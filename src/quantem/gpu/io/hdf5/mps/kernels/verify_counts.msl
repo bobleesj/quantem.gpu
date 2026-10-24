@@ -1,0 +1,33 @@
+#include <metal_stdlib>
+using namespace metal;
+
+// Compare unsigned values without truncating the wider source or converting
+// either input to floating point. One mismatch is counted per detector value.
+kernel void verify_counts(
+    device const uchar* source [[buffer(0)]],
+    device const uchar* saved [[buffer(1)]],
+    device uint* partials [[buffer(2)]],
+    constant uint4& parameters [[buffer(3)]],
+    uint group [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup uint totals[256];
+    uint different = 0;
+    for (uint offset = lane; offset < 4096; offset += 256) {
+        uint index = group * 4096 + offset;
+        if (index >= parameters.x) break;
+        bool unequal = false;
+        for (uint byte = 0; byte < parameters.y; ++byte) {
+            uchar expected = source[index * parameters.y + byte];
+            uchar actual = byte < parameters.z ? saved[index * parameters.z + byte] : 0;
+            unequal |= expected != actual;
+        }
+        different += uint(unequal);
+    }
+    totals[lane] = different;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 128; stride; stride >>= 1) {
+        if (lane < stride) totals[lane] += totals[lane + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (lane == 0) partials[group] = totals[0];
+}

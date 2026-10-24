@@ -194,9 +194,30 @@ struct QEMRoundtrip {
       var expected = [String]()
       for frame in frames { expected.append(hash(try source.extractRawDiffraction(scanRow: frame / shape[1], scanColumn: frame % shape[1]))) }
       let products = try detectorHashes(source, frames: frames)
+      if ProcessInfo.processInfo.environment["QEM_VERIFY_SAVE_FAILURES"] == "1" {
+        let directory = output.deletingLastPathComponent()
+        let before = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+        let cancelled = directory.appendingPathComponent("cancelled.qem")
+        var cancel = false
+        var rejected = false
+        do {
+          try source.saveSnapshot(to: cancelled, shouldCancel: { cancel },
+                                  progress: { _, _ in cancel = true })
+        } catch { rejected = error.localizedDescription.lowercased().contains("cancel") }
+        try require(rejected, "Save cancellation was not reported")
+        let after = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+        try require(before == after, "Cancelled save left temporary or published output")
+      }
       let saveStart = CFAbsoluteTimeGetCurrent()
       try source.saveSnapshot(to: output)
       let saved = CFAbsoluteTimeGetCurrent()
+      if ProcessInfo.processInfo.environment["QEM_VERIFY_SAVE_FAILURES"] == "1" {
+        var rejected = false
+        do { try source.saveSnapshot(to: output) }
+        catch { rejected = error.localizedDescription.contains("already exists") }
+        try require(rejected, "Saving replaced an existing destination")
+        print("PASS INTEGER save_cancel_cleanup=pass existing_destination_preserved=pass")
+      }
       source.releaseResidentStorage()
       let file = try NativeANSSnapshot(url: output)
       try require(NativeANSSnapshot.matches(output), "Writer did not produce QEM")

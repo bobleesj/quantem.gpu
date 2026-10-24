@@ -198,8 +198,8 @@ class MPSDecompressor:
         except (TypeError, AttributeError, NameError):
             pass
 
-    def load_prepared_frames(self, prepared: dict) -> SharedArray:
-        """Decode one prepared frame plan into a fresh Metal-backed array.
+    def load_prepared_frames(self, prepared: dict, *, out_buffer=None) -> SharedArray:
+        """Decode one prepared frame plan into an owned Metal-backed array.
 
         The compressed bytes and block metadata of ``prepared`` are copied into
         this decoder's unified-memory buffers, then decoded in the stored
@@ -208,6 +208,11 @@ class MPSDecompressor:
         whose framing is intact) raise ``ValueError`` naming the frames; the
         kernels bound every read and write, so the next batch decodes as usual.
         A Metal command that ends with an error raises ``RuntimeError``.
+
+        ``out_buffer`` may supply an idle shared Metal staging buffer with at
+        least ``total_frames * frame_bytes`` bytes. On success the returned
+        array owns that buffer; on failure it remains the caller's to release.
+        No other command may access it until this call completes.
         """
         read_buffer = prepared["read_buffer"]
         total_frames = int(prepared["total_frames"])
@@ -250,7 +255,15 @@ class MPSDecompressor:
         max_blocks = int(block_counts[:total_frames].max(initial=1))
         self._errors_np[:] = (np.iinfo(np.uint32).max, 0)
 
-        out_mtl = allocate_shared(total_frames * frame_bytes, "decoded frames")
+        output_bytes = total_frames * frame_bytes
+        if out_buffer is not None and int(out_buffer.length()) < output_bytes:
+            raise ValueError(
+                "Decode output buffer is too small; supply a full batch staging buffer."
+            )
+        out_mtl = (
+            out_buffer if out_buffer is not None
+            else allocate_shared(output_bytes, "decoded frames")
+        )
         try:
             command = self._submit_gpu(total_frames, frame_bytes, elem_size, out_mtl, max_blocks)
             command.waitUntilCompleted()
@@ -266,7 +279,8 @@ class MPSDecompressor:
                     "writing, or copy it again."
                 )
         except BaseException:
-            release_buffer(out_mtl)
+            if out_buffer is None:
+                release_buffer(out_mtl)
             raise
         return shared_array(out_mtl, dtype, (total_frames, *frame_shape))
 

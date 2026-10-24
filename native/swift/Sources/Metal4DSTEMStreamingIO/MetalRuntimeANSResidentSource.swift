@@ -133,8 +133,13 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
         validity: (0..<source.dataset.detectorRows * source.dataset.detectorCols).map {
           source.dataset.badPixelIndices.contains($0) ? 0 : 1
         }) : nil
+    let windowFrames =
+      try includeSpatialIndex
+      ? RuntimeANSEncoder.maximumSpatialWindowFrames(
+        pixels: source.dataset.detectorRows * source.dataset.detectorCols,
+        maximumFrames: maximumFrames, maximumBufferBytes: device.maxBufferLength) : maximumFrames
     try packing.forEachExactDecodedWindow(
-      source: source, maximumFrames: includeSpatialIndex ? min(512, maximumFrames) : maximumFrames,
+      source: source, maximumFrames: windowFrames,
       shouldCancel: shouldCancel, progress: progress
     ) { dense, _, range, command in
       try encoder.append(
@@ -143,6 +148,23 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
       if let spatial {
         try encoder.addSpatialIndex(
           spatial.build(raw: dense, scans: range.count, itemBytes: source.sourceBytesPerValue))
+      }
+    }
+    if let spatial, ProcessInfo.processInfo.environment["QGPU_RUNTIME_ANS_PROFILE"] == "1" {
+      let profile: [String: Any] = [
+        "record": "runtime_ans_spatial_profile", "build_calls": spatial.buildCalls,
+        "allocation_seconds": spatial.allocationSeconds,
+        "reduction_wall_seconds": spatial.reductionWallSeconds,
+        "reduction_gpu_seconds": spatial.reductionGPUSeconds,
+        "prefix_cpu_seconds": spatial.prefixCPUSeconds,
+        "pack_wall_seconds": spatial.packWallSeconds,
+        "pack_gpu_seconds": spatial.packGPUSeconds,
+        "payload_bytes": spatial.packPayloadBytes,
+      ]
+      if let data = try? JSONSerialization.data(withJSONObject: profile, options: [.sortedKeys]),
+        let line = String(data: data, encoding: .utf8)
+      {
+        FileHandle.standardError.write(Data(("QGPU_SPATIAL_PROFILE " + line + "\n").utf8))
       }
     }
     guard encoder.readyScans == source.logicalFrameCount else {
@@ -1250,6 +1272,35 @@ final class RuntimeANSEncoder {
     }
   }
 
+  /// Bound the tuned spatial window by admission, codec offsets and Metal buffers.
+  static func maximumSpatialWindowFrames(
+    pixels: Int, maximumFrames: Int, maximumBufferBytes: Int
+  ) throws -> Int {
+    guard pixels > 0, pixels < Int(UInt32.max), maximumFrames > 0,
+      maximumBufferBytes > 0
+    else {
+      throw MetalRuntimeANSResidentSource.invalid(
+        "Runtime ANS requires a positive detector within uint32 limits and a positive window.")
+    }
+    var frames = min(8_192, maximumFrames)
+    if frames >= 512 { frames = frames / 512 * 512 }
+    // The worst-case ANS scratch also bounds the uint8/uint16 dense window and
+    // payload. Match the snapshot reader's strict offset bound. Full streams
+    // stay aligned; a large detector can require a short final-sized chunk.
+    while frames > 0 {
+      let streams = UInt64((frames + 511) / 512) * UInt64(pixels)
+      let bytesPerStream = UInt64(2 * min(frames, 512) + 4)
+      if streams < (UInt64(1) << 32) / bytesPerStream,
+        streams * bytesPerStream <= UInt64(maximumBufferBytes)
+      {
+        return frames
+      }
+      frames -= frames > 512 ? 512 : 1
+    }
+    throw MetalRuntimeANSResidentSource.invalid(
+      "Detector shape exceeds runtime ANS uint32 or Metal buffer limits.")
+  }
+
   static func maximumWindowFrames(
     source: Native4DSTEMIndexedSource, maximumAdditionalBytes: UInt64?
   ) throws -> Int {
@@ -1535,6 +1586,8 @@ extension OriginalHDF5Packing {
     memset(mask.contents(), 0, mask.length)
     var profile = Profile()
     let readAhead = Self.readAheadEnabled ? CompressedWindowReadAhead(device: device) : nil
+    profile.readAheadEnabled = readAhead != nil
+    profile.readAheadDepth = readAhead == nil ? 0 : 1
     func prefetch(_ index: Int) {
       guard let readAhead, windows.indices.contains(index) else { return }
       do {
@@ -1555,7 +1608,9 @@ extension OriginalHDF5Packing {
         }
         memset(audit.contents(), 0, audit.length)
         memset(errors.contents(), 0, errors.length)
+        let readWaitStarted = CFAbsoluteTimeGetCurrent()
         let prepared = try readAhead?.take(window: ordinal) ?? []
+        profile.readWait += CFAbsoluteTimeGetCurrent() - readWaitStarted
         prefetch(ordinal + 1)
         let command = try commandBuffer()
         for (sliceIndex, slice) in window.slices.enumerated() {

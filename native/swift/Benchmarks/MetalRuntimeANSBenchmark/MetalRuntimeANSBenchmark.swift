@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import Metal
 import Metal4DSTEMStreamingIO
@@ -10,19 +11,63 @@ import Native4DSTEMIO
 enum MetalRuntimeANSBenchmark {
   static func main() throws {
     let arguments = Array(CommandLine.arguments.dropFirst())
+    if arguments.count == 2 && arguments[1] == "--qem-load-only" {
+      guard let device = MTLCreateSystemDefaultDevice() else {
+        throw failure("A physical Metal device is required")
+      }
+      let ioBefore = try processUsage()
+      let started = CFAbsoluteTimeGetCurrent()
+      let source = try MetalRuntimeANSResidentSource.load(
+        snapshot: NativeANSSnapshot(url: URL(fileURLWithPath: arguments[0])), device: device)
+      let elapsed = CFAbsoluteTimeGetCurrent() - started
+      let ioAfter = try processUsage()
+      defer { source.releaseResidentStorage() }
+      let checkStarted = CFAbsoluteTimeGetCurrent()
+      let scans = source.shape[0] * source.shape[1]
+      let frames = [0, scans / 2, scans - 1]
+      let hashes = try frames.map { frame in
+        let values = try source.extractRawDiffraction(
+          scanRow: frame / source.shape[1], scanColumn: frame % source.shape[1])
+        return values.withUnsafeBytes {
+          SHA256.hash(data: Data($0)).map { String(format: "%02x", $0) }.joined()
+        }
+      }
+      let output: [String: Any] = [
+        "schema": "quantem-gpu-native-qem-load-benchmark/v1",
+        "device": device.name, "shape": source.shape,
+        "load_seconds": elapsed, "resident_bytes": source.residentBytes,
+        "physical_read_bytes": ioAfter.ri_diskio_bytesread - ioBefore.ri_diskio_bytesread,
+        "physical_footprint_bytes": ioAfter.ri_phys_footprint,
+        "peak_physical_footprint_bytes": ioAfter.ri_lifetime_max_phys_footprint,
+        "metal_allocated_bytes": device.currentAllocatedSize,
+        "source_dtype": source.dataset.sourceDtype,
+        "sample_frames": frames, "sample_hashes_u32_le": hashes,
+        "verification_seconds_excluded": CFAbsoluteTimeGetCurrent() - checkStarted,
+        "verification_scope": "three raw diffraction frame hashes; not full-volume parity",
+      ]
+      print(
+        String(
+          data: try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]),
+          encoding: .utf8)!)
+      return
+    }
     if arguments.count == 2 && arguments[0] == "--camera" {
       try CameraBenchmark.run(URL(fileURLWithPath: arguments[1]))
       return
     }
-    guard arguments.count == 2 else {
-      throw failure("Usage: metal-runtime-ans-benchmark INPUT INDEX_DIRECTORY")
+    let loadOnly = arguments.count == 3 && arguments[2] == "--load-only"
+    guard arguments.count == 2 || loadOnly else {
+      throw failure("Usage: metal-runtime-ans-benchmark INPUT INDEX_DIRECTORY [--load-only]")
     }
     guard let device = MTLCreateSystemDefaultDevice() else {
       throw failure("A physical Metal device is required")
     }
     let input = URL(fileURLWithPath: arguments[0])
     let indexes = URL(fileURLWithPath: arguments[1])
+    let ioBeforePreparation = try processUsage()
+    let preparationStarted = CFAbsoluteTimeGetCurrent()
     let catalog = try Native4DSTEMCatalogBuilder(cacheDirectory: indexes).prepare(input: input)
+    let preparationSeconds = CFAbsoluteTimeGetCurrent() - preparationStarted
     guard !catalog.datasets.isEmpty else { throw failure("No original indexed HDF5 acquisition") }
     var residents: [MetalRuntimeANSResidentSource] = []
     defer {
@@ -32,10 +77,14 @@ enum MetalRuntimeANSBenchmark {
     let seriesStarted = CFAbsoluteTimeGetCurrent()
     for dataset in catalog.datasets {
       let indexed = try Native4DSTEMIndexedSource.open(dataset: dataset)
+      let ioBefore = try processUsage()
       let resident = try MetalRuntimeANSResidentSource.load(
-        source: indexed, device: device,
+        source: indexed, device: device, includeSpatialIndex: loadOnly,
         maximumAdditionalBytes: ProcessInfo.processInfo.physicalMemory)
+      let ioAfter = try processUsage()
       residents.append(resident)
+      let readySeconds = CFAbsoluteTimeGetCurrent() - seriesStarted
+      let checkStarted = CFAbsoluteTimeGetCurrent()
       let scans = indexed.logicalFrameCount
       let frames = [0, scans / 2, scans - 1]
       let hashes = try frames.map { frame in
@@ -47,9 +96,15 @@ enum MetalRuntimeANSBenchmark {
       }
       records.append([
         "shape": resident.shape,
+        "ready_seconds_including_preparation": preparationSeconds + readySeconds,
         "source_dtype": dataset.sourceDtype,
         "source_identity": resident.sourceIdentitySHA256,
         "load_seconds": resident.loadMetrics.totalSeconds,
+        "physical_read_bytes": ioAfter.ri_diskio_bytesread - ioBefore.ri_diskio_bytesread,
+        "physical_read_bytes_including_preparation": ioAfter.ri_diskio_bytesread - ioBeforePreparation.ri_diskio_bytesread,
+        "physical_footprint_bytes": ioAfter.ri_phys_footprint,
+        "peak_physical_footprint_bytes": ioAfter.ri_lifetime_max_phys_footprint,
+        "metal_allocated_bytes": device.currentAllocatedSize,
         "fused_decode_encode_seconds": resident.loadMetrics.fusedDecodeAndEncodeSeconds,
         "prefix_seconds": resident.loadMetrics.prefixSeconds,
         "compact_seconds": resident.loadMetrics.compactSeconds,
@@ -57,9 +112,25 @@ enum MetalRuntimeANSBenchmark {
         "resident_bytes": resident.loadMetrics.residentBytes,
         "sample_frames": frames,
         "sample_hashes_u32_le": hashes,
+        "verification_seconds_excluded": CFAbsoluteTimeGetCurrent() - checkStarted,
       ])
     }
     let seriesLoadSeconds = CFAbsoluteTimeGetCurrent() - seriesStarted
+    if loadOnly {
+      let output: [String: Any] = [
+        "schema": "quantem-gpu-native-load-benchmark/v1",
+        "device": device.name,
+        "catalog_preparation_seconds": preparationSeconds,
+        "acquisitions": records,
+        "include_spatial_index": true,
+        "verification_scope": "three raw diffraction frame hashes; not full-volume parity",
+      ]
+      print(
+        String(
+          data: try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]),
+          encoding: .utf8)!)
+      return
+    }
     let series = try MetalRuntimeANSSeries(sources: residents)
     defer { series.release() }
     var selectedDPMilliseconds: [Double] = []
@@ -171,6 +242,17 @@ enum MetalRuntimeANSBenchmark {
       String(
         data: try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]),
         encoding: .utf8)!)
+  }
+
+  static func processUsage() throws -> rusage_info_v4 {
+    var usage = rusage_info_v4()
+    let result = withUnsafeMutablePointer(to: &usage) { pointer in
+      pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+        proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0)
+      }
+    }
+    guard result == 0 else { throw failure("Cannot read process IO counters") }
+    return usage
   }
 
   static func failure(_ message: String) -> NSError {

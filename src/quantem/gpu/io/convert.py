@@ -1,4 +1,4 @@
-"""Convert Arina HDF5 acquisitions into verified ``.qem`` copies.
+"""Convert Arina HDF5 acquisitions into ``.qem`` copies with optional verification.
 
 The conversion is ``io.load(master, representation="encoded")`` followed by
 ``io.save(destination, acquisition, format="quantem")``. This module adds what a
@@ -16,9 +16,11 @@ import re
 import tempfile
 import time
 import zlib
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event
 
 import h5py
 import hdf5plugin  # noqa: F401  registers bitshuffle/LZ4 for h5py
@@ -39,12 +41,17 @@ from quantem.gpu.formats.qem.metadata import (
 from quantem.gpu.formats.qem.snapshot import BIT_DTYPES, read_header
 from quantem.gpu.io import load, save
 from quantem.gpu.io.read import torch_value
+from quantem.gpu.resident.cuda.counts import StreamedCounts
+from quantem.gpu.resident.hot_pixels import (
+    fill_flagged,
+    median_plan,
+    normalize_hot_pixel_correction,
+)
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
-from quantem.gpu.resident.hot_pixels import fill_flagged, median_plan, normalize_hot_pixel_correction
 
 _MASTER_SUFFIX = "_master.h5"
 _STORED_DTYPES = BIT_DTYPES
-_HASH_BLOCK = 64 << 20
+_HASH_BLOCK = 8 << 20
 _READABLE_VALUES = 64
 _EMBEDDED_MASTER_LIMIT = 8 << 20
 _MAX_CIF_DOCUMENTS = 8                 # of the 16 source documents a .qem carries; the rest stay for the source's own metadata
@@ -450,16 +457,26 @@ def destination_for(master: Path, source: Path, out: Path | None) -> Path:
     return Path(out) / relative / name
 
 
-def _source_files(paths: list[Path]) -> list[dict]:
-    """Record name, size and SHA-256 of every source file for the saved copy."""
-    records = []
-    for path in paths:
+def _source_files(paths: list[Path], *, stop: Event | None = None) -> list[dict]:
+    """Record complete ordered source fingerprints, or cancel abandoned work."""
+    def fingerprint(path):
         digest = hashlib.sha256()
-        with open(path, "rb") as handle:
-            while block := handle.read(_HASH_BLOCK):
-                digest.update(block)
-        records.append(dict(name=path.name, bytes=path.stat().st_size, sha256=digest.hexdigest()))
-    return records
+        buffer = bytearray(_HASH_BLOCK)
+        view = memoryview(buffer)
+        with open(path, "rb", buffering=0) as handle:
+            while True:
+                if stop is not None and stop.is_set():
+                    raise CancelledError("Source hashing was cancelled before saving.")
+                count = handle.readinto(buffer)
+                if not count:
+                    break
+                digest.update(view[:count])
+        return {"name": path.name, "bytes": path.stat().st_size, "sha256": digest.hexdigest()}
+
+    # Independent shards preserve their ordered provenance while reusing at
+    # most sixteen 8 MiB read buffers, without allocating every read block.
+    with ThreadPoolExecutor(max_workers=min(16, len(paths))) as workers:
+        return list(workers.map(fingerprint, paths))
 
 
 def _json_value(value):
@@ -527,10 +544,12 @@ def _embedded_master(master: Path) -> dict | None:
     """Carry the master file itself so that no field, table or attribute is lost."""
     if master.stat().st_size > _EMBEDDED_MASTER_LIMIT:
         return None
-    packed = base64.b64encode(zlib.compress(master.read_bytes(), 9)).decode("ascii")
+    content = master.read_bytes()
+    packed = base64.b64encode(zlib.compress(content, 9)).decode("ascii")
     if len(packed) > _EMBEDDED_MASTER_LIMIT:
         return None
-    return dict(name=master.name, encoding="zlib+base64", data=packed)
+    return {"name": master.name, "encoding": "zlib+base64", "data": packed,
+            "sha256": hashlib.sha256(content).hexdigest()}
 
 
 def restore_master(qem: Path, destination: Path) -> Path:
@@ -569,8 +588,10 @@ def restore_master(qem: Path, destination: Path) -> Path:
     )
     if len(content) > _EMBEDDED_MASTER_LIMIT or not decoder.eof or decoder.unused_data:
         raise ValueError("Invalid or oversized embedded master; retain the original acquisition.")
-    expected = next((record["sha256"] for record in header["metadata"].get("source_files", [])
-                     if record["name"] == embedded["name"]), None)
+    expected = embedded.get("sha256") or next(
+        (record.get("sha256") for record in header["metadata"].get("source_files", [])
+         if record["name"] == embedded["name"]), None
+    )
     if expected is None or hashlib.sha256(content).hexdigest() != expected:
         raise ValueError("Embedded master does not match its source checksum; recopy the .qem file.")
     with open(destination, "xb") as handle:
@@ -587,6 +608,9 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
     neighborhoods; all other values retain their original bits. Bit comparisons
     run on the requested GPU in bounded windows, including for float64 on
     Metal, whose tensor arithmetic does not support that floating dtype.
+    Uncorrected supported integer HDF5 uses bounded GPU decoding and exact
+    unsigned comparison; other formats and correction references use h5py
+    source decoding followed by accelerator comparison.
     """
     header, _ = read_header(qem)
     rows, columns, detector_rows, detector_columns = header["shape"]
@@ -600,6 +624,8 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
     with ExitStack() as stack:
         handles = [stack.enter_context(h5py.File(path, "r")) for path in detector_files(master)]
         datasets = [handle["entry/data/data"] for handle in handles]
+        if any(dataset.shape[1:] != (detector_rows, detector_columns) for dataset in datasets):
+            raise ValueError("Source detector shape differs from the QEM copy; verify the matching acquisition.")
         starts = np.cumsum([0] + [len(dataset) for dataset in datasets])
         if starts[-1] != rows * columns:
             raise ValueError(f"{master.name} holds {starts[-1]} frames; the copy declares {rows * columns}.")
@@ -621,40 +647,62 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
                 decode = saved.data.decode_scan_range_torch
             else:
                 decode = saved.data.decode_scan_range_device
-            for first in range(0, rows * columns, step):
-                stop = min(rows * columns, first + step)
-                decoded = decode(first, stop)
-                raw = np.ascontiguousarray(frames(first, stop))
-                if method != "none":
-                    # the CPU reference of the GPU correction, bit for bit
-                    raw = fill_flagged(raw.copy(), plan, method)
-                stored = np.dtype(header["dtype"])
-                if stored != raw.dtype:
-                    # Counts stored in a narrower unsigned type: compare every value exactly.
-                    if not (stored.kind == raw.dtype.kind == "u" and stored.itemsize < raw.dtype.itemsize):
-                        raise ValueError(f"The QEM stores {stored.name} values of a {raw.dtype.name} source; "
-                                         "only exact narrower unsigned counts are supported.")
-                    copy = torch_value(decoded).to(torch.int32).to(torch.int64).reshape(stop - first, -1)
-                    source = torch.from_numpy(raw.astype(np.int64).reshape(stop - first, -1)).to(copy.device)
-                    differing += int((copy != source).sum())
+            accelerated = False
+            if isinstance(saved.data, MPSStreamedCounts) and method == "none":
+                from quantem.gpu.io.hdf5.mps.verify import (
+                    supports_counts,
+                    verify_counts,
+                )
+
+                if supports_counts(datasets, np.dtype(header["dtype"])):
+                    differing = verify_counts(master, saved.data, datasets[0].dtype)
+                    compared = rows * columns * pixels
+                    accelerated = True
+            if isinstance(saved.data, StreamedCounts) and method == "none":
+                from quantem.gpu.io.hdf5.cuda.verify import (
+                    supports_counts,
+                    verify_counts,
+                )
+
+                if supports_counts(datasets, np.dtype(header["dtype"])):
+                    differing = verify_counts(master, saved.data, datasets[0].dtype)
+                    compared = rows * columns * pixels
+                    accelerated = True
+            if not accelerated:
+                for first in range(0, rows * columns, step):
+                    stop = min(rows * columns, first + step)
+                    decoded = decode(first, stop)
+                    raw = np.ascontiguousarray(frames(first, stop))
+                    if method != "none":
+                        # the CPU reference of the GPU correction, bit for bit
+                        raw = fill_flagged(raw.copy(), plan, method)
+                    stored = np.dtype(header["dtype"])
+                    if stored != raw.dtype:
+                        # Counts stored in a narrower unsigned type: compare every value exactly.
+                        if not (stored.kind == raw.dtype.kind == "u" and stored.itemsize < raw.dtype.itemsize):
+                            raise ValueError(f"The QEM stores {stored.name} values of a {raw.dtype.name} source; "
+                                             "only exact narrower unsigned counts are supported.")
+                        copy = torch_value(decoded).to(torch.int32).to(torch.int64).reshape(stop - first, -1)
+                        source = torch.from_numpy(raw.astype(np.int64).reshape(stop - first, -1)).to(copy.device)
+                        differing += int((copy != source).sum())
+                        compared += pixels * (stop - first)
+                        del decoded, copy, source, raw
+                        continue
+                    if hasattr(decoded, "_mtl"):
+                        decoded.dtype = np.dtype("uint8")
+                        decoded.shape = (raw.nbytes,)
+                        copy = torch_value(decoded)
+                    elif isinstance(decoded, torch.Tensor):
+                        copy = decoded.view(torch.uint8).reshape(-1)
+                    elif is_float8(header["dtype"]):
+                        copy = torch_value(decoded).view(torch.uint8).reshape(-1)
+                    else:
+                        copy = torch_value(decoded.view(np.uint8)).reshape(-1)
+                    source = torch.from_numpy(raw.view(np.uint8).reshape(-1)).to(copy.device)
+                    unequal = (copy != source).reshape(-1, raw.dtype.itemsize).any(dim=1)
+                    differing += int(unequal.sum())
                     compared += pixels * (stop - first)
-                    del decoded, copy, source, raw
-                    continue
-                if hasattr(decoded, "_mtl"):
-                    decoded.dtype = np.dtype("uint8")
-                    decoded.shape = (raw.nbytes,)
-                    copy = torch_value(decoded)
-                elif isinstance(decoded, torch.Tensor):
-                    copy = decoded.view(torch.uint8).reshape(-1)
-                elif is_float8(header["dtype"]):
-                    copy = torch_value(decoded).view(torch.uint8).reshape(-1)
-                else:
-                    copy = torch_value(decoded.view(np.uint8)).reshape(-1)
-                source = torch.from_numpy(raw.view(np.uint8).reshape(-1)).to(copy.device)
-                unequal = (copy != source).reshape(-1, raw.dtype.itemsize).any(dim=1)
-                differing += int(unequal.sum())
-                compared += pixels * (stop - first)
-                del decoded, copy, source, raw, unequal
+                    del decoded, copy, source, raw, unequal
     flagged = int((~valid).sum())
     return dict(
         identical=differing == 0,
@@ -667,13 +715,14 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
     )
 
 
-def convert(master: Path, destination: Path, *, write: bool = True, verify: bool = True,
+def convert(master: Path, destination: Path, *, write: bool = True, verify: bool = False,
+            source_hashes: bool = False,
             backend: str = "auto", voltage_kV: float | None = None,
             semiangle_mrad: float | None = None,
             scan_sampling_A: float | tuple[float, float] | None = None,
             detector_sampling_mrad: float | tuple[float, float] | None = None,
             hot_pixel_correction: str = "none") -> ConvertedAcquisition:
-    """Preserve a complete acquisition in a verified, no-overwrite saved copy.
+    """Preserve a complete acquisition in a no-overwrite saved copy.
 
     Parameters
     ----------
@@ -683,9 +732,14 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
         New ``.qem`` path. Original acquisitions are never modified.
     write : bool, default True
         False performs GPU encoding for a payload estimate without saving.
-    verify : bool, default True
+    verify : bool, default False
         Compare every decoded value with bounded independent source reads
-        before publishing. False explicitly skips that integrity gate.
+        before publishing when True. QEM checksums and file synchronization
+        remain enabled regardless of this option.
+    source_hashes : bool, default False
+        Read every original file to record its SHA-256 when True. Otherwise
+        record source names and sizes without this extra read pass. The small
+        embedded master retains its own checksum in both modes.
     backend : {"auto", "cuda", "mps"}, default "auto"
         Accelerator for loading, encoding and decoded-value comparison.
     voltage_kV, semiangle_mrad
@@ -714,7 +768,11 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
     Examples
     --------
     >>> result = convert(Path("scan_master.h5"), Path("scan.qem"))
-    >>> result.verified
+    >>> result.verified is None
+    True
+    >>> checked = convert(Path("scan_master.h5"), Path("checked.qem"),
+    ...                   verify=True, source_hashes=True)
+    >>> checked.verified
     True
     """
     master, destination = Path(master), Path(destination)
@@ -750,16 +808,33 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
         signatures = [(path.stat().st_size, path.stat().st_mtime_ns) for path in paths]
         # Integer counts are stored in the narrowest unsigned type that holds every value (after the
         # requested correction); the copy records the source dtype, and verification compares values.
-        with load(master, backend=backend, representation="encoded", verbose=False,
-                  hot_pixel_correction=hot_pixel_correction) as acquisition:
+        with ExitStack() as stack:
+            # Hash unchanged source files while the accelerator prepares the
+            # resident. The executor drains before this scope exits, including
+            # loading failures and copies rejected by the size comparison.
+            fingerprints = None
+            stop = Event()
+            if write and source_hashes:
+                workers = stack.enter_context(ThreadPoolExecutor(max_workers=1))
+                stack.callback(stop.set)
+                fingerprints = workers.submit(_source_files, paths, stop=stop)
+            acquisition = stack.enter_context(load(
+                master, backend=backend, representation="encoded", verbose=False,
+                hot_pixel_correction=hot_pixel_correction,
+            ))
             result.hot_pixel_correction = dict(acquisition.metadata.get("hot_pixel_correction", {}))
             result.qem_bytes = int(acquisition.resident_bytes)
             if result.qem_bytes >= result.source_bytes:
                 result.larger = True
                 write = False
+                stop.set()
             if write:
                 metadata = dict(acquisition.metadata)
-                metadata["source_files"] = _source_files(paths)
+                metadata["source_files"] = (
+                    fingerprints.result() if fingerprints is not None else
+                    [{"name": path.name, "bytes": signature[0]}
+                     for path, signature in zip(paths, signatures, strict=True)]
+                )
                 metadata["source_metadata"] = master_metadata(master)
                 embedded = _embedded_master(master)
                 if embedded is None:

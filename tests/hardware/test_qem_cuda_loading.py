@@ -5,7 +5,7 @@ import os
 import numpy as np
 import pytest
 
-from quantem.gpu import io
+from quantem.gpu import detector, io
 from quantem.gpu.formats.qem import snapshot
 from quantem.gpu.io import qem
 
@@ -39,13 +39,27 @@ def acquisition(tmp_path, monkeypatch, request):
 
 
 @pytest.mark.parametrize("acquisition", [8192, 64 << 20], indirect=True)
-def test_parallel_restore_reuses_slots_without_changing_counts(acquisition):
+@pytest.mark.parametrize("read_order", ["cache", "reverse"])
+def test_parallel_restore_reuses_slots_without_changing_counts(
+    acquisition, monkeypatch, read_order
+):
     path, values, header, _ = acquisition
-    workers = min(4, len(header["sha256"]))
+    if read_order == "reverse":
+        monkeypatch.setattr(
+            qem, "_cached_block_order",
+            lambda *_: list(reversed(range(len(header["sha256"])))),
+        )
+    workers = min(16, len(header["sha256"]))
+    mask = np.zeros(values.shape[-2:], dtype=bool)
+    mask[::2, ::2] = True
     for _ in range(3):
         with io.load(path, backend="cuda", verbose=False) as loaded:
             actual = loaded.data.decode_scan_range_device(0, 1024).get()
             np.testing.assert_array_equal(actual.reshape(values.shape), values)
+            np.testing.assert_array_equal(
+                detector.prepare(loaded).masked_sum(mask),
+                values[:, :, mask].sum(-1),
+            )
             assert loaded.dtype == values.dtype
             timings = loaded.metadata["load_timings"]
             assert timings["verified_read_workers"] == workers

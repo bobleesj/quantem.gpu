@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from benchmark_source import runtime_source
 from benchmark_support import (
     LOGICAL_PIXEL_AXIS_ORDER,
     LOGICAL_PIXEL_HASH_SCHEMA,
@@ -54,6 +55,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--backend", default="cuda", choices=("cuda", "mps", "cpu", "auto")
     )
+    parser.add_argument("--hot-pixel-correction", choices=("none", "zero", "median"), default="none")
     parser.add_argument("--dtype", default=None, help="Optional browse dtype, e.g. u8.")
     parser.add_argument("--det-bin", type=int, default=1)
     parser.add_argument("--scan-region", type=_parse_region)
@@ -121,6 +123,13 @@ def _output_parity(
     from quantem.gpu.io.dataset import Dataset4dstemGPU
 
     description = _array_description(data)
+    if isinstance(acquisition, Dataset4dstemGPU):
+        # The encoded payload may be narrower than native-dtype public reads.
+        description.update(
+            shape=list(acquisition.shape),
+            dtype=str(acquisition.dtype),
+            logical_resident_bytes=acquisition.logical_bytes,
+        )
     output_sha256 = None
     validation_seconds = 0.0
     if args.expected_output_sha256 is not None or args.require_full_output_parity:
@@ -189,7 +198,7 @@ def _scientific_metadata(result: Any, args: argparse.Namespace) -> dict[str, Any
     if source_detector_shape is None and int(args.det_bin) == 1:
         source_detector_shape = working_detector_shape
     source_dtype = metadata.get("source_dtype")
-    working_dtype = metadata.get("dtype")
+    working_dtype = metadata.get("working_dtype", metadata.get("dtype"))
     if working_dtype is None:
         working_dtype = str(getattr(data, "dtype", "")) or None
     detector_bin = metadata.get("det_bin")
@@ -319,6 +328,7 @@ def _run_timed_trial(
     resident_bytes = None
     release_method = None
     release_error = None
+    load_timings = {}
 
     def retain_failure(stage: str, message: str) -> None:
         nonlocal failure, failure_stage
@@ -335,6 +345,7 @@ def _run_timed_trial(
             retain_failure("post-load-memory", f"{type(exc).__name__}: {exc}")
 
         if result is not None and failure is None:
+            load_timings = dict(result.metadata.get("load_timings", {}))
             try:
                 output_parity = _output_parity(result.data, args, result)
                 scientific_metadata = _scientific_metadata(result, args)
@@ -369,6 +380,7 @@ def _run_timed_trial(
         "failure_stage": failure_stage,
         "error": failure,
         "wall_seconds": elapsed,
+        "load_timings": load_timings,
         "shape": shape,
         "resident_bytes": resident_bytes,
         "memory_before": memory_before,
@@ -431,9 +443,11 @@ def main() -> None:
     report = {
         "schema": "quantem-gpu-hdf5-load-benchmark/v4",
         "status": "running",
+        "runtime_source_before": runtime_source(),
         "benchmark_definition": {
             "timing_boundary": "public io.load return after backend synchronization",
             "cache_state": args.cache_state,
+            "hot_pixel_correction": args.hot_pixel_correction,
             "warmup_count": args.warmup,
             "repetitions": args.reps,
             "full_volume_hash_excluded_from_wall_time": True,
@@ -558,6 +572,7 @@ def main() -> None:
         row["status"] = "passed"
 
     report["status"] = "failed" if terminal_failure is not None else "passed"
+    report["runtime_source_after"] = runtime_source()
     _write_json_report(report, args.json_out)
     if terminal_failure is not None:
         raise SystemExit(f"benchmark failed closed: {terminal_failure}")

@@ -3,6 +3,7 @@
 import math
 import time
 import weakref
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -142,6 +143,8 @@ class MPSStreamedCounts:
         self.released_scans = 0
         self.is_released = False
         self.load_metrics = {"encode_seconds": 0.0}
+        self._encoding_workspace_buffer = None
+        self._encoding_exceeds_uint8 = False
 
     @property
     def device(self):
@@ -228,6 +231,48 @@ class MPSStreamedCounts:
             self._metal.MTLSizeMake(128, 1, 1),
         )
 
+    def _encoding_scratch_bytes(self, scans: int) -> int:
+        streams = math.ceil(scans / self.interval) * math.prod(self.shape[2:])
+        return (2 * min(scans, self.interval) + 4) * streams
+
+    def _encoding_scan_limit(self, requested: int) -> int:
+        """Bound an ingest window by uint32 codec offsets and the device buffer limit."""
+        limit = min(1 << 32, int(metal_device().maxBufferLength()))
+        pixels = math.prod(self.shape[2:])
+        full_interval_bytes = pixels * (2 * self.interval + 4)
+        if full_interval_bytes < limit:
+            capacity = ((limit - 1) // full_interval_bytes) * self.interval
+        else:
+            capacity = ((limit - 1) // pixels - 4) // 2
+        if capacity < 1:
+            raise MemoryError("One detector frame exceeds the Metal codec buffer limit.")
+        return min(requested, capacity)
+
+    @contextmanager
+    def encoding_workspace(self, max_scans: int):
+        """Reuse bounded encoder scratch during ingestion, then release it.
+
+        The resident never retains staging after this context exits. Each
+        append completes its GPU work before the next append reuses scratch;
+        encoded chunks own their payload, offsets and models independently.
+        """
+        self._check_resident()
+        if max_scans < 1 or self._encoding_workspace_buffer is not None:
+            raise ValueError("Use one encoding workspace with a positive scan capacity.")
+        size = self._encoding_scratch_bytes(max_scans)
+        if size >= min(1 << 32, int(metal_device().maxBufferLength())):
+            raise MemoryError(
+                "ANS encoding scratch exceeds the codec offset or Metal buffer limit; "
+                "use a smaller scan batch."
+            )
+        scratch = allocate_shared(size, "ANS encoding scratch")
+        self._encoding_workspace_buffer = scratch
+        try:
+            yield
+        finally:
+            self._encoding_workspace_buffer = None
+            release_buffer(scratch)
+
     def append(self, raw) -> None:
         """Encode one consecutive ``(scan, row, col)`` native-count block held in a ``SharedArray``."""
         self._check_resident()
@@ -246,15 +291,26 @@ class MPSStreamedCounts:
         if scans < 1 or self.ready_scans + scans > math.prod(self.shape[:2]):
             raise ValueError("ANS input block exceeds the declared scan geometry.")
         streams = math.ceil(scans / self.interval) * pixels
-        scratch_bytes = (2 * min(scans, self.interval) + 4) * streams
-        if scratch_bytes >= int(metal_device().maxBufferLength()):
-            raise MemoryError("ANS encoding scratch exceeds Metal's buffer limit.")
-        scratch = sizes = states = models = offsets = payload = None
+        scratch_bytes = self._encoding_scratch_bytes(scans)
+        if scratch_bytes >= min(1 << 32, int(metal_device().maxBufferLength())):
+            raise MemoryError(
+                "ANS encoding scratch exceeds the codec offset or Metal buffer limit; "
+                "use a smaller scan batch."
+            )
+        scratch = self._encoding_workspace_buffer
+        if scratch is not None and int(scratch.length()) < scratch_bytes:
+            raise ValueError("Input exceeds encoding workspace capacity; use a smaller scan batch.")
+        sizes = states = models = offsets = payload = None
+        state_view = None
         started = time.perf_counter()
         try:
-            scratch = allocate_shared(scratch_bytes, "ANS encoding scratch")
+            if scratch is None:
+                scratch = allocate_shared(scratch_bytes, "ANS encoding scratch")
             sizes = allocate_shared(streams * 4, "ANS sizes")
-            states = allocate_shared(streams * 4, "ANS states")
+            # One transient footer records the range already examined by the encoder.
+            states = allocate_shared((streams + 1) * 4, "ANS states and range flag")
+            state_view = np.frombuffer(buffer_view(states), np.uint32)
+            state_view[streams] = 0
             models = allocate_shared(streams, "ANS models")
             parameters = np.asarray(
                 [scans, pixels, self.interval, streams, self.dtype.itemsize],
@@ -271,6 +327,7 @@ class MPSStreamedCounts:
             self._dispatch_threads(encoder, streams)
             encoder.endEncoding()
             complete_command(command, "ANS encode")
+            above_uint8 = bool(state_view[streams])
 
             offsets = allocate_shared((streams + 1) * 4, "ANS offsets")
             offsets_view = np.frombuffer(buffer_view(offsets), np.uint32)
@@ -297,10 +354,13 @@ class MPSStreamedCounts:
                 _Chunk(self.ready_scans, scans, (payload, offsets, models))
             )
             self.ready_scans += scans
+            self._encoding_exceeds_uint8 |= above_uint8
             payload = offsets = models = None
             self.load_metrics["encode_seconds"] += time.perf_counter() - started
         finally:
-            for buffer in (scratch, sizes, states, models, offsets, payload):
+            state_view = None
+            owned_scratch = scratch if self._encoding_workspace_buffer is None else None
+            for buffer in (owned_scratch, sizes, states, models, offsets, payload):
                 release_buffer(buffer)
 
     def _encode_decode(

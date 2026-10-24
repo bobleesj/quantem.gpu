@@ -7,6 +7,7 @@ allocating GPU memory, and check every body block before a decoder sees it.
 This module holds that format alone: no GPU, decoder or encoder code.
 """
 
+import bisect
 import hashlib
 import json
 import math
@@ -166,12 +167,15 @@ def write_envelope(path: Path, header: dict, size: int, spans) -> None:
 
     ``spans`` yields ``(offset, bytes)`` in body order; the bytes between two
     spans are the zeros that align an array. Each 64 MiB block is hashed as it
-    is written, so nothing is read back: one thread hashes a span and another
-    writes it while the caller produces the next, and both are done before the
+    is written, so nothing is read back. For a streaming producer, one thread
+    hashes a span and another writes it while the caller produces the next.
+    Both are done before the
     span after that is asked for, so a producer may alternate two buffers.
     The header holds those checksums yet precedes the body: every checksum is
     64 hex characters, so placeholders give the header its final length, the
-    body is written behind that gap and the header fills it last. The file is
+    body is written behind that gap and the header fills it last.
+    Resident lists are stable: their independent blocks are hashed in parallel
+    while the file is written sequentially without a body-sized copy. The file is
     written beside ``path`` and linked into place only when complete, so a
     reader never sees a partial copy and an existing file is never replaced.
     """
@@ -203,19 +207,24 @@ def write_envelope(path: Path, header: dict, size: int, spans) -> None:
     try:
         with os.fdopen(descriptor, "wb") as output, ThreadPoolExecutor(max_workers=2) as workers:
             output.seek(start)
-            pending, position = (), 0
-            for offset, piece in spans:
-                view = memoryview(piece).cast("B")
+            if isinstance(spans, list) and hasattr(os, "pwrite"):
+                header["sha256"] = _write_resident_spans(
+                    output.fileno(), start, size, spans
+                )
+            else:
+                pending, position = (), 0
+                for offset, piece in spans:
+                    view = memoryview(piece).cast("B")
+                    for task in pending:
+                        task.result()
+                    gap = bytes(offset - position)
+                    checksum(gap, position)
+                    output.write(gap)
+                    pending = (workers.submit(checksum, view, offset), workers.submit(output.write, view))
+                    position = offset + len(view)
                 for task in pending:
                     task.result()
-                gap = bytes(offset - position)
-                checksum(gap, position)
-                output.write(gap)
-                pending = (workers.submit(checksum, view, offset), workers.submit(output.write, view))
-                position = offset + len(view)
-            for task in pending:
-                task.result()
-            header["sha256"] = [block.hexdigest() for block in blocks]
+                header["sha256"] = [block.hexdigest() for block in blocks]
             blob = encoded()
             output.seek(0)
             output.write(metadata.MAGIC + struct.pack("<QQ", len(blob), start))
@@ -225,6 +234,47 @@ def write_envelope(path: Path, header: dict, size: int, spans) -> None:
         publish_file(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def _write_resident_spans(descriptor: int, start: int, size: int, spans: list) -> list[str]:
+    """Hash and write stable resident views without a second encoded-body copy."""
+    views = [(offset, memoryview(piece).cast("B")) for offset, piece in spans]
+    starts = [offset for offset, _ in views]
+
+    def checksum(number: int) -> str:
+        lower = number * BLOCK_BYTES
+        upper = min(size, lower + BLOCK_BYTES)
+        digest = hashlib.sha256()
+        index = max(0, bisect.bisect_right(starts, lower) - 1)
+        cursor = lower
+        while cursor < upper:
+            while index < len(views) and views[index][0] + len(views[index][1]) <= cursor:
+                index += 1
+            if index < len(views) and views[index][0] <= cursor:
+                offset, view = views[index]
+                stop = min(upper, offset + len(view))
+                piece = view[cursor - offset : stop - offset]
+            else:
+                stop = min(upper, starts[index] if index < len(starts) else upper)
+                piece = memoryview(bytes(stop - cursor))
+            digest.update(piece)
+            cursor = stop
+        return digest.hexdigest()
+
+    blocks = math.ceil(size / BLOCK_BYTES)
+    with ThreadPoolExecutor(max_workers=max(1, min(8, os.cpu_count() or 1, blocks))) as workers:
+        pending = [workers.submit(checksum, number) for number in range(blocks)]
+        cursor = 0
+        for offset, view in views:
+            for position, piece in ((cursor, memoryview(bytes(offset - cursor))), (offset, view)):
+                written = 0
+                while written < len(piece):
+                    count = os.pwrite(descriptor, piece[written:], start + position + written)
+                    if count <= 0:
+                        raise OSError("QEM write made no progress; check the destination disk.")
+                    written += count
+            cursor = offset + len(view)
+        return [task.result() for task in pending]
 
 
 def verify_body(handle, header: dict, start: int) -> None:

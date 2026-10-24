@@ -122,6 +122,8 @@ parts:
       - file: developer/testing
       - file: performance/results
         title: Verified benchmark results
+      - file: performance/2026-10-23-io-loading-limits
+        title: HDF5 and QEM Disk–GPU loading (2026-10-23)
       - file: performance/changes
         title: Revision and change ledger
       - file: backends

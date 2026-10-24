@@ -12,6 +12,7 @@ import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+from queue import Empty, SimpleQueue
 
 import h5py
 import numpy as np
@@ -26,12 +27,37 @@ from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
 from quantem.gpu.io.inspect import inspect
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.cuda.hot_pixels import CUDAHotPixelCorrector
-from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 from quantem.gpu.resident.hot_pixels import hot_pixel_outcome
+from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 from quantem.gpu.resident.mps.hot_pixels import MPSHotPixelCorrector
 from quantem.gpu.resident.mps.spatial import build_index
 
 _CUDA_MAX_STAGING_SCANS = 16384
+
+
+def _prepare_cuda_loader() -> None:
+    """Initialize reusable loader code before an acquisition arrives.
+
+    No source is opened and no detector counts are allocated. Empty header
+    arrays select the same compiled parser as bounded reads; the existing
+    codec modules and small shared coding tables retain their normal caches.
+    The caller must select its device before preparing the loader.
+    """
+    from quantem.gpu.formats.hdf5.frames import parse_headers
+    from quantem.gpu.io.hdf5.cuda.decode import kernel
+    from quantem.gpu.resident.cuda.counts import kernels, tables
+
+    empty_bytes = np.empty(0, dtype=np.uint8)
+    empty_words = np.empty(0, dtype=np.uint32)
+    empty_offsets = np.empty(0, dtype=np.uint64)
+    parse_headers(
+        empty_bytes, empty_words, empty_offsets, empty_words, empty_words, 0, 1,
+    )
+    kernel("h5lz4dc_batched")
+    selected = cp.cuda.Device().id
+    kernels(selected)
+    tables(selected)
+    cp.cuda.get_current_stream().synchronize()
 
 
 def load_h5_ans(
@@ -120,10 +146,10 @@ def load_h5_ans(
             stack.callback(reader.close)
         scans = math.prod(info.scan_shape)
         blocks = [(first, min(first + chunk_scans, scans)) for first in range(0, scans, chunk_scans)]
-        # One block of compressed chunks is read ahead on a worker while the GPU decodes,
-        # corrects and encodes the current block: read after read, the GPU sat idle for
-        # every read and the host for every encode.
-        read_ahead = stack.enter_context(ThreadPoolExecutor(max_workers=1))
+        # Two bounded compressed blocks read ahead while the GPU consumes
+        # the current block, so reading can also overlap header preparation.
+        # Only the current block is decoded on the GPU.
+        read_ahead = stack.enter_context(ThreadPoolExecutor(max_workers=2))
 
         def prepare(block):
             # The staging buffer is page-locked in this GPU's context, which a worker thread enters itself.
@@ -131,11 +157,19 @@ def load_h5_ans(
                 return reader.prepare(np.arange(*block))
 
         def release_unread_block():
-            # A block read ahead of a failed decode was never copied to the GPU.
-            if pending is not None and pending.exception() is None:
-                _release_pinned(pending.result()["read_buffer"])
+            # Unconsumed prepared blocks have never been copied to the GPU.
+            for future in pending.values():
+                try:
+                    prepared = future.result()
+                except BaseException:  # noqa: BLE001, S110
+                    pass  # Preserve the foreground failure.
+                else:
+                    _release_pinned(prepared["read_buffer"])
 
-        pending = None if reader is None else read_ahead.submit(prepare, blocks[0])
+        pending = {} if reader is None else {
+            number: read_ahead.submit(prepare, blocks[number])
+            for number in range(min(2, len(blocks)))
+        }
         stack.callback(release_unread_block)
         for number, (first, stop) in enumerate(blocks):
             if dataset is not None:
@@ -143,9 +177,10 @@ def load_h5_ans(
                 # the stored chunks on the host for this generic layout.
                 raw = cp.asarray(arrays.read_frame_block(dataset, shape, first, stop))
             else:
-                prepared, pending = pending.result(), None
-                if number + 1 < len(blocks):
-                    pending = read_ahead.submit(prepare, blocks[number + 1])
+                prepared = pending.pop(number).result()
+                following = number + 2
+                if following < len(blocks):
+                    pending[following] = read_ahead.submit(prepare, blocks[following])
                 raw = decompress_prepared(prepared, batch_bytes_target=128 * 1024**2)
                 raw = raw.reshape(stop - first, *info.detector_shape)
             corrector.apply(raw)
@@ -199,7 +234,10 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
     uint16 counts whose every value is at most 255 end as a uint8 resident.
     """
     # Metal decoding is imported only on the MPS path, like every platform decoder.
-    from quantem.gpu.io.hdf5.mps.decode import MPSDecompressor, exact_uint16, exceeds_uint8
+    from quantem.gpu.io.hdf5.mps.decode import (
+        MPSDecompressor,
+        exact_uint16,
+    )
 
     started = time.perf_counter()
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
@@ -223,6 +261,7 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
     resident = source._lanes if bit_lanes else source
     reader = FrameReader(str(path))
     decoder = None
+    decoded_buffers = SimpleQueue()
     scans = math.prod(info.scan_shape)
     # Bound simultaneous decoded counts and ANS encoding scratch on smaller Macs;
     # uint32 batches hold half the scans, so their decoded bytes stay the same.
@@ -232,70 +271,107 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
         chunk_scans = min(512, arrays.MAX_INGEST_BYTES // (math.prod(shape[2:]) * dtype.itemsize))
     elif chunk_scans >= 512:
         chunk_scans = chunk_scans // 512 * 512
+    chunk_scans = resident._encoding_scan_limit(chunk_scans)
+    staging_bytes = chunk_scans * math.prod(shape[2:]) * stored_dtype.itemsize
+
+    def recycle_frames(raw):
+        """Return an idle full staging buffer; release narrowed or short outputs."""
+        buffer, raw._mtl = raw._mtl, None
+        if int(buffer.length()) >= staging_bytes:
+            decoded_buffers.put(buffer)
+        else:
+            release_buffer(buffer)
+
     try:
         ranges = [
             (first, min(first + chunk_scans, scans))
             for first in range(0, scans, chunk_scans)
         ]
-        # Keep one host-side HDF5 read queued while Metal decodes, corrects,
-        # and ANS-encodes the preceding batch. Scientific array work remains
-        # on Metal; the worker only prepares compressed file bytes.
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            pending = pool.submit(reader.prepare, np.arange(*ranges[0]))
-            for index in range(len(ranges)):
-                prepared = pending.result()
-                if index + 1 < len(ranges):
-                    pending = pool.submit(reader.prepare, np.arange(*ranges[index + 1]))
-                compressed_bytes = max(1, len(prepared["read_buffer"]))
-                if decoder is None or compressed_bytes > decoder.max_compressed_bytes:
-                    if decoder is not None:
-                        decoder.free()
-                    # Reuse bounded decode scratch across batches. Reserve room
-                    # for compressed-size variation without rebuilding every
-                    # block; decoded output still has independent ownership.
-                    frame_bytes = int(prepared["frame_bytes"])
-                    decoder = MPSDecompressor(
-                        max_compressed_bytes=2 * compressed_bytes,
-                        max_frames=chunk_scans,
-                        frame_bytes=frame_bytes,
-                        n_blocks_per_frame=(frame_bytes + 8191) // 8192,
-                    )
-                raw = decoder.load_prepared_frames(prepared)
-                try:
-                    corrector.apply(raw)
-                    if narrowed:
-                        counts, byte = exact_uint16(raw)
-                        if counts is None:
-                            raise _ExceedsUint16
-                        buffer, raw._mtl = raw._mtl, None
+        # One decoded batch is prepared ahead while the caller encodes and
+        # indexes the preceding batch. Only this worker owns decoder scratch.
+        def decode_next(bounds):
+            """Prepare one batch on the host and decode into idle Metal staging."""
+            nonlocal decoder
+            prepared = reader.prepare(np.arange(*bounds))
+            compressed_bytes = max(1, len(prepared["read_buffer"]))
+            if decoder is None or compressed_bytes > decoder.max_compressed_bytes:
+                if decoder is not None:
+                    decoder.free()
+                # Reuse bounded decode scratch across batches. Reserve room
+                # for compressed-size variation without rebuilding every
+                # block; decoded output still has independent ownership.
+                frame_bytes = int(prepared["frame_bytes"])
+                decoder = MPSDecompressor(
+                    max_compressed_bytes=2 * compressed_bytes,
+                    max_frames=chunk_scans,
+                    frame_bytes=frame_bytes,
+                    n_blocks_per_frame=(frame_bytes + 8191) // 8192,
+                )
+            try:
+                output = decoded_buffers.get_nowait()
+            except Empty:
+                output = None
+            try:
+                return decoder.load_prepared_frames(prepared, out_buffer=output)
+            except BaseException:
+                release_buffer(output)
+                raise
+
+        pending = None
+        with ExitStack() as workspace, ThreadPoolExecutor(max_workers=1) as pool:
+            if not bit_lanes:
+                workspace.enter_context(source.encoding_workspace(chunk_scans))
+            try:
+                pending = pool.submit(decode_next, ranges[0])
+                for index in range(len(ranges)):
+                    raw = pending.result()
+                    pending = None
+                    try:
+                        if index + 1 < len(ranges):
+                            pending = pool.submit(decode_next, ranges[index + 1])
+                        corrector.apply(raw)
+                        if narrowed:
+                            counts, byte = exact_uint16(raw)
+                            if counts is None:
+                                raise _ExceedsUint16
+                            recycle_frames(raw)
+                            raw = counts
+                            above_byte |= byte
+                        (source.append_device if bit_lanes else source.append)(raw)
+                        if not bit_lanes:
+                            index_started = time.perf_counter()
+                            source.spatial_chunks.append(
+                                build_index(source, raw._mtl, int(raw.shape[0]))
+                            )
+                            source.load_metrics["index_seconds"] = (
+                                source.load_metrics.get("index_seconds", 0.0)
+                                + time.perf_counter() - index_started
+                            )
+                    finally:
+                        recycle_frames(raw)
+                        del raw
+            finally:
+                # A failed encode/correction must also return an unread prefetched
+                # output before decoder scratch and the reader are torn down.
+                if pending is not None:
+                    try:
+                        unused = pending.result()
+                    except BaseException:  # noqa: BLE001, S110 - keep the active ingest failure.
+                        pass
+                    else:
+                        buffer, unused._mtl = unused._mtl, None
                         release_buffer(buffer)
-                        raw = counts
-                        above_byte |= byte
-                    elif byte_check and not above_byte:
-                        above_byte = exceeds_uint8(raw)
-                    (source.append_device if bit_lanes else source.append)(raw)
-                    if not bit_lanes:
-                        index_started = time.perf_counter()
-                        source.spatial_chunks.append(
-                            build_index(source, raw._mtl, int(raw.shape[0]))
-                        )
-                        source.load_metrics["index_seconds"] = (
-                            source.load_metrics.get("index_seconds", 0.0)
-                            + time.perf_counter() - index_started
-                        )
-                finally:
-                    buffer, raw._mtl = raw._mtl, None
-                    release_buffer(buffer)
-                    del raw
     except BaseException:
         source.release()
         raise
     finally:
         reader.close()
+        while not decoded_buffers.empty():
+            release_buffer(decoded_buffers.get_nowait())
         if decoder is not None:
             decoder.free()
         corrector.close()
-    if byte_check and not above_byte:
+    if byte_check and not (above_byte or source._encoding_exceeds_uint8):
         source.store_as_uint8()
         dtype = source.dtype
     metadata = dict(info.metadata)
