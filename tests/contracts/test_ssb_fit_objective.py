@@ -42,7 +42,7 @@ def test_standard_fit_passes_the_objective_and_refines_by_it(tmp_path, monkeypat
     assert backend.fits[-1]["objective"] == objective
     assert backend.fits[-1]["refinement"] == fit.refinement == refinement
     assert fit.objective == objective
-    assert fit.report()["objective"].iloc[0] == objective
+    assert fit.report().loc["objective"].iloc[0] == objective
     assert f"Objective      {objective}" in repr(fit)
 
 

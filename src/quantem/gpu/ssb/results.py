@@ -3,6 +3,7 @@
 from collections.abc import Iterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Self
 
@@ -241,16 +242,22 @@ class SSBResult(Mapping[str, float]):
             return pd.DataFrame(index=pd.Index([], name="trial"))
         return pd.DataFrame.from_records(deepcopy(rows)).set_index("trial")
 
-    def report(self, *, to_dict: bool = False,
+    def report(self, *, columns: int = 1, to_dict: bool = False,
                show_convergence: bool = False) -> "pd.DataFrame | dict[str | int, object]":
         """Report fitted optics, geometry, objective and recorded timing.
 
-        ``pd.concat([a.report(), b.report()])`` compares fits side by side.
-        A bare result in a notebook displays the same values vertically, with
-        display-only rounding. No reconstruction or fitting is performed.
+        Parameters are rows, so ``fit.report()`` is readable directly in a
+        notebook. ``pd.concat([a.report(), b.report()], axis=1)`` compares fits
+        side by side. No reconstruction or fitting is performed.
 
         Parameters
         ----------
+        columns : int, optional
+            Number of parameter/value groups across a single-fit table.
+            Use ``columns=2`` or ``columns=3`` for a shorter report. Read down
+            each group, then across; every parameter retains its value and
+            units. This layout option does not change dictionary exports or
+            series trial tables.
         to_dict : bool, optional
             Return an independent dictionary instead of a pandas table.
             Coefficients are nested under ``aberrations`` with their public
@@ -266,9 +273,10 @@ class SSBResult(Mapping[str, float]):
         Returns
         -------
         pandas.DataFrame or dict
-            One row per fit, with units in the column labels, or an unrounded
-            dictionary of the same fitted parameters. A series returns its
-            trial records. Only coefficients present in the result are listed.
+            Parameters with their units, arranged in the requested number of
+            groups, or an unrounded dictionary of the same fitted parameters.
+            A series returns its trial records. Only coefficients present in
+            the result are listed.
             ``depth_spread_nm`` is effective model depth, not a measured
             specimen thickness. This report describes the result, not later
             widget edits, and does not replace ``save_calibration()``.
@@ -287,10 +295,12 @@ class SSBResult(Mapping[str, float]):
         --------
         >>> fit = ptycho.find_aberrations()  # doctest: +SKIP
         >>> fit.report()  # doctest: +SKIP
+        >>> fit.report(columns=2)  # doctest: +SKIP
         >>> parameters = fit.report(to_dict=True)  # doctest: +SKIP
         >>> parameters["aberrations"]["C30_nm"]  # doctest: +SKIP
         >>> fit.report(show_convergence=True)  # doctest: +SKIP
         """
+        resolve_columns(1, columns=columns, default=1)
         if show_convergence:
             if to_dict:
                 raise ValueError("Use report(to_dict=True) to export data, or report(show_convergence=True) "
@@ -379,13 +389,21 @@ class SSBResult(Mapping[str, float]):
             row["Output sampling (×)"] = record["upsampling_factor"]
             row["Nominal requirement (×)"] = record["nominal_upsampling_requirement"]
         model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
-        return pd.DataFrame([row], index=pd.Index([model], name="model"))
+        table = pd.DataFrame.from_dict(row, orient="index", columns=[model]).rename_axis("Parameter")
+        columns = resolve_columns(len(table), columns=columns, default=1)
+        if columns == 1:
+            return table
+        height = (len(table) + columns - 1) // columns
+        groups = {}
+        for index in range(columns):
+            start, stop = len(table) * index // columns, len(table) * (index + 1) // columns
+            group = table.iloc[start:stop].rename(columns={model: "Value"}).reset_index()
+            groups[f"Column {index + 1}"] = group.reindex(range(height), fill_value="")
+        return _grouped_report()(pd.concat(groups, axis=1, names=[model]))
 
     def _repr_html_(self) -> str:
         """Render the parameter table once, without changing numerical values."""
         table = self.report()
-        if self.object_wave.ndim != 3:
-            table = table.T.rename_axis("Parameter")
         return table.to_html(float_format=lambda value: f"{value:.6g}", max_rows=None)
 
     @property
@@ -861,6 +879,31 @@ def _announce_below_auto(result: SSBResult) -> None:
     if result.upsampling_factor < auto:
         print(f"SSB: showing this phase at {result.upsampling_factor}x, the grid it was reconstructed on; "
               f"ssb.run(result, upsampling_factor='auto') shows it at {auto}x.")
+
+
+@cache
+def _grouped_report():
+    """DataFrame for ``report(columns=n)`` that draws a rule between parameter groups.
+
+    The table stays an ordinary DataFrame for indexing, comparison and export;
+    only its notebook HTML adds a left border on each group after the first,
+    so neighbouring Parameter/Value pairs are not read across. Pandas is
+    imported here because the module keeps it optional at import time.
+    """
+    import pandas as pd
+
+    class GroupedReport(pd.DataFrame):
+        @property
+        def _constructor(self):
+            return pd.DataFrame
+
+        def _repr_html_(self) -> str:
+            groups = self.columns.get_level_values(0)
+            rules = [{"selector": f"th.col{index}, td.col{index}", "props": "border-left: 2px solid #9aa0a6;"}
+                     for index in range(1, len(groups)) if groups[index] != groups[index - 1]]
+            return self.style.set_table_styles(rules).to_html()
+
+    return GroupedReport
 
 
 def _format_aberrations(aberrations: dict) -> str:

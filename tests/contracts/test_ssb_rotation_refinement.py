@@ -154,7 +154,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
     # the search trials of the fit stay; a polish adds none
     assert fit.num_trials == 4 and len(fit.trial_records) == 4
     assert f"SSB: refined rotation 3.00° → {fit.scan_detector_rotation_deg:.2f}° (+" in capsys.readouterr().out
-    report = fit.report().iloc[0]
+    report = fit.report().iloc[:, 0]
     assert report["Estimated rotation (deg)"] == 3.0
     assert report["SSB-selected rotation (deg)"] == pytest.approx(5.0, abs=0.1)
     assert "Refined from   3.00° (estimate)" in repr(fit)
@@ -187,7 +187,7 @@ def test_a_given_rotation_is_never_refined(tmp_path, monkeypatch, capsys):
     assert fit.scan_detector_rotation_deg == 3.0
     assert (fit.rotation_refined, fit.rotation_estimate_deg, fit.rotation_refinement) == (False, None, None)
     assert "SSB: rotation 3.00° is given; refine_rotation leaves it as it is." in capsys.readouterr().out
-    assert "Estimated rotation (deg)" not in fit.report().columns
+    assert "Estimated rotation (deg)" not in fit.report().index
 
 
 def test_the_default_fit_searches_once_and_records_no_refinement(tmp_path, monkeypatch):

@@ -150,7 +150,7 @@ def test_reconstruct_keeps_the_branch_comparison_of_the_fit_it_applies(estimate_
         assert session.reconstruct() is fitted
         for result in (session.reconstruct(), session.reconstruct(fitted, upsampling_factor=2)):
             assert result.rotation_branches is fitted.rotation_branches
-            report = result.report().iloc[0]
+            report = result.report().iloc[:, 0]
             assert report["Suggested rotation (deg)"] == 180.0 and report["SSB-selected rotation (deg)"] == 0.0
             assert report["180° branch by"] == "atomic columns"
             assert isinstance(result.show("rotation"), Figure)
@@ -431,6 +431,6 @@ def test_gold_refined_rotation(capsys):
     assert fit.timings["rotation_refinement_s"] == record["seconds"]
     out = capsys.readouterr().out
     assert out.count("SSB: refined rotation ") == 1 and out.index("SSB: kept ") < out.index("SSB: refined rotation ")
-    report = fit.report().iloc[0]
+    report = fit.report().iloc[:, 0]
     assert report["Estimated rotation (deg)"] == round(fit.rotation_estimate_deg, 3)
     assert report["SSB-selected rotation (deg)"] == round(fit.scan_detector_rotation_deg, 3)
