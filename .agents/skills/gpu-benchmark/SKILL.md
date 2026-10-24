@@ -12,7 +12,7 @@ not authorize publishing, tagging, replacing baselines or stopping other jobs.
 ## Choose the existing measurement
 
 - SSB joint fitting and regional correction: `quantem-gpu benchmark-ssb`.
-  Read [the command and timing boundaries](../../../docs/performance/ssb-joint-fit.md).
+  Read [the command and timing boundaries](../../../docs/performance/ssb/joint-fit.md).
 - Other kernels, acquisition IO or native paths: read
   [the test guide](../../../docs/developer/testing.md) and select the existing
   runner for that operation and backend. Extend it for a missing case.
@@ -60,9 +60,10 @@ tolerances to obtain a faster number.
 
 Write raw JSON, logs, profiler traces and private images outside this public
 repository, in the private evidence archive. Add a dated Markdown summary under
-`docs/` with the question, exact source fingerprint, hardware, workload,
-first/warm results, parity outcome, limitations and private experiment ID.
-Link it from the results index. Never publish private acquisition names, home
+the owning `docs/performance/<operation>/reports/` folder with the question, exact source
+fingerprint, hardware, workload, first/warm results, parity outcome, limitations and private experiment ID.
+Link it from the operation report index and the results index. Keep one owner
+for a cross-operation report and link to it from other relevant topics. Never publish private acquisition names, home
 paths, host names or non-public images. Public gold data can be used for figures.
 
 For a changed implementation, state the before/after values and the isolated

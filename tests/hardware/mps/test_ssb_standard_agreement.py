@@ -4,7 +4,7 @@ The synthetic crystal (``test_ssb_mps_rotation._astigmatic_crystal``: 64 x 64 sc
 object) has known aberrations, so the fit is checked against the truth, not against a previous fit. On 15 such crystals
 (C10 -20 to +15 nm, C12 0 to 5 nm, noise-free and Poisson at 1e4 and 1e5 electrons per pattern) this objective landed
 0.024 nm from the true C10 on average (0.046 nm at worst) and the phase-variance search it replaced 0.078 nm (0.127 nm);
-docs/maintainer/2026-10-20-ssb-standard-fit-objective.md.
+docs/performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md.
 """
 
 import math

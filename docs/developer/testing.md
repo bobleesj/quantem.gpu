@@ -222,7 +222,7 @@ on physical CUDA. It covers reordered authenticated blocks, exact decoded and
 indexed detector products, staging reuse, corruption and recovery. Record file
 cache residency and physical bytes read when interpreting large-file load
 timings; a repeated load is not necessarily a cache hit. See the
-[controlled loader comparison](../performance/2026-10-23-cuda-qem-loader-fix.md).
+[controlled loader comparison](../performance/io/reports/2026-10-23-cuda-qem-loader-fix.md).
 
 Raw logs and run folders stay in the private evidence archive, never in this
 repository. The dated summary (question, setup, numbers, conclusion) goes under
@@ -300,7 +300,7 @@ data. Measured numbers are written into the pages as dated records.
 
 ## Backend parity
 
-Follow [Cross-backend parity](../performance/parity.md). Re-run each unexpected
+Follow [Cross-backend parity](../performance/parity/index.md). Re-run each unexpected
 hardware mismatch twice on the same source/environment before deciding whether
 it is deterministic drift or nondeterminism.
 

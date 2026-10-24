@@ -4,7 +4,7 @@ This page collects one night of Apple GPU (MPS/Metal) work on the SSB preview,
 the aberration search and Show4DSTEM's detector sums, explains where the time
 still goes, and describes the regression harness that keeps these paths from
 slowing down unnoticed. The browser side is in quantem.widget's
-`docs/maintainer/2026-10-20-mps-performance.md`.
+`docs/performance/ssb/reports/2026-10-20-mps-performance.md`.
 
 Hardware: Apple M5 Max, 128 GB, macOS 26.4, torch 2.13, MLX 0.32. "A
 512² × 192² scan" below is one full 512 × 512 × 192 × 192 uint16 acquisition

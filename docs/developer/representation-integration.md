@@ -4,7 +4,7 @@ This is the integration boundary for ongoing lossless-memory work, not a claim
 that every research encoding is available through every backend. Keep existing
 workflows usable while qualifying one new implementation at a time. The
 [representation API](../api/representations.md) describes current calls;
-the [parity matrix](../performance/parity.md) retains the scientific and
+the [parity matrix](../performance/parity/index.md) retains the scientific and
 physical-device gates.
 
 ## Four responsibilities, not four public loaders

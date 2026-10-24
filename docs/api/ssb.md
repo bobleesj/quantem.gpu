@@ -24,7 +24,7 @@ The default Newton refinement may stop early and has a 5000-evaluation ceiling.
 Scientific objective/reconstruction work stays on the GPU; the optimizer's
 candidate generation and float64 control run on the CPU.
 
-See the [matched initialization study and optimization lessons](../performance/2026-10-22-ssb-initialization-and-refinement.md).
+See the [matched initialization study and optimization lessons](../performance/ssb/reports/2026-10-22-ssb-initialization-and-refinement.md).
 
 In notebooks, the initial Auto-sampled phase appears while refinement continues.
 The same view updates with the final phase. Use `show=False` to suppress it.
@@ -119,7 +119,7 @@ It stays as a backup, not an equal alternative: it scores images instead of
 predicting the data, it cannot see sample tilt or depth spread, and it is about
 10x slower (gold, both 180° branches: about 75 s against 7.8 s). On simulated
 crystals with known aberrations the model-based fit lands about 3x closer to
-the true C10. Evidence: [the standard-fit objective](../maintainer/2026-10-20-ssb-standard-fit-objective.md).
+the true C10. Evidence: [the standard-fit objective](../performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md).
 
 `objective` is `"agreement"` (default) or `"phase_variance"`, kept for
 reproducing older results and cross-checks; with `tilt=True` the phase

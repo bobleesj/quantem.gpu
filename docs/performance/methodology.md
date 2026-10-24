@@ -173,7 +173,7 @@ work before interpreting a release, and record post-release live/reserved
 baselines. A smaller payload does not by itself establish a lower load peak
 or support for a particular GPU capacity.
 
-See the [CUDA count-codec investigation](cuda-count-codecs.md) for an example
+See the [CUDA count-codec investigation](io/codecs.md) for an example
 that explicitly keeps calculated resident storage separate from measured
 shared scratch and unmeasured full-load peak. Missing peak counters stay null
 in its downloadable evidence; they are not zeros or inferred fit guarantees.

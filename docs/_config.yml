@@ -26,6 +26,59 @@ sphinx:
       - sphinx.ext.intersphinx
       - sphinx_design
       - sphinx_book_theme
+      - sphinx_reredirects
+    redirects:
+      maintainer/2026-09-11-ssb-performance-checkpoints: ../performance/ssb/reports/2026-09-11-ssb-performance-checkpoints.html
+      maintainer/2026-10-15-cuda-batched-refinement: ../performance/ssb/reports/2026-10-15-cuda-batched-refinement.html
+      maintainer/2026-10-15-mps-ssb-upsampling: ../performance/ssb/reports/2026-10-15-mps-ssb-upsampling.html
+      maintainer/2026-10-16-ssb-coherent-reconstruction: ../performance/ssb/reports/2026-10-16-ssb-coherent-reconstruction.html
+      maintainer/2026-10-17-mps-coherent-reduction: ../performance/ssb/reports/2026-10-17-mps-coherent-reduction.html
+      maintainer/2026-10-17-mps-interruptible-preview: ../performance/ssb/reports/2026-10-17-mps-interruptible-preview.html
+      maintainer/2026-10-17-mps-ssb-coherent-support: ../performance/ssb/reports/2026-10-17-mps-ssb-coherent-support.html
+      maintainer/2026-10-17-mps-ssb-dispatch: ../performance/ssb/reports/2026-10-17-mps-ssb-dispatch.html
+      maintainer/2026-10-17-mps-ssb-group-fusion: ../performance/ssb/reports/2026-10-17-mps-ssb-group-fusion.html
+      maintainer/2026-10-17-mps-ssb-loading: ../performance/ssb/reports/2026-10-17-mps-ssb-loading.html
+      maintainer/2026-10-17-ssb-aperture-bounds: ../performance/ssb/reports/2026-10-17-ssb-aperture-bounds.html
+      maintainer/2026-10-18-cuda-ssb-group-support: ../performance/ssb/reports/2026-10-18-cuda-ssb-group-support.html
+      maintainer/2026-10-18-mps-ssb-source-addressing: ../performance/ssb/reports/2026-10-18-mps-ssb-source-addressing.html
+      maintainer/2026-10-20-mps-memory: ../performance/ssb/reports/2026-10-20-mps-memory.html
+      maintainer/2026-10-20-mps-performance: ../performance/ssb/reports/2026-10-20-mps-performance.html
+      maintainer/2026-10-20-mps-ssb-separable-coherent: ../performance/ssb/reports/2026-10-20-mps-ssb-separable-coherent.html
+      maintainer/2026-10-20-mps-tilt-speed: ../performance/ssb/reports/2026-10-20-mps-tilt-speed.html
+      maintainer/2026-10-20-ssb-cuda-standard-fit: ../performance/ssb/reports/2026-10-20-ssb-cuda-standard-fit.html
+      maintainer/2026-10-20-ssb-cuda-tilt-speed: ../performance/ssb/reports/2026-10-20-ssb-cuda-tilt-speed.html
+      maintainer/2026-10-20-ssb-standard-fit-objective: ../performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.html
+      maintainer/2026-10-21-ssb-higher-order-fit: ../performance/ssb/reports/2026-10-21-ssb-higher-order-fit.html
+      maintainer/2026-10-21-ssb-joint-benchmark: ../performance/ssb/reports/2026-10-21-ssb-joint-benchmark.html
+      maintainer/2026-10-21-ssb-odd-aberration-sign: ../performance/ssb/reports/2026-10-21-ssb-odd-aberration-sign.html
+      maintainer/mps-coherent-redraw-2026-10-17: ../performance/ssb/reports/mps-coherent-redraw-2026-10-17.html
+      maintainer/mps-ssb-full-bf-redraw-2026-10-17: ../performance/ssb/reports/mps-ssb-full-bf-redraw-2026-10-17.html
+      maintainer/mps-ssb-optical-shortcuts-2026-10-17: ../performance/ssb/reports/mps-ssb-optical-shortcuts-2026-10-17.html
+      maintainer/mps-ssb-preview-reuse-2026-10-17: ../performance/ssb/reports/mps-ssb-preview-reuse-2026-10-17.html
+      maintainer/virtual-image-kernel-checklist: ../performance/virtual-detectors/validation.html
+      performance/2026-10-21-ssb-region-latency: ssb/reports/2026-10-21-ssb-region-latency.html
+      performance/2026-10-22-broad-fifth-cuda-study: ssb/reports/2026-10-22-broad-fifth-cuda-study.html
+      performance/2026-10-22-independent-tpe-reuse: ssb/reports/2026-10-22-independent-tpe-reuse.html
+      performance/2026-10-22-rotation-comparison-reuse: ssb/reports/2026-10-22-rotation-comparison-reuse.html
+      performance/2026-10-22-ssb-initialization-and-refinement: ssb/reports/2026-10-22-ssb-initialization-and-refinement.html
+      performance/2026-10-22-ssb-staging-memory: ssb/reports/2026-10-22-ssb-staging-memory.html
+      performance/2026-10-23-cuda-qem-cache-recheck: io/reports/2026-10-23-cuda-qem-cache-recheck.html
+      performance/2026-10-23-cuda-qem-loader-fix: io/reports/2026-10-23-cuda-qem-loader-fix.html
+      performance/2026-10-23-default-five-io: io/reports/2026-10-23-default-five-io.html
+      performance/2026-10-23-default-six-io: io/reports/2026-10-23-default-six-io.html
+      performance/2026-10-23-io-cuda: io/reports/2026-10-23-io-cuda.html
+      performance/2026-10-23-io-loading-limits: io/reports/2026-10-23-io-loading-limits.html
+      performance/2026-10-23-io-mps: io/reports/2026-10-23-io-mps.html
+      performance/2026-10-23-io-swift-metal: io/reports/2026-10-23-io-swift-metal.html
+      performance/2026-10-23-loader-startup: io/reports/2026-10-23-loader-startup.html
+      performance/2026-10-23-mps-hdf5-pipeline: io/reports/2026-10-23-mps-hdf5-pipeline.html
+      performance/2026-10-23-qem-compression: io/reports/2026-10-23-qem-compression.html
+      performance/2026-10-23-qem-layout-cuda-profile: io/reports/2026-10-23-qem-layout-cuda-profile.html
+      performance/2026-10-23-qem-verification: io/reports/2026-10-23-qem-verification.html
+      performance/2026-10-24-ssb-c10-cache-transfer: rendering/reports/2026-10-24-ssb-c10-cache-transfer.html
+      performance/cuda-count-codecs: io/codecs.html
+      performance/parity: parity/index.html
+      performance/ssb-joint-fit: ssb/joint-fit.html
     html_theme_options:
       secondary_sidebar_items: []
       show_navbar_depth: 1

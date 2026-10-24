@@ -68,7 +68,7 @@ do not silently move scientific work to CPU, crop a scan, bin a detector,
 reduce a mask, or change precision. The CPU implementation is available only
 when explicitly selected as a reference.
 
-See [Cross-backend parity](../performance/parity.md) for numerical gates and
+See [Cross-backend parity](../performance/parity/index.md) for numerical gates and
 [Kernel architecture](kernel-architecture.md) for the implementation boundary.
 
 (resident-integer-detector-products-v1)=

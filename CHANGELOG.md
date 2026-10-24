@@ -14,7 +14,7 @@ new `rcN` heading when that rc is published to TestPyPI.
   per pass of eight parameter sets, 7.2 ms instead of 24.5 ms at depth spread 0), the mean-phase loss corrects
   straight from the stored half plane (97 ms instead of 223 ms on a 512 x 512 scan) and the drag preview computes
   each bright-field pixel's geometry once per block. On a 512 x 512 scan one tilt fit takes 0.67 s instead
-  of 1.62 s, and both branches 1.5 s instead of 3.6 s; `docs/maintainer/2026-10-20-ssb-cuda-tilt-speed.md`.
+  of 1.62 s, and both branches 1.5 s instead of 3.6 s; `docs/performance/ssb/reports/2026-10-20-ssb-cuda-tilt-speed.md`.
 - SSB fit methods have one vocabulary, `find_aberrations(tilt=..., objective=...)`. The default,
   `find_aberrations()`, is the model-based, tilt-corrected fit (least-squares model agreement, sample tilt and depth
   spread fitted); `tilt=False` holds the tilt and depth spread at 0; `tilt=False, objective="phase_variance"` is the

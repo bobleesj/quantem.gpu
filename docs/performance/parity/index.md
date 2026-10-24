@@ -52,7 +52,7 @@ native-detector CoM/iDPC; Metal detector sessions have since dropped that
 sidecar. A direct full-resolution Metal diagnostic passes CoM with `7.63e-6`
 maximum error, while iDPC remains blocked at `7.58e-5`. Detector-bin-2 and
 detector-bin-8 timings have no equivalent retained real-data product bundle and
-remain timing-only. See [Verified benchmark results](results.md) for the full
+remain timing-only. See [Verified benchmark results](../results.md) for the full
 matrix and device/runtime details.
 
 Native Swift/Metal SSB at `e1da9bc` has its own independently frozen 512×512
@@ -81,7 +81,7 @@ the backend being adjudicated during an ordinary test run.
 ## Coverage map
 
 The machine-readable capability matrix is
-[`tests/parity/backend_matrix.json`](../../tests/parity/backend_matrix.json).
+[`tests/parity/backend_matrix.json`](../../../tests/parity/backend_matrix.json).
 Its guard ensures that every scientific domain names coverage for CPU reference,
 CUDA, MPS, native Swift/Metal, and WebGPU and that every named gate still exists.
 

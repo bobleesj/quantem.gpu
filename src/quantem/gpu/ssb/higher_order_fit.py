@@ -248,7 +248,7 @@ def edge_phase(term: str, magnitude_A: float, wavelength_A: float, semiangle_rad
 # When the fitted terms are the probe's aberrations (``assess``): the model must explain this share of G's signal
 # power over the band, and each term's standard error must change the probe phase at the aperture edge by no more
 # than this. On simulated crystals without these aberrations, no fit that returned spurious terms exceeded 0.80, and
-# no fit that passed both was wrong (docs/maintainer/2026-10-21-ssb-higher-order-fit.md).
+# no fit that passed both was wrong (docs/performance/ssb/reports/2026-10-21-ssb-higher-order-fit.md).
 COHERENCE_MIN = 0.9
 EDGE_PHASE_ERROR_MAX_RAD = 0.1
 

@@ -19,7 +19,7 @@ the minimum recorded loss; it does not average the 200 parameter sets.
 The default fit, `find_aberrations()`, maximizes the least-squares agreement
 of the SSB model with G instead and fits the sample tilt and depth spread;
 `tilt=False` holds them at 0 ({ref}`fit methods <ssb-fit-methods>`,
-`docs/maintainer/2026-10-20-ssb-standard-fit-objective.md`). The phase variance
+`docs/performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md`). The phase variance
 derived here is what every backend reports as `result.loss`.
 
 The PyTorch blocks below form one progressive reference: run them from top to
@@ -428,7 +428,7 @@ its numerical policy. Initial trial batches keep their existing reduction.
 This scheduling change applies to the joint model, rather than the
 standard phase-variance example above. The public API is unchanged.
 
-[CUDA refinement batching](../maintainer/2026-10-15-cuda-batched-refinement.md) records the measured
+[CUDA refinement batching](../performance/ssb/reports/2026-10-15-cuda-batched-refinement.md) records the measured
 speedup, exact comparison scope, source map, and regression commands.
 
 ## Coordinate and unit checks

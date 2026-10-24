@@ -1,6 +1,6 @@
 # Later SSB performance checkpoints
 
-These updates follow the [frozen SSB evidence](ssb-performance.md).
+These updates follow the [frozen SSB evidence](../../../maintainer/ssb-performance.md).
 
 ## 2026-09-11 full-aperture Apple M5 floor checkpoint
 

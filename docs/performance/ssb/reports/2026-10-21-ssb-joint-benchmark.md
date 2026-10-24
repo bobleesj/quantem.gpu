@@ -1,8 +1,8 @@
 # SSB joint-fit benchmark, 2026-10-21
 
 The reusable command is `quantem-gpu benchmark-ssb`. Its
-[measurement protocol](../performance/ssb-joint-fit.md) and repository
-[agent skill](../../.agents/skills/gpu-benchmark/SKILL.md) keep subsequent
+[measurement protocol](../joint-fit.md) and repository
+[agent skill](../../../../.agents/skills/gpu-benchmark/SKILL.md) keep subsequent
 measurements comparable. This record qualifies the measurements below; it is
 not a release announcement or a new optimization result.
 

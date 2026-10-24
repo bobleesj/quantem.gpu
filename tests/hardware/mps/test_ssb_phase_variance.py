@@ -3,7 +3,7 @@
 Optuna TPE in pairs on the exact phase-variance loss (``mps/loss.py``), then Nelder-Mead
 (``optimizer.optimize_phase_variance``). The synthetic crystal (``test_ssb_mps_rotation._astigmatic_crystal``) has
 known aberrations; on 15 such crystals this search landed 0.078 nm from the true C10 on average (0.127 nm at worst),
-docs/maintainer/2026-10-20-ssb-standard-fit-objective.md. The gold test pins the search to the fit of the search that
+docs/performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md. The gold test pins the search to the fit of the search that
 was removed and restored on 2026-10-20 (``find_aberrations(tilt=False)`` at commit 4d1ea007).
 """
 
