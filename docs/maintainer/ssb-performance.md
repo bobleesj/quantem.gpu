@@ -52,14 +52,14 @@ produces the same phase. The test fails on the previous close implementation.
 Group corrected BF spectra before writing scratch buffers to reduce repeated
 full-field preview latency by 1.7–1.8× in matched measurements. All BF pixels,
 the estimator and precision are retained. See the
-[timing and complete-array checks](2026-10-17-mps-coherent-reduction.md), including
+[timing and complete-array checks](../performance/ssb/reports/2026-10-17-mps-coherent-reduction.md), including
 the numerical reduction-order difference and unavailable legacy fixture gate.
 
 ## Shared C10/C12 reconstruction, 2026-10-16
 
 Python MPS and CUDA now use coherent wave averaging for displayed C10/C12
 phase and exclude repeated scan means during upsampling. The search objective
-is unchanged. See [the scientific contract and checks](2026-10-16-ssb-coherent-reconstruction.md).
+is unchanged. See [the scientific contract and checks](../performance/ssb/reports/2026-10-16-ssb-coherent-reconstruction.md).
 
 ## Batched joint CUDA refinement, 2026-10-15
 
@@ -68,7 +68,7 @@ On two complete 512 × 512 × 192 × 192 acquisitions, prepared joint search
 and save took 33.8% and 35.4% less time with identical search trajectories
 and phase arrays in the matched tests. The benchmark uses the same search
 budget on both sides and measures automatic output sampling separately.
-See [CUDA refinement batching](2026-10-15-cuda-batched-refinement.md) for the device, timing boundaries,
+See [CUDA refinement batching](../performance/ssb/reports/2026-10-15-cuda-batched-refinement.md) for the device, timing boundaries,
 numerical constraints, and reproduction checks.
 
 ## MPS sampling and joint search, 2026-10-15
@@ -76,7 +76,7 @@ numerical constraints, and reproduction checks.
 The Python MPS backend supports automatic fine-grid C10/C12 reconstruction.
 Matched full 512 × 512 × 192 × 192 measurements reduce prepared tilt/depth
 phase latency from approximately 2.7 s to 0.18 s and joint-search time from
-44–48 s to 33–34 s. See the [sampling and search evidence](2026-10-15-mps-ssb-upsampling.md)
+44–48 s to 33–34 s. See the [sampling and search evidence](../performance/ssb/reports/2026-10-15-mps-ssb-upsampling.md)
 for numerical differences, unchanged ordinary-search timing, exact scope and
 the separation between prepared and complete workflow measurements.
 

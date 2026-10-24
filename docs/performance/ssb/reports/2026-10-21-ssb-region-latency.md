@@ -81,7 +81,7 @@ CUDA_VISIBLE_DEVICES=0 python -m pytest -q -m "" \
     tests/hardware/test_ssb_resident_joint.py -k "not mps"
 ```
 
-See [the reproducible SSB benchmark](ssb-joint-fit.md) for the public command
+See [the reproducible SSB benchmark](../joint-fit.md) for the public command
 and timing boundaries.
 
 ## Separate integration check

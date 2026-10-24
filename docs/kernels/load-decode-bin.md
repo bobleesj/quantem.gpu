@@ -195,4 +195,4 @@ The resulting array is binned evidence, not native-resolution evidence.
 Acceptance covers exact decoded counts, odd detector shapes, incomplete edge
 bins, bad pixels, dtype/overflow behavior, full source identity, memory-budget
 failure, and cold/warm/prepared timing. See
-[Cross-backend parity](../performance/parity.md).
+[Cross-backend parity](../performance/parity/index.md).

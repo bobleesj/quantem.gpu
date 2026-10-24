@@ -189,3 +189,30 @@ def test_public_api_pages_are_contracts() -> None:
             "## Integration boundary",
         ):
             assert section in text, f"{section!r} missing from {name}"
+
+
+def test_performance_reports_have_operation_owners_and_redirects() -> None:
+    """Moved reports remain reachable through the topic tree and old URLs."""
+    config = CONFIG.read_text(encoding="utf-8")
+    toc = TOC.read_text(encoding="utf-8")
+    topics = ("io", "ssb", "virtual-detectors", "dpc", "rendering", "parity")
+    for topic in topics:
+        assert Path("docs/performance", topic, "index.md").is_file()
+        assert f"file: performance/{topic}/index" in toc
+    assert not Path("docs/performance/ptychography").exists()
+    assert "sphinx_reredirects" in config
+    assert "sphinx-reredirects>=1.1,<2" in Path("docs/requirements.txt").read_text()
+    redirects = re.findall(r"^      ([^ :]+): ([^ ]+\.html)$", config, re.MULTILINE)
+    assert redirects
+    destinations = set()
+    for old, target in redirects:
+        assert not Path("docs", old + ".md").exists()
+        destination = (Path("docs", old).parent / target).with_suffix(".md").resolve()
+        assert destination.is_file(), (old, target)
+        relative = destination.relative_to(Path("docs").resolve()).with_suffix("")
+        assert f"file: {relative.as_posix()}" in toc
+        destinations.add(destination)
+    assert len(destinations) == len(redirects)
+    for topic in ("io", "ssb", "rendering"):
+        for report in Path("docs/performance", topic, "reports").glob("*.md"):
+            assert f"file: {report.relative_to('docs').with_suffix('').as_posix()}" in toc

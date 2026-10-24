@@ -1816,7 +1816,7 @@ class SSB:
         bright-field pixels' corrected phase images agree best (the least phase variance across them), so it scores
         images rather than predicting the data, cannot see the sample tilt or depth spread (with ``tilt=True`` it
         raises) and is about 10x slower; on simulated crystals with known aberrations the model-based fit lands about
-        3x closer to the true C10 (docs/maintainer/2026-10-20-ssb-standard-fit-objective.md).
+        3x closer to the true C10 (docs/performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md).
 
         Each method runs one search of ``trials`` candidates (default 200) per rotation branch, plus local refinement.
         ``refinement="auto"`` (default) selects Newton for the agreement fits and Nelder-Mead for the phase variance and for an agreement fit that
@@ -1936,7 +1936,7 @@ class SSB:
         terms, so ``reconstruct(result)`` applies them. They are the probe's aberrations only where the SSB model
         holds: on simulated crystals they matched the truth to a few percent for a light-element crystal up to
         8 nm and for SrTiO3 up to about 1 nm; thicker or heavier crystals returned terms that fit dynamical
-        scattering instead (docs/maintainer/2026-10-21-ssb-higher-order-fit.md). ``result.optimizer["higher_order"]``
+        scattering instead (docs/performance/ssb/reports/2026-10-21-ssb-higher-order-fit.md). ``result.optimizer["higher_order"]``
         says whether they can be read as the probe's (``trusted``, and the numbers in ``guard``): the fitted model must
         explain at least 90 % of G's signal power over the fit band (``coherence``; simulated thick crystals without
         these aberrations reached at most 0.80 where their fit returned spurious terms), and each term's standard

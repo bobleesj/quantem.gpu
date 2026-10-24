@@ -67,7 +67,7 @@ silently:
 Record every intentional crop, bin, dtype conversion, mask, approximation, and
 cache state in result provenance. See the
 [scientific contract](docs/concepts/scientific-contract.md) and
-[cross-backend parity rules](docs/performance/parity.md).
+[cross-backend parity rules](docs/performance/parity/index.md).
 
 ## Add or change a backend
 

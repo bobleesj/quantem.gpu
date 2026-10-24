@@ -761,7 +761,7 @@ _PAIRED_SOURCE = """
 # The flat classes of the two-term kernel carry over: a lone sideband with a weight proven positive keeps only the
 # sign of its sinc, and both sidebands inside the flat aperture share A(k), which cancels; soft edges evaluate the
 # unchanged geometry and keep the 1e-8 floor of |gamma|. Against float64 the spectrum error is below the per-term
-# kernel's (docs/maintainer/2026-10-20-mps-tilt-speed.md).
+# kernel's (docs/performance/ssb/reports/2026-10-20-mps-tilt-speed.md).
 _DEPTH_HEADER = """
 // sinc(x) as (numerator, denominator): its Taylor series to x^10 over 1 below |x| = 1, sin x over x above.
 inline float2 sep_sinc_parts(float x, float s) {

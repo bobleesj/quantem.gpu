@@ -1,89 +1,45 @@
-# Benchmarks and parity
+# Performance and parity
 
-This section is the numerical record for `quantem.gpu`. It keeps current
-results easy to find while preserving the detailed history needed to understand
-which optimizations were accepted, rejected, or remain provisional.
+Choose the scientific operation first. Each folder contains a maintained entry
+point and, where available, dated reports. Backends are compared within the
+operation so the same scientific workload stays together.
 
 ## Browse by topic
 
-Start with the operation you want to measure. Detailed reports keep their
-measurement dates in their filenames so links and provenance remain stable.
-
-| Topic | Start here |
+| Operation | Scope |
 |---|---|
-| Loading and conversion | [HDF5 and QEM loading](2026-10-23-io-loading-limits.md) |
-| SSB fitting | [Joint-fit benchmark command and timing boundaries](ssb-joint-fit.md) |
-| SSB reconstruction and interaction | [C10 caching and FFT transfer measurements](2026-10-24-ssb-c10-cache-transfer.md) |
-| Compression | [CUDA count codecs](cuda-count-codecs.md) |
-| Correctness | [Cross-backend parity](parity.md) |
+| [IO and compression](io/index.md) | Loading, decoding, encoding, conversion, saving and memory |
+| [SSB](ssb/index.md) | Calibration, joint fitting, reconstruction and local-region measurements |
+| [Virtual detectors](virtual-detectors/index.md) | BF, DF, ADF, arbitrary masks and diffraction reductions |
+| [CoM, DPC and iDPC](dpc/index.md) | Detector moments, rotation and phase integration |
+| [Rendering and transfer](rendering/index.md) | FFT display, contrast, GPU/host transfer and actual image updates |
+| [Cross-backend parity](parity/index.md) | Shared exactness contracts, floating-point gates and unresolved cases |
 
-Use the [results index](results.md) for individual measurements and the
-[change ledger](changes.md) for chronological decisions. Dates identify a
-measurement, not a guarantee that its source is the latest released package.
+## How to read and reproduce results
 
-## Where to find the numbers
+Start with [methodology](methodology.md) for cache states, timing boundaries,
+memory and parity requirements, then the [testing guide](../developer/testing.md)
+for maintained commands. The [results index](results.md) retains individual
+measurements and the [change ledger](changes.md) records chronological decisions.
 
-| Evidence | Use it for |
-|---|---|
-| [Documentation landing page](../intro.md) | Package contract and routes for API, kernel, and application developers; intentionally contains no benchmark tables |
-| {ref}`Minimum-device gates <minimum-device-memory-gates>` | CUDA 6 GiB VRAM and WebGPU 8 GB laptop acceptance status; runtime details on [CUDA](../platforms/cuda.md) and [WebGPU](../platforms/webgpu.md) |
-| [Verified benchmark results](results.md) | Metrics with date, revision, device, shape/dtype, cache state, load plan, benchmark definition, calibration, and parity provenance |
-| [Revision and change ledger](changes.md) | Latest documentation changes, implementation baselines, and why a retained number changed or remained historical |
-| [Backend coverage](../backends.md) | Capability and implementation-source status without duplicated timing tables |
-| [Native Swift and Metal](../platforms/swift-metal.md) | SwiftPM product structure, exact resident-summary contract, ownership boundary, and links to retained timing |
-| [Python MPS](../platforms/mps.md) | Direct-Metal output lifetime, resident-versus-driver memory accounting, profiling fields, and focused checks |
-| [Benchmark methodology](methodology.md) | Required timing stages, cold/warm definitions, memory reporting, and acceptance rules |
-| [CUDA codec speed and peak memory](cuda-count-codecs.md) | Experimental count ANS versus bitpacking: GPU timings, calculated resident layouts, measured shared scratch, and unresolved per-codec/full-load peaks |
-| [Testing and evidence](../developer/testing.md) | The timing script for each hot path, the SSB parity gates, and the documentation checks |
-| [Cross-backend parity](parity.md) | Exact integer contracts, floating metrics, fixtures, and hardware gates |
-| [Optimization ledger](../maintainer/backend-optimization-matrix.md) | Accepted and rejected IO, kernel, display, and browser experiments |
-| [Load acceptance evidence](../maintainer/backend-4dstem-load-checklist.md) | Real-data load/decode/product gates and backend signoff |
-| [CUDA regional SSB latency](2026-10-21-ssb-region-latency.md) | Matched full-data joint fits, explicit region cleanup and exact-result checks |
-| [SSB performance evidence](../maintainer/ssb-performance.md) | Shape-by-backend SSB kernel history, memory, and exactness |
-| [Native Swift/Metal SSB migration](../maintainer/native-metal-ssb-migration.md) | Frozen historical extraction record; see native-size verification, experiment 20260915-metal-ssb-native-sizes (raw evidence in the private evidence archive), for the current 128/256/512 scan support and parity checks |
-| [Native Metal loader postmortem](../maintainer/native-metal-hdf5-postmortem.md) | Pass-graph, redundant-work failure, and prevention checklist |
-| [M2 Air Metal evidence](../maintainer/m2-air-lz4-match-unroll-2026-08-18.md) | Physical low-memory Apple load/decode profiling and retained kernel evidence |
-| [WebGPU memory history](../maintainer/history/webgpu-gqk-memory-2026-07.md) | Archived browser G(q,k) layout and memory experiments |
+A report date identifies a measurement, not the latest released implementation.
+Keep its shape, dtype, mask, precision, backend, device, source revision and
+cache state together. Kernel duration, completed reconstruction, transfer and
+new scientific image paints are different quantities. Missing evidence remains
+unqualified; older or rejected results are not silently replaced.
 
-Every number on these pages is a dated record: it keeps the device, date,
-revision, input, cache state and parity check it was measured with. A new
-measurement adds a row or a dated page; it does not overwrite an older record
-measured under different conditions. Raw run folders stay in the private
-evidence archive, indexed by experiment id.
+## Adding a benchmark
 
-## Reading a result
+Put each new report under the owning operation's `reports/` folder, using
+`YYYY-MM-DD-description.md`. Link it from that operation's report index and
+register its interpretation in [results](results.md) and [changes](changes.md).
+Use one canonical report for a cross-operation experiment and link to it from
+other relevant topics. Create a report folder when there is an actual report.
 
-A complete row answers all of these questions:
+Keep raw logs, source identities and non-public images in the private evidence
+archive; publish anonymous workloads, measured numbers and limitations. General
+API and kernel documentation remains in its existing guide, not copied here.
 
-1. Which exact source and source revision ran?
-2. What were the scan/detector shape, dtype, crop, bin, mask, and precision?
-3. Which backend, device, driver/runtime, and kernel revision ran?
-4. Was storage cold, controlled uncached-source-page, page-cache warm, process
-   warm, or a saved-result reopen, and which audits/indexes already existed?
-5. What did file open, read, decode, reduction, upload, synchronization, first
-   usable product, and total wall time cost?
-6. What were peak process memory, accelerator allocation/reserve, total-device
-   occupancy, and swap/pressure?
-7. Which frozen output or reference proves scientific parity?
-
-If one of these facts is missing, the number may still be useful diagnostically
-but is not a release or migration signoff.
-
-## Current versus historical evidence
-
-The results page owns the provenance of each retained measurement. Maintainer
-ledgers keep chronological experiments—including
-regressions—so future work does not repeat failed kernel layouts or confuse an
-older record with the production path.
-
-Dated pages with headings such as “Question,” “TODO,” or “Next” are collected
-under [Historical experiments](../maintainer/history/index.md). Their wording is
-preserved as experiment provenance and does not define current commitments.
-
-Valid older numbers are not copied through current overview pages. They remain
-once in the owning historical ledger with exact revision and protocol context.
-Measurements that failed parity or repeatability remain named as rejected
-experiments, never as current timing rows.
-
-See [later SSB performance checkpoints](../maintainer/2026-09-11-ssb-performance-checkpoints.md)
-for subsequent full-aperture measurements. The original evidence remains frozen.
+Previous published report URLs redirect to their new locations, including
+section fragments. The [optimization ledger](../maintainer/backend-optimization-matrix.md)
+and [historical archive](../maintainer/history/index.md) retain broader records.

@@ -23,7 +23,7 @@ fitting, decoding, index construction, detector reductions and comparisons run
 on one NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, physical GPU1,
 with CUDA runtime and driver API version 13.0.
 
-The portable {download}`benchmark record <data/cuda-count-codecs-2026-09-08.json>`
+The portable {download}`benchmark record <../data/cuda-count-codecs-2026-09-08.json>`
 owns the exact bytes, timing distributions, source identities, code hashes,
 protocol, and qualification limits. The full private fixture and executable
 prototype are retained separately; the summary alone is not an executable
@@ -226,7 +226,7 @@ current backend qualification is changed by this documentation.
 
 | Concern | Location or status |
 |---|---|
-| Public representation and conversion contract | [Count representations](../api/representations.md) |
+| Public representation and conversion contract | [Count representations](../../api/representations.md) |
 | Current CUDA ANS resident encoding | `src/quantem/gpu/resident/cuda/counts.py` and `resident/cuda/kernels/streamed.cu`; distinct from these prototype kernels |
 | HDF5 compressed-byte preparation and CUDA decompression | `src/quantem/gpu/formats/hdf5/reads.py` and `src/quantem/gpu/io/hdf5/cuda/decode.py`; the exact experimental revision is retained in the record |
 | Experimental direct/count and packed-byte encoders, inverse and indexed queries | Frozen source hashes in the portable record; not a current public-API benchmark |

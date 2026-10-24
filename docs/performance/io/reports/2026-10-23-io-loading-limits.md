@@ -3,7 +3,7 @@
 **Current status:** routine 512 × 512 × 192 × 192 loading checks passed on
 CUDA, Python MPS and native Swift/Metal for the two selected ARINA inputs. Large-QEM CUDA saving remains unresolved and
 further optimization is deferred. Loading, saving and complete conversion are
-separate measurements. The [benchmark index](results.md#hdf5-and-qem-diskgpu-loading-2026-10-23)
+separate measurements. The [benchmark index](../../results.md#hdf5-and-qem-diskgpu-loading-2026-10-23)
 links this campaign's current and historical records.
 
 This follow-up measures complete ARINA HDF5 loading, authenticated QEM loading,
@@ -97,12 +97,12 @@ counters, telemetry and the frozen snapshot. The native binary SHA-256 is
 
 ### Tracking future runs
 
-Use the [routine command](../developer/testing.md#routine-io-loading-check) with
+Use the [routine command](../../../developer/testing.md#routine-io-loading-check) with
 `--history-dir` and an explicit `--baseline`. Every report is archived by
 content hash; `index.json`, `timings.csv` and `README.md` track its revision,
 hardware, storage, cache conditions, checks and baseline. Duplicate registration
 does not duplicate evidence, and new timings never automatically replace a
-baseline. Use the [history workflow](../developer/testing.md#keeping-benchmark-history)
+baseline. Use the [history workflow](../../../developer/testing.md#keeping-benchmark-history)
 after IO changes and complete qualification before codec changes or releases.
 The private history now includes the accepted runs and diagnostic failures.
 The runner remains manual; physical IO performance is not an automatic CI gate.
@@ -158,7 +158,7 @@ references, source snapshots and telemetry are in this private experiment's
 `loading-regression` folder. The runner and its portable infrastructure checks
 passed 33 tests, including report comparison, timing boundaries, existing load
 helpers and repository privacy checks. See the
-[repeatable command](../developer/testing.md#routine-io-loading-check).
+[repeatable command](../../../developer/testing.md#routine-io-loading-check).
 This fresh campaign is CUDA only. Python MPS supports the routine command but
 was not rerun here; native Swift/Metal retains its separate earlier evidence.
 Ordinary CI does not automatically run the physical IO performance gate.

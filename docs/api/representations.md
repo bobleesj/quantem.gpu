@@ -31,7 +31,7 @@ the entry-point and implementation map.
 For these profiles, `detector.prepare(data).frame(...)` and
 `masked_sum_exact(...)` consume resident counts. For measured codec tradeoffs
 and the distinction between payload, scratch and complete-process peak, see the
-[CUDA count-codec investigation](../performance/cuda-count-codecs.md). Its
+[CUDA count-codec investigation](../performance/io/codecs.md). Its
 experimental kernels do not change the qualification table above.
 
 ## Choose the representation
@@ -165,4 +165,4 @@ Host/Node tests and small Metal fixtures do not establish real-device
 throughput or app frame rate. Report cold original source, prepared reopen,
 resident interaction, process RSS, accelerator allocation, and peak memory
 separately for **each** implemented representation. See
-[parity methodology](../performance/parity.md).
+[parity methodology](../performance/parity/index.md).

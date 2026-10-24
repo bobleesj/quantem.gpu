@@ -199,7 +199,7 @@ in **Device tested**. This keeps tables comparable when machines are renamed
 and makes every row understandable outside the development lab.
 
 Use [benchmark methodology](../performance/methodology.md) and
-[cross-backend parity](../performance/parity.md) for the required evidence.
+[cross-backend parity](../performance/parity/index.md) for the required evidence.
 
 ## Tables: one cell, one value
 

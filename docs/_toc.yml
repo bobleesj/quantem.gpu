@@ -7,10 +7,10 @@ parts:
 - caption: Python workflows
   chapters:
   - file: python-workflow
-    title: "Gold: I/O, DPC and SSB"
+    title: 'Gold: I/O, DPC and SSB'
     sections:
     - file: examples/qem_portable
-      title: "Advanced: probe and reconstruction"
+      title: 'Advanced: probe and reconstruction'
   - file: api/qem-python
     title: Save and share your data
 - caption: API reference
@@ -119,53 +119,91 @@ parts:
     - file: performance/index
       title: Testing and benchmarks
       sections:
+      - file: performance/io/index
+        title: IO and compression
+        sections:
+        - file: performance/io/codecs
+        - file: performance/io/reports/index
+          title: IO reports
+          sections:
+          - file: performance/io/reports/2026-10-23-qem-verification
+          - file: performance/io/reports/2026-10-23-qem-layout-cuda-profile
+          - file: performance/io/reports/2026-10-23-qem-compression
+          - file: performance/io/reports/2026-10-23-mps-hdf5-pipeline
+          - file: performance/io/reports/2026-10-23-loader-startup
+          - file: performance/io/reports/2026-10-23-io-swift-metal
+          - file: performance/io/reports/2026-10-23-io-mps
+          - file: performance/io/reports/2026-10-23-io-loading-limits
+          - file: performance/io/reports/2026-10-23-io-cuda
+          - file: performance/io/reports/2026-10-23-default-six-io
+          - file: performance/io/reports/2026-10-23-default-five-io
+          - file: performance/io/reports/2026-10-23-cuda-qem-loader-fix
+          - file: performance/io/reports/2026-10-23-cuda-qem-cache-recheck
+      - file: performance/ssb/index
+        title: SSB
+        sections:
+        - file: performance/ssb/joint-fit
+        - file: performance/ssb/reports/index
+          title: SSB reports
+          sections:
+          - file: performance/ssb/reports/mps-ssb-preview-reuse-2026-10-17
+          - file: performance/ssb/reports/mps-ssb-optical-shortcuts-2026-10-17
+          - file: performance/ssb/reports/mps-ssb-full-bf-redraw-2026-10-17
+          - file: performance/ssb/reports/mps-coherent-redraw-2026-10-17
+          - file: performance/ssb/reports/2026-10-22-ssb-staging-memory
+          - file: performance/ssb/reports/2026-10-22-ssb-initialization-and-refinement
+          - file: performance/ssb/reports/2026-10-22-rotation-comparison-reuse
+          - file: performance/ssb/reports/2026-10-22-independent-tpe-reuse
+          - file: performance/ssb/reports/2026-10-22-broad-fifth-cuda-study
+          - file: performance/ssb/reports/2026-10-21-ssb-region-latency
+          - file: performance/ssb/reports/2026-10-21-ssb-odd-aberration-sign
+          - file: performance/ssb/reports/2026-10-21-ssb-joint-benchmark
+          - file: performance/ssb/reports/2026-10-21-ssb-higher-order-fit
+          - file: performance/ssb/reports/2026-10-20-ssb-standard-fit-objective
+          - file: performance/ssb/reports/2026-10-20-ssb-cuda-tilt-speed
+          - file: performance/ssb/reports/2026-10-20-ssb-cuda-standard-fit
+          - file: performance/ssb/reports/2026-10-20-mps-tilt-speed
+          - file: performance/ssb/reports/2026-10-20-mps-ssb-separable-coherent
+          - file: performance/ssb/reports/2026-10-20-mps-performance
+          - file: performance/ssb/reports/2026-10-20-mps-memory
+          - file: performance/ssb/reports/2026-10-18-mps-ssb-source-addressing
+          - file: performance/ssb/reports/2026-10-18-cuda-ssb-group-support
+          - file: performance/ssb/reports/2026-10-17-ssb-aperture-bounds
+          - file: performance/ssb/reports/2026-10-17-mps-ssb-loading
+          - file: performance/ssb/reports/2026-10-17-mps-ssb-group-fusion
+          - file: performance/ssb/reports/2026-10-17-mps-ssb-dispatch
+          - file: performance/ssb/reports/2026-10-17-mps-ssb-coherent-support
+          - file: performance/ssb/reports/2026-10-17-mps-interruptible-preview
+          - file: performance/ssb/reports/2026-10-17-mps-coherent-reduction
+          - file: performance/ssb/reports/2026-10-16-ssb-coherent-reconstruction
+          - file: performance/ssb/reports/2026-10-15-mps-ssb-upsampling
+          - file: performance/ssb/reports/2026-10-15-cuda-batched-refinement
+          - file: performance/ssb/reports/2026-09-11-ssb-performance-checkpoints
+      - file: performance/virtual-detectors/index
+        title: Virtual detectors
+        sections:
+        - file: performance/virtual-detectors/validation
+      - file: performance/dpc/index
+        title: CoM, DPC and iDPC
+      - file: performance/rendering/index
+        title: Rendering and transfer
+        sections:
+        - file: performance/rendering/reports/index
+          title: Rendering reports
+          sections:
+          - file: performance/rendering/reports/2026-10-24-ssb-c10-cache-transfer
+      - file: performance/parity/index
+        title: Cross-backend parity
+      - file: performance/methodology
       - file: developer/testing
       - file: performance/results
-        title: Verified benchmark results
-      - file: performance/2026-10-23-io-loading-limits
-        title: HDF5 and QEM Disk–GPU loading (2026-10-23)
-      - file: performance/2026-10-24-ssb-c10-cache-transfer
-        title: SSB caching and FFT transfer (2026-10-24)
       - file: performance/changes
-        title: Revision and change ledger
+      - file: maintainer/backend-optimization-matrix
+      - file: maintainer/backend-4dstem-load-checklist
+      - file: maintainer/ans-io-acceptance
+      - file: maintainer/ssb-performance
       - file: backends
         title: Backend coverage
-      - file: performance/methodology
-      - file: performance/ssb-joint-fit
-      - file: maintainer/2026-10-21-ssb-joint-benchmark
-        title: SSB joint-fit benchmark (2026-10-21)
-      - file: performance/cuda-count-codecs
-        title: CUDA codec speed and peak memory
-      - file: performance/parity
-      - file: maintainer/ans-io-acceptance
-      - file: maintainer/backend-optimization-matrix
-        title: Optimization ledger
-      - file: maintainer/backend-4dstem-load-checklist
-        title: Load acceptance evidence
-      - file: maintainer/ssb-performance
-      - file: maintainer/2026-10-21-ssb-odd-aberration-sign
-        title: Sign of the odd aberrations in SSB reconstruction (2026-10-21)
-      - file: maintainer/2026-10-20-mps-performance
-        title: MPS performance and regression harness (2026-10-20)
-      - file: maintainer/2026-10-20-mps-memory
-        title: MPS memory per SSB stage (2026-10-20)
-      - file: maintainer/2026-10-20-mps-ssb-separable-coherent
-        title: Separable C10/C12 coherent SSB on Metal (2026-10-20)
-      - file: maintainer/2026-10-20-ssb-standard-fit-objective
-        title: MPS standard SSB fit on the agreement objective (2026-10-20)
-      - file: maintainer/2026-10-20-ssb-cuda-standard-fit
-        title: CUDA standard SSB fit on the agreement objective (2026-10-20)
-      - file: maintainer/2026-10-20-ssb-cuda-tilt-speed
-        title: Tilt-corrected SSB on CUDA, fit and preview speed (2026-10-20)
-      - file: maintainer/2026-10-21-ssb-higher-order-fit
-        title: Coma, trefoil and C30 in the model-based SSB fit (2026-10-21)
-      - file: maintainer/2026-10-20-mps-tilt-speed
-        title: Tilt-corrected SSB on Metal, preview and fit speed (2026-10-20)
-      - file: maintainer/2026-10-15-cuda-batched-refinement
-        title: CUDA refinement batching (2026-10-15)
-      - file: maintainer/2026-09-11-ssb-performance-checkpoints
-        title: SSB performance checkpoints (2026-09-11)
-      - file: maintainer/virtual-image-kernel-checklist
     - file: developer/kernel-lifecycle
       title: Contributing changes
       sections:
