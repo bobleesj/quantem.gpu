@@ -50,8 +50,8 @@ Evidence groups: `1022-consumer-broad-final` and `1022-seedfinal`.
 
 ## Limits and integration status
 
-The frozen research source started from `d36f8578`; the public four-case reuse
-branch was at `1f92a354` during qualification. Prototype dependencies and
+The frozen research source started from `db305309`; the public four-case reuse
+branch was at `6bb36fa0` during qualification. Prototype dependencies and
 runners were snapshotted before execution in the private archive.
 
 The historical research objective has a different numerical contract from the

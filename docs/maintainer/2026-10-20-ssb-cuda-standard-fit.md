@@ -38,7 +38,7 @@ A private 512 x 512 crystal scan, 192 x 192 detector, 300 kV, 30 mrad, the
 detector step from `fit_detector_sampling()`. CUDA: RTX PRO 6000 Blackwell
 Max-Q, CuPy 14.2, Optuna 4.9, idle device. MPS: the reference run of the same
 branch on an Apple GPU; its phase-variance numbers are those of the MPS search
-(`mps/optimizer.optimize_phase_variance`, restored in 0e571f0 unchanged). Evidence: experiment
+(`mps/optimizer.optimize_phase_variance`, restored in 33a6790 unchanged). Evidence: experiment
 `2026-10-20-ssb-cuda-parity` in the private archive.
 
 ## Results

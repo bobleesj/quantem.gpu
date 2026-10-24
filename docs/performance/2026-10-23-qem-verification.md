@@ -69,7 +69,7 @@ and require buffer allocations to return to baseline.
 ## Evidence and limitations
 
 The private experiment is `20261023-qem-backend-verification`. The implementation
-is an uncommitted candidate based on `e8750f3e365208421675f47bbdc6314b135f7146`;
+is an uncommitted candidate based on `d2db0bdb4c9859230d3e9ba2f6b23fcfae8eb0f1`;
 its patch, file fingerprints, commands, hardware reports, and raw measurements
 are retained with that experiment. This is a source-tree benchmark, not an
 installed-wheel or application UI qualification. The measured final matrix fingerprint

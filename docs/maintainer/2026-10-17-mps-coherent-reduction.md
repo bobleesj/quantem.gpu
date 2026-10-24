@@ -19,7 +19,7 @@ spectrum; the existing symmetry guard is unchanged.
 Two complete 512 × 512 × 192 × 192 acquisitions were tested on Apple Silicon
 through the Python MPS backend. Case A used 8,807 BF pixels and 1536 × 1536
 output; case B used 8,930 BF pixels and 2048 × 2048 output. The frozen baseline
-was `bcbed5d1`. Ten new phase evaluations per row alternated baseline and
+was `3362fd55`. Ten new phase evaluations per row alternated baseline and
 candidate on the same prepared data, including zero and both focus signs and
 both rotation candidates. Times include GPU completion and phase return, but
 exclude loading, initial preparation, fitting and the separate native loss.

@@ -6,14 +6,14 @@ Zero-depth reconstruction now specializes the identically-one thickness weights.
 It retains precise trigonometry, calibration, estimator, all BF pixels and the
 original summation order. Joint tilt/depth reconstruction keeps the general
 optical model. This builds on the exact aperture shortcuts and bounded queued
-batches in `327337dc`; those existing changes account for the joint-mode gain.
+batches in `bf902997`; those existing changes account for the joint-mode gain.
 
 ## Matched measurements
 
 Two complete 512 × 512 × 192 × 192 acquisitions were tested on Apple M5 Max.
 Acquisition A has 8,807 BF pixels and a 1536² automatic output; B has 8,930 BF
 pixels and a 2048² output. Each row uses 20 new parameter settings, alternating
-the frozen deployed implementation (`10e0de54`) and this implementation on the
+the frozen deployed implementation (`43d5c4b4`) and this implementation on the
 same prepared engine. Both use `phase_of_mean` and identical tilt and depth.
 Ordinary controls set tilt and depth to zero without refitting.
 

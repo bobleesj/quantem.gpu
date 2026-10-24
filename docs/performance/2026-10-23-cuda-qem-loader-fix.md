@@ -21,7 +21,7 @@ desktop bursts, but no sustained competing scientific compute during the
 controlled loads. This is not exclusive-host qualification.
 
 Private experiment: `20261023-cuda-qem-loader-fix`. Base revision:
-`e8750f3e365208421675f47bbdc6314b135f7146`, with the recorded working-tree snapshot.
+`d2db0bdb4c9859230d3e9ba2f6b23fcfae8eb0f1`, with the recorded working-tree snapshot.
 Five-input measurement source fingerprint:
 `6f22b5a3795fd34e30f8f837d4e97145ea2023a0455559e787b435882d1cf568`.
 Candidate loader SHA-256:

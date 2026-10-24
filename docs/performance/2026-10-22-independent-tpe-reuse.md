@@ -73,6 +73,6 @@ Existing ShowPtycho explanatory text still refers to a primary-only automatic fi
 
 ## Source and private evidence
 
-Base `d74b88cc8bc42c3fada71b9fd6740431134bcdc9`; local candidate `ssb-search-modes` with the ongoing broad API. This is a source-checkout study, not installed-wheel or release qualification. Dependency versions: optuna 4.9.0, numpy 2.4.6, scipy 1.18.0, cupy-cuda12x 14.2.0, numba 0.66.0.
+Base `7029520bb8aff854b391585eb32908c221e1baa9`; local candidate `ssb-search-modes` with the ongoing broad API. This is a source-checkout study, not installed-wheel or release qualification. Dependency versions: optuna 4.9.0, numpy 2.4.6, scipy 1.18.0, cupy-cuda12x 14.2.0, numba 0.66.0.
 
 Private experiment ID: `1022-exact-independent-tpe`. Complete source fingerprints, frozen arrays, timings and process manifests remain in the private archive. Sampler source SHA-256: `8631c9b01801025a82c6c4e69ba1c8600e3ce9f23144055d900fb70e4cd3f19a`.

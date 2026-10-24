@@ -10,7 +10,7 @@ profiles; a separate pinned transfer control reaches 28.76 GB/s.
 Private experiment: `20261023-qem-layout-cuda-profile`. This follow-up retains
 the same scientific source fingerprint as the earlier six-acquisition suite,
 `2873ac0ffac23c49c89a7d5311ffbcc8836ead6af640acf6df10f5a292290df8`,
-on base revision `e8750f3e365208421675f47bbdc6314b135f7146`. Only benchmark
+on base revision `d2db0bdb4c9859230d3e9ba2f6b23fcfae8eb0f1`. Only benchmark
 accounting and profiling instrumentation changed. CUDA ran on the same physical
 RTX PRO 6000 Blackwell Workstation Edition, with a PCIe generation-5, eight-lane
 link, Python 3.14.6, CuPy 14.2.0 and CUDA runtime 12.9.

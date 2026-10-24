@@ -10,7 +10,7 @@ savings differ from loading speedups.
 
 CUDA: NVIDIA RTX PRO 6000 Blackwell Workstation Edition, 96 GB, CUDA runtime 12.9, CuPy 14.2.0, Python 3.14.6 and PyTorch 2.13.0. MPS and Swift/Metal: Apple M5 Max, 128 GB unified memory, macOS 26.4; Python 3.13.13/PyTorch 2.13.0 or Swift 6.3.3 release build. The CUDA run held the physical GPU's cooperative lock; Apple backends ran serially.
 
-Private experiment: `20261023-six-default-io`. Base revision: `e8750f3e365208421675f47bbdc6314b135f7146`. Identical measured source fingerprint: `2873ac0ffac23c49c89a7d5311ffbcc8836ead6af640acf6df10f5a292290df8`. Native binary hashes, source/selection manifests, telemetry and all individual measurements are retained privately.
+Private experiment: `20261023-six-default-io`. Base revision: `d2db0bdb4c9859230d3e9ba2f6b23fcfae8eb0f1`. Identical measured source fingerprint: `2873ac0ffac23c49c89a7d5311ffbcc8836ead6af640acf6df10f5a292290df8`. Native binary hashes, source/selection manifests, telemetry and all individual measurements are retained privately.
 
 | Acquisition | Scan × detector | Backend | HDF5 first / repeated (s) | QEM conversion + full verification (s) | QEM reload first / repeated (s) |
 |---|---|---|---:|---:|---:|

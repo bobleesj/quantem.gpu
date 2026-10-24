@@ -260,7 +260,7 @@ same fitted values. `phase_variance_fit_peak` (26.05 GiB above the encoded data,
 includes MLX's cache from the two fits before it. Measured alone on gold (both branches), both versions peak at
 12.50 GiB of live MLX arrays and, in most runs, 18.56 GiB of driver memory above the encoded data, the overnight
 18.6 GiB. In one measurement script the restored search read 22.5 GiB (three runs) and the old one 18.56; with the
-coherent preview kernels of before 56877bf4 the restored search read 18.56 there too, so the extra 4 GiB is MLX
+coherent preview kernels of before 6784eff3 the restored search read 18.56 there too, so the extra 4 GiB is MLX
 cache that the newer preview kernels leave, not the search.
 
 ### Reading a failure
