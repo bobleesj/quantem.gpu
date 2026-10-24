@@ -7,7 +7,7 @@
 Translation only: the frames are compared on their own pixel grids, displacement_A[f] where frame f sees the specimen
 against frame 0."""
 
-from quantem.gpu.drift.registration import register
+from quantem.gpu.drift.registration import bands, peaks, prepared, register, register_spectra, spots
 from quantem.gpu.drift.series import Drift, drift, footprint, running, shifted
 
-__all__ = ["Drift", "drift", "footprint", "register", "running", "shifted"]
+__all__ = ["Drift", "bands", "drift", "footprint", "peaks", "prepared", "register", "register_spectra", "running", "shifted", "spots"]

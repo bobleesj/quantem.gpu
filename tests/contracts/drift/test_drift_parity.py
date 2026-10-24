@@ -1,6 +1,7 @@
 """quantem.gpu.drift reproduces myptycho's translation drift exactly: register, drift and running on a simulated twisted
-MoS2 bilayer moved by a drift longer than its lattice, against myptycho's outputs frozen below (myptycho ab62529a,
-time/tests/drift_baseline.py, quantem.gpu a26c62fa for running's correlation). The series is rebuilt here exactly as
+MoS2 bilayer moved by a drift longer than its lattice, against myptycho's outputs frozen below (baseline made at myptycho
+ab62529a by time/tests/drift_baseline.py, the script added in myptycho 62e5e259; quantem.gpu a26c62fa for running's
+correlation). The series is rebuilt here exactly as
 myptycho's test_drift.specimen builds it, so the comparison needs no stored images."""
 
 import numpy as np
