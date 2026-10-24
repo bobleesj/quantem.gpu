@@ -50,7 +50,7 @@ PARTLY_OVERRIDDEN = "Recorded + overridden"
 NOT_RECORDED = "Not recorded"
 FITTED_BRIGHT_FIELD_DISK = "Fitted (bright-field disk)"  # data.calibration.fit_detector_sampling()
 # and the states only a session's launch table states, for the value it uses:
-EXPLICIT_OVERRIDE = "Explicit override"  # a keyword given to SSB(...) or SSB.open(...)
+EXPLICIT_OVERRIDE = "Explicit override"  # a keyword given to DirectPtycho(...) or DirectPtycho.open(...)
 ESTIMATED = "Estimated"
 ESTIMATED_ROTATION = "Estimated (centre-of-mass curl)"
 DEFAULT = "Default"

@@ -13,11 +13,11 @@ if TYPE_CHECKING:
     from quantem.widget import Show2D, Show3D
 
     from quantem.gpu.ssb.results import SSBResult
-    from quantem.gpu.ssb.workflow import SSB
+    from quantem.gpu.ssb.workflow import DirectPtycho
 
 
 def show_focus(
-    session: "SSB",
+    session: "DirectPtycho",
     fit: "SSBResult",
     *,
     region: tuple[int, int, int, int] | None = None,

@@ -125,7 +125,7 @@ def test_broad_records_refinement_budget(monkeypatch, tmp_path, refinement, cap)
             return_value=SimpleNamespace(rotation_branches=None, trial_records=[])),
         _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object()),
         _result_signature=signature, _accept_result=lambda result: result,
-        reconstruct=lambda result, **kwargs: result, _save_result=lambda result, **kwargs: result,
+        run=lambda result, **kwargs: result, _save_result=lambda result, **kwargs: result,
     )
     result = fifth_order_fit.fit_fifth_order(
         session, search="broad", trials=400, seed=17, save_dir=tmp_path,
@@ -198,7 +198,7 @@ def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch, refinement):
     session = SimpleNamespace(
         backend="cuda", _find_aberrations=Mock(return_value=primary),
         _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object()),
-        reconstruct=lambda result, **kwargs: result, _accept_result=lambda result: result,
+        run=lambda result, **kwargs: result, _accept_result=lambda result: result,
     )
     fit = fifth_order_fit.fit_fifth_order(
         session, search="standard", trials=200, seed=42, save_dir=None,

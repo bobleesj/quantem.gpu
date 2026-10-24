@@ -84,7 +84,7 @@ def handoff(monkeypatch):
             clock.now += 2.0
             return self.primary
 
-        def reconstruct(self, fit, **options):
+        def run(self, fit, **options):
             factor = options["upsampling_factor"]
             self.calls.append(factor)
             events.append(f"reconstruct:{factor}")

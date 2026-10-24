@@ -51,3 +51,38 @@ def test_a_fit_on_the_second_gpu_equals_the_fit_on_the_first():
 
     assert dict(fits[1].aberrations) == dict(fits[0].aberrations)
     assert fits[1].loss == fits[0].loss > 0
+
+
+@pytest.mark.parametrize("dtype", [np.uint16, np.float32])
+def test_detector_products_follow_the_resident_gpu(dtype):
+    """Inspect a scan on GPU 1 while GPU 0 remains selected for another reconstruction."""
+    _require_cuda(2)
+    from quantem.gpu import detector
+
+    counts = np.arange(6 * 7 * 13 * 11).reshape(6, 7, 13, 11).astype(dtype)
+    rows, cols = np.indices((13, 11))
+    mask = (rows - 6) ** 2 + (cols - 5) ** 2 <= 25
+    indices = np.array([0, 4, 17, 31], dtype=np.int32)
+
+    def products(session):
+        images = [session.frame(4), session.mean_dp(),
+                  session.masked_sum(mask), session.masked_sum(~mask),
+                  *session.center_of_mass(), *session.center_of_mass(mask)]
+        images.extend(session.reduce_frames(indices, mode=mode)
+                      for mode in ("mean", "sum", "max"))
+        if dtype == np.uint16:
+            images.extend([session.masked_sum_exact(mask),
+                           session.reduce_frames_exact(indices),
+                           session.reduce_frames_max(indices)])
+        return images
+
+    with cp.cuda.Device(1):
+        data = cp.asarray(counts)
+        expected = products(detector.prepare(data, immutable=True))
+    with cp.cuda.Device(0):
+        session = detector.prepare(data, immutable=True)
+        for _ in range(2):
+            actual = products(session)
+            assert cp.cuda.runtime.getDevice() == 0
+            for found, reference in zip(actual, expected, strict=True):
+                np.testing.assert_array_equal(found, reference)

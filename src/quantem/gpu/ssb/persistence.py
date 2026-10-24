@@ -149,7 +149,7 @@ def load_result(
 
 def result_paths(
     save_dir: str | Path,
-    operation: Literal["find_aberrations", "reconstruct"],
+    operation: str,
 ) -> tuple[Path, Path]:
     """Resolve the array and readable metadata paths of one saved result in the results directory ``save_dir``.
 

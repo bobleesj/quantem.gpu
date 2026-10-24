@@ -1,6 +1,6 @@
-# SSB API
+# Direct ptychography API
 
-Use `SSB` from Python on MPS or CUDA. Find aberrations once, inspect the search,
+Use `DirectPtycho` from Python on MPS or CUDA. The default `.run()` method is conventional SSB. See [regularized phase and complex reconstruction](direct-ptycho.md) for the experimental CUDA methods. Find aberrations once, inspect the search,
 and reuse those parameters for reconstruction. Start with the
 {ref}`Python workflow <reconstruct-phase>` for a short example.
 For actual images and saved outputs, run the {ref}`Gold notebook <gold-ssb-reconstruction>`.
@@ -8,7 +8,7 @@ This page covers parameters, calibration, ownership, and backend limits.
 
 ## Choose a search
 
-`ssb.find_aberrations()` defaults to `search="standard"`: 200 TPE trials
+`ptycho.find_aberrations()` defaults to `search="standard"`: 200 TPE trials
 for initial defocus, astigmatism, tilt and depth, including its Newton polish,
 then joint Newton refinement through fifth order. No additional fifth-order
 TPE search is performed. `search="broad"` adds 400 fifth-order TPE trials
@@ -38,7 +38,7 @@ The method returns only after final refinement.
 Keep the returned result to inspect and reuse the fitted model:
 
 ```python
-fit = ssb.find_aberrations()
+fit = ptycho.find_aberrations()
 fit.report()                         # coefficients and sample geometry
 fit.show("convergence")              # recorded search and refinement
 fit.show("probe")                    # model probe intensities
@@ -56,7 +56,7 @@ is reported as a budget stop, rather than proof of convergence.
 For an optional broad-search study, use a sequence of trial counts:
 
 ```python
-fits = ssb.find_aberrations(search="broad", trials=(200, 400, 600), seed=17)
+fits = ptycho.find_aberrations(search="broad", trials=(200, 400, 600), seed=17)
 fits[200].show("convergence", compare=fits)
 ```
 
@@ -65,7 +65,7 @@ curves. Each budget starts independently from the same session state and uses
 all selected data. The parent session is unchanged; choose a fit explicitly:
 
 ```python
-image = ssb.reconstruct(fits[400], upsampling_factor="auto")
+image = ptycho.run(fits[400], upsampling_factor="auto")
 ```
 
 A scalar `trials=400` still returns one fit. The default is one 200-trial initial fit followed by joint refinement.
@@ -144,12 +144,12 @@ search is now `objective="phase_variance"`, the same search as on MPS
 
 ## Inputs and outputs
 
-`SSB.open(path, ...)` loads a supported detector source. `SSB(data, ...)`
+`DirectPtycho.open(path, ...)` loads a supported detector source. `DirectPtycho(data, ...)`
 accepts an existing `Dataset4dstemGPU` or supported array. Prefer loading once
 and inspecting the acquisition before constructing the algorithm:
 
 ```python
-from quantem.gpu import SSB, io
+from quantem.gpu import DirectPtycho, io
 
 data = io.load("acquisition.qem")
 data.calibration.semiangle_mrad = 30   # set what the file does not record
@@ -159,8 +159,8 @@ data  # The notebook displays geometry, calibration, units, and overridden value
 In the next cell, pass that same dataset to SSB and reconstruct:
 
 ```python
-ssb = SSB(data)
-result = ssb.reconstruct()   # fits the aberrations once when none are known
+ptycho = DirectPtycho(data)
+result = ptycho.run()   # fits the aberrations once when none are known
 ```
 
 Both file-backed entry points use the loaded `voltage_kV`, `semiangle_mrad`,
@@ -180,7 +180,7 @@ fitted once and never moved. `scan_detector_rotation_flipped=True` means the
 detector's row and column axes are swapped relative to the scan, which no
 rotation can produce; it is estimated with the angle, or False when an angle is
 given. Reported centers stay in the original detector axes. Give a calibrated
-angle to skip the estimate: `SSB(data, scan_detector_rotation_deg=12.3)`.
+angle to skip the estimate: `DirectPtycho(data, scan_detector_rotation_deg=12.3)`.
 
 `reconstruct()` fits the aberrations with `find_aberrations()` defaults (the
 tilt-corrected joint fit) when the session has none, then reuses them. For custom
@@ -188,11 +188,11 @@ primary bounds or fixed coefficients, call `find_aberrations(search="primary", .
 first. This fits defocus, astigmatism, tilt and depth without the default
 fifth-order stage. The primary joint fit takes a `C10_nm` range or value and a `C12_nm` range from 0, or
 holds `C12_nm=0`:
-`ssb.find_aberrations(search="primary", tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})`.
+`ptycho.find_aberrations(search="primary", tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})`.
 It searches `phi12_deg` over its whole period, so a `phi12_deg` range or a
 nonzero held `C12_nm` alone raises and names what to pass; holding all three
 coefficients needs `check_rotation=False`. The joint fit searches depth
-spreads in `quantem.gpu.ssb.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ssb.aberrations = {...}` to
+spreads in `quantem.gpu.ssb.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ptycho.aberrations = {...}` to
 state a known calibration, which `reconstruct()` then applies without fitting.
 `detector_sampling_mrad` is detector angular sampling in
 mrad per pixel, `(row, col)`. Calibrate it as its own step before SSB:
@@ -204,29 +204,29 @@ fit.show()                                       # the mean pattern with the fit
 
 The bright-field disk is the image of the aperture, so its edge sits at the convergence semiangle. The fit
 records the detector step with the source **Fitted (bright-field disk)**, together with the disk centre and its
-edge radius, and `SSB(data)` reads all of them. When nothing is recorded, CUDA and MPS estimate the step with the
+edge radius, and `DirectPtycho(data)` reads all of them. When nothing is recorded, CUDA and MPS estimate the step with the
 same rule (`quantem.gpu.detector.fit_bright_field_disk`: `semiangle_mrad` divided by the radius in detector
 pixels at which the bright-field disk of the full-detector mean pattern falls to half its plateau) and print one
 line saying so. A detector step set by hand, on `data.calibration` or as a keyword, always wins. In
-`SSB(data, bright_field_center_px=..., bright_field_radius_px=...)`, disk geometry uses
+`DirectPtycho(data, bright_field_center_px=..., bright_field_radius_px=...)`, disk geometry uses
 the input detector grid. The session adjusts the center if it takes a
 bright-field crop.
 
-`SSB.open` uses the canonical `io.load` path, including its ANS-only GPU
+`DirectPtycho.open` uses the canonical `io.load` path, including its ANS-only GPU
 acquisition policy.
 
-`SSB.open` owns the acquisition it loads. On CUDA, for fit-sized scans, it
+`DirectPtycho.open` owns the acquisition it loads. On CUDA, for fit-sized scans, it
 decodes the bright-field crop and releases the acquisition; large CUDA integer
 sources stay encoded until `close()` or context-manager exit. On MPS, integer
 acquisitions stay encoded until `close()`: the session decodes their
 bright-field columns a few scan rows at a time while it builds G(q, k) and
 keeps only G(q, k), so a 512 x 512 scan holds no decoded copy of its crop.
-`SSB(data, ...)` borrows the caller-owned dataset or array and never releases
+`DirectPtycho(data, ...)` borrows the caller-owned dataset or array and never releases
 it; on MPS keep the dataset open while the session is in use. `close()` frees
 only the session's own crop and Fourier data. Encoded inputs decode only the
 bright-field evidence needed by the session.
 Treat detector values as fixed for the lifetime of a session: SSB retains their
-prepared Fourier data. After editing the array, construct a new `SSB` session.
+prepared Fourier data. After editing the array, construct a new `DirectPtycho` session.
 SSB Fourier-stack preparation and reconstruction are additional work; they
 are not included in a detector-viewer loading-time claim.
 
@@ -255,7 +255,7 @@ copied with its data is therefore reused; another acquisition is fitted again.
 - complex result: `object_wave[scan_row, scan_column]`, complex64, on the session's output grid;
 - `bright_field_center_px`: `(detector_row, detector_column)`;
 - `scan_sampling_A` and `object_sampling_A`: `(row, col)` pairs, in Å; every
-  entry point (`SSB`, `SSB.open`, `reconstruct_series`, `parallax.run`) also
+  entry point (`DirectPtycho`, `DirectPtycho.open`, `reconstruct_series`, `parallax.run`) also
   takes one number for both axes and stores and reports the pair;
 - `C10_nm` and `C12_nm`: nm; and
 - `phi12_deg`: degrees.
@@ -264,7 +264,7 @@ For a dense CUDA input, native supported scan shapes are 128×128, 256×256,
 512×512 and 1024×1024. Other smaller scan shapes are padded with the mean
 diffraction pattern to a supported square. For example, a 32×32 input currently
 produces a 128×128 working grid before any requested upsampling. Check
-`ssb.scan_shape` and `result.phase.shape`; padded pixels are not additional
+`ptycho.scan_shape` and `result.phase.shape`; padded pixels are not additional
 measured scan positions; the session prints one line naming the padded size.
 Dense CUDA arrays larger than 1024 along either axis are unsupported. Use the
 encoded acquisition for the bounded-memory large-scan workflow below.
@@ -299,10 +299,10 @@ The uint16 scratch uses two bytes per scan position per detector column; at
 scratch, FFT workspace and the full output arrays before reconstruction.
 
 ```python
-from quantem.gpu import SSB, io
+from quantem.gpu import DirectPtycho, io
 
 with io.load("acquisition.qem", backend="cuda") as data:
-    with SSB(
+    with DirectPtycho(
         data,
         voltage_kV=300,
         semiangle_mrad=30,
@@ -310,17 +310,17 @@ with io.load("acquisition.qem", backend="cuda") as data:
         detector_sampling_mrad=(0.55, 0.55),
         scan_detector_rotation_deg=12,
     ) as ssb:
-        fitted = ssb.find_aberrations(
+        fitted = ptycho.find_aberrations(
             scan_region=(256, 768, 256, 768),
             tilt=True,
         )
-        result = ssb.reconstruct(fitted, compute_loss=False)
+        result = ptycho.run(fitted, compute_loss=False)
         # Native 2048 input produces 2048 output here, with unchanged field of view.
 ```
 
 Use measured calibration; the numbers above illustrate the units. A session
 borrows `data`, so it can also inspect the same counts through detector APIs.
-`SSB.open("acquisition.h5", ...)` uses the normal automatic ANS loader and owns
+`DirectPtycho.open("acquisition.h5", ...)` uses the normal automatic ANS loader and owns
 its encoded source. No manual conversion or saved intermediate is required.
 Invalid detector pixels are excluded from scientific selection; their original
 stored counts remain unchanged.
@@ -358,19 +358,19 @@ saved-result reuse.
 ## Find aberrations, then reconstruct
 
 ```python
-from quantem.gpu import SSB
+from quantem.gpu import DirectPtycho
 
-ssb = SSB.open(
+ptycho = DirectPtycho.open(
     "acquisition.qem",
     voltage_kV=300,  # kV
     semiangle_mrad=30,  # mrad
     scan_sampling_A=(0.264, 0.264),  # Å per scan pixel, (row, col)
 )
-aberrations = ssb.find_aberrations(tilt=True, save_dir="results/aberrations")
+aberrations = ptycho.find_aberrations(tilt=True, save_dir="results/aberrations")
 aberrations.report()
-ssb.show_trials(best=5)
-result = ssb.reconstruct(aberrations, save_dir="results/native")
-shown = ssb.reconstruct(aberrations, upsampling_factor="auto")
+ptycho.show_trials(best=5)
+result = ptycho.run(aberrations, save_dir="results/native")
+shown = ptycho.run(aberrations, upsampling_factor="auto")
 shown.show()
 ```
 
@@ -387,14 +387,14 @@ gold scan), and its title names the factor. `show_trials` and the branch
 panels of `compare_rotation_branches` use the same factor. `result.show()`
 draws the phase a result holds; for a native fit one line names the auto
 factor and the call that shows it.
-Keep `ssb` open for the examples below and call `ssb.close()` when finished.
+Keep `ssb` open for the examples below and call `ptycho.close()` when finished.
 
 Inspect the best joint fit while the same SSB session is open:
 
 ```python
-ssb.show()                             # existing interactive ShowPtycho
-ssb.show("depth", size="large")         # static focus-depth landscape
-ssb.show("tilt", size="medium")         # static row-column tilt landscape
+ptycho.show()                             # existing interactive ShowPtycho
+ptycho.show("depth", size="large")         # static focus-depth landscape
+ptycho.show("tilt", size="medium")         # static row-column tilt landscape
 ```
 
 The static calls reuse recorded diagnostics or measure them once on the GPU.
@@ -405,7 +405,7 @@ the complete figure. Returned figures also support `savefig(...)` and render dir
 
 | Argument | Choices | Meaning |
 | --- | --- | --- |
-| `view` | `"depth"`, `"tilt"`, `"parameters"` | Focus versus depth, row versus column tilt, or both landscapes. With no view, `ssb.show()` opens ShowPtycho. |
+| `view` | `"depth"`, `"tilt"`, `"parameters"` | Focus versus depth, row versus column tilt, or both landscapes. With no view, `ptycho.show()` opens ShowPtycho. |
 | `size` | `"small"`, `"medium"`, `"large"` | Display size only; the default dimensions match `"medium"`. |
 | `region` | `None` or four scan-pixel bounds | Full field, or an independently fitted selected region. |
 | `axsize` | `(width, height)` in inches | Exact panel dimensions instead of `size`. |
@@ -414,14 +414,14 @@ To see both landscapes in one figure and read the numerical joint-fit values,
 use these expressions in separate notebook cells:
 
 ```python
-ssb.show("parameters", size="medium", columns=2, cmap="inferno", save="fit.png")
+ptycho.show("parameters", size="medium", columns=2, cmap="inferno", save="fit.png")
 aberrations.report().T
 ```
 
 Select a region in original scan pixels with exclusive stops:
 
 ```python
-ssb.show("tilt", region=(64, 192, 64, 192), size="small")
+ptycho.show("tilt", region=(64, 192, 64, 192), size="small")
 ```
 
 This jointly fits the region's optics, tilt and depth with one seed, 200 trials
@@ -430,7 +430,7 @@ leaves the full-field fit unchanged. Each bounds-based call fits independently;
 to inspect multiple views of the same regional fit, retain its session:
 
 ```python
-region = ssb.select_region((64, 192, 64, 192))
+region = ptycho.select_region((64, 192, 64, 192))
 region.show("depth")
 ```
 
@@ -452,7 +452,7 @@ The explicit measurement API remains available, including plotting from a
 saved result without an open GPU session:
 
 ```python
-ssb.measure_parameters(aberrations)
+ptycho.measure_parameters(aberrations)
 aberrations.show()  # phase beside the saved parameter slices
 aberrations.show("parameters")
 aberrations.show(show_parameters=False)  # phase alone
@@ -483,9 +483,9 @@ estimator, sampling, or scientific parameters invalidates saved-result reuse.
 ### Inspect and replay search trials
 
 ```python
-ssb.show_trials(first=5)
-ssb.show_trials(last=5)
-ssb.show_trials(best=5)
+ptycho.show_trials(first=5)
+ptycho.show_trials(last=5)
+ptycho.show_trials(best=5)
 aberrations.trials  # DataFrame, indexed by stable trial ID
 aberrations["C10_nm"]  # defocus, nm
 aberrations["C12_nm"]  # twofold astigmatism, nm
@@ -513,9 +513,9 @@ different objectives (the phase variance and the agreement) are not mixed.
 its final result appears in `report()`.
 
 ```python
-attempts = ssb.reconstruct(aberrations, trial_ids=aberrations.trials.tail(5).index)
+attempts = ptycho.run(aberrations, trial_ids=aberrations.trials.tail(5).index)
 attempts.phase  # radians; axes (trial, row, column)
-adjusted = ssb.reconstruct(aberrations, aberrations={"C10_nm": 12.5})  # nm
+adjusted = ptycho.run(aberrations, aberrations={"C10_nm": 12.5})  # nm
 ```
 
 Overrides preserve unspecified coefficients, tilt, depth spread and rotation.
@@ -527,7 +527,7 @@ results retain this history.
 ### Rotation and defocus comparison
 
 ```python
-comparison = ssb.compare_rotation_defocus(show=True)
+comparison = ptycho.compare_rotation_defocus(show=True)
 ```
 
 Four independent fits compare two rotations and both C10 signs, preserving the
@@ -541,7 +541,7 @@ not interrupted for per-trial progress. Use `verbose=False` for quiet runs.
 To compare the actual specimen images, use the interactive image gallery:
 
 ```python
-viewer = ssb.show("focus")
+viewer = ptycho.show("focus")
 viewer
 ```
 
@@ -549,7 +549,7 @@ Use the interactive stack viewer to scroll through defocus while comparing model
 depths side by side:
 
 ```python
-viewer = ssb.show("focus", layout="stack")
+viewer = ptycho.show("focus", layout="stack")
 viewer
 ```
 
@@ -570,7 +570,7 @@ interactive layouts become the same compact grid containing every reconstructed
 frame, with at most two columns by default:
 
 ```python
-ssb.show("focus", mode="static", size="small")
+ptycho.show("focus", mode="static", size="small")
 ```
 
 Static figures keep the image aspect ratio and use enough pixels to retain the
@@ -595,12 +595,12 @@ which stores scientific calibration.
 For a focus sweep at one model depth, or a regional comparison:
 
 ```python
-ssb.show("focus", focus_offsets_nm=(-10, 0, 10), depth_spread_nm=15)
-ssb.show("focus", region=(64, 192, 64, 192))
+ptycho.show("focus", focus_offsets_nm=(-10, 0, 10), depth_spread_nm=15)
+ptycho.show("focus", region=(64, 192, 64, 192))
 ```
 
 Regional focus views apply the region's joint fit to the **full parent scan**,
-then crop the displayed images. A retained `region = ssb.select_region(...)`
+then crop the displayed images. A retained `region = ptycho.select_region(...)`
 session also supports `region.show("focus")`; keep its parent open. This does
 not replace the full-field fitted parameters. Both returned widgets support
 the usual zoom, FFT and `viewer.export_html(...)` methods.
@@ -610,7 +610,7 @@ the usual zoom, FFT and `viewer.export_html(...)` methods.
 Fit at native sampling, then reuse the fitted parameters for a finer preview:
 
 ```python
-result = ssb.reconstruct(aberrations, upsampling_factor="auto")
+result = ptycho.run(aberrations, upsampling_factor="auto")
 ```
 
 `"auto"` selects the smallest supported factor (1, 2, 3, 4 or 8) whose output
@@ -631,8 +631,8 @@ replicas of the scan mean while retaining the normalization at the true origin.
 For an explicit sampling comparison:
 
 ```python
-result_2x = ssb.reconstruct(aberrations, upsampling_factor=2)
-result_4x = ssb.reconstruct(aberrations, upsampling_factor=4)
+result_2x = ptycho.run(aberrations, upsampling_factor=2)
+result_4x = ptycho.run(aberrations, upsampling_factor=4)
 ```
 
 Show both full fields with a marked, matching crop underneath:
@@ -655,11 +655,11 @@ the example does not establish improved resolution.
 ## Fit a region and reconstruct the full scan
 
 ```python
-aberrations = ssb.find_aberrations(
+aberrations = ptycho.find_aberrations(
     scan_region=(128, 384, 128, 384),  # row start/stop, column start/stop; scan pixels
     tilt=True,
 )
-result = ssb.reconstruct(aberrations, upsampling_factor="auto")
+result = ptycho.run(aberrations, upsampling_factor="auto")
 result.show()
 ```
 
@@ -714,16 +714,16 @@ all on 512 × 512 scans on an M-series Mac, two MPS standard fits
 (`tilt=False`) 3 to 10 s, two phase-variance fits about 90 s.
 
 ```python
-branches = ssb.compare_rotation_branches()  # both fits; the session ends on the kept one
+branches = ptycho.compare_rotation_branches()  # both fits; the session ends on the kept one
 branches.report()                           # aberrations, loss, column z and effect, positive columns, S
 branches.show()                             # both fits at the auto factor, then the evidence
-result = ssb.reconstruct()                  # the kept fit, no third search
+result = ptycho.run()                  # the kept fit, no third search
 result.show("rotation")                     # the same figure from the result
 ```
 
 `compare_rotation_branches(**find_aberrations_options)` takes every
 `find_aberrations` keyword except `check_rotation`. A rotation given to
-`SSB(...)` or recorded with the acquisition is the user's calibration:
+`DirectPtycho(...)` or recorded with the acquisition is the user's calibration:
 `reconstruct()` and `find_aberrations()` fit it once and never move it, and
 `compare_rotation_branches()` on it reports the evidence and keeps the given
 angle unless called with `apply=True`. `find_aberrations(check_rotation=False)`
@@ -767,7 +767,7 @@ phase tails (left) and the high-passed phase at the columns (right).
 ## View the phase and model probe
 
 ```python
-result = ssb.reconstruct(aberrations, upsampling_factor="auto")
+result = ptycho.run(aberrations, upsampling_factor="auto")
 result.show()  # one large phase image
 ```
 
@@ -838,15 +838,15 @@ Rerun the aberration search for older records; the loader does not guess their u
   calibration.
 - An unsupported backend or scientific request fails explicitly; SSB never
   falls back silently to CPU.
-- `SSB(data.data, ...)` raises `TypeError`: the encoded storage inside a loaded
-  dataset has no bounded read of its own. Pass the dataset, `SSB(data, ...)`, or
-  open the file with `SSB.open(path, ...)`.
+- `DirectPtycho(data.data, ...)` raises `TypeError`: the encoded storage inside a loaded
+  dataset has no bounded read of its own. Pass the dataset, `DirectPtycho(data, ...)`, or
+  open the file with `DirectPtycho.open(path, ...)`.
 - `trials` is the search budget per rotation branch (default 200), before refinement.
   `num_trials` remains a compatibility alias; supply only one keyword.
   `trials` must be non-negative and `refinement` is `"auto"`,
   `"nelder-mead"`, `"newton"` (tilt fits) or `None`. With `tilt=True` and
   `trials=0` the session's previous joint fit is refined. Use
-  `reconstruct()`, or assign `ssb.aberrations = {...}`, to apply known
+  `reconstruct()`, or assign `ptycho.aberrations = {...}`, to apply known
   parameters without a search.
 - To save results from an in-memory array, provide `source_path` for provenance.
   Direct arrays never reuse results from disk automatically: a path cannot
@@ -861,7 +861,7 @@ refused. It writes the complex object and a readable signature containing source
 identity, source and output shapes/dtypes, calibration, physical parameters,
 optimizer settings/history, bright-field geometry, loss, timings, backend,
 package source identity, and Git revision. An exact signature match reopens the
-saved result for a file-backed `SSB.open` session. Direct array sessions always
+saved result for a file-backed `DirectPtycho.open` session. Direct array sessions always
 recompute when saving; no full-array hash or GPU-to-host copy is required to
 check reuse. Any scientific mismatch recomputes instead of reusing stale
 output. Inspect `result.reused`, `result.saved_path`, and `result.metadata`.
@@ -874,16 +874,16 @@ an older result.
 ## Scripts and fixed aberrations
 
 ```python
-from quantem.gpu import SSB
+from quantem.gpu import DirectPtycho
 
-with SSB.open(
+with DirectPtycho.open(
     "acquisition.qem",
     voltage_kV=300,
     semiangle_mrad=30,
     scan_sampling_A=(0.264, 0.264),
 ) as batch_ssb:
-    batch_aberrations = batch_ssb.find_aberrations(save_dir="results/aberrations")
-    result = batch_ssb.reconstruct(batch_aberrations, save_dir="results/native")
+    batch_aberrations = batch_ptycho.find_aberrations(save_dir="results/aberrations")
+    result = batch_ptycho.run(batch_aberrations, save_dir="results/native")
 ```
 
 The context manager closes the session after the block. In a still-open
@@ -891,7 +891,7 @@ notebook session, use `reconstruct()` when aberrations are known and no
 optimizer should run:
 
 ```python
-result = ssb.reconstruct(
+result = ptycho.run(
     aberrations={"C10_nm": 12.5, "C12_nm": 3.0, "phi12_deg": 15.0},
     save_dir="results/fixed-ssb",
 )
@@ -927,7 +927,7 @@ DC-referenced `angle(mean(waves))` as numerically identical to that output.
 CUDA and MPS default to phase after complex-wave averaging, including higher orders:
 
 ```python
-phase, native_loss = ssb.preview(
+phase, native_loss = ptycho.preview(
     dict(aberrations),
     sample_tilt_mrad=aberrations.sample_tilt_mrad,
     depth_spread_nm=aberrations.depth_spread_nm,
@@ -987,8 +987,8 @@ adds more optical terms, so it is a separate comparison:
 ```python
 import pandas as pd
 
-standard = ssb.find_aberrations(search="primary", tilt=False)  # C10_nm, C12_nm, phi12_deg; same objective, tilt held at 0
-tilted = ssb.find_aberrations(search="primary")  # + specimen tilt and depth spread, jointly
+standard = ptycho.find_aberrations(search="primary", tilt=False)  # C10_nm, C12_nm, phi12_deg; same objective, tilt held at 0
+tilted = ptycho.find_aberrations(search="primary")  # + specimen tilt and depth spread, jointly
 
 tilted.sample_tilt_mrad   # (row, col) mrad, scan frame
 tilted.depth_spread_nm    # model depth spread, not a measured thickness
@@ -1025,7 +1025,7 @@ Native application authors should use the {ref}`Swift/Metal integration guide <n
 
 ## Series reconstruction
 
-`SSB.reconstruct_series()` discovers numbered acquisitions in one directory
+`DirectPtycho.run_series()` discovers numbered acquisitions in one directory
 and returns one `SSBSeriesResult`. Inclusive `first_frame` and `last_frame`
 values select acquisition identifiers, not positional array indices. Set
 `probe_reference_frame` to reuse one fitted probe; omit it to fit each
@@ -1036,14 +1036,14 @@ backend request, optimizer settings, and per-acquisition records.
 `<output>/live/screen`; default `<source>/live/screen`),
 `scan_detector_rotation_flipped` gives the flip (None: the saved fit's, else
 unflipped for a recorded rotation), and an acquisition with no recorded
-rotation is estimated by `SSB.open`. `scan_sampling_A` may be one number.
+rotation is estimated by `DirectPtycho.open`. `scan_sampling_A` may be one number.
 
 `quantem.gpu.ssb.series.screen_record_settings(record)` returns the
-`SSB.open` keywords a QuantEM Live screening record's stored fit used (beam,
+`DirectPtycho.open` keywords a QuantEM Live screening record's stored fit used (beam,
 `(row, col)` scan and detector sampling, physical rotation and flip,
 bright-field centre and radius, aberrations), and
 `series.open_screen_record(record, source=None, backend="auto")` opens the
-session at that fit, so `ssb.show()` opens ShowPtycho there. The fit is the
+session at that fit, so `ptycho.show()` opens ShowPtycho there. The fit is the
 record's tilt-corrected fit when it has one (`series.screen_record_fit`:
 `computed.ssb_tilt` beside an ordinary fit, else `computed.ssb`), and the
 session also takes its sample tilt and depth spread
@@ -1097,7 +1097,7 @@ API semantics.
 Load first so acquisition metadata remains available independently of SSB:
 
 ```python
-from quantem.gpu import SSB, io
+from quantem.gpu import DirectPtycho, io
 
 data = io.load("scan.qem")
 data
@@ -1108,8 +1108,8 @@ For scan-detector rotation, explicitly use the recorded angle, or provide an
 independently calibrated angle when the file does not record one:
 
 ```python
-ssb = SSB(data, scan_detector_rotation_deg=data.metadata["scan_detector_rotation_deg"])
-ssb.calibration_table()
+ptycho = DirectPtycho(data, scan_detector_rotation_deg=data.metadata["scan_detector_rotation_deg"])
+ptycho.calibration_table()
 ```
 
 The metadata lookup intentionally raises if rotation is missing. Replace it
@@ -1117,7 +1117,7 @@ with your known calibrated angle; do not silently substitute zero. Omitting
 rotation estimates it from the centre-of-mass curl, labelled **Estimated
 (centre-of-mass curl)**, not a measured calibration.
 
-`ssb.calibration_table()` returns a DataFrame with **File value**, **File unit**,
+`ptycho.calibration_table()` returns a DataFrame with **File value**, **File unit**,
 **Value used**, **Unit used**, and **Source**, using the session's current values.
 File values include saved calibration overrides. Source labels are **Recorded**,
 **Overridden** (set on `data.calibration`), **Fitted (bright-field disk)** (`data.calibration.fit_detector_sampling()`),

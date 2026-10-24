@@ -17,7 +17,7 @@ class ParallaxResult:
     ``aberrations`` (``C10_nm`` and ``C12_nm`` in nm, ``phi12_deg`` in degrees,
     scan frame) and ``scan_detector_rotation_deg`` (degrees, in [0, 360)) hold
     the fit of ``parallax.run(fit_aberrations=True)``, in the units and convention
-    ``SSB(aberrations=..., scan_detector_rotation_deg=...)`` takes; both are None
+    ``DirectPtycho(aberrations=..., scan_detector_rotation_deg=...)`` takes; both are None
     without a fit.
     """
 

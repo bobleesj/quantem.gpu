@@ -548,6 +548,6 @@ class CudaSSBBackend:
         return MemoryError(
             f"Out of GPU VRAM during SSB {stage} "
             f"({num_bright_field_pixels} BF pixels, {free_gb:.1f} GB free).\n"
-            f"Try: SSB(..., bright_field_radius_px=<smaller>) to reduce BF pixel count, "
+            f"Try: DirectPtycho(..., bright_field_radius_px=<smaller>) to reduce BF pixel count, "
             f"or restart the kernel to free stale GPU memory."
         )

@@ -405,16 +405,16 @@ Using the `show_2d` setup above, supply your microscope calibration, find the
 aberrations once, and reuse them:
 
 ```python
-from quantem.gpu import SSB
+from quantem.gpu import DirectPtycho
 
-ssb = SSB.open(
+ptycho = DirectPtycho.open(
     "acquisition.qem",
     voltage_kV=300,  # kV
     semiangle_mrad=30,  # mrad
     scan_sampling_A=(0.264, 0.264),  # Å per scan pixel, (row, column)
 )
-aberrations = ssb.find_aberrations()  # on the native scan grid
-result = ssb.reconstruct(aberrations, upsampling_factor="auto")
+aberrations = ptycho.find_aberrations()  # on the native scan grid
+result = ptycho.run(aberrations, upsampling_factor="auto")
 result.show()  # large phase image at the factor the sampling allows (2x here)
 ```
 
@@ -448,9 +448,9 @@ Advanced users can inspect search trials with shared phase contrast, shown at
 `upsampling_factor="auto"`:
 
 ```python
-ssb.show_trials(best=5)     # five lowest-loss search trials
-ssb.show_trials(last=5)     # five most recent search trials
-ssb.show_trials(first=5)    # five earliest search trials
+ptycho.show_trials(best=5)     # five lowest-loss search trials
+ptycho.show_trials(last=5)     # five most recent search trials
+ptycho.show_trials(first=5)    # five earliest search trials
 ```
 
 The calibration above is an example; use your acquisition's values. A fitted
@@ -469,9 +469,9 @@ result.object_sampling_A  # Å per output pixel, (row, column)
 probe = result.probe()  # centered complex real-space model probe
 probe_fourier = result.probe(space="fourier")  # centered complex reciprocal-space probe
 result.probe_sampling_A  # Å per probe pixel, (row, column)
-result = ssb.reconstruct(aberrations, upsampling_factor=4)  # CUDA: same parameters, finer output
-adjusted = ssb.reconstruct(aberrations, aberrations={"C10_nm": 12.5})  # nm
-ssb.close()
+result = ptycho.run(aberrations, upsampling_factor=4)  # CUDA: same parameters, finer output
+adjusted = ptycho.run(aberrations, aberrations={"C10_nm": 12.5})  # nm
+ptycho.close()
 ```
 
 Searches use the native scan grid. Finer output sampling does not add detector

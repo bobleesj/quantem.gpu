@@ -13,6 +13,7 @@ memory.
 
 import math
 from collections import OrderedDict
+from functools import wraps
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +41,15 @@ _NAMES = tuple(
 )
 
 
+def _on_data_gpu(method):
+    """Allocate and launch beside the resident counts, restoring the caller's device afterward."""
+    @wraps(method)
+    def on_data_gpu(self, *args, **kwargs):
+        with self._data.device:
+            return method(self, *args, **kwargs)
+    return on_data_gpu
+
+
 class CudaKernelCompute(DetectorQueries):
     """Virtual-detector products from a resident CuPy array, reduced by CUDA kernels.
 
@@ -64,7 +74,8 @@ class CudaKernelCompute(DetectorQueries):
         self.n_frames = math.prod(self.scan_shape)
         self.device = "cuda"
         self._data = data
-        self._frames = data.reshape(-1, *self.detector_shape)
+        with data.device:
+            self._frames = data.reshape(-1, *self.detector_shape)
         # The kernels read raw C-ordered memory of the native count dtypes only.
         self._suffix = _KERNEL_SUFFIX.get(np.dtype(data.dtype)) if data.flags.c_contiguous else None
         self._mask_indices = OrderedDict()
@@ -73,9 +84,11 @@ class CudaKernelCompute(DetectorQueries):
         self._pattern_totals = None
         self._full_center_of_mass = None
 
+    @_on_data_gpu
     def frame(self, index: int) -> np.ndarray:
         return self._frames[int(index)].get()
 
+    @_on_data_gpu
     def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
         """Float32 virtual image: each frame's selected pixels summed exactly, rounded once."""
         mask = self._mask(det_mask)
@@ -85,6 +98,7 @@ class CudaKernelCompute(DetectorQueries):
             return self._torch_backend().masked_sum(mask.reshape(self.detector_shape))
         return self._selected_sums(mask, cp.float32).reshape(self.scan_shape).get()
 
+    @_on_data_gpu
     def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
         """Exact uint64 virtual image of the selected pixels."""
         _require_counts(self._frames, "Exact detector sums")
@@ -97,9 +111,11 @@ class CudaKernelCompute(DetectorQueries):
             image = self._selected_sums(mask, cp.uint64)
         return image.reshape(self.scan_shape).get()
 
+    @_on_data_gpu
     def mean_dp(self) -> np.ndarray:
         return mean_dp(self._data).get()
 
+    @_on_data_gpu
     def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
         """Exact ``sum`` and ``max`` of integer data (uint64, int64 when signed), float32 for float data; float32 ``mean``.
 
@@ -126,6 +142,7 @@ class CudaKernelCompute(DetectorQueries):
         pattern = total.astype(exact) if reduce == "sum" else (total / int(indices.size)).astype(cp.float32)
         return pattern.reshape(self.detector_shape).get()
 
+    @_on_data_gpu
     def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
         """Exact uint64 sum of selected frames without a gathered frame tensor."""
         _require_counts(self._frames, "Exact scan ROI sums")
@@ -136,6 +153,7 @@ class CudaKernelCompute(DetectorQueries):
             pattern = self._reduce_selected_frames("selected_frame_sum_u64", indices, cp.uint64)
         return pattern.reshape(self.detector_shape).get()
 
+    @_on_data_gpu
     def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
         """Exact maximum of selected frames without a gathered frame tensor."""
         _require_counts(self._frames, "Exact scan ROI maxima")
@@ -146,6 +164,7 @@ class CudaKernelCompute(DetectorQueries):
             pattern = self._reduce_selected_frames("selected_frame_max_u32", indices, cp.uint32)
         return pattern.reshape(self.detector_shape).get().astype(np.uint32, copy=False)
 
+    @_on_data_gpu
     def center_of_mass(self, det_mask: np.ndarray | None = None):
         """Absolute detector ``(com_col, com_row)``, flat float32, from exact integer moments.
 

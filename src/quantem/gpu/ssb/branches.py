@@ -231,7 +231,7 @@ class RotationBranches:
         session that reloaded the fit builds its G(q, k) first, as its first reconstruction would). On
         the 512 x 512 gold scan at 0.5 Å (4x auto, 2048 x 2048 each) both took 0.4 s on an M5 Max, 0.35 GiB above
         the fitted session and below the fit's own peak. The result is kept for the next call. ``"auto"`` is
-        ``ssb.reconstruct(upsampling_factor="auto")``'s factor; the column test and the phase tail stay on the native
+        ``ssb.run(upsampling_factor="auto")``'s factor; the column test and the phase tail stay on the native
         ``phase``.
         """
         cached = self._upsampled

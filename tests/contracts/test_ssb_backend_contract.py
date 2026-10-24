@@ -347,6 +347,7 @@ def test_public_ssb_exports_are_backend_neutral() -> None:
 
     assert set(ssb.__all__) == {
         "DEPTH_SPREAD_RANGE_NM",
+        "DirectPtycho",
         "RotationBranch",
         "RotationBranches",
         "RotationDefocusComparison",

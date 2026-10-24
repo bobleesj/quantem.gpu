@@ -158,9 +158,9 @@ def test_fit_detector_sampling_needs_the_semiangle_and_its_disk_is_not_set_by_ha
     with pytest.raises(ValueError, match="semiangle_mrad"):
         data.calibration.fit_detector_sampling()
     assert data.calibration.bright_field_center_px is None
-    with pytest.raises(AttributeError, match="bright_field_center_px= to SSB"):
+    with pytest.raises(AttributeError, match="bright_field_center_px= to DirectPtycho"):
         data.calibration.bright_field_center_px = (20, 20)
-    with pytest.raises(AttributeError, match="bright_field_radius_px= to SSB"):
+    with pytest.raises(AttributeError, match="bright_field_radius_px= to DirectPtycho"):
         data.calibration.bright_field_edge_radius_px = 10
     # a fitted provenance belongs to the detector step alone
     with pytest.raises(ValueError, match="calibration override"):

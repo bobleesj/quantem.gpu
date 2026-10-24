@@ -1,9 +1,9 @@
 """Detector-column sources that MPS SSB reads: NumPy arrays, MPS tensors, decoded frames and exact BF-column exports.
 
 MPS SSB streams one bright-field detector pixel over all scan positions at a time, so every source answers "these
-(row, col) columns as float32". An export from ShowPtycho or ``SSB.export_brightfield`` keeps exactly those columns as
+(row, col) columns as float32". An export from ShowPtycho or ``DirectPtycho.export_brightfield`` keeps exactly those columns as
 integers on disk with a declaration that names them; ``find_bf_columns`` looks for one beside the acquisition before
-``SSB.open`` falls back to decoding the detector.
+``DirectPtycho.open`` falls back to decoding the detector.
 """
 
 import json
@@ -25,6 +25,7 @@ from quantem.gpu.device.metal_runtime import (
 )
 from quantem.gpu.resident.mps.frames import ChunkedFrames
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
+from quantem.gpu.ssb.calibration import CALIBRATION_SCHEMA
 from quantem.gpu.ssb.mps.hardware import require_mlx
 
 # The layout of a ShowPtycho folder's snapshots/cal.json as quantem.widget writes it; another value is refused.
@@ -115,6 +116,14 @@ def load_bf_columns_mps(
     payload = json.loads(cal_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"ShowPtycho calibration must be a JSON object: {cal_path}")
+    if payload.get("schema") == CALIBRATION_SCHEMA and not any(
+        key in payload for key in ("bf_column_companion_path", "bf_column_encoding")
+    ):
+        # A fitted Python calibration carries optics, not detector-column data.
+        # Let open() read the acquisition instead of treating the fit as counts.
+        raise _BfColumnCompanionNotDeclared(
+            f"No exact BF-column companion is declared: {cal_path}"
+        )
     if payload.get("schema") != BROWSER_CALIBRATION_SCHEMA:
         # the keys of earlier exports name other quantities (bf_center, det_sampling_mrad_px); none is reinterpreted
         raise ValueError(
@@ -808,7 +817,7 @@ class ArrayFrames:
     def columns_float32_into(self, rows, cols, out: np.ndarray) -> np.ndarray:
         """Copy the requested columns as ``(BF, scan)`` float32 into ``out``, the column contract of every MPS source.
 
-        ``SSB.export_brightfield`` streams any session's columns through this call; uint8 and uint16 counts are exact
+        ``DirectPtycho.export_brightfield`` streams any session's columns through this call; uint8 and uint16 counts are exact
         in float32.
         """
         out[...] = self.columns(rows, cols)
