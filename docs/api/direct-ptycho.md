@@ -6,11 +6,8 @@ Regularized phase and complex reconstruction are experimental CUDA methods;
 MPS continues to support conventional SSB. This API does not imply that a
 linear weak-object model is accurate for every specimen.
 
-Use the paired development sources (`quantem.gpu` 0.0.1rc18.dev0 and
-`quantem.widget` 0.0.1rc44.dev0). These are source candidates, not a package-index
-release; use branch `oct-24-direct-iterative-api` in both repositories and
-install both checkouts, or install the matching supplied wheels. An older
-widget does not provide the method and regularization controls.
+This API is available in the development source candidate. See the
+[acquisition tutorial](../python-workflow.md) for the matching installation.
 
 ```python
 from quantem.gpu import DirectPtycho
