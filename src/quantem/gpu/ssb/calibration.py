@@ -65,7 +65,7 @@ def save_calibration(result, path):
         raise ValueError("This fit has no persistent acquisition calibration. Fit a file opened with DirectPtycho.open() "
                          "before saving a calibration for ShowPtycho.")
     if result.fit_scan_region is not None:
-        raise ValueError("This fit describes a subregion of its session. Open that region with DirectPtycho.open(scan_region=...), "
+        raise ValueError("This fit describes a subregion of its session. Select that region with session.select_region(...), "
                          "fit it, and save its calibration to preserve the region's acquisition identity.")
     method = result.reconstruction_method
     if method not in ("ssb", "phase", "complex"):
