@@ -14,6 +14,7 @@ import os
 import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from typing import Self
 
 import numpy as np
@@ -40,6 +41,7 @@ class FrameReader:
 
     def __init__(self, filepath: str) -> None:
         self.closed = False
+        self._timing_lock = Lock()
         started = time.perf_counter()
         source_started = time.perf_counter()
         self.source_infos = master_frame_sources(filepath)
@@ -100,9 +102,10 @@ class FrameReader:
             raise RuntimeError("Sparse frame read session is already closed")
         source_infos = self.source_infos
         # One-time initialization costs are reported with the first prepared batch.
-        session_timing = self._initial_timing
-        self._initial_timing = {name: 0.0 for name in session_timing}
-        source_seconds = session_timing.pop("source_index")
+        with self._timing_lock:
+            session_timing = self._initial_timing
+            self._initial_timing = {name: 0.0 for name in session_timing}
+            source_seconds = session_timing.pop("source_index")
         frame_shape = source_infos[0]["frame_shape"]
         dtype = source_infos[0]["dtype"]
         for info in source_infos[1:]:

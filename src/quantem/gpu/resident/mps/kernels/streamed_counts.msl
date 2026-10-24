@@ -123,6 +123,11 @@ kernel void streamed_counts_encode(
         sum += min(value, 32u);
         nonzero += value != 0;
     }
+    // The footer is initialized per append and read after this command completes.
+    // Reuse the exact maximum already needed for model selection; no extra traversal.
+    device atomic_uint *above_byte = (device atomic_uint *)(states + streams);
+    if (maximum > 255u && atomic_load_explicit(above_byte, memory_order_relaxed) == 0u)
+        atomic_fetch_or_explicit(above_byte, 1u, memory_order_relaxed);
     if (minimum == maximum) {
         models[stream] = maximum ? 255 : 253;
         sizes[stream] = maximum ? 2 : 0;

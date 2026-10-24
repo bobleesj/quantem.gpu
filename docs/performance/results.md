@@ -9,6 +9,105 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
+## HDF5 and QEM Disk–GPU loading, 2026-10-23
+
+Start with the [IO benchmark record](2026-10-23-io-loading-limits.md). It is the
+current entry point for this campaign; the older records below keep their
+original source revisions and timing boundaries.
+
+| Record | What it establishes |
+|---|---|
+| [Current three-backend loading check](2026-10-23-io-loading-limits.md#routine-cross-backend-loading-check) | Two full 512² inputs on CUDA, MPS and Swift/Metal, five cold/cached trials, matched references and persistent private history |
+| [Fresh 512² CUDA regression check](2026-10-23-io-loading-limits.md#routine-512-cuda-loading-check) | Five cold and five cached loads per format/input, frozen encoded/product parity, matched replay within the 20% review threshold |
+| [Five-acquisition backend matrix](2026-10-23-io-loading-limits.md#complete-workflows) | CUDA, Python MPS and Swift/Metal HDF5 loads, QEM loads and verified conversions, with cache definitions |
+| [512² CUDA loading status](2026-10-23-io-loading-limits.md#validated-512-cuda-loading) | Two full 512 × 512 × 192 × 192 inputs, exact original-count comparisons and measured load times |
+| [Routine conversion](2026-10-23-io-loading-limits.md#routine-conversion-with-optional-checks-disabled) | New Python defaults with source hashing and exhaustive verification off; saving and fsync included |
+| [CUDA saving profile](2026-10-23-io-loading-limits.md#focused-cuda-save-profile-for-handoff) | Write/flush attribution, limitations and archived agent handoff; further optimization deferred |
+| [Compression accounting](2026-10-23-qem-compression.md) and [index layout](2026-10-23-qem-layout-cuda-profile.md) | Encoded payload, indexes, metadata and size relative to bitshuffle/LZ4 HDF5 |
+| [Verification](2026-10-23-qem-verification.md), [CUDA](2026-10-23-io-cuda.md), [MPS](2026-10-23-io-mps.md), [Swift/Metal](2026-10-23-io-swift-metal.md) | Earlier full scale, source identities, exact-count coverage and backend-specific limitations |
+
+**Status:** the tested 512² × 192² ARINA HDF5/QEM CUDA loading paths are
+validated. Large-QEM CUDA write/flush time remains variable and unresolved.
+Routine Python conversion defaults to `verify=False, source_hashes=False`;
+QEM payload checksums and file-data fsync remain enabled. This development
+record is not a claim about a newly published package or app build.
+
+Raw evidence, source snapshots and the handoff are retained under private
+experiment `20261023-io-limits`; the earlier backend scale uses
+`20261023-qem-backend-verification`. Reusable runners are described in the
+[test guide](../developer/testing.md#performance-entry-points). The
+[change ledger](changes.md#2026-10-23-optional-conversion-checks) records the
+default and interpretation changes.
+
+The [qualified loading-limits comparison](2026-10-23-io-loading-limits.md)
+measures five complete 192 × 192 detector acquisitions on CUDA, Python MPS and
+Swift/Metal from one frozen source tree. It separates first/repeated HDF5
+readiness, full verified conversion, and measured empty-cache/repeated QEM loads.
+Every backend checked 215,016,800,256 original counts exactly. Largest cold QEM
+medians are 7.790 s on CUDA, 2.929 s on MPS and 2.907 s on Swift/Metal; storage,
+cache and verification boundaries prevent interpreting this as a GPU ranking.
+Broader format-gate failures and blocked cells remain explicit. Local default
+HDF5/QEM smoke tests passed. The first CUDA save profile identifies file writes
+and final fsync as the dominant cost. A later private direct-write candidate
+passed exact checks but did not establish a repeatable real QEM save gain; the
+buffered default remains. Raw-write controls do not replace the canonical table.
+Further storage investigation is deferred; no maintenance or writer fix is
+claimed by the profiling handoff.
+
+## CUDA QEM loader correction, 2026-10-23
+
+The [cache-aware loader comparison](2026-10-23-cuda-qem-loader-fix.md) measures
+10.61 to 6.59 s with the file cache empty, and 10.44 to 4.78 s with half cached,
+for the complete 38.333 GB QEM. Ordinary repeated loading is 5.10 s on the
+largest of five inputs. All 215,016,800,256 original values compare exactly;
+targeted CUDA tests pass. The broader FP8/data acceptance gaps remain explicit.
+Historical HDF5, MPS and Swift results below retain their original revisions.
+
+## Five default acquisitions: Disk–GPU loading, 2026-10-23
+
+The [original five-acquisition comparison](2026-10-23-default-five-io.md) covers
+192 × 192 detectors on CUDA, MPS and Swift/Metal. It selects completed
+measurements, with first/repeated HDF5 loads, full verified conversion and QEM
+loads kept separate. HDF5 uses bitshuffle + LZ4; QEM uses ANS. MPS and Swift/Metal
+ran on a MacBook Pro with Apple M5 Max and 128 GB unified memory. The selected
+five inputs use 30.0% less storage as CUDA-produced QEM.
+
+The [original six-acquisition table](2026-10-23-default-six-io.md),
+[compression analysis](2026-10-23-qem-compression.md), and
+[index-size/CUDA profile](2026-10-23-qem-layout-cuda-profile.md) remain historical
+evidence, including the excluded 96 × 96 input. The profile separates observed
+storage-read delays from a 28.76 GB/s pinned-transfer control and documents
+background device and disk activity. Later variable loads do not replace the
+original medians.
+
+The [2048² CUDA cache recheck](2026-10-23-cuda-qem-cache-recheck.md) confirms
+10.20–10.45 s authenticated loads with 37.3–38.3 GB fetched from storage, while
+a separate full-byte-count transfer control takes 1.33 s. File cache residency
+and brief background GPU activity are recorded explicitly.
+
+## QEM backend verification, 2026-10-23
+
+The [QEM conversion record](2026-10-23-qem-verification.md) separates physical
+CUDA, Python MPS, and native Swift/Metal measurements, with exhaustive count
+verification and explicit unsupported cases. The eleven-acquisition scale has
+separate [CUDA](2026-10-23-io-cuda.md), [MPS](2026-10-23-io-mps.md), and
+[Swift/Metal](2026-10-23-io-swift-metal.md) tables for loading, encoding, storage
+size, saving and QEM reopening.
+
+## Acquisition-worker startup, 2026-10-23
+
+The [loader startup record](2026-10-23-loader-startup.md) separates reusable
+CUDA preparation, full-native H5 loading, staged fitting and real browser paint.
+It records exact saved-product and full-volume checks; the end-to-end latency
+targets remain unmet. This is not a release qualification.
+
+## MPS HDF5 loading, 2026-10-23
+
+The [bounded loading record](2026-10-23-mps-hdf5-pipeline.md) measures overlapping
+decode and reusable staging at full resolution. The 2048² case improves from a
+34.80-second repeated control to 16.26–16.54 seconds, with identical complete
+encoded residency. Broader format-gate failures remain explicitly recorded.
+
 ## SSB research optimization, 2026-10-22
 
 The [staging-memory record](2026-10-22-ssb-staging-memory.md) measures lazy

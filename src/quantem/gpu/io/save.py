@@ -38,8 +38,8 @@ class SaveResult:
     """Completion handle returned by :func:`quantem.gpu.io.save`; a notebook shows it as a small table.
 
     A finished ``.qem`` save also records what it wrote: ``elapsed_s`` is
-    the wall time of the save alone (writing and closing the file, not loading
-    or flushing the disk), ``logical_bytes`` the size of the saved values as an
+    the wall time of the save alone (writing, flushing and publishing the file,
+    excluding acquisition loading), ``logical_bytes`` the size of the saved values as an
     uncompressed array (shape times dtype, not the source file) and
     ``file_bytes`` the size of the ``.qem`` file with its metadata. They stay
     None for HDF5 saves.

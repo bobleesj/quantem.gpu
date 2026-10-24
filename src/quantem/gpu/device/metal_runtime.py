@@ -34,7 +34,7 @@ def metal_device():
 
 @cache
 def metal_queue():
-    """Return the one command queue; every caller waits for its commands, so they never interleave."""
+    """Return the shared command queue; callers wait before reusing their buffers."""
     return metal_device().newCommandQueue()
 
 

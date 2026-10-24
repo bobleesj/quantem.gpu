@@ -15,10 +15,17 @@ Keep the ARINA master beside all its detector files, then run:
 quantem-gpu convert scan_master.h5 --out ./qem
 ```
 
-This writes `qem/scan.qem`, verifies it against the source, and keeps the
+This writes `qem/scan.qem` with QEM checksums and disk synchronization, and keeps the
 originals. Existing destinations are never overwritten. A folder can replace
 `scan_master.h5` to convert a collection. Copies larger than the original HDF5
 acquisition are reported and not written.
+
+Full source comparison and source-file SHA-256 hashing are **off by default**.
+Request either check independently when needed, or both for validation:
+
+```bash
+quantem-gpu convert scan_master.h5 --out ./qem --verify --source-hashes
+```
 
 No session file is required. Supply any missing calibration directly:
 
@@ -55,7 +62,7 @@ the replacement is zero. This is not whole-image smoothing or automatic outlier
 detection. `zero` replaces flagged pixels with zero; `none` requests no correction.
 
 The output reports the number and `(row, column)` coordinates of repaired pixels,
-their original flags, and verification of the replacements. QEM records this
+their original flags, and verification of the replacements when requested. QEM records this
 processing history. Its encoding is lossless **after the declared correction**;
 the corrected values are not unchanged raw measurements. Reopening does not
 apply the correction again. Reconstruction settings such as defocus guesses,
@@ -79,7 +86,10 @@ result = convert(
 result.verified
 ```
 
-For a successful conversion, the last expression returns `True`. Inspect
+The last expression returns `None` when full comparison was not requested.
+Pass `verify=True` to compare every saved value, and `source_hashes=True` to
+record SHA-256 fingerprints of every original file. A successful requested
+comparison returns `True`. Both options default to `False`. Inspect
 `result.skipped` or `result.larger` when no file was written. The CLI calls this
 same function; no dataset-specific conversion script is needed. Use `--dry`
 for a GPU payload-size estimate without writing, and `--backend cuda` or

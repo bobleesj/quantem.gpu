@@ -92,8 +92,10 @@ def test_uint32_counts_that_fit_load_as_exact_uint16(tmp_path, capsys):
     assert stored.dtype == np.uint32
     np.testing.assert_array_equal(values.astype(np.uint32), stored.reshape(64, 80, 4, 8))
     lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Stored as")]
-    assert lines == ['Stored as uint16: every uint32 value fits in 16 bits, so every count reads back unchanged '
-                     '(dtype="native" reads uint32).']
+    assert lines == [
+        ('Stored as uint16: every uint32 value fits in 16 bits, so every count reads back unchanged '
+         '(dtype="native" reads uint32).')
+    ]
 
 
 @pytest.mark.parametrize("source", [np.uint16, np.uint32])
@@ -283,7 +285,7 @@ def test_damaged_lz4_bytes_raise_and_the_gpu_stays_usable(tmp_path):
     ]
     result = subprocess.run(
         [sys.executable, "-c", DAMAGED_LZ4_SCRIPT, quantem.gpu.__file__, *map(str, masters)],
-        capture_output=True, text=True, timeout=600,
+        capture_output=True, text=True, timeout=600, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.splitlines() == 2 * [
@@ -309,6 +311,96 @@ def test_failed_decode_command_raises_instead_of_returning_frames(tmp_path, monk
 
     master = _write_bslz4_master(tmp_path, "failed-command", np.arange(4 * 64 * 64, dtype=np.uint16).reshape(4, 64, 64))
     monkeypatch.setattr(decode.MPSDecompressor, "_submit_gpu", lambda self, *arguments: FailedCommand())
-    with FrameReader(str(master)) as reader:
-        with pytest.raises(RuntimeError, match="the GPU stopped responding"):
-            decode.load_prepared_frames(reader.prepare(np.arange(4)))
+    with (
+        FrameReader(str(master)) as reader,
+        pytest.raises(RuntimeError, match="the GPU stopped responding"),
+    ):
+        decode.load_prepared_frames(reader.prepare(np.arange(4)))
+
+
+def test_prefetched_h5_batches_preserve_late_high_counts(tmp_path):
+    """A high count after staging reuse prevents byte narrowing."""
+    pytest.importorskip("Metal")
+    counts = np.random.default_rng(67).integers(0, 40, (16448, 4, 8), dtype=np.uint16)
+    counts[16384, 2, 3] = 65535
+    master = _write_bslz4_master(tmp_path, "late-high-count", counts)
+    with io.load(master, backend="mps", scan_shape=(257, 64), verbose=False) as loaded:
+        assert loaded.dtype == np.dtype("uint16")
+        np.testing.assert_array_equal(_read_back(loaded).reshape(counts.shape), counts)
+
+
+def test_failed_ingest_releases_prefetched_frames(tmp_path, monkeypatch):
+    """Encoding failure drains and frees the next decoded batch before teardown."""
+    pytest.importorskip("Metal")
+    from threading import Event
+
+    from quantem.gpu.io.hdf5.mps.decode import MPSDecompressor
+
+    counts = np.zeros((8256, 4, 8), np.uint16)
+    master = _write_bslz4_master(tmp_path, "failed-ingest", counts)
+    decoded = []
+    owners = []
+    prefetched = Event()
+    original = MPSDecompressor.load_prepared_frames
+
+    def capture(self, prepared, **kwargs):
+        raw = original(self, prepared, **kwargs)
+        decoded.append(raw)
+        if len(decoded) == 2:
+            prefetched.set()
+        return raw
+
+    def fail(self, raw):
+        owners.append(self)
+        assert prefetched.wait(timeout=30), "Next decode did not overlap ingestion"
+        raise RuntimeError("Injected encoding failure")
+
+    monkeypatch.setattr(MPSDecompressor, "load_prepared_frames", capture)
+    monkeypatch.setattr(MPSStreamedCounts, "append", fail)
+    with pytest.raises(RuntimeError, match="Injected encoding failure"):
+        io.load(master, backend="mps", scan_shape=(129, 64), verbose=False)
+    assert len(decoded) == 2
+    assert all(raw._mtl is None for raw in decoded)
+    assert owners[0].is_released
+    assert owners[0]._encoding_workspace_buffer is None
+
+
+def test_failed_decode_keeps_supplied_staging_owned_by_caller(tmp_path, monkeypatch):
+    """A failed command must not free the caller's reusable output buffer."""
+    pytest.importorskip("Metal")
+    from quantem.gpu.device.metal_runtime import allocate_shared, release_buffer
+    from quantem.gpu.formats.hdf5.reads import FrameReader
+    from quantem.gpu.io.hdf5.mps import decode
+
+    class FailedCommand:
+        def waitUntilCompleted(self):
+            pass
+
+        def error(self):
+            return "injected failure"
+
+    master = _write_bslz4_master(tmp_path, "borrowed-output", np.zeros((4, 64, 64), np.uint16))
+    decoder = decode.MPSDecompressor(
+        max_compressed_bytes=65536, max_frames=4,
+        frame_bytes=8192, n_blocks_per_frame=1,
+    )
+    output = allocate_shared(4 * 8192, "test decode staging")
+    released = []
+    original_release = decode.release_buffer
+
+    def record_release(buffer):
+        released.append(buffer)
+        original_release(buffer)
+
+    monkeypatch.setattr(decode, "release_buffer", record_release)
+    monkeypatch.setattr(decoder, "_submit_gpu", lambda *args: FailedCommand())
+    try:
+        with (
+            FrameReader(str(master)) as reader,
+            pytest.raises(RuntimeError, match="injected failure"),
+        ):
+            decoder.load_prepared_frames(reader.prepare(np.arange(4)), out_buffer=output)
+        assert not any(buffer is output for buffer in released)
+    finally:
+        release_buffer(output)
+        decoder.free()

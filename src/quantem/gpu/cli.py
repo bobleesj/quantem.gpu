@@ -34,13 +34,13 @@ def _parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--detector-sampling-mrad", type=float, nargs="+")
     convert_command = commands.add_parser(
         "convert",
-        help="convert Arina HDF5 acquisitions into verified .qem copies",
+        help="convert Arina HDF5 acquisitions into .qem copies",
         description=(
             "Write a .qem copy of one acquisition, or of every *_master.h5 below a "
             "folder. Original values are encoded losslessly by default; explicitly "
             "requested detector-mask corrections are recorded. "
-            "Calibration is retained. Each copy is verified against its source "
-            "and any declared correction. "
+            "Calibration, QEM checksums and disk synchronization are retained. "
+            "Full source comparison and source-file hashing are opt-in. "
             "Source files are never modified or removed."
         ),
     )
@@ -48,7 +48,10 @@ def _parser() -> argparse.ArgumentParser:
     convert_command.add_argument("--out", type=Path, help="write copies here, mirroring the folder layout (default: beside each master)")
     convert_command.add_argument("--dry", action="store_true", help="encode on GPU and estimate payload size without writing a copy")
     convert_command.add_argument("--backend", choices=("auto", "cuda", "mps"), default="auto")
-    convert_command.add_argument("--no-verify", action="store_true", help="skip comparing each copy with its source files")
+    convert_command.add_argument("--verify", action=argparse.BooleanOptionalAction, default=False,
+                                 help="compare every saved value with its source (default: off)")
+    convert_command.add_argument("--source-hashes", action="store_true",
+                                 help="read all original files to record SHA-256 fingerprints (default: off)")
     convert_command.add_argument("--voltage-kv", type=float, help="accelerating voltage in kV; overrides session/source metadata")
     convert_command.add_argument("--semiangle-mrad", type=float, help="convergence semiangle in mrad; overrides session/source metadata")
     convert_command.add_argument("--scan-sampling-a", type=float, nargs="+", metavar="VALUE",
@@ -153,7 +156,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             destination = convert.destination_for(master, args.source, args.out)
             try:
                 result = convert.convert(
-                    master, destination, write=not args.dry, verify=not args.no_verify,
+                    master, destination, write=not args.dry, verify=args.verify,
+                    source_hashes=args.source_hashes,
                     backend=args.backend,
                     voltage_kV=args.voltage_kv, semiangle_mrad=args.semiangle_mrad,
                     scan_sampling_A=args.scan_sampling_a, detector_sampling_mrad=args.detector_sampling_mrad,
@@ -202,6 +206,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif result.verified is False:
                 failed += 1
                 line += f"  VERIFICATION FAILED, no copy published: {result.verification}"
+            elif not args.dry:
+                line += "  full source comparison not requested"
             for note in result.session_notes:
                 line += f"\n    note: {note}"
             print(line)

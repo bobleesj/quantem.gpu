@@ -1,20 +1,21 @@
 """Convert an ARINA acquisition without changing counts or microscope metadata."""
 
+import hashlib
 import os
 
 import h5py
 import numpy as np
 import pytest
 
-from quantem.gpu.io import convert
 from quantem.gpu.formats.qem.snapshot import read_header
+from quantem.gpu.io import convert
 
 
-def _master(tmp_path, dtype):
+def _master(tmp_path, dtype, frames=1024):
     import hdf5plugin
 
-    values = np.random.default_rng(71).integers(0, 20, (1024, 16, 16), dtype=dtype)
-    values[:, 2, 3] = np.arange(1024)  # flagged measurements must not be replaced
+    values = np.random.default_rng(71).integers(0, 20, (frames, 16, 16), dtype=dtype)
+    values[:, 2, 3] = np.arange(frames)  # flagged measurements must not be replaced
     mask = np.zeros((16, 16), np.uint8)
     mask[2, 3] = 1
     chunk = tmp_path / "detector.h5"
@@ -28,7 +29,7 @@ def _master(tmp_path, dtype):
         handle["entry/data/data_000001"] = h5py.ExternalLink(chunk.name, "/entry/data/data")
         root = "entry/instrument/detector/"
         handle[root + "description"] = b"Dectris ARINA Si"
-        handle[root + "detectorSpecific/ntrigger"] = np.uint32(1024)
+        handle[root + "detectorSpecific/ntrigger"] = np.uint32(frames)
         handle[root + "detectorSpecific/pixel_mask"] = mask
         handle[root + "detectorSpecific/photon_energy"] = 200000.0
         handle[root + "count_time"] = 49.5e-6
@@ -49,22 +50,54 @@ def backend():
     return selected
 
 
+def test_default_conversion_skips_checks_and_reopens_exactly(tmp_path, backend, monkeypatch):
+    from quantem.gpu import io
+
+    master = _master(tmp_path, np.uint16)
+    destination = tmp_path / "default.qem"
+    original_master = master.read_bytes()
+    with h5py.File(tmp_path / "detector.h5", "r") as handle:
+        expected = handle["entry/data/data"][()]
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Default conversion requested an opt-in source check.")
+
+    monkeypatch.setattr(convert, "_source_files", forbidden)
+    monkeypatch.setattr(convert, "verify_against_source", forbidden)
+    result = convert.convert(master, destination, backend=backend)
+    assert result.verified is None and not result.failed and not result.skipped and not result.larger
+    header, _ = read_header(destination)
+    assert header["metadata"]["source_files"] == [
+        {"name": path.name, "bytes": path.stat().st_size}
+        for path in (master, tmp_path / "detector.h5")
+    ]
+    with io.load(destination, backend=backend, apply_mask=False, verbose=False) as loaded:
+        np.testing.assert_array_equal(loaded.read().cpu().numpy().reshape(expected.shape), expected)
+    restored = convert.restore_master(destination, tmp_path / "restored.h5")
+    assert restored.read_bytes() == original_master
+
+
 def test_collection_preserves_flagged_counts_and_master(tmp_path, backend):
     master = _master(tmp_path, np.uint16)
     original_master = master.read_bytes()
     destination = tmp_path / "scan.qem"
-    result = convert.convert(master, destination, backend=backend)
+    result = convert.convert(master, destination, backend=backend, verify=True, source_hashes=True)
     assert not result.skipped and not result.larger and result.verified is True
     assert result.verification["compared_values"] == 1024 * 16 * 16
     assert result.verification["differing_values"] == 0
     assert result.verification["flagged_pixels"] == 1
     header, _ = read_header(destination)
+    assert header["metadata"]["source_files"] == [
+        {"name": path.name, "bytes": path.stat().st_size,
+         "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        for path in (master, tmp_path / "detector.h5")
+    ]
     quantities = header["scientific_metadata"]["electron_microscope"]
     assert quantities["electron_source/accelerating_voltage"]["value"] == 200
     assert quantities["scan_controller/regular_scan/dwell_time"]["value"] == pytest.approx(49.5)
     restored = convert.restore_master(destination, tmp_path / "restored.h5")
     assert restored.read_bytes() == original_master == master.read_bytes()
-    assert convert.convert(master, destination, backend=backend).skipped
+    assert convert.convert(master, destination, backend=backend, verify=True, source_hashes=True).skipped
     assert not list(tmp_path.glob(".qem-convert-*"))
 
 
@@ -81,13 +114,13 @@ def test_collection_warns_of_master_calibration_it_does_not_read(tmp_path, backe
     master = _master(tmp_path, np.uint16)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert convert.convert(master, tmp_path / "current.qem", backend=backend).verified is True
+        assert convert.convert(master, tmp_path / "current.qem", backend=backend, verify=True, source_hashes=True).verified is True
     with h5py.File(master, "r+") as handle:
         handle.attrs["scan_sampling_A"] = [0.4, 0.6]
         handle.attrs["detector_sampling"] = [0.2, 0.3]
         handle.attrs["detector_sampling_unit"] = "mrad"
     with pytest.warns(UserWarning, match="Calibration not read: scan_master.h5 holds detector_sampling, detector_sampling_unit") as caught:
-        result = convert.convert(master, tmp_path / "earlier.qem", backend=backend)
+        result = convert.convert(master, tmp_path / "earlier.qem", backend=backend, verify=True, source_hashes=True)
     assert len(caught) == 1 and result.verified is True
     with io.load(tmp_path / "earlier.qem", backend=backend, verbose=False) as copy:
         assert copy.sampling == (0.4, 0.6, None, None)
@@ -98,7 +131,7 @@ def test_uint32_flagged_markers_and_wide_counts_survive_conversion(tmp_path, bac
     from quantem.gpu import io
 
     master = _master(tmp_path, np.uint32)
-    result = convert.convert(master, tmp_path / "fits.qem", backend=backend)
+    result = convert.convert(master, tmp_path / "fits.qem", backend=backend, verify=True, source_hashes=True)
     assert result.verified is True
     assert result.verification["flagged_markers_stored_as_zero"] == 0
     header, _ = read_header(tmp_path / "fits.qem")
@@ -111,7 +144,7 @@ def test_uint32_flagged_markers_and_wide_counts_survive_conversion(tmp_path, bac
         source = handle["entry/data/data"][()]
     with h5py.File(master, "r") as handle:
         mask = handle["entry/instrument/detector/detectorSpecific/pixel_mask"][()]
-    result = convert.convert(master, tmp_path / "markers.qem", backend=backend)
+    result = convert.convert(master, tmp_path / "markers.qem", backend=backend, verify=True, source_hashes=True)
     assert result.verified is True
     assert result.verification["flagged_markers_stored_as_zero"] == 0
     header, _ = read_header(tmp_path / "markers.qem")
@@ -129,7 +162,7 @@ def test_uint32_flagged_markers_and_wide_counts_survive_conversion(tmp_path, bac
     # A wide valid count must remain native uint32, just like a flagged marker.
     with h5py.File(tmp_path / "detector.h5", "r+") as handle:
         handle["entry/data/data"][0, 1, 1] = 70000
-    wider = convert.convert(master, tmp_path / "wide.qem", backend=backend)
+    wider = convert.convert(master, tmp_path / "wide.qem", backend=backend, verify=True, source_hashes=True)
     assert wider.verified is True
     with io.load(tmp_path / "wide.qem", backend=backend, verbose=False) as loaded:
         assert loaded.dtype == np.uint32
@@ -146,7 +179,7 @@ def test_conversion_stores_the_narrowest_exact_type(tmp_path, backend, largest, 
     with h5py.File(tmp_path / "detector.h5", "r+") as handle:
         handle["entry/data/data"][:, 2, 3] = np.arange(1024) % (largest + 1)
         source = handle["entry/data/data"][()]
-    result = convert.convert(master, tmp_path / "archive.qem", backend=backend)
+    result = convert.convert(master, tmp_path / "archive.qem", backend=backend, verify=True, source_hashes=True)
     assert result.verified is True and result.verification["differing_values"] == 0
     assert result.verification["compared_values"] == source.size
     header, _ = read_header(tmp_path / "archive.qem")
@@ -179,7 +212,7 @@ def test_failed_verification_does_not_publish_a_copy(tmp_path, backend, monkeypa
     master = _master(tmp_path, np.uint16)
     monkeypatch.setattr(convert, "verify_against_source",
                         lambda *args, **kwargs: {"identical": False})
-    result = convert.convert(master, tmp_path / "rejected.qem", backend=backend)
+    result = convert.convert(master, tmp_path / "rejected.qem", backend=backend, verify=True, source_hashes=True)
     assert result.failed and result.verified is False
     assert not (tmp_path / "rejected.qem").exists()
     assert not list(tmp_path.glob(".qem-convert-*"))
@@ -193,7 +226,7 @@ def test_convert_command_writes_a_qem_copy_with_the_source_counts(tmp_path, back
     with h5py.File(tmp_path / "detector.h5", "r") as handle:
         expected = handle["entry/data/data"][()]
     out = tmp_path / "copies"
-    assert main(["convert", str(master), "--out", str(out), "--backend", backend]) == 0
+    assert main(["convert", str(master), "--out", str(out), "--backend", backend, "--verify", "--source-hashes"]) == 0
     printed = capsys.readouterr().out
     assert f"verified: {1024 * 16 * 16:,} values identical" in printed
     assert "1 flagged pixels also verified" in printed
@@ -220,7 +253,7 @@ def test_command_calibrates_and_repairs_one_acquisition(tmp_path, backend, capsy
         )
     out = tmp_path / "copies"
     assert main([
-        "convert", str(master), "--out", str(out), "--backend", backend,
+        "convert", str(master), "--out", str(out), "--backend", backend, "--verify", "--source-hashes",
         "--voltage-kv", "300", "--semiangle-mrad", "30",
         "--scan-sampling-a", "0.5", "--detector-sampling-mrad", "0.8", "0.9",
         "--hot-pixel-correction", "median",
@@ -253,7 +286,7 @@ def test_conversion_retains_session_detector_sampling_without_cli_values(tmp_pat
         "  detector_sampling_mrad: 0.8\ncalibrations:\n  default:\n    scan_sampling_A: [0.5, 0.6]\n"
     )
     destination = tmp_path / "calibrated.qem"
-    result = convert.convert(master, destination, backend=backend)
+    result = convert.convert(master, destination, backend=backend, verify=True, source_hashes=True)
     assert result.verified is True
     assert all("dataset.yml sha256:" in value["evidence"] for value in result.session_calibration.values())
     with io.load(destination, backend=backend, verbose=False) as data:
@@ -292,7 +325,7 @@ def test_requested_mask_correction_keeps_wide_valid_counts(tmp_path, backend, me
             replacement = lower + (total & lower & np.uint64(1))  # a .5 median rounds half to even
         expected[:, row, col] = replacement
     destination = tmp_path / "corrected.qem"
-    result = convert.convert(master, destination, backend=backend,
+    result = convert.convert(master, destination, backend=backend, verify=True, source_hashes=True,
                              hot_pixel_correction=method)
     assert result.verified is True and not result.failed
     assert result.verification["corrected_values_compared"] == 1024 * int(np.count_nonzero(mask))
@@ -301,3 +334,105 @@ def test_requested_mask_correction_keeps_wide_valid_counts(tmp_path, backend, me
     np.testing.assert_array_equal(decoded, expected)
     with h5py.File(tmp_path / "detector.h5", "r") as handle:
         np.testing.assert_array_equal(handle["entry/data/data"][()], values)
+
+
+@pytest.mark.parametrize("source_dtype, high_bit", [(np.uint16, 256), (np.uint32, 65536)])
+def test_verification_finds_high_bytes_and_late_batch_changes(tmp_path, backend, source_dtype, high_bit, monkeypatch):
+    """A saved copy must reject changed source counts even when their low byte matches."""
+    master = _master(tmp_path, source_dtype, frames=18496)
+    with h5py.File(tmp_path / "detector.h5", "r+") as handle:
+        handle["entry/data/data"][:, 2, 3] = 7
+        if source_dtype == np.uint32:
+            handle["entry/data/data"][0, 0, 0] = 1023
+    destination = tmp_path / "full.qem"
+    assert convert.convert(master, destination, backend=backend, verify=True, source_hashes=True).verified is True
+    with h5py.File(tmp_path / "detector.h5", "r+") as handle:
+        values = handle["entry/data/data"]
+        # Include flagged, batch-boundary, and final-frame values. Changing
+        # multiple bytes of one value must still count as only one mismatch.
+        for frame in (0, 8191, 8192, 16384, 18495):
+            values[frame, 2, 3] = high_bit + 7
+        values[18495, 5, 6] = high_bit + 255
+    verified = convert.verify_against_source(destination, master, backend=backend)
+    assert verified["identical"] is False
+    assert verified["differing_values"] == 6
+    assert verified["compared_values"] == 18496 * 16 * 16
+    if backend == "mps":
+        from quantem.gpu.io.hdf5.mps import verify
+    else:
+        from quantem.gpu.io.hdf5.cuda import verify
+    monkeypatch.setattr(verify, "supports_counts", lambda *args: False)
+    assert convert.verify_against_source(destination, master, backend=backend) == verified
+
+
+def test_verification_releases_prefetched_source_after_comparison_failure(tmp_path, backend, monkeypatch):
+    """A failed comparison drains the worker before freeing its staging buffers."""
+    if backend != "mps":
+        pytest.skip("Metal pipeline lifetime check")
+    from quantem.gpu.device.metal_runtime import metal_device
+    from quantem.gpu.io.hdf5.mps import verify
+
+    master = _master(tmp_path, np.uint16, frames=18496)
+    destination = tmp_path / "full.qem"
+    assert convert.convert(master, destination, backend=backend, verify=True, source_hashes=True).verified is True
+    before = int(metal_device().currentAllocatedSize())
+    complete = verify.complete_command
+
+    def fail(*args):
+        complete(*args)
+        raise RuntimeError("injected comparison failure")
+    monkeypatch.setattr(verify, "complete_command", fail)
+    with pytest.raises(RuntimeError, match="injected comparison failure"):
+        convert.verify_against_source(destination, master, backend=backend)
+    assert int(metal_device().currentAllocatedSize()) == before
+
+
+def test_verification_releases_buffers_after_prefetch_failure(tmp_path, backend, monkeypatch):
+    """A source-decode failure in a later batch must fail verification and release staging."""
+    if backend != "mps":
+        pytest.skip("Metal pipeline lifetime check")
+    from quantem.gpu.device.metal_runtime import metal_device
+    from quantem.gpu.io.hdf5.mps.verify import MPSDecompressor
+
+    master = _master(tmp_path, np.uint16, frames=18496)
+    destination = tmp_path / "full.qem"
+    assert convert.convert(master, destination, backend=backend, verify=True, source_hashes=True).verified is True
+    before = int(metal_device().currentAllocatedSize())
+    decode = MPSDecompressor.load_prepared_frames
+    calls = 0
+
+    def fail_later(self, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("injected source decode failure")
+        return decode(self, *args, **kwargs)
+
+    monkeypatch.setattr(MPSDecompressor, "load_prepared_frames", fail_later)
+    with pytest.raises(ValueError, match="injected source decode failure"):
+        convert.verify_against_source(destination, master, backend=backend)
+    assert int(metal_device().currentAllocatedSize()) == before
+
+
+def test_cuda_verification_drains_prefetch_after_comparison_failure(tmp_path, backend, monkeypatch):
+    """The source read queued ahead of a failing CUDA comparison is released."""
+    if backend != "cuda":
+        pytest.skip("CUDA pipeline lifetime check")
+    import cupy as cp
+
+    from quantem.gpu.io.hdf5.cuda import verify
+
+    master = _master(tmp_path, np.uint16, frames=18496)
+    destination = tmp_path / "full.qem"
+    assert convert.convert(master, destination, backend=backend, verify=True, source_hashes=True).verified is True
+    before = cp.get_default_memory_pool().used_bytes()
+    count = verify.cp.count_nonzero
+
+    def fail(*args, **kwargs):
+        count(*args, **kwargs).get()
+        raise RuntimeError("injected CUDA comparison failure")
+
+    monkeypatch.setattr(verify.cp, "count_nonzero", fail)
+    with pytest.raises(RuntimeError, match="injected CUDA comparison failure"):
+        convert.verify_against_source(destination, master, backend=backend)
+    assert cp.get_default_memory_pool().used_bytes() == before

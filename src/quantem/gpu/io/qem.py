@@ -14,7 +14,8 @@ import hashlib
 import math
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import ExitStack
 from pathlib import Path
 
 import numpy as np
@@ -32,8 +33,8 @@ from quantem.gpu.formats.qem import metadata as qem_metadata
 from quantem.gpu.formats.qem.reference import load_array
 from quantem.gpu.formats.qem.snapshot import (
     ARRAY_DTYPES,
-    BLOCK_BYTES,
     BIT_CODEC,
+    BLOCK_BYTES,
     FLOAT_CODEC,
     INTEGER_CODEC,
     SCALED_CODEC,
@@ -44,9 +45,9 @@ from quantem.gpu.formats.qem.snapshot import (
 )
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
 from quantem.gpu.io.hdf5.cpu import record_dense_representation
+from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts
 from quantem.gpu.resident.float_ans import FloatANSResident
-from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts, _Chunk
 from quantem.gpu.resident.mps.precision import PrecisionSource, _ANSPart
 
@@ -223,6 +224,59 @@ def _staged(spans):
             number += 1
 
 
+def _cached_block_order(path: str | Path, start: int, size: int) -> list[int]:
+    """Read cached blocks before an uncached prefix can evict them on Linux.
+
+    This is a best-effort page-cache snapshot, not a read or a reservation of
+    the file contents. Checksums and destination offsets are independent of
+    the resulting order. Other platforms retain sequential scheduling.
+    """
+    import ctypes
+    import sys
+
+    order = list(range(math.ceil(size / BLOCK_BYTES)))
+    if sys.platform != "linux" or len(order) < 2:
+        return order
+    try:
+        library = ctypes.CDLL(None, use_errno=True)
+        library.mmap.restype = ctypes.c_void_p
+        library.mmap.argtypes = [
+            ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, ctypes.c_long,
+        ]
+        library.mincore.argtypes = [
+            ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p,
+        ]
+        library.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        page_bytes = os.sysconf("SC_PAGE_SIZE")
+        length = start + size
+        vector = (ctypes.c_ubyte * math.ceil(length / page_bytes))()
+        with open(path, "rb") as handle:
+            # PROT_NONE, MAP_SHARED: inspect residency without touching pages.
+            address = library.mmap(None, length, 0, 1, handle.fileno(), 0)
+            if address == ctypes.c_void_p(-1).value:
+                return order
+            try:
+                if library.mincore(address, length, vector):
+                    return order
+                cached = np.ctypeslib.as_array(vector)
+                fractions = []
+                for number in order:
+                    first = (start + number * BLOCK_BYTES) // page_bytes
+                    stop = math.ceil(
+                        (start + min(size, (number + 1) * BLOCK_BYTES)) / page_bytes
+                    )
+                    fractions.append(
+                        np.count_nonzero(cached[first:stop] & 1) / (stop - first)
+                    )
+                return sorted(order, key=lambda number: (-fractions[number], number))
+            finally:
+                library.munmap(address, length)
+    except (AttributeError, OSError, OverflowError):
+        # Restricted or unsupported residency inspection must not block IO.
+        return order
+
+
 def _load_counts_cuda(path, header, start, device, verbose, started):
     """Read and authenticate bounded blocks in parallel before uploading them."""
     import cupy as cp
@@ -237,45 +291,61 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
         start_after_queued_work(stream)
         arena = cp.empty(header["bytes"], cp.uint8)
         capacity = min(BLOCK_BYTES, header["bytes"])
-        workers = min(4, len(header["sha256"]))
+        workers = min(16, len(header["sha256"]))
         owners = [cp.cuda.alloc_pinned_memory(capacity) for _ in range(workers)]
         buffers = [np.frombuffer(owner, np.uint8, count=capacity) for owner in owners]
+        order = _cached_block_order(path, start, header["bytes"])
         try:
-            with ThreadPoolExecutor(max_workers=workers) as reader:
-                def read(number, uploaded=None):
+            with ExitStack() as stack:
+                handles = [
+                    stack.enter_context(open(path, "rb", buffering=0))
+                    for _ in range(workers)
+                ]
+                reader = stack.enter_context(ThreadPoolExecutor(max_workers=workers))
+                def read(number, slot, uploaded=None):
                     # A slot cannot be overwritten until its previous upload
                     # finishes. Waiting in the worker leaves other reads active.
                     if uploaded is not None:
                         with cp.cuda.Device(selected):
                             uploaded.synchronize()
-                    slot = number % workers
                     count = min(BLOCK_BYTES, header["bytes"] - number * BLOCK_BYTES)
                     view = memoryview(buffers[slot][:count])
                     # Independent file positions let reads and SHA-256 checks
                     # overlap without sharing a seek cursor between workers.
-                    with open(path, "rb", buffering=0) as handle:
-                        handle.seek(start + number * BLOCK_BYTES)
-                        cursor = 0
-                        while cursor < count:
-                            length = handle.readinto(view[cursor:])
-                            if not length:
-                                raise ValueError("ANS snapshot ended during loading; recopy it.")
-                            cursor += length
+                    handle = handles[slot]
+                    handle.seek(start + number * BLOCK_BYTES)
+                    cursor = 0
+                    while cursor < count:
+                        length = handle.readinto(view[cursor:])
+                        if not length:
+                            raise ValueError("ANS snapshot ended during loading; recopy it.")
+                        cursor += length
                     if hashlib.sha256(view).hexdigest() != header["sha256"][number]:
                         raise ValueError(f"ANS checksum mismatch in block {number}; recopy the file.")
                     return count
 
-                pending = [reader.submit(read, number) for number in range(workers)]
-                for number in range(len(header["sha256"])):
-                    slot = number % workers
-                    count = pending[slot].result()
-                    with stream:
-                        arena[number * BLOCK_BYTES:number * BLOCK_BYTES + count].set(buffers[slot][:count], stream=stream)
-                        uploaded = cp.cuda.Event()
-                        uploaded.record(stream)
-                    following = number + workers
-                    if following < len(header["sha256"]):
-                        pending[slot] = reader.submit(read, following, uploaded)
+                block_iterator = iter(order)
+                pending = {}
+                for slot in range(workers):
+                    number = next(block_iterator)
+                    pending[reader.submit(read, number, slot)] = (number, slot)
+                while pending:
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        number, slot = pending.pop(future)
+                        count = future.result()
+                        with stream:
+                            first = number * BLOCK_BYTES
+                            arena[first:first + count].set(
+                                buffers[slot][:count], stream=stream
+                            )
+                            uploaded = cp.cuda.Event()
+                            uploaded.record(stream)
+                        following = next(block_iterator, None)
+                        if following is not None:
+                            pending[reader.submit(read, following, slot, uploaded)] = (
+                                following, slot
+                            )
                 stream.synchronize()
             for chunk in header["chunks"]:
                 arrays = []
@@ -468,7 +538,7 @@ def _read_verified(path, header, start, spans):
         descriptor = os.open(path, os.O_RDONLY)
         try:
             blocks = len(header["sha256"])
-            with ThreadPoolExecutor(max_workers=min(8, blocks)) as workers:
+            with ThreadPoolExecutor(max_workers=min(16, os.cpu_count() or 1, blocks)) as workers:
                 list(workers.map(read, range(blocks)))
         finally:
             os.close(descriptor)

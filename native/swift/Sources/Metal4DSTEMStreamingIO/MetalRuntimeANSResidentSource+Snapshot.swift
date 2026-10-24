@@ -22,35 +22,38 @@ extension MetalRuntimeANSResidentSource {
       throw invalid(
         "The encoded acquisition exceeds the Metal memory budget; release other datasets.")
     }
-    let mapped = try snapshot.verifiedMapping()
-    let chunks: [Chunk] = try mapped.withUnsafeBytes { bytes in
-      try snapshot.chunks.map { chunk in
-        let buffers = try chunk.arrays.enumerated().map { index, span -> MTLBuffer in
-          // Spatial buffers use a four-byte minimum in the original encoder.
-          // Restore that allocation without reading padding beyond the file span.
-          let length = max(index >= 3 ? 4 : 1, span.bytes)
-          guard
-            let buffer = device.makeBuffer(
-              length: length, options: .storageModeShared)
-          else {
-            throw invalid("Metal could not allocate the encoded snapshot.")
-          }
-          if span.bytes > 0 {
-            memcpy(
-              buffer.contents(),
-              bytes.baseAddress!.advanced(by: snapshot.dataStart + span.offset), span.bytes)
-          }
-          if length > span.bytes {
-            memset(buffer.contents().advanced(by: span.bytes), 0, length - span.bytes)
-          }
-          return buffer
+    // Allocate the final resident owners first. Each authenticated body block is
+    // read directly into those owners, eliminating the whole-file copy pass.
+    var spans = [NativeQEMFile.BodySpan]()
+    let chunks: [Chunk] = try snapshot.chunks.map { chunk in
+      let buffers = try chunk.arrays.enumerated().map { index, span -> MTLBuffer in
+        let length = max(index >= 3 ? 4 : 1, span.bytes)
+        guard let buffer = device.makeBuffer(length: length, options: .storageModeShared) else {
+          throw invalid("Metal could not allocate the encoded snapshot.")
         }
-        return Chunk(
-          firstScan: chunk.first, scanCount: chunk.scans,
-          payload: buffers[0], offsets: buffers[1], models: buffers[2],
-          spatial: Array(buffers[3...]))
+        if span.bytes > 0 {
+          spans.append(
+            NativeQEMFile.BodySpan(
+              offset: span.offset,
+              destination: UnsafeMutableRawBufferPointer(
+                start: buffer.contents(), count: span.bytes)))
+        }
+        if length > span.bytes {
+          memset(buffer.contents().advanced(by: span.bytes), 0, length - span.bytes)
+        }
+        return buffer
       }
+      return Chunk(
+        firstScan: chunk.first, scanCount: chunk.scans,
+        payload: buffers[0], offsets: buffers[1], models: buffers[2],
+        spatial: Array(buffers[3...]))
     }
+    let file = try NativeQEMFile(url: snapshot.url)
+    guard file.identity == snapshot.identity else {
+      throw invalid("QEM file changed during loading; reopen it.")
+    }
+    try file.readVerified(into: spans)
+    _ = try file.headerJSON()
     let library = try Metal4DSTEMKernels.makeRuntimeANSLibrary(device: device)
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
       guard let function = library.makeFunction(name: name) else {

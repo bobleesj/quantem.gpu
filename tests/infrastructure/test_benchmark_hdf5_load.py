@@ -51,6 +51,28 @@ def test_output_parity_hashes_full_array_and_checks_dtype_and_shape() -> None:
     assert evidence["logical_pixel_byte_order"] == "little_endian"
 
 
+def test_native_reads_report_scientific_dtype_separately_from_storage() -> None:
+    from quantem.gpu.io.dataset import Dataset4dstemGPU
+
+    stored = np.arange(24, dtype=np.uint8).reshape(2, 1, 3, 4)
+    acquisition = Dataset4dstemGPU(stored, {
+        "scan_shape": (2, 1), "detector_shape": (3, 4),
+        "source_dtype": "uint16", "dtype": "uint8",
+        "working_dtype": "uint16", "detector_bin": 1,
+    })
+    args = _args(stored.astype(np.uint16))
+    args.expected_output_sha256 = None
+    args.require_full_output_parity = False
+
+    output = _output_parity(stored, args, acquisition)
+    metadata = benchmark._scientific_metadata(acquisition, args)
+
+    assert output["passed"] and metadata["passed"]
+    assert output["dtype"] == "uint16"
+    assert output["logical_resident_bytes"] == 48
+    assert acquisition.data.nbytes == 24
+
+
 def test_logical_pixel_hash_matches_cross_language_vector() -> None:
     values = np.arange(2 * 3 * 3 * 5, dtype=np.uint16).reshape(2, 3, 3, 5)
 

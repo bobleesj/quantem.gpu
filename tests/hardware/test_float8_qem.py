@@ -79,7 +79,7 @@ def test_float8_linked_collection_conversion(tmp_path, backend, kind):
         handle["entry/data/data_000001"] = h5py.ExternalLink(
             chunk.name, "/entry/data/data"
         )
-    result = convert(original, tmp_path / "copy.qem", backend=backend, write=True)
+    result = convert(original, tmp_path / "copy.qem", backend=backend, write=True, verify=True)
     assert result.verified, result
     assert result.verification["compared_values"] == bits.size
     assert original.exists() and chunk.exists()
@@ -212,8 +212,12 @@ def test_float8_detector_products_match_float32(tmp_path, backend, kind):
             "entry/instrument/detector/detectorSpecific/pixel_mask", data=mask
         )
     with (
-        io.load(original, backend=backend, verbose=False) as data,
-        io.load(baseline, backend=backend, verbose=False) as reference,
+        io.load(
+            original, backend=backend, hot_pixel_correction="none", verbose=False
+        ) as data,
+        io.load(
+            baseline, backend=backend, hot_pixel_correction="none", verbose=False
+        ) as reference,
     ):
         assert not data.data.valid_pixels[0, 0]
         assert not reference.data.valid_pixels[0, 0]

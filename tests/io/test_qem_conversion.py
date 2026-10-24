@@ -126,6 +126,24 @@ def test_embedded_master_is_the_source_file_byte_for_byte(tmp_path):
     assert zlib.decompress(base64.b64decode(embedded["data"])) == master.read_bytes()
 
 
+@pytest.mark.parametrize("source_hashes", [False, True])
+def test_restore_master_with_current_and_legacy_checksums(tmp_path, monkeypatch, source_hashes):
+    import hashlib
+
+    master = _acquisition(tmp_path, "gold_01", "uint16")
+    embedded = convert._embedded_master(master)
+    sources = [{"name": master.name, "bytes": master.stat().st_size}]
+    if source_hashes:
+        # Earlier copies kept this checksum only in source_files.
+        sources[0]["sha256"] = embedded.pop("sha256")
+    else:
+        assert embedded["sha256"] == hashlib.sha256(master.read_bytes()).hexdigest()
+    header = {"metadata": {"source_master_file": embedded, "source_files": sources}}
+    monkeypatch.setattr(convert, "read_header", lambda path: (header, 0))
+    restored = convert.restore_master(tmp_path / "copy.qem", tmp_path / "restored.h5")
+    assert restored.read_bytes() == master.read_bytes()
+
+
 def test_master_links_select_data_not_orphan_files(tmp_path):
     master = _acquisition(tmp_path, "scan", "uint16")
     (tmp_path / "scan_data_999999.h5").write_bytes(b"old unrelated chunk")

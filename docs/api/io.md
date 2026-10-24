@@ -329,7 +329,7 @@ most 255, else uint16, else uint32 (one value above 65,535, such as a kept
 unchanged and use the fast detector sums; `io.load` names the stored type in
 one line, and `dtype="native"` reads them in the file's dtype, a cast on read.
 `.qem` copies (`convert`, `io.save`) store that narrow type and record the
-source dtype; `convert` verifies every value against the source. `auto_narrow`
+source dtype; `convert(..., verify=True)` verifies every value against the source. `auto_narrow`
 applies only to the explicit dense reader, and defaults to false. EMPAD RAW loading finds a sibling XML that
 names the RAW file, retaining its scan dimensions, instrument fields, and
 independently indexed virtual-detector regions. If multiple XML files name the
@@ -410,7 +410,7 @@ For a three-dimensional frame stack, also pass `dataset_path` and the complete
 `scan_shape`. Untagged `uint8` remains integer counts; an untagged opaque array
 is not interpreted as FP8. Use `io.load` followed by optional `io.save` for
 this workflow. Tagged external detector chunks also use the existing collection
-converter, including its GPU comparison of every original measurement byte.
+converter, with optional GPU comparison of every original measurement byte (`verify=True`).
 Original input files remain unchanged. A fill is defined for uint8, uint16
 and uint32 counts: a source of another dtype whose mask flags pixels is
 refused until it is loaded with `hot_pixel_correction="none"`, which excludes
@@ -533,8 +533,16 @@ quantem-gpu convert /data/arina/session --out /archive/session
 Each published copy keeps master-file fields and attributes (units included) under
 its HDF5 path, embeds the master file itself so that long tables such as the
 flatfield survive (`quantem.gpu.io.convert.restore_master` writes it back byte for
-byte), records the name, size and SHA-256 of its source files, and fills the scientific metadata (source format, accelerating
+byte), records the name and size of its source files, and fills the scientific metadata (source format, accelerating
 voltage, dwell time) from the Arina master.
+
+Routine conversion defaults to `verify=False, source_hashes=False`. QEM header
+and body checksums, file synchronization and no-overwrite publication remain
+enabled. The embedded master has its own checksum computed from the bytes
+already read for embedding. Add `--source-hashes` (`source_hashes=True`) to read
+every original file and include its SHA-256. Add `--verify` (`verify=True`) to
+compare every saved value against the source. The options are independent;
+`--verify --source-hashes` enables both for validation.
 
 An Arina master records neither the
 probe semi-angle nor the scan step; when the acquisition's folder has a session
@@ -560,9 +568,9 @@ session calibration, with parameter provenance retained in QEM. Both session
 filenames at once are an error; choose one. The command line names the calibrated
 fields, values, units, and sources for each copy.
 
-After writing, every value is
-compared with the detector files read through h5py before the copy is published.
-Flagged pixels are kept and checked too: conversion disables display-time
+With `--verify`, every value is compared with independent detector-file reads
+before publication, using the selected GPU path when supported.
+Flagged pixels are kept and included in the requested comparison: conversion disables display-time
 hot-pixel correction by default, and the detector pixel mask is saved with the copy. CUDA and
 MPS retain `uint32` files as uint32, including flagged 0xFFFFFFFF markers and
 valid counts above 65,535. Raw reads and source verification include every
@@ -579,8 +587,9 @@ Use `--backend cuda` or `--backend mps` to select a device backend. An
 acquisition whose copy would be larger than its HDF5 files is reported and left
 as HDF5. Oversized masters that cannot be embedded are not converted, so long
 metadata tables cannot be silently lost. Source files are never modified or
-removed; existing copies are never overwritten. `--no-verify` explicitly skips
-the comparison. Dry-run size is the encoded payload estimate, not final file
+removed; existing copies are never overwritten. The existing `--no-verify`
+option remains accepted and selects the new default. A conversion without
+full comparison reports `result.verified is None`. Dry-run size is the encoded payload estimate, not final file
 size, and still performs GPU loading and encoding.
 
 ### Load an existing saved copy directly into native Metal
@@ -684,6 +693,21 @@ loaded = io.load("scan-lossless.h5", backend="auto")
 
 Ordinary HDF5 uses ANS residency on accelerator backends. A saved `.qem`
 source remains encoded. Dense GPU loading is rejected.
+
+ARINA bitshuffle + LZ4 masters use the optimized loading path automatically.
+CUDA overlaps bounded compressed reads with GPU decoding and encoding; MPS
+overlaps loading with Metal work and reuses bounded staging buffers. Native
+Swift/Metal uses the same bounded-window approach through its native loader.
+No performance switch or pre-conversion is required. Keep the master and all
+external detector files together. To retain every original detector value,
+including flagged pixels, use `hot_pixel_correction="none"`; the ordinary
+detector-correction default is unchanged.
+
+QEM loading authenticates its encoded buffers before returning them. It avoids
+HDF5 decoding and re-encoding, but still reads the complete saved representation
+and checks every payload checksum. Cache state and storage bandwidth therefore
+affect loading time even when the GPU has available compute capacity.
+
 Read only the working region needed by the calculation:
 
 ```python

@@ -1,8 +1,206 @@
 # Revision and change ledger
 
+## 2026-10-23: IO publication review
+
+The FP8 detector-product comparison now explicitly requests
+`hot_pixel_correction="none"` for both its FP8 input and float32 reference.
+The test compares original values with flagged pixels excluded; requesting
+the default integer-only median correction contradicted that intent. All
+numerical assertions and tolerances remain unchanged. Historical failed
+acceptance reports remain in the private evidence archive.
+
+## 2026-10-23: Apple loading checks and persistent IO history
+
+The routine loading runner now supports native Swift/Metal alongside Python
+CUDA/MPS. Native timing includes HDF5 catalog preparation and checks frozen
+raw diffraction frames outside the timer; QEM preparation uses the accepted
+MPS representation. Native warm inputs are explicitly primed when needed.
+File dtype is checked separately for uint16 HDF5 and losslessly packed QEM.
+
+The [three-backend record](2026-10-23-io-loading-limits.md#routine-cross-backend-loading-check)
+adds fresh MPS and Swift/Metal five-trial runs and matched replays. Both Apple
+replays stayed within the 20% review threshold. All references passed; full
+original-count verification was not rerun. A source-drift run and harness
+controls remain in the private evidence history. The final native replay used
+a frozen source snapshot; no production loader or saving code changed.
+
+`--history-dir` automatically registers immutable reports and generates JSON,
+CSV and Markdown indexes. `benchmark_io_history.py` imports older reports.
+Baselines stay explicit and are pinned by SHA-256 in new reports. Concurrent
+source edits invalidate a run. Private evidence: `20261023-io-limits`.
+
+## 2026-10-23: repeatable IO loading regression check
+
+`benchmark_io_scale.py --load-only` separates first observations, controlled
+disk reads and cached loads, with five trials recommended per format/input.
+QEM preparation is outside loading time; encoded-body/layout identity and
+indexed products are compared with frozen references without repeating full
+original-count verification. A supplied prior report must match the physical
+device, storage, inputs and timing/cache/allocator policies. Median slowdowns
+over 20% trigger review; references are never automatically replaced.
+
+The [fresh CUDA check](2026-10-23-io-loading-limits.md#routine-512-cuda-loading-check)
+passed all reference checks on two full 512² × 192² inputs. A matched replay
+stayed within the threshold in all eight comparisons. QEM disk medians were
+0.363 / 0.395 s and cached medians 0.165 / 0.191 s. A separate harness control
+that reset CUDA memory pools explains higher preliminary timings; normal
+allocator reuse is now explicit. No production loader or saving code changed.
+The runner is manual, not an automatic hardware CI gate; MPS/native timings
+were not refreshed in this campaign. Private evidence: `20261023-io-limits`.
+
+## 2026-10-23: optional conversion checks
+
+Routine Python and CLI QEM conversion now defaults to `verify=False` and
+`source_hashes=False`. `--verify` compares every saved value; `--source-hashes`
+adds complete original-file fingerprints. They are independent opt-ins, while
+QEM checksums, embedded-master restoration, file-data fsync and no-overwrite
+publication remain enabled. Existing `--no-verify` calls remain valid. The
+verified benchmark requests both checks explicitly and retains its old timing
+boundary; earlier results are not relabeled as routine conversion timings.
+Portable checks passed 69 tests. Physical conversion checks passed 18 tests on
+MPS and 17 on CUDA, with only the opposite-backend lifetime checks skipped.
+The broader acceptance runs retained their existing FP8 product failures and
+the existing MPS uint64 SSB failure; no new failed test appeared. Private
+evidence is retained in experiment `20261023-io-limits`.
+
+Two subsequent routine 2048² conversions per backend, with both optional checks
+off, took 35.876 / 24.743 s on MPS and 46.721 / 62.164 s on CUDA. All started with
+zero measured source-file cache residency. CUDA saving still varied from
+27.145 to 43.089 s including fsync; no stable total speedup is established.
+The [routine conversion table](2026-10-23-io-loading-limits.md#routine-conversion-with-optional-checks-disabled)
+keeps these measurements separate from the earlier verified results.
+One subsequent instrumented CUDA save took 25.858 s; write and fsync intervals
+covered 94.4% of it. The raw trace and a reproducible agent handoff are archived
+privately. This is diagnostic evidence; no writer change or speedup is claimed.
+
+## 2026-10-23: complete HDF5 and QEM loading optimization
+
+The [qualified workflow comparison](2026-10-23-io-loading-limits.md) adds bounded
+HDF5 prefetch and verification windows on CUDA, fewer MPS range/serialization
+passes, and direct native QEM reads into final Metal owners. Native HDF5 uses
+bounded 8,192-frame windows; native saving bounds private readback lifetimes and
+overlaps one next chunk. Full original-count and checksum checks are retained.
+All five acquisitions were rerun from a common source fingerprint with measured
+empty-cache QEM controls and explicit first/repeated HDF5 timing. Local default
+HDF5/QEM paths were smoke-tested. Broader baseline format failures remain visible.
+The first CUDA save profile finds that file writes and final fsync dominate.
+A later direct-write candidate passed exact real-data checks but did not show a
+repeatable save gain and was not adopted. The buffered default and canonical
+measurements remain unchanged. A subsequent accepted source-SHA overlap reduces
+complete MPS conversion to 41.135 s against 48.692 and 52.212 s baselines; CUDA
+preparation improves by 6.1–6.7 s, but variable saving prevents an end-to-end CUDA
+speedup claim. All original counts and provenance checks remain exact. Storage
+maintenance and its retest separately await administrator access. Older
+measurements keep their original implementations and cache conditions.
+A subsequent four-worker buffered writer was rejected: its largest save took
+54.310 s versus a nearly read-quiet current-writer control of 45.070 s. Exact
+counts and hashes passed. A fresh full control conversion took 70.399 s;
+writeback telemetry attributes the long fsync tail mainly to pending data writes,
+not the much shorter device flush commands. No writer speedup is claimed.
+A private final-fsync overlap hid 9.033 s of flushing but complete conversion
+took 78.363 s versus 68.423 and 78.704 s controls, with competing SSD reads in
+the later runs. All three authenticated envelopes and exhaustive comparisons
+matched. Process attribution identified two report-inventory readers accounting
+for 14.182 GB of observed reads during the closing control. This identifies a
+separate source of storage contention; it does not establish a writer speedup.
+The private receiver now reuses fallback report hashes only while full file
+identities match and serializes concurrent inventory calls. Fourteen tests
+passed; the real repeated inventory took 0.108 s with zero report-body opens
+and identical returned records. Publishing rules and the QEM writer are unchanged.
+One subsequent full default CUDA conversion took 61.292 s: preparation 21.687 s,
+saving with fsync 22.804 s, and full verification 16.669 s. All 154,618,822,656
+original values and complete authenticated envelopes matched. Large background
+inventory reads disappeared; smaller report-server reads remained. This is a
+new qualified observation, not an isolated QEM-code speedup or a hardware limit.
+
+## 2026-10-23: CUDA and MPS loading interpretation
+
+The [five-acquisition comparison](2026-10-23-default-five-io.md) now explains
+that 5.10 s is not a theoretical CUDA minimum. The CUDA trial read 24.7 GB from
+storage; the MPS trial did not measure physical reads or cache residency. The
+frozen MPS path reads into shared GPU-accessible buffers and avoids a separate
+host-to-device transfer. Cache benefit remains unquantified. This is a
+clarification of existing evidence, not a new timing run or GPU ranking.
+
+## 2026-10-23: CUDA QEM read scheduling
+
+The [loader fix](2026-10-23-cuda-qem-loader-fix.md) uses up to sixteen persistent
+readers, cached-block priority and upload on checksum completion. Matched
+empty-cache loading improves from 10.61 to 6.59 s; half-cache loading improves
+from 10.44 to 4.78 s. Full source verification remains exact on all five default
+acquisitions. Pinned staging increases from 256 MiB to at most 1 GiB.
+
+## 2026-10-23: 2048² CUDA QEM cache controls
+
+The [cache recheck](2026-10-23-cuda-qem-cache-recheck.md) repeats complete lossless
+verification and isolates ordinary loads, per-file cache eviction, sequential
+pre-reads and a full-byte-count pinned-copy control. The production loader and
+codec are unchanged; the original comparison medians remain intact.
+
+## 2026-10-23: five-input default selection
+
+The [current Disk–GPU comparison](2026-10-23-default-five-io.md) excludes 96 × 96
+detector acquisitions from future default/full-scale benchmarks and active
+examples. The five retained 192 × 192 inputs reuse completed measurements;
+no new timing or codec improvement is claimed. Historical six-input results
+remain unchanged. The private static report separates acquisition and benchmark
+dates, labels HDF5 as bitshuffle + LZ4, and identifies the M5 Max MacBook Pro.
+
 This ledger separates documentation revisions from the implementation revision
 that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
+
+## 2026-10-23: spatial-index accounting and CUDA read profiling
+
+The [layout and profile follow-up](2026-10-23-qem-layout-cuda-profile.md)
+recreates all six QEM files with exhaustive source verification and accounts
+for their payload, stream offsets, models, spatial indexes and envelope.
+The benchmark gains optional host-call interval profiling after ordinary
+reloads. Device/process observations and transfer controls bound the loading
+interpretation; the existing source implementation and original timing table
+remain unchanged. Static IEEE-style tables are retained privately.
+
+## 2026-10-23: QEM compression and loading interpretation
+
+The [compression comparison](2026-10-23-qem-compression.md) derives exact size
+ratios from the retained six-acquisition conversion records and verifies every
+source dataset's bitshuffle/LZ4 filter and complete HDF5 file total. It records
+29.0% aggregate savings, the 25.5% expansion case, and the distinction between
+storage savings and backend loading costs. This is analysis of the existing
+benchmark; no codec change or timing rerun is claimed.
+
+## 2026-10-23: selected six-acquisition comparison
+
+The [default-six rerun](2026-10-23-default-six-io.md) adds a single comparison
+table across physical CUDA, MPS and native Swift/Metal. Benchmark runners now
+accept a checked private selection manifest and fresh first-trial frame indexes,
+and record a complete verified conversion wall time. Numerical compute is
+unchanged. Native conversion includes its round-trip/product checks followed by
+MPS exhaustive verification; the table labels this different workload.
+
+## 2026-10-23: bounded full-count QEM verification
+
+The [QEM verification record](2026-10-23-qem-verification.md) measures bounded
+CUDA and Metal source decoding, overlapped batches, exact unsigned GPU comparison,
+and parallel source hashing. The native writer now plans its authenticated
+header before streaming the body once, removing the second full-size temporary
+copy. Separate [CUDA](2026-10-23-io-cuda.md), [MPS](2026-10-23-io-mps.md), and
+[Swift/Metal](2026-10-23-io-swift-metal.md) scale reports preserve their timing
+boundaries, complete source verification, and unsupported input cases.
+
+## 2026-10-23: prepare loader code before acquisition arrival
+
+The [dated startup record](2026-10-23-loader-startup.md) measures a private
+preparation helper and the application H5-first path. Source data, decoding
+arithmetic and scientific fitting budgets are unchanged. Loading, preparation
+and browser-visible times have separate boundaries; older rows stay historical.
+
+## 2026-10-23: bounded MPS ingestion pipeline
+
+The [dated loader record](2026-10-23-mps-hdf5-pipeline.md) measures one-batch
+read/decode overlap and reuse of decoded and ANS scratch buffers. Kernels and
+native counts remain unchanged. The benchmark now distinguishes the public
+scientific read dtype from the narrower lossless backing representation.
 
 ## 2026-10-22: exact independent proposal reuse
 

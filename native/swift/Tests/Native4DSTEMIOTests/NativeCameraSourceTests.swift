@@ -1,12 +1,35 @@
 import CryptoKit
 import Foundation
 import Metal
-import Metal4DSTEMStreamingIO
 import XCTest
 
+@testable import Metal4DSTEMStreamingIO
 @testable import Native4DSTEMIO
 
 final class NativeCameraSourceTests: XCTestCase {
+  func testSpatialWindowsRespectCodecOffsetsAndAdmission() throws {
+    for (side, admitted, bufferBytes, expected) in [
+      (192, 32_768, Int.max, 8_192), (512, 32_768, Int.max, 7_680),
+      (1024, 32_768, Int.max, 1_536), (2048, 32_768, Int.max, 509),
+      (192, 1_200, Int.max, 1_024), (192, 500, Int.max, 500),
+      (192, 32_768, 512 << 20, 7_168), (192, 32_768, 256 << 20, 3_584),
+      (512, 32_768, 256 << 20, 510),
+    ] {
+      let frames = try RuntimeANSEncoder.maximumSpatialWindowFrames(
+        pixels: side * side, maximumFrames: admitted, maximumBufferBytes: bufferBytes)
+      XCTAssertEqual(frames, expected)
+      XCTAssertLessThanOrEqual(frames, admitted)
+      if frames >= 512 { XCTAssertEqual(frames % 512, 0) }
+      let streams = UInt64((frames + 511) / 512) * UInt64(side * side)
+      let bytesPerStream = UInt64(2 * min(frames, 512) + 4)
+      XCTAssertLessThan(streams, (UInt64(1) << 32) / bytesPerStream)
+      XCTAssertLessThanOrEqual(streams * bytesPerStream, UInt64(bufferBytes))
+    }
+    XCTAssertThrowsError(
+      try RuntimeANSEncoder.maximumSpatialWindowFrames(
+        pixels: Int(UInt32.max), maximumFrames: 512, maximumBufferBytes: Int.max))
+  }
+
   func testCameraIdentityUsesRecordedModelNotDM4Extension() {
     var generic = ["camera_model": "Other camera"]
     NativeDM4Source.identifyCamera(in: &generic)
@@ -188,6 +211,59 @@ final class NativeCameraSourceTests: XCTestCase {
         (scan * pixels..<scan * pixels + pixels).map { UInt32(UInt8(truncatingIfNeeded: $0)) })
     }
     let preserved = try Data(contentsOf: saved)
+    // Direct loading must authenticate all resident bytes, then recover cleanly
+    // after an error without publishing any unchecked partial resident.
+    var corruptOffsets = [
+      snapshot.dataStart, snapshot.dataStart + snapshot.bodyBytes / 2, preserved.count - 1,
+    ]
+    var previousEnd = 0
+    for span in snapshot.chunks.flatMap(\.arrays) {
+      if span.offset > previousEnd {
+        corruptOffsets.append(snapshot.dataStart + previousEnd)
+        break
+      }
+      previousEnd = span.offset + span.bytes
+    }
+    XCTAssertEqual(corruptOffsets.count, 4, "Fixture must exercise alignment padding")
+    for offset in corruptOffsets {
+      var corrupt = preserved
+      corrupt[offset] ^= 1
+      try corrupt.write(to: saved)
+      XCTAssertThrowsError(
+        try MetalRuntimeANSResidentSource.load(
+          snapshot: NativeANSSnapshot(url: saved), device: device)
+      ) { error in
+        XCTAssertTrue(error.localizedDescription.contains("checksum mismatch"))
+      }
+      try preserved.write(to: saved)
+      let recovered = try MetalRuntimeANSResidentSource.load(
+        snapshot: NativeANSSnapshot(url: saved), device: device)
+      XCTAssertEqual(
+        try recovered.extractRawDiffraction(scanRow: 0, scanColumn: 0),
+        (0..<pixels).map { UInt32(UInt8(truncatingIfNeeded: $0)) })
+      recovered.releaseResidentStorage()
+    }
+    // A valid replacement header still belongs to a different snapshot. Reject
+    // the stale description even when every body checksum remains valid.
+    let originalEnvelope = try NativeQEMFile(url: saved)
+    var replacementHeader = originalEnvelope.header
+    var replacementMetadata = replacementHeader["metadata"] as! [String: Any]
+    replacementMetadata["source_path"] = "changed source provenance"
+    replacementHeader["metadata"] = replacementMetadata
+    let replacementJSON = try JSONSerialization.data(
+      withJSONObject: replacementHeader, options: [.sortedKeys])
+    var replacement = NativeQEMMetadata.magic
+    for size in [replacementJSON.count, replacementJSON.count + 56] {
+      var value = UInt64(size).littleEndian
+      withUnsafeBytes(of: &value) { replacement.append(contentsOf: $0) }
+    }
+    replacement.append(contentsOf: SHA256.hash(data: replacementJSON))
+    replacement.append(replacementJSON)
+    replacement.append(preserved.suffix(snapshot.bodyBytes))
+    try replacement.write(to: saved)
+    XCTAssertThrowsError(try originalEnvelope.headerJSON())
+    XCTAssertThrowsError(try MetalRuntimeANSResidentSource.load(snapshot: snapshot, device: device))
+    try preserved.write(to: saved)
     XCTAssertThrowsError(try resident.saveSnapshot(to: saved))
     XCTAssertEqual(try Data(contentsOf: saved), preserved)
     let cancelled = directory.appendingPathComponent("cancelled.qem")
