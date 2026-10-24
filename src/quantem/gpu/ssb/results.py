@@ -339,6 +339,16 @@ class SSBResult(Mapping[str, float]):
             record["stop_reason"] = self.optimizer["stop"]
         if self.timings:
             record["timings"] = dict(self.timings)
+        if None not in (self.voltage_kV, self.semiangle_mrad, self.object_sampling_A):
+            from quantem.gpu.optics import ssb_upsampling_requirement
+
+            required = ssb_upsampling_requirement(
+                voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
+                scan_sampling_A=tuple(float(step) * self.upsampling_factor for step in self.object_sampling_A),
+            )
+            if self.upsampling_factor < required - 1e-12:
+                record["upsampling_factor"] = self.upsampling_factor
+                record["nominal_upsampling_requirement"] = required
         if to_dict:
             return record
 
@@ -365,6 +375,9 @@ class SSBResult(Mapping[str, float]):
         if "stop_reason" in record:
             row["Stopping reason"] = record["stop_reason"]
         row.update({f"Timing: {name} (s)": seconds for name, seconds in self.timings.items()})
+        if "nominal_upsampling_requirement" in record:
+            row["Output sampling (×)"] = record["upsampling_factor"]
+            row["Nominal requirement (×)"] = record["nominal_upsampling_requirement"]
         model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
         return pd.DataFrame([row], index=pd.Index([model], name="model"))
 

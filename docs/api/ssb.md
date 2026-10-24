@@ -1164,3 +1164,16 @@ and persistence. The source QEM and its recorded metadata remain unchanged.
 An explicit numerical keyword remains available for an independent calibration.
 The convergence semiangle must be known; disk radius alone cannot set an
 absolute angular scale.
+
+## Automatic output sampling
+
+Auto chooses 1×, 2×, 3× or 4× from the acquisition calibration, with a
+maximum of 4×. Select 8× explicitly with `ssb.show(upsampling=8)` or the
+ShowPtycho Upsampling menu. For a standalone reconstruction, use
+`ssb.reconstruct(fit, upsampling_factor=8)`.
+
+The nominal bandwidth requirement remains separate from the selected grid.
+When Auto is capped, the fit report and viewer settings identify the larger
+requirement; a 4× grid does not imply full nominal bandwidth. Fitting and
+source data are unchanged. Saved Auto fits reopen under the current cap;
+saved explicit 8× choices retain 8×.
