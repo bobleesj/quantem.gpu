@@ -62,13 +62,16 @@ def save_calibration(result, path):
     if path.suffix.lower() != ".json":
         raise ValueError("Use a JSON filename, for example fit.save_calibration('calibration.json').")
     if result.calibration_context is None:
-        raise ValueError("This fit has no persistent acquisition calibration. Fit a file opened with SSB.open() "
+        raise ValueError("This fit has no persistent acquisition calibration. Fit a file opened with DirectPtycho.open() "
                          "before saving a calibration for ShowPtycho.")
     if result.fit_scan_region is not None:
-        raise ValueError("This fit describes a subregion of its session. Open that region with SSB.open(scan_region=...), "
+        raise ValueError("This fit describes a subregion of its session. Open that region with DirectPtycho.open(scan_region=...), "
                          "fit it, and save its calibration to preserve the region's acquisition identity.")
-    if result.phase_estimator not in ("phase_of_mean", "mean_phase"):
-        raise ValueError("ShowPtycho requires a phase-only SSB estimator. Save the result of ssb.find_aberrations().")
+    method = result.reconstruction_method
+    if method not in ("ssb", "phase", "complex"):
+        raise ValueError(f"Unsupported direct reconstruction method {method!r}; save an SSB, phase or complex result.")
+    if method == "ssb" and result.phase_estimator not in ("phase_of_mean", "mean_phase"):
+        raise ValueError("ShowPtycho requires a phase-only SSB estimator. Save the result of ptycho.find_aberrations().")
     context = deepcopy(result.calibration_context)
     identity = context["session_identity"]
     if "source" not in identity:
@@ -79,7 +82,7 @@ def save_calibration(result, path):
     if any(geometry.get(key) is None for key in (
         "voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad", "num_bright_field_pixels",
     )):
-        raise ValueError("The fit's acquisition calibration is incomplete. Fit a calibrated SSB.open() session first.")
+        raise ValueError("The fit's acquisition calibration is incomplete. Fit a calibrated DirectPtycho.open() session first.")
     sample = result.sample_tilt_mrad
     depth = result.depth_spread_nm
     # A zero-depth model applies no depth-dependent tilt correction.
@@ -87,8 +90,9 @@ def save_calibration(result, path):
         sample, depth = None, None
     if (sample is None) != (depth is None) or (depth is not None and depth < 0):
         raise ValueError("Sample tilt and positive depth spread must describe one complete model.")
-    factor = ssb_upsampling_factor(scan_sampling_A=geometry["scan_sampling_A"],
+    factor = (ssb_upsampling_factor(scan_sampling_A=geometry["scan_sampling_A"],
                                    semiangle_mrad=geometry["semiangle_mrad"], voltage_kV=geometry["voltage_kV"])
+              if method == "ssb" else result.upsampling_factor)
     record = {
         "schema": CALIBRATION_SCHEMA, "id": uuid4().hex[:12], "generated_at_utc": datetime.now(UTC).isoformat(),
         "notes": "", "aberrations": dict(result.aberrations),
@@ -101,8 +105,15 @@ def save_calibration(result, path):
         "propagator_tilt_mrad": (None if sample is None else sample_to_propagator_tilt(
             sample, scan_detector_rotation_deg=result.scan_detector_rotation_deg,
             scan_detector_rotation_flipped=result.scan_detector_rotation_flipped)),
-        "loss": result.loss, "phase_estimator": result.phase_estimator,
-        "upsampling_factor": factor, "upsampling_mode": "auto", "display_negate_phase": False,
+        "loss": result.loss,
+        # This field selects the conventional SSB view when comparing methods;
+        # it does not describe the regularized solver recorded separately below.
+        "phase_estimator": result.phase_estimator if method == "ssb" else "phase_of_mean",
+        "reconstruction_method": method,
+        "reconstruction_options": deepcopy(result.reconstruction_options),
+        "reconstruction_diagnostics": deepcopy(result.reconstruction_diagnostics),
+        "upsampling_factor": factor, "upsampling_mode": "auto" if method == "ssb" else "explicit",
+        "display_negate_phase": False,
         "display": {"tilt_correction": sample is not None, "max_columns": 3},
         "session_identity": identity, "local_tilt": None,
     }

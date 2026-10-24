@@ -206,7 +206,7 @@ def run_ssb(
     >>> from quantem.gpu.benchmark import run_ssb
     >>> report = run_ssb("scan.qem")  # doctest: +SKIP
     """
-    from quantem.gpu import SSB, io
+    from quantem.gpu import DirectPtycho, io
     from quantem.gpu.device import resolve
 
     if runs < 2 or num_trials < 1:
@@ -292,7 +292,7 @@ def run_ssb(
             if progress:
                 progress(f"Measurement {index + 1}/{runs}: full field")
             with contextlib.redirect_stdout(text_io.StringIO()):
-                ssb, session_s = _timed(partial(SSB, data, backend=selected), selected)
+                ssb, session_s = _timed(partial(DirectPtycho, data, backend=selected), selected)
             session_times.append(session_s)
             with ssb:
                 fitted, seconds = _timed(

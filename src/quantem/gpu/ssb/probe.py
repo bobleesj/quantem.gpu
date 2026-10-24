@@ -8,7 +8,7 @@ from quantem.gpu.optics.physics import wavelength_A_from_kV
 def probe_grid(result):
     """Resolve the aperture and leave room around its defocused footprint."""
     if result.voltage_kV is None or result.semiangle_mrad is None:
-        raise ValueError("Probe calibration is missing. Run ssb.reconstruct() with voltage and convergence semiangle.")
+        raise ValueError("Probe calibration is missing. Run ssb.run() with voltage and convergence semiangle.")
     wavelength = wavelength_A_from_kV(result.voltage_kV)
     semiangle = result.semiangle_mrad * 1e-3
     sampling = wavelength / (4 * semiangle)

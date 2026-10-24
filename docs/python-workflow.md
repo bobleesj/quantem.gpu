@@ -22,7 +22,7 @@ from pathlib import Path
 import json
 
 from huggingface_hub import snapshot_download
-from quantem.gpu import io, detector, dpc, SSB
+from quantem.gpu import io, detector, dpc, DirectPtycho
 from quantem.core.visualization import show_2d
 
 snapshot_download(
@@ -111,7 +111,7 @@ the angle. SSB does not run DPC automatically.
 Reuse the same acquisition and the DPC rotation above.
 
 ```python
-ssb = SSB(
+ptycho = DirectPtycho(
     data,
     voltage_kV=metadata["voltage_kV"],  # kV
     semiangle_mrad=metadata["probe_semiangle_mrad"],  # mrad
@@ -120,8 +120,8 @@ ssb = SSB(
     scan_detector_rotation_deg=dpc_result.scan_detector_rotation_mod180_deg,  # degrees
     scan_detector_rotation_flipped=dpc_result.scan_detector_rotation_flipped,
 )
-aberrations = ssb.find_aberrations()
-result = ssb.reconstruct(aberrations, upsampling_factor=1)
+aberrations = ptycho.find_aberrations()
+result = ptycho.run(aberrations, upsampling_factor=1)
 show_2d(
     result.phase, title="Gold SSB phase (rad)", cmap="inferno", cbar=True,
     scalebar={"sampling": result.object_sampling_A[1], "units": "Å"},
@@ -175,7 +175,7 @@ Keep the session open for the {ref}`advanced tutorial <gold-advanced>`:
 When finished, close the session before its acquisition:
 
 ```python
-ssb.close()
+ptycho.close()
 data.close()
 ```
 
@@ -186,7 +186,7 @@ For a calibrated SSB session, compare the two 180-degree rotation candidates
 with negative and positive C10 search intervals:
 
 ```python
-comparison = ssb.compare_rotation_defocus(show=True)
+comparison = ptycho.compare_rotation_defocus(show=True)
 ```
 
 Omit `show=True` to return a pandas-style table view without displaying a figure;
@@ -206,7 +206,7 @@ with the convention `f = -C10`. Depth spread is a fitted model parameter.
 
 ## Browse reconstructed focus images
 
-`ssb.show("focus")` uses the existing Show2D gallery. Pass `layout="stack"`
+`ptycho.show("focus")` uses the existing Show2D gallery. Pass `layout="stack"`
 to scroll through defocus in Show3D, or `interactive=False` for static core
 views. See the [SSB view options](api/ssb.md) for focus spacing, depth values,
 region selection and panel sizes.
@@ -220,5 +220,5 @@ detector_fit.show(size="medium", cmap="inferno", save="detector-fit.png")
 
 The fit view has one panel. Detector and SSB galleries additionally accept
 `rows` or `columns`. For example,
-`ssb.show("focus", mode="static", columns=2, cmap="inferno", save="focus.png")`
+`ptycho.show("focus", mode="static", columns=2, cmap="inferno", save="focus.png")`
 exports the focus comparison without changing its reconstructed pixels.

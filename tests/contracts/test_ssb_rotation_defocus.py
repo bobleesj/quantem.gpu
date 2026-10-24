@@ -100,7 +100,7 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
             self.latest = SimpleNamespace(case=len(calls))
             return self.latest
 
-        def reconstruct(self, *, upsampling_factor):
+        def run(self, *, upsampling_factor):
             assert upsampling_factor == "auto"
             return self.latest
 

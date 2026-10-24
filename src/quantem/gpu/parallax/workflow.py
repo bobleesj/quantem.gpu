@@ -121,10 +121,10 @@ def run(
 
     Examples
     --------
-    >>> from quantem.gpu import SSB, io, parallax
+    >>> from quantem.gpu import DirectPtycho, io, parallax
     >>> data = io.load("scan_master.h5", backend="cuda")
     >>> result = parallax.run(data, fit_aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
-    >>> ssb = SSB(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
+    >>> ssb = DirectPtycho(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
     ...           aberrations=result.aberrations, scan_detector_rotation_deg=result.scan_detector_rotation_deg)
     """
     if not isinstance(data, Dataset4dstemGPU):
@@ -238,7 +238,7 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     -------
     tuple
         ``{"C10_nm", "C12_nm", "phi12_deg"}`` in nm, nm and degrees (scan frame), and the
-        rotation in degrees: what ``SSB(aberrations=..., scan_detector_rotation_deg=...)``
+        rotation in degrees: what ``DirectPtycho(aberrations=..., scan_detector_rotation_deg=...)``
         takes.
     """
     matrix = np.linalg.lstsq(angles_rad, shifts_A, rcond=None)[0]

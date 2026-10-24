@@ -120,3 +120,21 @@ def test_a_scan_region_that_does_not_span_the_scan_shape_is_refused(tmp_path):
     write_widget_folder(tmp_path / "showptycho", scan_region=(2, 6, 1, 6))
     with pytest.raises(ValueError, match="scan_region"):
         load_bf_columns_mps(tmp_path / "showptycho")
+
+
+def test_python_fit_calibration_does_not_block_acquisition_loading(tmp_path):
+    """Reopening saved Python optics falls back to the original acquisition."""
+    from quantem.gpu.ssb.calibration import CALIBRATION_SCHEMA
+    from quantem.gpu.ssb.mps.frames import find_bf_columns
+
+    calibration = tmp_path / "calibration.json"
+    calibration.write_text(json.dumps({"schema": CALIBRATION_SCHEMA}))
+    assert find_bf_columns(str(tmp_path / "acquisition.h5"), str(calibration)) is None
+
+
+def test_python_calibration_cannot_disguise_a_broken_column_declaration(tmp_path):
+    from quantem.gpu.ssb.calibration import CALIBRATION_SCHEMA
+
+    write_widget_folder(tmp_path / "showptycho", schema=CALIBRATION_SCHEMA)
+    with pytest.raises(ValueError, match="quantem.ssb-browser-calibration/3"):
+        load_bf_columns_mps(tmp_path / "showptycho")

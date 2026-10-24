@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     import pandas as pd
     from matplotlib.figure import Figure
 
-    from quantem.gpu.ssb.workflow import SSB
+    from quantem.gpu.ssb.workflow import DirectPtycho
 
 
 @dataclass
@@ -174,7 +174,7 @@ class RotationDefocusComparison:
 
 
 def compare_rotation_defocus(
-    session: "SSB", *, num_trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
+    session: "DirectPtycho", *, num_trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
     search_ranges: dict[str, tuple[float, float] | float] | None = None,
     seed: int = 42, tilt: bool = True, verbose: bool = True,
 ) -> RotationDefocusComparison:
@@ -216,7 +216,7 @@ def compare_rotation_defocus(
                         check_rotation=False, compare_standard=False, verbose=False,
                     )
                     progress.set_postfix_str(f"{case} | Reconstructing full field")
-                    reconstructed = candidate.reconstruct(upsampling_factor="auto")
+                    reconstructed = candidate.run(upsampling_factor="auto")
                     fits.append(fitted)
                     reconstructions.append(reconstructed)
                     progress.update(1)

@@ -24,7 +24,7 @@ class FitDisplay:
         if self.display is None:
             return
         try:
-            image = self.ssb.reconstruct(
+            image = self.ssb.run(
                 fit, upsampling_factor="auto", compute_loss=False, verbose=False,
             )
             figure = image.show(show_parameters=False)

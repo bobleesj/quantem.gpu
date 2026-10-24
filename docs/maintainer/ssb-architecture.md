@@ -5,12 +5,12 @@
 `quantem.gpu.SSB` is the scientist-facing SSB compute entry point. CUDA and
 MPS are its execution backends, not separate APIs. The browser engine in
 `ssb/webgpu` is a separate runtime that applications bundle; it is not an
-`SSB(backend=...)` option.
+`DirectPtycho(backend=...)` option.
 
 ```python
-from quantem.gpu import SSB
+from quantem.gpu import DirectPtycho
 
-with SSB.open(
+with DirectPtycho.open(
     "scan_master.h5",
     backend="mps",
     voltage_kV=300,
@@ -18,7 +18,7 @@ with SSB.open(
     scan_sampling_A=(0.5, 0.5),
     scan_detector_rotation_deg=351.8,
 ) as ssb:
-    result = ssb.find_aberrations(save_dir="results/ssb")
+    result = ptycho.find_aberrations(save_dir="results/ssb")
 ```
 
 The public units are fixed: kV, mrad, angstrom, nanometres for `C10_nm` and

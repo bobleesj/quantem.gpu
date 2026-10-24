@@ -75,7 +75,7 @@ class Calibration:
         if name in Calibration.FITTED:
             raise AttributeError(
                 f"{name} is fitted by data.calibration.fit_detector_sampling(); to use another value, give "
-                f"{name.replace('_edge', '')}= to SSB(...) or Show4DSTEM(...)."
+                f"{name.replace('_edge', '')}= to DirectPtycho(...) or Show4DSTEM(...)."
             )
         if name not in Calibration.FIELDS:
             raise AttributeError(_unknown_calibration(name))

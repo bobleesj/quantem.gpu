@@ -23,8 +23,9 @@ parts:
     - file: api/images_dpc
       title: BF, ADF, and DPC images
     - file: api/ssb
-      title: SSB phase and aberrations
+      title: Direct ptychography and aberrations
       sections:
+      - file: api/direct-ptycho
       - file: api/ssb-phase-artifact
         title: Portable SSB results
     - file: api/movie

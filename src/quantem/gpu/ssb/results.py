@@ -69,6 +69,14 @@ class SSBResult(Mapping[str, float]):
         records output pixel spacing, preserving the physical field of view.
     object_sampling_A : tuple[float, float] | None
         Pixel size of the reconstructed image in Angstrom, (row, col): the scan step divided by ``upsampling_factor``.
+    reconstruction_method : str
+        ``ssb``, ``phase`` or ``complex``. The regularized methods are experimental.
+    reconstruction_options : dict[str, object]
+        Method, strengths, smoothness prior and detector weighting used by a
+        regularized reconstruction; saved and restored with the result.
+    reconstruction_diagnostics : dict[str, object]
+        Model conventions and optional training prediction error. This is not
+        the conventional phase-variance ``loss`` or an independent validation.
     phase_estimator : str
         ``mean_phase`` or ``phase_of_mean`` for phase-only reconstruction;
         ``complex_wave`` identifies a direct complex-object reconstruction.
@@ -121,6 +129,9 @@ class SSBResult(Mapping[str, float]):
     semiangle_mrad: float | None = None
     object_sampling_A: tuple[float, float] | None = None
     upsampling_factor: int = 1
+    reconstruction_method: str = "ssb"
+    reconstruction_options: dict[str, object] = field(default_factory=dict)
+    reconstruction_diagnostics: dict[str, object] = field(default_factory=dict)
     phase_estimator: str = "complex_wave"
     amplitude_estimated: bool = True
     source_path: str | None = None
@@ -172,7 +183,7 @@ class SSBResult(Mapping[str, float]):
         return len(self.aberrations)
 
     def __repr__(self) -> str:
-        lines = ["SSB Result"]
+        lines = ["SSB Result" if self.reconstruction_method == "ssb" else f"Direct {self.reconstruction_method} result"]
         lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsampling_factor}x output")
         lines.append(f"  Estimator      {self.phase_estimator}")
         if not self.amplitude_estimated:
@@ -334,7 +345,7 @@ class SSBResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.reconstruct(aberrations)
+        >>> result = ssb.run(aberrations)
         >>> probe = result.probe()
         >>> probe_fourier = result.probe(space="fourier")
         """
@@ -454,7 +465,7 @@ class SSBResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.reconstruct(aberrations, upsampling_factor="auto")
+        >>> result = ssb.run(aberrations, upsampling_factor="auto")
         >>> result.show()
         >>> result.show("probe")
         >>> result.show(size="large")
@@ -728,7 +739,7 @@ def _announce_below_auto(result: SSBResult) -> None:
         return
     if result.upsampling_factor < auto:
         print(f"SSB: showing this phase at {result.upsampling_factor}x, the grid it was reconstructed on; "
-              f"ssb.reconstruct(result, upsampling_factor='auto') shows it at {auto}x.")
+              f"ssb.run(result, upsampling_factor='auto') shows it at {auto}x.")
 
 
 def _format_aberrations(aberrations: dict) -> str:
