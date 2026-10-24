@@ -123,13 +123,13 @@ def wrap_degrees(angle_deg: float, period_deg: float) -> float:
     return 0.0 if wrapped == period_deg else wrapped
 
 
-def ssb_upsampling_factor(
+def ssb_upsampling_requirement(
     *,
     voltage_kV: float,
     semiangle_mrad: float,
     scan_sampling_A: float | Sequence[float],
-) -> int:
-    """Choose the smallest output grid covering nominal circular-aperture SSB support.
+) -> float:
+    """Calculate the fractional output sampling needed for nominal SSB support.
 
     Parameters
     ----------
@@ -142,9 +142,9 @@ def ssb_upsampling_factor(
 
     Returns
     -------
-    int
-        Smallest supported factor (1, 2, 3, 4, or 8) with output Nyquist
-        frequency at least ``2 * semiangle / wavelength`` on both axes.
+    float
+        Uncapped factor with output Nyquist frequency equal to
+        ``2 * semiangle / wavelength`` on the more coarsely sampled axis.
 
     Notes
     -----
@@ -172,11 +172,40 @@ def ssb_upsampling_factor(
             "give the step as one number or a (row, col) pair."
         )
     target_spacing = wavelength_A_from_kV(voltage) / (4 * angle * 1e-3)
-    required = max(spacing) / target_spacing
-    for factor in (1, 2, 3, 4, 8):
-        if factor >= required - 1e-12:
-            return factor
-    raise ValueError(
-        "Nominal SSB support needs more than 8× output; "
-        "choose an explicit factor for a limited output."
+    return max(spacing) / target_spacing
+
+
+def ssb_upsampling_factor(
+    *,
+    voltage_kV: float,
+    semiangle_mrad: float,
+    scan_sampling_A: float | Sequence[float],
+) -> int:
+    """Choose automatic SSB output sampling, capped at 4×.
+
+    Parameters
+    ----------
+    voltage_kV : float
+        Positive accelerating voltage in kilovolts.
+    semiangle_mrad : float
+        Positive probe convergence semi-angle in milliradians.
+    scan_sampling_A : float or sequence of float
+        Native scan step in Angstroms, ``(row, col)``.
+
+    Returns
+    -------
+    int
+        Smallest factor in 1, 2, 3, 4 covering nominal support, or 4 when
+        the requirement exceeds the automatic limit. Use
+        ``ssb_upsampling_requirement`` to inspect the uncapped requirement.
+
+    Notes
+    -----
+    Auto can undersample nominal support. Request 8× explicitly in the
+    reconstruction or viewer when needed; this choice does not change fitting.
+    """
+    required = ssb_upsampling_requirement(
+        voltage_kV=voltage_kV, semiangle_mrad=semiangle_mrad,
+        scan_sampling_A=scan_sampling_A,
     )
+    return next((factor for factor in (1, 2, 3, 4) if factor >= required - 1e-12), 4)
