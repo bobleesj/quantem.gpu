@@ -241,8 +241,9 @@ class SSBResult(Mapping[str, float]):
             return pd.DataFrame(index=pd.Index([], name="trial"))
         return pd.DataFrame.from_records(deepcopy(rows)).set_index("trial")
 
-    def report(self, *, to_dict: bool = False) -> "pd.DataFrame | dict[str | int, object]":
-        """Report all fitted aberrations and sample geometry at full precision.
+    def report(self, *, to_dict: bool = False,
+               show_convergence: bool = False) -> "pd.DataFrame | dict[str | int, object]":
+        """Report fitted optics, geometry, objective and recorded timing.
 
         ``pd.concat([a.report(), b.report()])`` compares fits side by side.
         A bare result in a notebook displays the same values vertically, with
@@ -256,6 +257,11 @@ class SSBResult(Mapping[str, float]):
             unit-bearing names. Geometry uses the public attribute names;
             ``sample_tilt_mrad`` is a (row, col) pair. For a series result,
             return the trial table as a dictionary indexed by trial ID.
+        show_convergence : bool, optional
+            Display the saved convergence figure in a notebook, then return
+            the table. Uses the same recorded history as
+            ``fit.show("convergence")``; does not refit. Cannot be combined
+            with ``to_dict=True``. Missing history raises a helpful error.
 
         Returns
         -------
@@ -267,13 +273,31 @@ class SSBResult(Mapping[str, float]):
             specimen thickness. This report describes the result, not later
             widget edits, and does not replace ``save_calibration()``.
 
+        Notes
+        -----
+        ``fit.aberrations`` remains the coefficient dictionary. The report
+        adds the objective name, model agreement, variance diagnostic loss,
+        search/refinement counts, stopping reason and timings when recorded.
+        These objectives have different meanings and scales. A stopping
+        reason does not establish physical convergence. Stage timings may
+        overlap; they must not be summed to estimate total time. ``elapsed_s``
+        describes the recorded operation, not notebook or acquisition IO time.
+
         Examples
         --------
         >>> fit = ptycho.find_aberrations()  # doctest: +SKIP
         >>> fit.report()  # doctest: +SKIP
         >>> parameters = fit.report(to_dict=True)  # doctest: +SKIP
         >>> parameters["aberrations"]["C30_nm"]  # doctest: +SKIP
+        >>> fit.report(show_convergence=True)  # doctest: +SKIP
         """
+        if show_convergence:
+            if to_dict:
+                raise ValueError("Use report(to_dict=True) to export data, or report(show_convergence=True) "
+                                 "to display the convergence figure and table.")
+            from IPython.display import display
+
+            display(self.show("convergence"))
         if self.object_wave.ndim == 3:
             table = self.trials
             return table.to_dict(orient="index") if to_dict else table
@@ -295,6 +319,26 @@ class SSBResult(Mapping[str, float]):
             record["depth_spread_nm"] = self.depth_spread_nm
         if self.objective is not None:
             record["objective"] = self.objective
+        summary_fields = (
+            ("backend", "Backend"),
+            ("reconstruction_method", "Reconstruction method"),
+            ("elapsed_s", "Elapsed (s)"),
+            ("sample_agreement", "Model agreement"),
+            ("loss", "Variance diagnostic loss"),
+            ("num_trials", "Trials"),
+            ("num_bright_field_pixels", "Bright-field pixels"),
+            ("refinement", "Refinement"),
+            ("refine_nfev", "Refinement evaluations"),
+            ("refine_elapsed_s", "Refinement (s)"),
+        )
+        for name, _ in summary_fields:
+            value = getattr(self, name)
+            if value is not None:
+                record[name] = value
+        if self.optimizer.get("stop") is not None:
+            record["stop_reason"] = self.optimizer["stop"]
+        if self.timings:
+            record["timings"] = dict(self.timings)
         if to_dict:
             return record
 
@@ -317,6 +361,10 @@ class SSBResult(Mapping[str, float]):
             row["depth spread (nm)"] = record["depth_spread_nm"]
         if self.objective is not None:
             row["objective"] = record["objective"]
+        row.update({label: record[name] for name, label in summary_fields if name in record})
+        if "stop_reason" in record:
+            row["Stopping reason"] = record["stop_reason"]
+        row.update({f"Timing: {name} (s)": seconds for name, seconds in self.timings.items()})
         model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
         return pd.DataFrame([row], index=pd.Index([model], name="model"))
 

@@ -39,14 +39,15 @@ Keep the returned result to inspect and reuse the fitted model:
 
 ```python
 fit = ptycho.find_aberrations()
-fit.report()                         # full-precision pandas table, all fitted orders
+fit.report()                         # optics, geometry, objective, counts and timing
 parameters = fit.report(to_dict=True)  # coefficients and geometry as a dictionary
-fit.show("convergence")              # recorded search and refinement
+fit.report(show_convergence=True)    # table plus recorded convergence
 fit.show("probe")                    # model probe intensities
 fit.save_calibration("calibration.json")
 ```
 
-In a notebook, a cell ending on `fit` displays the same parameters vertically.
+Read just the coefficients from `fit.aberrations`, the existing dictionary.
+In a notebook, a cell ending on `fit` displays the full report vertically.
 Only this display rounds numbers; both report formats retain full precision.
 `parameters["aberrations"]` contains every fitted coefficient with unit-bearing
 names such as `C30_nm` and `phi23_deg`. Geometry is separate:
@@ -55,6 +56,21 @@ names such as `C30_nm` and `phi23_deg`. Geometry is separate:
 not an independently measured thickness. Editing the table or dictionary does
 not change the result. The report describes the saved fit, not later viewer
 edits; use the viewer's calibration export for those.
+
+The report includes recorded elapsed time, stage timings, the objective name,
+model agreement, variance diagnostic loss, search/refinement counts and the
+optimizer's stopping reason. These quantities have distinct meanings; reaching
+an evaluation limit is not proof of convergence. Stage times can overlap and
+must not be summed. Unrecorded diagnostics are omitted, not invented.
+
+`fit.report(show_convergence=True)` displays the existing convergence figure
+and returns the same pandas table. In a notebook, append `.T` for a vertical
+table. Plotting uses recorded history only; absent history raises an error
+explaining how to obtain it. Export and plotting are separate calls:
+`to_dict=True` cannot be combined with `show_convergence=True`. Reports add no
+fit callbacks, image transfers or history collection. `find_aberrations(show=False)`
+disables the live phase preview; normal scalar fit history still belongs to the
+fitter and supports result inspection later.
 
 `search="broad"` uses the same result API for the broader fifth-order
 search. Plotting convergence uses saved scalar evaluations, with different

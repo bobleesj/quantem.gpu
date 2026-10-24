@@ -30,6 +30,9 @@ End a notebook cell on `optics` to inspect every fitted aberration and its units
 Use `optics.report()` for the full-precision pandas table or
 `optics.report(to_dict=True)` for a dictionary, with coefficients under
 `"aberrations"` and rotation, tilt and effective depth stored separately.
+`optics.aberrations` remains the coefficient dictionary. The report also includes
+recorded timing and optimizer diagnostics; `optics.report(show_convergence=True)`
+adds the saved convergence plot without fitting again.
 
 The acquisition must supply its calibration, or it must be passed explicitly
 as in the [acquisition tutorial](../python-workflow.md). All three calls above
