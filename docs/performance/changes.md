@@ -330,3 +330,16 @@ layout experiments remain in the
 2. Explain whether it replaces a truly comparable row or remains separate.
 3. Keep rejected or incomparable experiments discoverable rather than deleting
    them.
+
+## 2026-10-24: C10 cache experiments and benchmark navigation
+
+Keep dated reports as reproducible records, with a
+[topic-based entry point](index.md#browse-by-topic) for loading, fitting,
+reconstruction, compression and parity. Existing report paths remain stable.
+
+The [C10 cache and FFT transfer record](2026-10-24-ssb-c10-cache-transfer.md)
+preserves rejected experiments and all observed notebook intervals. The
+retained display transfer reduces its isolated 2048² copy from 2.4 to 0.3 ms;
+this does not establish a universal notebook speedup. The 2× regression and
+unmet 60 fps target remain explicit. This is report-only development evidence,
+not release qualification.

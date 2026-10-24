@@ -4,6 +4,23 @@ This section is the numerical record for `quantem.gpu`. It keeps current
 results easy to find while preserving the detailed history needed to understand
 which optimizations were accepted, rejected, or remain provisional.
 
+## Browse by topic
+
+Start with the operation you want to measure. Detailed reports keep their
+measurement dates in their filenames so links and provenance remain stable.
+
+| Topic | Start here |
+|---|---|
+| Loading and conversion | [HDF5 and QEM loading](2026-10-23-io-loading-limits.md) |
+| SSB fitting | [Joint-fit benchmark command and timing boundaries](ssb-joint-fit.md) |
+| SSB reconstruction and interaction | [C10 caching and FFT transfer measurements](2026-10-24-ssb-c10-cache-transfer.md) |
+| Compression | [CUDA count codecs](cuda-count-codecs.md) |
+| Correctness | [Cross-backend parity](parity.md) |
+
+Use the [results index](results.md) for individual measurements and the
+[change ledger](changes.md) for chronological decisions. Dates identify a
+measurement, not a guarantee that its source is the latest released package.
+
 ## Where to find the numbers
 
 | Evidence | Use it for |
