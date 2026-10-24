@@ -26,7 +26,7 @@ Private selection/report experiment: `20261023-five-default-io`. Timing
 experiment: `20261023-six-default-io`. Byte-layout experiment:
 `20261023-qem-layout-cuda-profile`. Measured scientific source fingerprint:
 `2873ac0ffac23c49c89a7d5311ffbcc8836ead6af640acf6df10f5a292290df8`.
-Base revision: `e8750f3e365208421675f47bbdc6314b135f7146`.
+Base revision: `d2db0bdb4c9859230d3e9ba2f6b23fcfae8eb0f1`.
 
 ## Disk–GPU loading time and verified conversion
 

@@ -8,7 +8,7 @@ is 2.12×. This measures the Python MPS API, not native Swift application paint.
 
 ## Workload and changes
 
-Base revision: `e8750f3e365208421675f47bbdc6314b135f7146`, with local MPS
+Base revision: `d2db0bdb4c9859230d3e9ba2f6b23fcfae8eb0f1`, with local MPS
 loader changes. Physical device: Apple M5 Max, 128 GB unified memory.
 Private experiment: `20261023-mps-h5-pipeline`.
 

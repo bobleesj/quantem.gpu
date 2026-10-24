@@ -15,7 +15,7 @@ The estimator remains `phase_of_mean`; fitting and native loss are unchanged.
 
 ## Matched measurements
 
-These first measurements describe the isolated bounds change at `926d0838`.
+These first measurements describe the isolated bounds change at `2792ed5a`.
 The ordered-group integration below has a separate paired comparison.
 
 Two full 512 × 512 × 192 × 192 acquisitions use all 8,807 and 8,930 active BF
@@ -62,16 +62,16 @@ phase arrays, profiles, browser captures and timing logs remain private.
 ## Integration with ordered coherent accumulation
 
 The bounds were reconciled with the ordered BF accumulation and guarded
-half-spectrum implementation from `90d087c5`. Group bounds follow the existing
+half-spectrum implementation from `5e176105`. Group bounds follow the existing
 chunk boundaries, including incomplete final groups and batches. The shared
 per-detector correction also retains the bounds for the mean-phase estimator.
 No accumulation order, sampling policy, or half-spectrum guard was changed.
 
-The combined implementation is bitwise identical to `90d087c5` for all 28
+The combined implementation is bitwise identical to `5e176105` for all 28
 full-source cases above and three additional 1024-square phases from a third
 acquisition. Native losses and two fixed-optics regional fits are unchanged.
-The 28 earlier slider arrays were frozen from `a382ae49` and also match
-`926d0838` exactly. They differ from both `90d087c5` and the combined version
+The 28 earlier slider arrays were frozen from `6aa323b5` and also match
+`2792ed5a` exactly. They differ from both `5e176105` and the combined version
 by at most 3.52e-6 rad because the pre-integration detector accumulation order
 differs. This is tolerance-based parity across those lineages, not bitwise
 parity; the existing 2e-5 bound is unchanged. The third acquisition retains

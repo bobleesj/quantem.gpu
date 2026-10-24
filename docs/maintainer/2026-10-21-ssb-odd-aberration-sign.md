@@ -34,7 +34,7 @@ either sign. It shares no code with the kernels.
 ## Every backend against the oracle
 
 Largest phase difference (rad) from the oracle at either sign: before
-(quantem.gpu dc8f0398) and after the fix. "Simulation": a weak periodic lattice,
+(quantem.gpu e25bb089) and after the fix. "Simulation": a weak periodic lattice,
 one slice, the probe above, tiled to the backend's scan size. "Measured": the
 crop above. Each backend reconstructs from its own G(q, k) and k, and the
 oracle uses the same inputs. A backend has the right sign when it matches k − q

@@ -54,7 +54,7 @@ These differences are not evidence of improved resolution.
 
 Private evidence: experiment `1022-07-newton-scratch`; API integration acceptance:
 `1022-08-standard-api`. The frozen implementation was GPU commit
-`626a9ecabb68c4ad8d85732d1539ad1df2fd4b4c`. Raw data, images and manifests remain
+`8100dee31a08bb99781232c72186ab4b2cb69427`. Raw data, images and manifests remain
 outside this repository.
 
 ## Optimization lessons

@@ -17,7 +17,7 @@ Python 3.14.6, CuPy 14.2.0 and NumPy 2.4.6. The browser ran separately on an
 Apple M5 Max using hardware WebGPU. There was no competing scientific job;
 existing desktop/background contexts remained running.
 
-GPU base: `e8750f3e365208421675f47bbdc6314b135f7146` plus local changes.
+GPU base: `d2db0bdb4c9859230d3e9ba2f6b23fcfae8eb0f1` plus local changes.
 The full-volume benchmark records diff SHA-256
 `b51b0d24d1506a5b96b97e99d23b8e4efe3629fdecb13b1ee0d9e1b24dbc7dec`.
 Concurrent MPS changes are not qualified by these CUDA observations.

@@ -19,7 +19,7 @@ and private experiment `20261023-six-default-io`. There are three backends
 and six acquisitions. No conversion or timing was rerun for this analysis.
 The measured source fingerprint is
 `2873ac0ffac23c49c89a7d5311ffbcc8836ead6af640acf6df10f5a292290df8`,
-on base revision `e8750f3e365208421675f47bbdc6314b135f7146`.
+on base revision `d2db0bdb4c9859230d3e9ba2f6b23fcfae8eb0f1`.
 
 HDF5 is a container. Every linked detector dataset in these six inputs uses
 bitshuffle plus LZ4, confirmed from filter ID 32008 and compression parameter 2.

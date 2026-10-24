@@ -18,7 +18,7 @@ crop source data, discard BF pixels or reduce output sampling.
 
 ## Matched measurements
 
-The baseline was `5fba77a2`. Alternating 30 synchronized full-phase evaluations
+The baseline was `1898b764`. Alternating 30 synchronized full-phase evaluations
 per version in one process gave:
 
 | Metric | Baseline | Optimized |

@@ -83,7 +83,7 @@ source-checkout qualification, not an installed-wheel release qualification.
 
 ## Source and evidence
 
-Base: `d74b88cc8bc42c3fada71b9fd6740431134bcdc9`, with the same ongoing broad-search
+Base: `7029520bb8aff854b391585eb32908c221e1baa9`, with the same ongoing broad-search
 candidate on both sides. Private experiment ID: `1022-02-memory`. Full manifests,
 frozen source/arrays, raw timings and logs remain private. The shared-FFT
 compiler-cache experiment remains held and was not integrated.

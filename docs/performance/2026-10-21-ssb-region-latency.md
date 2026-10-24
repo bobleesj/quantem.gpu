@@ -86,7 +86,7 @@ and timing boundaries.
 
 ## Separate integration check
 
-The export and cleanup fixes were also tested on `6fce2932`, without the
+The export and cleanup fixes were also tested on `e91459ec`, without the
 shared-FFT refactor. The focused CUDA checks passed (19 tests). Two full
 512 × 512 × 192 × 192 acquisitions retained all 8,807 and 8,930 valid BF
 pixels, with Auto 3× and 4× output respectively. Each benchmark ran four

@@ -9,7 +9,7 @@ rotation, calibration and fitted optics are preserved.
 ## Matched CUDA evidence
 
 The private experiment group `1022-rotation-reuse` compares frozen source
-`d36f8578` with the candidate on a physical Blackwell Max-Q GPU. All valid
+`db305309` with the candidate on a physical Blackwell Max-Q GPU. All valid
 bright-field pixels, detector dimensions, precision and estimators are retained.
 Fitting uses native scan sampling; displayed reconstruction uses Auto.
 
