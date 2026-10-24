@@ -10,6 +10,14 @@ For probe images, fitted coefficients,
 search trials, upsampling, and saved results, use the
 {ref}`advanced Gold tutorial <gold-advanced>`.
 
+## Development API installation
+
+Use the paired development sources (`quantem.gpu` 0.0.1rc18.dev0 and
+`quantem.widget` 0.0.1rc44.dev0). These are source candidates, not a package-index
+release; use branch `oct-24-direct-iterative-api` in both repositories and
+install both checkouts, or install the matching supplied wheels. An older
+widget does not provide the method and regularization controls.
+
 ## Get the Gold data
 
 The public [Gold acquisition](https://huggingface.co/datasets/bobleesj/quantem-data/tree/5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20/4dstem/gold_512_npy_bin4)
