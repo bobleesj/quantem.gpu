@@ -7,11 +7,16 @@ import warnings
 PANEL_WIDTHS = {"small": 300, "medium": 450, "large": 600, "xlarge": 900}
 
 
-def panel_inches(size: str) -> float:
-    """Translate a named panel width to the static 100-DPI reference."""
-    if not isinstance(size, str) or size not in PANEL_WIDTHS:
-        raise ValueError("Use size='small', 'medium', 'large' or 'xlarge'.")
-    return PANEL_WIDTHS[size] / 100
+def panel_inches(size: str | int) -> float:
+    """Translate a preset or pixel width at the static 100-DPI reference."""
+    if isinstance(size, str) and size in PANEL_WIDTHS:
+        return PANEL_WIDTHS[size] / 100
+    if isinstance(size, numbers.Integral) and not isinstance(size, bool) and size > 0:
+        return int(size) / 100
+    raise ValueError(
+        "size must be 'small', 'medium', 'large', 'xlarge', or a positive integer "
+        f"panel width in pixels; use size=900, got {size!r}."
+    )
 
 
 def resolve_columns(

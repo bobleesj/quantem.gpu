@@ -23,7 +23,7 @@ def show_focus(
     region: tuple[int, int, int, int] | None = None,
     mode: Literal["interactive", "static"] = "interactive",
     layout: Literal["grid", "stack"] = "grid",
-    size: Literal["small", "medium", "large", "xlarge"] | None = None,
+    size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
     focus_offsets_nm: Sequence[float] = (-5.0, 0.0, 5.0),
     depth_spread_nm: float | Sequence[float] | None = None,
     axsize: tuple[float, float] | None = None,
@@ -42,7 +42,7 @@ def show_focus(
         raise ValueError(f"Use layout='grid' for Show2D or 'stack' for Show3D; got {layout!r}.")
     width_inches = panel_inches("medium" if size is None else size)
     if axsize is not None and (size is not None or mode != "static"):
-        raise ValueError("Choose size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height) with mode='static'.")
+        raise ValueError("Choose size (a preset or pixel width), or axsize=(width, height) with mode='static'.")
     offsets = np.asarray(focus_offsets_nm, dtype=float)
     if offsets.ndim != 1 or not offsets.size or not np.isfinite(offsets).all():
         raise ValueError("Give finite focus_offsets_nm, for example (-5, 0, 5), relative to the joint fit.")
@@ -111,7 +111,8 @@ def show_focus(
                 labels=[f"C₁₀ {fit.aberrations['C10_nm'] + offset:+.2f} nm" for offset in offsets],
                 title=title, dim_label="Defocus", cmap=cmap,
                 sampling=sampling, units="Å", columns=columns,
-                size=size or "medium", panel_gap_px=0,
+                size=size if isinstance(size, str) else "medium",
+                panel_width_px=round(width_inches * 100), panel_gap_px=0,
                 vmin=lower, vmax=upper, auto_contrast=False,
                 link_contrast=True, display_bin=1, avg_window=1,
             )
@@ -121,7 +122,8 @@ def show_focus(
             [image for row in images for image in row],
             labels=[label for row in labels for label in row], title=title,
             sampling=sampling, units="Å", columns=columns,
-            size=size or "medium", cmap=cmap,
+            size=size if isinstance(size, str) else "medium",
+            panel_width_px=round(width_inches * 100), cmap=cmap,
             vmin=lower, vmax=upper, auto_contrast=False,
             link_contrast=True, link_zoom=True, link_pan=True, display_bin=1,
         )
