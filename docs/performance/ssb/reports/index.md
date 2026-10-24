@@ -3,10 +3,6 @@
 Dated records retain their original workload, backend, source revision and
 acceptance limits. They are evidence, not a statement of current release speed.
 
-- [MPS SSB preview reuse](mps-ssb-preview-reuse-2026-10-17.md)
-- [MPS fine-grid optical calculations, 2026-10-17](mps-ssb-optical-shortcuts-2026-10-17.md)
-- [Full BF MPS redraw comparison, 2026-10-17](mps-ssb-full-bf-redraw-2026-10-17.md)
-- [MPS coherent SSB redraw — 2026-10-17](mps-coherent-redraw-2026-10-17.md)
 - [Lower CUDA SSB staging memory without changing numerical results](2026-10-22-ssb-staging-memory.md)
 - [Initial fitting before fifth-order refinement](2026-10-22-ssb-initialization-and-refinement.md)
 - [Reuse Fourier preparation in four-case SSB review](2026-10-22-rotation-comparison-reuse.md)
@@ -25,6 +21,10 @@ acceptance limits. They are evidence, not a statement of current release speed.
 - [MPS memory: where SSB's gigabytes go and what fits which Mac (2026-10-20)](2026-10-20-mps-memory.md)
 - [Reuse source addresses in MPS SSB reconstruction](2026-10-18-mps-ssb-source-addressing.md)
 - [Exact group support in CUDA SSB](2026-10-18-cuda-ssb-group-support.md)
+- [MPS SSB preview reuse](mps-ssb-preview-reuse-2026-10-17.md)
+- [MPS fine-grid optical calculations, 2026-10-17](mps-ssb-optical-shortcuts-2026-10-17.md)
+- [Full BF MPS redraw comparison, 2026-10-17](mps-ssb-full-bf-redraw-2026-10-17.md)
+- [MPS coherent SSB redraw — 2026-10-17](mps-coherent-redraw-2026-10-17.md)
 - [Exact aperture bounds for interactive MPS SSB](2026-10-17-ssb-aperture-bounds.md)
 - [Reuse MPS loading buffers and decode detector regions directly](2026-10-17-mps-ssb-loading.md)
 - [MPS SSB correction and reduction fusion — 17 October 2026](2026-10-17-mps-ssb-group-fusion.md)

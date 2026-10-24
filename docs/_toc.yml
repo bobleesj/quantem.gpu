@@ -146,10 +146,6 @@ parts:
         - file: performance/ssb/reports/index
           title: SSB reports
           sections:
-          - file: performance/ssb/reports/mps-ssb-preview-reuse-2026-10-17
-          - file: performance/ssb/reports/mps-ssb-optical-shortcuts-2026-10-17
-          - file: performance/ssb/reports/mps-ssb-full-bf-redraw-2026-10-17
-          - file: performance/ssb/reports/mps-coherent-redraw-2026-10-17
           - file: performance/ssb/reports/2026-10-22-ssb-staging-memory
           - file: performance/ssb/reports/2026-10-22-ssb-initialization-and-refinement
           - file: performance/ssb/reports/2026-10-22-rotation-comparison-reuse
@@ -168,6 +164,10 @@ parts:
           - file: performance/ssb/reports/2026-10-20-mps-memory
           - file: performance/ssb/reports/2026-10-18-mps-ssb-source-addressing
           - file: performance/ssb/reports/2026-10-18-cuda-ssb-group-support
+          - file: performance/ssb/reports/mps-ssb-preview-reuse-2026-10-17
+          - file: performance/ssb/reports/mps-ssb-optical-shortcuts-2026-10-17
+          - file: performance/ssb/reports/mps-ssb-full-bf-redraw-2026-10-17
+          - file: performance/ssb/reports/mps-coherent-redraw-2026-10-17
           - file: performance/ssb/reports/2026-10-17-ssb-aperture-bounds
           - file: performance/ssb/reports/2026-10-17-mps-ssb-loading
           - file: performance/ssb/reports/2026-10-17-mps-ssb-group-fusion
