@@ -1,6 +1,7 @@
 """Backend-neutral SSB fit, source, evaluation, and reconstruction results."""
 
 from collections.abc import Iterator, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Self
@@ -13,6 +14,8 @@ from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb.probe import model_probe, probe_grid
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from quantem.gpu.ssb.branches import RotationBranches
 
 # A resolved crystal has sparse positive columns; below this magnitude the phase histogram is too symmetric to tell which
@@ -236,36 +239,93 @@ class SSBResult(Mapping[str, float]):
                          **record["params"]})
         if not rows:
             return pd.DataFrame(index=pd.Index([], name="trial"))
-        return pd.DataFrame.from_records(rows).set_index("trial")
+        return pd.DataFrame.from_records(deepcopy(rows)).set_index("trial")
 
-    def report(self):
-        """One-row table of the fitted parameters and the fit's ``objective``; ``pd.concat([a.report(), b.report()])``
-        compares fits side by side."""
-        import pandas as pd
+    def report(self, *, to_dict: bool = False) -> "pd.DataFrame | dict[str | int, object]":
+        """Report all fitted aberrations and sample geometry at full precision.
 
+        ``pd.concat([a.report(), b.report()])`` compares fits side by side.
+        A bare result in a notebook displays the same values vertically, with
+        display-only rounding. No reconstruction or fitting is performed.
+
+        Parameters
+        ----------
+        to_dict : bool, optional
+            Return an independent dictionary instead of a pandas table.
+            Coefficients are nested under ``aberrations`` with their public
+            unit-bearing names. Geometry uses the public attribute names;
+            ``sample_tilt_mrad`` is a (row, col) pair. For a series result,
+            return the trial table as a dictionary indexed by trial ID.
+
+        Returns
+        -------
+        pandas.DataFrame or dict
+            One row per fit, with units in the column labels, or an unrounded
+            dictionary of the same fitted parameters. A series returns its
+            trial records. Only coefficients present in the result are listed.
+            ``depth_spread_nm`` is effective model depth, not a measured
+            specimen thickness. This report describes the result, not later
+            widget edits, and does not replace ``save_calibration()``.
+
+        Examples
+        --------
+        >>> fit = ptycho.find_aberrations()  # doctest: +SKIP
+        >>> fit.report()  # doctest: +SKIP
+        >>> parameters = fit.report(to_dict=True)  # doctest: +SKIP
+        >>> parameters["aberrations"]["C30_nm"]  # doctest: +SKIP
+        """
         if self.object_wave.ndim == 3:
-            return self.trials
-        aberrations = self.aberrations
-        row = {
-            "C10 (nm)": aberrations.get("C10_nm"),
-            "C12 (nm)": aberrations.get("C12_nm"),
-            "phi12 (deg)": aberrations.get("phi12_deg", 0.0),
+            table = self.trials
+            return table.to_dict(orient="index") if to_dict else table
+        aberrations = {name: self.aberrations[name]
+                       for name in ("C10_nm", "C12_nm", "phi12_deg") if name in self.aberrations}
+        aberrations.update(self.aberrations)
+        record = {
+            "aberrations": aberrations,
+            "scan_detector_rotation_deg": self.scan_detector_rotation_deg,
         }
         if self.rotation_branches is not None:
-            row["Suggested rotation (deg)"] = self.rotation_branches.branches[0].scan_detector_rotation_deg
+            record["suggested_rotation_deg"] = self.rotation_branches.branches[0].scan_detector_rotation_deg
+            record["rotation_branch_decided_by"] = self.rotation_branches.decided_by
         if self.rotation_refined:
-            row["Estimated rotation (deg)"] = self.rotation_estimate_deg
-        row["SSB-selected rotation (deg)"] = self.scan_detector_rotation_deg
-        if self.rotation_branches is not None:
-            row["180° branch by"] = {"columns": "atomic columns", "phase_tail": "phase tail"}[self.rotation_branches.decided_by]
+            record["rotation_estimate_deg"] = self.rotation_estimate_deg
         if self.sample_tilt_mrad is not None:
-            row.update({"tilt row (mrad)": self.sample_tilt_mrad[0],
-                        "tilt col (mrad)": self.sample_tilt_mrad[1],
-                        "depth spread (nm)": self.depth_spread_nm})
+            record["sample_tilt_mrad"] = tuple(self.sample_tilt_mrad)
+        if self.depth_spread_nm is not None:
+            record["depth_spread_nm"] = self.depth_spread_nm
         if self.objective is not None:
-            row["objective"] = self.objective
+            record["objective"] = self.objective
+        if to_dict:
+            return record
+
+        import pandas as pd
+
+        row = {f"{name.rsplit('_', 1)[0]} ({name.rsplit('_', 1)[1]})": value
+               for name, value in record["aberrations"].items()}
+        if self.rotation_branches is not None:
+            row["Suggested rotation (deg)"] = record["suggested_rotation_deg"]
+        if self.rotation_refined:
+            row["Estimated rotation (deg)"] = record["rotation_estimate_deg"]
+        row["SSB-selected rotation (deg)"] = record["scan_detector_rotation_deg"]
+        if self.rotation_branches is not None:
+            row["180° branch by"] = {"columns": "atomic columns", "phase_tail": "phase tail"}[
+                record["rotation_branch_decided_by"]]
+        if self.sample_tilt_mrad is not None:
+            row.update({"tilt row (mrad)": record["sample_tilt_mrad"][0],
+                        "tilt col (mrad)": record["sample_tilt_mrad"][1]})
+        if self.depth_spread_nm is not None:
+            row["depth spread (nm)"] = record["depth_spread_nm"]
+        if self.objective is not None:
+            row["objective"] = record["objective"]
         model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
-        return pd.DataFrame([row], index=pd.Index([model], name="model")).round(3)
+        return pd.DataFrame([row], index=pd.Index([model], name="model"))
+
+    def _repr_html_(self) -> str:
+        """Render the parameter table once, without changing numerical values."""
+        table = self.report()
+        if self.object_wave.ndim != 3:
+            table = table.T.rename_axis("Parameter")
+        return table.to_html(float_format=lambda value: f"{value:.6g}", max_rows=None)
 
     @property
     def phase(self):

@@ -39,11 +39,22 @@ Keep the returned result to inspect and reuse the fitted model:
 
 ```python
 fit = ptycho.find_aberrations()
-fit.report()                         # coefficients and sample geometry
+fit.report()                         # full-precision pandas table, all fitted orders
+parameters = fit.report(to_dict=True)  # coefficients and geometry as a dictionary
 fit.show("convergence")              # recorded search and refinement
 fit.show("probe")                    # model probe intensities
 fit.save_calibration("calibration.json")
 ```
+
+In a notebook, a cell ending on `fit` displays the same parameters vertically.
+Only this display rounds numbers; both report formats retain full precision.
+`parameters["aberrations"]` contains every fitted coefficient with unit-bearing
+names such as `C30_nm` and `phi23_deg`. Geometry is separate:
+`scan_detector_rotation_deg`, and, when present, `sample_tilt_mrad` in
+`(row, col)` order and `depth_spread_nm`. Effective depth is a model parameter,
+not an independently measured thickness. Editing the table or dictionary does
+not change the result. The report describes the saved fit, not later viewer
+edits; use the viewer's calibration export for those.
 
 `search="broad"` uses the same result API for the broader fifth-order
 search. Plotting convergence uses saved scalar evaluations, with different
