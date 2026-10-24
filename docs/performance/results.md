@@ -9,6 +9,15 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
+## SSB reconstruction and interaction, 2026-10-24
+
+The [anonymous C10 cache and FFT transfer benchmark](2026-10-24-ssb-c10-cache-transfer.md)
+retains full data and higher-order corrections. It separates CUDA cache
+experiments, an isolated WebGPU transfer improvement and actual notebook
+paints. The 2× notebook measurement does not improve on its baseline; 4×
+measurements vary. The 60 fps target remains unmet. Raw source identities and
+images remain in the private evidence archive.
+
 ## HDF5 and QEM Disk–GPU loading, 2026-10-23
 
 Start with the [IO benchmark record](2026-10-23-io-loading-limits.md). It is the
