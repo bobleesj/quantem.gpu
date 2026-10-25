@@ -55,9 +55,10 @@ detector-bin-8 timings have no equivalent retained real-data product bundle and
 remain timing-only. See [Verified benchmark results](../results.md) for the full
 matrix and device/runtime details.
 
-Native Swift/Metal SSB at `e1da9bc` has its own independently frozen 512×512
-phase reference. The complete-cache path passes at relative L2 `5.86952296e-5`
-and maximum wrapped error `5.62884106e-6` rad; the zero-cache exact path passes
+Native Swift/Metal SSB at `e1da9bc` (the engine's non-model reconstruction and
+phase-variance fit, retired 2026-10-25) had its own independently frozen 512×512
+phase reference. The complete-cache path passed at relative L2 `5.86952296e-5`
+and maximum wrapped error `5.62884106e-6` rad; the zero-cache exact path passed
 at relative L2 `2.30151898e-5` and maximum wrapped error `2.48712759e-6` rad.
 Three seed-42 200-trial TPE plus Nelder–Mead fits returned identical parameters
 and loss. These values do not adjudicate other scan sizes, raw-HDF5 preparation,

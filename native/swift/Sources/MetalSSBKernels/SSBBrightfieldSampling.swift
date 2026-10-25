@@ -1,6 +1,7 @@
 import Foundation
 
-/// Reproducible optimization-only sampling of the complete logical BF selection.
+/// Reproducible optimization-only sampling of the complete logical BF selection, as the retired
+/// phase-variance search recorded it (`SSBOptimizationResult.brightfieldSampling`).
 /// Reconstruction keeps the original geometry and all of its BF pixels.
 public struct SSBBrightfieldSampling: Codable, Equatable, Sendable {
   public let policy: String
@@ -31,29 +32,5 @@ public struct SSBBrightfieldSampling: Codable, Equatable, Sendable {
       }
     }
     indices = Array(order.prefix(count)).sorted()
-  }
-
-  /// Preserve the original accumulation order and batch adjacent selected columns.
-  func ranges(activeIndices: [Int], within bounds: Range<Int>, batchSize: Int) -> [Range<Int>] {
-    if indices.count == totalCount {
-      return stride(from: bounds.lowerBound, to: bounds.upperBound, by: batchSize)
-        .map { $0..<min($0 + batchSize, bounds.upperBound) }
-    }
-    let included = Set(indices)
-    var ranges = [Range<Int>]()
-    var cursor = bounds.lowerBound
-    while cursor < bounds.upperBound {
-      guard included.contains(activeIndices[cursor]) else {
-        cursor += 1
-        continue
-      }
-      let start = cursor
-      repeat {
-        cursor += 1
-      } while cursor < bounds.upperBound
-        && cursor - start < batchSize && included.contains(activeIndices[cursor])
-      ranges.append(start..<cursor)
-    }
-    return ranges
   }
 }

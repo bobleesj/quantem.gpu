@@ -26,7 +26,6 @@ import math
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -45,9 +44,7 @@ from ssb_parity_case import (  # noqa: E402
 from ssb_parity_gate import GATES, _gate  # noqa: E402
 
 FAST_CASES = ("arina-128-full-disk", "arina-128-inner-disk")
-RECORDED_CASE = "arina-128-recorded-c10"
 FULL_CASE = "arina-512-full-disk"
-HARNESS_MARKER = REPO_ROOT / "build" / "ssb-parity-check.json"
 
 
 def _gpurun() -> Path:
@@ -80,14 +77,6 @@ def _requires_mps() -> None:
         pytest.skip("the MPS backend requires macOS")
 
 
-def _requires_metal_harness() -> None:
-    if not HARNESS_MARKER.is_file():
-        pytest.skip(
-            "the native parity harness is not built; run "
-            "`scripts/check_ssb_parity.sh --build-metal`"
-        )
-
-
 def _existing_report() -> list[dict] | None:
     path = os.environ.get("QUANTEM_SSB_PARITY_REPORT")
     if not path:
@@ -95,9 +84,7 @@ def _existing_report() -> list[dict] | None:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _measure(
-    cases: tuple[str, ...], *, use_metal: bool, tag: str, metal_only: bool = False
-) -> list[dict]:
+def _measure(cases: tuple[str, ...], *, tag: str) -> list[dict]:
     """Run the gate for ``cases`` under the shared GPU lock and parse it."""
 
     if os.environ.get("QUANTEM_SSB_CPU_ORACLE") != "1":
@@ -114,10 +101,6 @@ def _measure(
         "--json",
         str(report_path),
     ]
-    if metal_only:
-        command.append("--metal-only")
-    elif not use_metal:
-        command.append("--no-metal")
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(REPO_ROOT / "src")
     environment["GPU_RUN_LABEL"] = "parity"
@@ -151,25 +134,7 @@ def fast_reports() -> list[dict]:
     if cached is not None:
         return cached
     _requires_mps()
-    use_metal = HARNESS_MARKER.is_file()
-    return _measure(FAST_CASES, use_metal=use_metal, tag="fast")
-
-
-@pytest.fixture(scope="session")
-def full_reports() -> list[dict]:
-    """Measured report for the full 512x512 acquisition (opt-in)."""
-
-    if not os.environ.get("QUANTEM_SSB_PARITY_FULL"):
-        pytest.skip("set QUANTEM_SSB_PARITY_FULL=1 to measure the 512x512 case")
-    _requires_source()
-    _requires_artifact(FULL_CASE)
-    _requires_metal_harness()
-    # The full acquisition is the case where the MPS finding F1 is open, so the
-    # aggregate gate verdict is already red here by construction. This fixture
-    # therefore measures the native Metal pairs alone; the MPS side of the same
-    # case is asserted by ``test_full_512_mps_finding_stays_open`` against the
-    # recorded full report.
-    return _measure((FULL_CASE,), use_metal=True, tag="full", metal_only=True)
+    return _measure(FAST_CASES, tag="fast")
 
 
 def _recorded_full_report() -> list[dict] | None:
@@ -289,58 +254,6 @@ def test_gated_aberration_settings_are_well_conditioned(fast_reports: list[dict]
             )
 
 
-def test_recorded_c10_settings_no_longer_disagree(fast_reports: list[dict]) -> None:
-    """The recorded cached-versus-streamed loss defect stays closed.
-
-    Experiment 20260913-ssb-loss-diagnosis recorded the cached objective
-    disagreeing with the streamed one by 4.43e-5, 3.46e-5 and 5.79e-5 relative
-    at C10 = 0, 55 and 155.96977 (the last exceeded the 5e-5 gate of the time).
-    The defect was the half-plane projection dropping the signed-Nyquist
-    contribution. Both paths must now agree with each other and with the
-    full-plane oracle at float32 level.
-    """
-
-    for entry in _entries(fast_reports, RECORDED_CASE):
-        floor = entry["float32_floor"]
-        assert floor["object_relative_l2"] < 1.0e-5, (
-            f"recorded C10={entry['aberrations']['C10_A']} is not a usable "
-            f"float32 parity point: floor {floor['object_relative_l2']:.3g}"
-        )
-        cached = entry.get("metal_cached_vs_streamed")
-        assert cached is not None, "no cached-versus-streamed record was measured"
-        _assert_gate(
-            "recorded cached vs streamed",
-            "loss_relative_error",
-            cached["loss_relative_error"],
-            floor,
-        )
-        _assert_gate(
-            "recorded cached vs streamed",
-            "object_relative_l2",
-            cached["object_relative_l2"],
-            floor,
-        )
-        _assert_gate(
-            "recorded cached vs streamed",
-            "loss_absolute_error",
-            cached["loss_abs_error"],
-            floor,
-        )
-        for variant, metrics in (entry.get("metal") or {}).items():
-            _assert_gate(
-                f"recorded metal {variant}",
-                "loss_relative_error",
-                metrics["loss_relative_error"],
-                floor,
-            )
-            _assert_gate(
-                f"recorded metal {variant}",
-                "loss_absolute_error",
-                metrics["loss_abs_error"],
-                floor,
-            )
-
-
 def test_mps_full_disk_matches_double_reference(fast_reports: list[dict]) -> None:
     """The public MPS path reproduces the independent oracle in float32."""
 
@@ -391,155 +304,6 @@ def test_mps_inner_disk_matches_double_reference(fast_reports: list[dict]) -> No
         )
 
 
-def test_native_metal_matches_double_reference(fast_reports: list[dict]) -> None:
-    """Every native Metal cache topology reproduces the oracle in float32."""
-
-    _requires_metal_harness()
-    for name in FAST_CASES:
-        for entry in _entries(fast_reports, name):
-            floor = entry["float32_floor"]
-            variants = entry.get("metal")
-            if not variants:
-                pytest.fail(f"case {name} has no native Metal products in the report")
-            for variant, metrics in variants.items():
-                label = f"metal {variant}"
-                _assert_gate(label, "object_relative_l2", metrics["object_relative_l2"], floor)
-                _assert_gate(
-                    label,
-                    "object_max_abs_error_relative",
-                    metrics["object_max_abs_error_relative"],
-                    floor,
-                )
-                _assert_gate(
-                    label,
-                    "phase_max_error_radians",
-                    metrics["object_phase_max_error_radians_core"],
-                    floor,
-                )
-                _assert_gate(
-                    label, "loss_relative_error", metrics["loss_relative_error"], floor
-                )
-                _assert_gate(
-                    label, "loss_absolute_error", metrics["loss_abs_error"], floor
-                )
-
-
-def test_metal_cache_topology_does_not_change_results(fast_reports: list[dict]) -> None:
-    """Cached, hybrid and fully streamed topologies agree at float32 level.
-
-    This is the regression claim for the retired half-plane endpoint defect,
-    which broke the cached objective by 1.06e-3 relative against a 5e-5 gate.
-    """
-
-    _requires_metal_harness()
-    for name in FAST_CASES:
-        for entry in _entries(fast_reports, name):
-            floor = entry["float32_floor"]
-            variants = entry.get("metal") or {}
-            assert variants, f"case {name} has no native Metal products"
-            cached = variants["cached"]
-            for variant in ("hybrid", "streamed"):
-                other = variants[variant]
-                relative = abs(other["loss"] - cached["loss"]) / abs(cached["loss"])
-                assert relative <= GATES["loss_relative_error"]["absolute"], (
-                    f"{name}: metal {variant} loss differs from cached by "
-                    f"{relative:.3g} relative; the endpoint projection defect "
-                    "is back."
-                )
-                pair = entry.get(f"metal_cached_vs_{variant}")
-                assert pair is not None, (
-                    f"case {name} has no cached-vs-{variant} topology record"
-                )
-                _assert_gate(
-                    f"metal cached vs {variant}",
-                    "object_relative_l2",
-                    pair["object_relative_l2"],
-                    floor,
-                )
-                _assert_gate(
-                    f"metal cached vs {variant}",
-                    "loss_relative_error",
-                    pair["loss_relative_error"],
-                    floor,
-                )
-                _assert_gate(
-                    f"metal cached vs {variant}",
-                    "phase_max_error_radians",
-                    pair["object_phase_max_error_radians_core"],
-                    floor,
-                )
-
-
-def test_mps_matches_native_metal_directly(fast_reports: list[dict]) -> None:
-    """The two production backends agree with each other in float32."""
-
-    _requires_metal_harness()
-    for name in FAST_CASES:
-        for entry in _entries(fast_reports, name):
-            floor = entry["float32_floor"]
-            for variant in ("cached", "hybrid", "streamed"):
-                pair = entry.get(f"mps_vs_metal_{variant}")
-                assert pair is not None, f"case {name} has no mps-vs-metal:{variant}"
-                _assert_gate(
-                    f"mps vs metal {variant}",
-                    "object_relative_l2",
-                    pair["object_relative_l2"],
-                    floor,
-                )
-                _assert_gate(
-                    f"mps vs metal {variant}",
-                    "phase_max_error_radians",
-                    pair["object_phase_max_error_radians_core"],
-                    floor,
-                )
-                _assert_gate(
-                    f"mps vs metal {variant}",
-                    "loss_relative_error",
-                    pair["loss_relative_error"],
-                    floor,
-                )
-                _assert_gate(
-                    f"mps vs metal {variant}",
-                    "loss_absolute_error",
-                    pair["loss_abs_error"],
-                    floor,
-                )
-
-
-def test_full_512_metal_matches_double_reference(full_reports: list[dict]) -> None:
-    """The production 512x512 scale keeps float32 parity on the native path."""
-
-    for entry in _entries(full_reports, FULL_CASE):
-        floor = entry["float32_floor"]
-        variants = entry.get("metal") or {}
-        assert variants, "no native Metal variant was measured for the 512 case"
-        for variant, metal in sorted(variants.items()):
-            _assert_gate(
-                f"metal {variant} object",
-                "object_relative_l2",
-                metal["object_relative_l2"],
-                floor,
-            )
-            _assert_gate(
-                f"metal {variant} object phase",
-                "phase_max_error_radians",
-                metal["object_phase_max_error_radians_core"],
-                floor,
-            )
-            _assert_gate(
-                f"metal {variant} objective",
-                "loss_relative_error",
-                metal["loss_relative_error"],
-                floor,
-            )
-            _assert_gate(
-                f"metal {variant} objective",
-                "loss_absolute_error",
-                metal["loss_abs_error"],
-                floor,
-            )
-
-
 def test_full_512_mps_finding_stays_open() -> None:
     """Finding F1 stays visible: MPS misses the strict bound at 512x512.
 
@@ -556,7 +320,7 @@ def test_full_512_mps_finding_stays_open() -> None:
     if report is None:
         pytest.skip(
             "no recorded 512 report; measure one with "
-            "`scripts/check_ssb_parity.sh --full` and point "
+            "`scripts/check_ssb_parity.sh --cpu-oracle --full` and point "
             "QUANTEM_SSB_PARITY_FULL_REPORT at it"
         )
     checked = 0
@@ -587,218 +351,3 @@ def test_full_512_mps_finding_stays_open() -> None:
         "a test to delete - re-measure the case, refresh "
         "experiment 20260916-ssb-strict-float32-parity, and retire F1 there."
     )
-
-# --------------------------------------------------------------------------
-# Fit-trajectory parity: the objective gate above proves that one loss is
-# right; these tests prove that the *search* that consumes it is pinned, is
-# deterministic, and that the batched pair draw is a different trajectory.
-# --------------------------------------------------------------------------
-
-FIT_HARNESS = REPO_ROOT / "build" / "ssb-fit-trajectory"
-FIT_PIN = Path(__file__).resolve().parent / "fixtures" / "ssb_fit_trajectory_128.json"
-FIT_CASE = "arina-128-full-disk"
-
-
-def _fit_runs_root() -> Path:
-    return Path(
-        os.environ.get(
-            "QUANTEM_SSB_PARITY_RUNS", Path.home() / "perf-lab/ssb-audit/parity-runs"
-        )
-    )
-
-
-def _requires_fit_harness() -> None:
-    if not FIT_HARNESS.is_file():
-        pytest.skip(
-            "the fit-trajectory harness is not built; run "
-            "`scripts/check_ssb_fit_trajectory.sh --build-metal`"
-        )
-
-
-def _float32_key(point: dict) -> str:
-    import struct
-
-    return "-".join(
-        str(struct.unpack("<I", struct.pack("<f", float(point[key])))[0])
-        for key in ("c10Angstroms", "c12Angstroms", "phi12Radians")
-    )
-
-
-def _trajectory_digest(trials: list[dict]) -> str:
-    import hashlib
-    import struct
-
-    digest = hashlib.sha256()
-    for trial in trials:
-        digest.update(_float32_key(trial).encode())
-        digest.update(struct.pack("<d", float(trial["loss"])))
-        digest.update(str(trial["stage"]).encode())
-    return digest.hexdigest()
-
-
-def _run_fit_harness(destination: Path) -> dict:
-    """Run the native fit harness twice under the shared GPU lock."""
-
-    _requires_fit_harness()
-    _requires_artifact(FIT_CASE)
-    case_directory = case_root(CASES[FIT_CASE])
-    out_directory = destination / "fit-run"
-    repeat_directory = destination / "fit-repeat"
-    environment = dict(os.environ)
-    environment["GPU_RUN_LABEL"] = "parity"
-    gpurun = _gpurun()
-    for run_directory in (out_directory, repeat_directory):
-        command = [
-            str(FIT_HARNESS), str(case_directory), str(run_directory), "closure",
-        ]
-        completed = subprocess.run(
-            [*([str(gpurun)] if gpurun.is_file() and os.access(gpurun, os.X_OK) else []), *command],
-            cwd=REPO_ROOT,
-            env=environment,
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode != 0:
-            pytest.fail(
-                f"the fit-trajectory harness failed:\n{completed.stdout}\n{completed.stderr}"
-            )
-    return {
-        "run": json.loads((out_directory / "fit-trajectory.json").read_text(encoding="utf-8")),
-        "repeat": json.loads((repeat_directory / "fit-trajectory.json").read_text(encoding="utf-8")),
-    }
-
-
-@pytest.fixture(scope="session")
-def fit_trajectory() -> dict:
-    """The measured fit report, reused when ``QUANTEM_SSB_PARITY_FIT_REPORT`` is set."""
-
-    _requires_source()
-    cached = os.environ.get("QUANTEM_SSB_PARITY_FIT_REPORT")
-    if cached:
-        path = Path(cached)
-        run = json.loads(path.read_text(encoding="utf-8"))
-        repeat_path = path.with_name(path.name.replace(".json", "-repeat.json"))
-        repeat = (
-            json.loads(repeat_path.read_text(encoding="utf-8"))
-            if repeat_path.is_file()
-            else run
-        )
-        return {"run": run, "repeat": repeat}
-    existing = _fit_runs_root() / f"fit-{FIT_CASE}.json"
-    if existing.is_file() and not os.environ.get("QUANTEM_SSB_PARITY_REMEASURE"):
-        run = json.loads(existing.read_text(encoding="utf-8"))
-        repeat_path = _fit_runs_root() / f"fit-{FIT_CASE}-repeat.json"
-        repeat = (
-            json.loads(repeat_path.read_text(encoding="utf-8"))
-            if repeat_path.is_file()
-            else run
-        )
-        return {"run": run, "repeat": repeat}
-    with tempfile.TemporaryDirectory(prefix="ssb-fit-parity-") as directory:
-        return _run_fit_harness(Path(directory))
-
-
-def test_fit_trajectory_is_deterministic(fit_trajectory: dict) -> None:
-    """Two processes, same artifact and seed, give the same fit trajectory.
-
-    A pin is meaningless without this: if the search were not reproducible the
-    frozen digest below would only record one sampling of a distribution.
-    """
-
-    run = fit_trajectory["run"]
-    repeat = fit_trajectory["repeat"]
-    first = _trajectory_digest(run["sequential"]["trials"])
-    second = _trajectory_digest(repeat["sequential"]["trials"])
-    assert first == second, (
-        "the production fit is not deterministic across processes: "
-        f"{first} != {second}. Do not pin a non-reproducible trajectory; find "
-        "the nondeterminism first."
-    )
-
-
-def test_production_fit_matches_frozen_trajectory_pin(fit_trajectory: dict) -> None:
-    """The unbatched production trajectory and optimum still match the pin.
-
-    ``MetalSSBEngine.optimize`` passes no ``evaluateBatch`` closure today, so
-    ``SSBOptimizer.run`` takes ``batchCount = 1``. That is the fit the product
-    ships; this pin freezes all 200 trials plus the Nelder-Mead refinement. A
-    mismatch is a finding about the sampler, the objective or the engine cache,
-    never a reason to rewrite the fixture.
-    """
-
-    if not FIT_PIN.is_file():
-        pytest.skip(f"the fit pin is absent: {FIT_PIN}")
-    pin = json.loads(FIT_PIN.read_text(encoding="utf-8"))
-    run = fit_trajectory["run"]
-    sequential = run["sequential"]
-    digest = _trajectory_digest(sequential["trials"])
-    assert run["productionOptimizeAlwaysMatchesSequential"], (
-        "the production `optimize` entry point no longer reproduces the plain "
-        "sequential draw; the fit path changed"
-    )
-    assert digest == pin["sequential"]["trajectorySha256"], (
-        "the production fit trajectory moved. Do not rewrite the pin; investigate "
-        f"what changed. measured {digest}, pinned {pin['sequential']['trajectorySha256']}"
-    )
-    measured_optimum = [
-        float(sequential["bestC10Angstroms"]),
-        float(sequential["bestC12Angstroms"]),
-        float(sequential["bestPhi12Radians"]),
-    ]
-    assert measured_optimum == [float(value) for value in pin["sequential"]["best"]]
-    assert float(sequential["bestLoss"]) == float(pin["sequential"]["bestLoss"])
-    assert int(sequential["totalEvaluations"]) == int(pin["sequential"]["totalEvaluations"])
-
-
-def test_objective_is_a_pure_function_of_the_float32_point(fit_trajectory: dict) -> None:
-    """Repeated, fresh-engine and float32-alias evaluations are bit-identical."""
-
-    purity = fit_trajectory["run"]["objectivePurity"]
-    assert purity["repeatSameEngineBitwiseMismatches"] == 0
-    assert purity["freshEngineBitwiseMismatches"] == 0
-    assert purity["float32AliasBitwiseMismatches"] == 0
-
-
-def test_batched_pair_draw_is_a_different_trajectory(fit_trajectory: dict) -> None:
-    """Batching changes the search, not just the arithmetic.
-
-    With ``evaluateBatch`` supplied, ``SSBOptimizer.run`` draws two candidates
-    from the *same* history instead of drawing trial t+1 after telling trial t.
-    On identical inputs and one seed that is a different search, so the frozen
-    divergence below is the size of the trap the user asked about: it is a
-    characterisation, not a tolerance.
-    """
-
-    run = fit_trajectory["run"]
-    comparison = run.get("comparison")
-    if comparison is None:
-        pytest.skip("this report was recorded without a batched trajectory")
-    sequential = run["sequential"]
-    batched = run["batched"]
-    assert comparison["sharedCandidateLossMismatches"] == 0, (
-        "a candidate evaluated by both draws got a different loss; the objective "
-        "is not a pure function of the point any more"
-    )
-    assert comparison["trialsWithDifferentFloat32Point"] > 0, (
-        "the batched draw is expected to be a different search on this artifact; "
-        "if batching is now history-correct, record that change instead of "
-        "deleting this test"
-    )
-    assert comparison["maxLossDifferenceAtSameIndex"] > 0.0
-    assert [
-        float(batched["bestC10Angstroms"]),
-        float(batched["bestC12Angstroms"]),
-        float(batched["bestPhi12Radians"]),
-    ] != [
-        float(sequential["bestC10Angstroms"]),
-        float(sequential["bestC12Angstroms"]),
-        float(sequential["bestPhi12Radians"]),
-    ], "the batched draw must not silently land on the sequential optimum"
-    pin = json.loads(FIT_PIN.read_text(encoding="utf-8")) if FIT_PIN.is_file() else None
-    if pin and "batched" in pin:
-        assert comparison["trialsWithDifferentFloat32Point"] == int(
-            pin["batched"]["divergenceFromSequential"]["trialsWithDifferentFloat32Point"]
-        ), "the measured batch divergence moved; this is a finding, not a pin to edit"
-        assert float(comparison["maxLossDifferenceAtSameIndex"]) == float(
-            pin["batched"]["divergenceFromSequential"]["maxLossDifferenceAtSameIndex"]
-        )

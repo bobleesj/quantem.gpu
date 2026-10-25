@@ -41,9 +41,10 @@ Native Swift/Metal products for macOS and iOS clients:
   `Metal4DSTEMResidentCacheIO`, and `Metal4DSTEMResidentSummaryIO` for explicit
   native load, resource, resident-cache, and exact prepared-product provenance.
   See [Native 4D-STEM load and cache contract](../api/native_4dstem_io.md).
-- `MetalSSBEngine` for exact native 128×128, 256×256 and 512×512 SSB reconstruction,
-  phase-variance evaluation, and deterministic 200-trial TPE plus Nelder–Mead
-  fitting. See [native SSB](#native-swift-and-metal).
+- `MetalSSBEngine` and `MetalSSBJointModel` for exact native 128×128, 256×256 and
+  512×512 SSB: the engine prepares the Fourier evidence, and the joint model fits
+  (`SSBModelFit`) and reconstructs SSB, Phase and Complex. See
+  [native SSB](#native-swift-and-metal).
 
 Native clients call these endpoints directly. They are not a local Python
 backend.
@@ -84,68 +85,25 @@ let engine = try MetalSSBEngine(
 )
 
 try engine.prepare(brightfield: planeMajorUInt8Buffer)
-let result = try engine.reconstruct(
-  aberrations: MetalSSBAberrations(
-    c10Angstroms: 72.98,
-    c12Angstroms: 14.4,
-    phi12Radians: 0.4686
-  )
-)
+let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
+let fit = try SSBModelFit.findAberrations(
+  model: model, rotationDegrees: rotation,
+  darkField: darkField, scanSampling: scanSampling)
+let phase = try model.reconstruct(fit.fit.point, upsamplingFactor: autoFactor)
 ```
 
-`result.object` and `result.fourierSum` are row-major complex64 Metal
-buffers at the native 128×128, 256×256 or 512×512 scan size. Their
-`result.provenance` records scan shape, source/compute dtype, scan bin
-1, no scan crop, logical/executed/zero-aperture BF counts, cached/streamed BF
-counts, and cache bytes. `phaseVariance(...)` evaluates the same complete
-objective. `optimize(...)` defaults to 200 seeded TPE trials followed by
-Nelder–Mead and returns the full trial record.
+The engine Fourier-transforms every active BF column once and keeps the
+Hermitian spectra; the joint model fits the model agreement on them and
+reconstructs at the automatic output sampling. `phase.provenance` records scan
+shape, source/compute dtype, scan bin 1, no scan crop, logical/executed/
+zero-aperture BF counts, cached/streamed BF counts, and cache bytes. The
+staged fit is described in `native/swift/README.md`.
 
-### Optional BF sampling for native optimization
-
-`phaseVariance` and `optimize` accept `brightfieldFraction`, default **1.0**.
-This fraction selects detector BF pixels for the objective, not scan positions,
-aperture radius, detector binning or the final image resolution. Full aperture
-remains the default throughout search and Nelder-Mead refinement.
-
-```swift
-let fit = try engine.optimize(
-  start: initialAberrations, globalTrials: 200, brightfieldFraction: 0.25)
-let final = try engine.reconstruct(aberrations: MetalSSBAberrations(
-  c10Angstroms: Float(fit.best.c10Angstroms),
-  c12Angstroms: Float(fit.best.c12Angstroms),
-  phi12Radians: Float(fit.best.phi12Radians)))
-```
-
-Fractions below one intentionally approximate the full objective and may change
-the fitted aberrations. They do not produce an equivalent full-BF loss. The
-selection is uniform without replacement, fixed at seed 42, sorted into source
-order and reused across all objective evaluations. Its size is the rounded
-fraction of the logical BF selection, with at least two pixels (or all pixels
-if fewer exist). Zero-aperture entries remain part of that logical normalization;
-a subset with no active contribution fails with an instruction to increase it.
-No intensity-based or central-disk-only selection is made.
-
-The engine skips unselected cached or streamed columns, batches adjacent selected
-columns, and reuses the full prepared cache. It does not allocate a second
-Fourier-volume cache. Initial full evidence preparation and memory use are not
-reduced. `reconstruct` is unchanged and always uses the engine's full selected
-aperture, including after a sampled fit. Using fewer objective pixels is not a
-kernel speedup or a guarantee of proportional total-workflow acceleration.
-
-`SSBOptimizationResult.brightfieldSampling` stores the policy version, requested
-fraction, total BF count and exact selected logical indices. Phase-variance
-results carry the same selection and selected-work provenance. Saved native
-runs retain this record; applications should label sampled losses explicitly
-and retain selection provenance when exporting a phase-only result.
-
-`scripts/check_metal_ssb_bf_sampling.sh` compares sampled loss against explicitly
-constructed subset inputs at all three native sizes in cached, streamed and
-hybrid modes, checks saved-fit selection, and checks bit-identical full
-reconstruction before/after sampling. The unchanged 100% path is additionally
-covered by `scripts/check_metal_ssb_scan_sizes.sh` against the frozen CUDA and
-independent-equation fixtures. These fixtures validate implementation, not the
-scientific quality of fitting a particular experiment with fewer BF pixels.
+The engine's own non-model reconstruction (`reconstruct(aberrations:)`), its
+phase-variance objective (`phaseVariance`), the seeded TPE and Nelder–Mead search
+over it (`optimize`, `SSBOptimizer`) and its optional BF sampling are retired.
+`SSBFitOptions(objective: .phaseVariance)` still decodes from saved runs and is
+refused as a fit.
 
 `cacheBudgetBytes: nil` requests a complete Hermitian `G(k)` cache. A finite
 budget caches whole 32-BF batches and streams the remaining terms exactly.
@@ -156,35 +114,26 @@ plots.
 
 ### Saved native runs
 
-`MetalSSBSavedRun` records both complex64 images, calibrated geometry,
-aberrations, rotation, fit history, seed, source identity, backend revision,
-reconstruction timings and provenance for a 128×128, 256×256 or 512×512 scan.
-The binary property-list format is versioned and holds SHA-256 checksums for
-the two image payloads. Writes are atomic; loading validates the requested
-source identity and both payloads.
+`MetalSSBJointSavedRun` saves a joint-model result: the phase, the exact model
+point, calibration, sampling, region and fit record.
+
+`MetalSSBSavedRun` is the format of the retired non-model engine. It records
+both complex64 images, calibrated geometry, aberrations, rotation, fit history,
+seed, source identity, backend revision, reconstruction timings and provenance
+for a 128×128, 256×256 or 512×512 scan, in a versioned binary property list with
+SHA-256 checksums for the two image payloads. Runs saved with it still open:
 
 ```swift
-let saved = try MetalSSBSavedRun(
-    result: reconstruction, sourceIdentity: sourceSHA256,
-    backendRevision: revision, geometry: geometry, aberrations: fitted,
-    scanDetectorRotationDegrees: rotation, optimization: fit, seed: 42)
-try saved.save(to: resultURL)
 let previous = try MetalSSBSavedRun.load(
     from: resultURL, matchingSourceIdentity: sourceSHA256)
 let images = try previous.reconstruction(device: device)
+let phase = try MetalSSBEngine(
+    device: device, geometry: previous.geometry, cacheBudgetBytes: 0
+).phase(of: images)
 ```
 
-Loading restores the saved calibration; it does not apply current application
-overrides to an old result, and no optimizer or raw-source decode runs during
-image restoration. Recorded reconstruction timings are not reopening timings.
-The application owns filenames, retention, source fingerprints and whether to
-restore a saved run or start a new one.
-
-`bash scripts/check_metal_ssb.sh` runs these checks without XCTest on an Apple
-GPU: identical reconstructions and loss for equal `uint8`, `uint16` and
-`uint32` counts, values beyond the narrower widths, full-cache versus streamed
-reconstruction within the 1e-4 relative L2 limit, coma and trefoil corrected
-with the first sideband's probe phase at k − q on three weak phase gratings, a
-seeded 200-trial synthetic fit, exact reload of saved images and fit history, and
-rejection of another acquisition's identity. The fixtures are small synthetic BF sets with full scan
-dimensions, not real full-BF acquisition timing.
+Loading validates the requested source identity and both payloads, restores
+the saved calibration, and does not apply current application overrides to an
+old result. No optimizer or raw-source decode runs during image restoration.
+Recorded reconstruction timings are not reopening timings. Editing such a run
+reconstructs it with the joint model.

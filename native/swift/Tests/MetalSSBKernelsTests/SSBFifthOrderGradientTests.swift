@@ -258,7 +258,7 @@ final class SSBFifthOrderGradientTests: XCTestCase {
     func fit(_ order: Int) throws -> (SSBBranchedFit, MetalSSBJointModel) {
       let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
       let result = try SSBModelFit.findAberrations(
-        model: model, engine: engine, rotationDegrees: 17.25, darkField: nil,
+        model: model, rotationDegrees: 17.25, darkField: nil,
         scanSampling: (0.5, 0.5), options: SSBFitOptions(trials: 40, maximumOrder: order),
         checkRotation: false)
       return (result, model)

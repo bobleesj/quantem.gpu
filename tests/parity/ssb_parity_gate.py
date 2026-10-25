@@ -7,9 +7,8 @@ One command proves that a measured SSB path did not lose precision:
 The gate compares, at byte-identical inputs (one exported exact BF-column
 artifact, one declared geometry, one aberration setting):
 
-1. the public Python ``quantem.gpu.SSB`` MPS path,
-2. the native Swift ``MetalSSBKernels`` path through its standalone harness, and
-3. the independent double-precision oracle in :mod:`ssb_double_reference`,
+1. the public Python ``quantem.gpu.SSB`` MPS path, and
+2. the independent double-precision oracle in :mod:`ssb_double_reference`,
 
 and reports the exact error metrics the user asked for: max absolute error,
 max relative error, relative L2 of the object, max phase error in radians, and
@@ -18,12 +17,15 @@ in :data:`GATES` are physical float32 bounds derived from the measured
 single-precision arithmetic floor of the same formula, never loosened to make a
 backend pass.
 
+The native Swift engine's non-model reconstruction and phase-variance objective,
+which this gate also measured, are retired; native SSB is the joint model, with
+its own XCTest parity suites.
+
 Run ``python tests/parity/ssb_parity_gate.py --help`` for the case list.
 """
 
 import argparse
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -108,7 +110,7 @@ GATE_FLOOR_METRIC = {
 def _aberration_dict(case: SSBParityCase, index: int) -> dict[str, float]:
     """One case setting as the public session takes it: ``C10_nm``, ``C12_nm`` (nm) and ``phi12_deg`` (degrees).
 
-    The case holds ``(C10_A, C12_A, phi12_rad)``, the engine units the oracle and the Metal harness evaluate. Passing
+    The case holds ``(C10_A, C12_A, phi12_rad)``, the engine units the oracle evaluates. Passing
     those numbers under the nm keys would give the session ten times the oracle's defocus and astigmatism.
     """
     from quantem.gpu.ssb.units import aberrations_from_engine
@@ -212,89 +214,15 @@ def run_mps(case: SSBParityCase, meta: dict[str, object], session=None) -> list[
     return products
 
 
-def metal_harness_path() -> Path | None:
-    """Return the compiled native parity harness, if it has been built."""
-
-    marker = REPO_ROOT / "build" / "ssb-parity-check.json"
-    if not marker.is_file():
-        return None
-    payload = json.loads(marker.read_text(encoding="utf-8"))
-    binary = Path(str(payload["binary"]))
-    return binary if binary.is_file() else None
-
-
-def run_metal(case: SSBParityCase, meta: dict[str, object]) -> list[dict]:
-    """Return the native Metal object, mean phase and loss per aberration."""
-
-    binary = metal_harness_path()
-    if binary is None:
-        raise RuntimeError(
-            "The native parity harness is not built. Run "
-            "`scripts/check_ssb_parity.sh --build-metal` first."
-        )
-    root = case_root(case)
-    out_dir = root / "metal"
-    subprocess.run(
-        [str(binary), str(root), str(out_dir)],
-        check=True,
-    )
-    summary = json.loads((out_dir / "metal.json").read_text(encoding="utf-8"))
-    side = case.scan_side
-    products = []
-    for index in range(len(case.aberrations_A_rad)):
-        variants = {}
-        for variant in summary["aberrations"][index]["variants"]:
-            object_wave = np.fromfile(
-                out_dir / f"object-{index}-{variant['name']}.f32", dtype=np.float32
-            )
-            # The native engine's ``phase(of:)`` runs the ``ssb_object_phase``
-            # kernel, so this artifact is the phase of the complex object, not
-            # the objective's mean bright-field phase.
-            object_phase = np.fromfile(
-                out_dir / f"phase-{index}-{variant['name']}.f32", dtype=np.float32
-            )
-            variants[variant["name"]] = {
-                "object_wave": (
-                    object_wave.reshape(-1, 2)[:, 0]
-                    + 1j * object_wave.reshape(-1, 2)[:, 1]
-                ).astype(np.complex128).reshape(side, side),
-                "mean_phase": None,
-                "object_phase": object_phase.astype(np.float64).reshape(side, side),
-                "loss": float(variant["loss"]),
-                "provenance": {
-                    key: variant[key]
-                    for key in (
-                        "cacheBudgetBytes",
-                        "logicalBrightfieldCount",
-                        "executedBrightfieldCount",
-                        "loggedCachedBrightfieldCount",
-                        "loggedStreamedBrightfieldCount",
-                        "wallSeconds",
-                        "gpuSeconds",
-                    )
-                    if key in variant
-                },
-            }
-        products.append(
-            {
-                "index": index,
-                "variants": variants,
-                "primary": "cached",
-            }
-        )
-    return products
-
-
 def run_case(
     case: SSBParityCase,
     *,
     export: bool,
-    use_metal: bool,
     use_mps: bool = True,
     geometry: str = "exact",
     reference_only: bool = False,
 ) -> dict[str, object]:
-    """Run the full three-way comparison for one case and return the report."""
+    """Run the comparison for one case and return the report."""
 
     if export:
         export_case(case)
@@ -317,15 +245,10 @@ def run_case(
         "aberrations": [],
     }
     settings = list(case.aberrations_A_rad)
-    if reference_only:
-        mps_products = None
-        metal_products = None
-    else:
-        mps_products = None
-        if use_mps:
-            session = open_mps_session(case, meta)
-            mps_products = run_mps(case, meta, session=session)
-        metal_products = run_metal(case, meta) if use_metal else None
+    mps_products = None
+    if use_mps and not reference_only:
+        session = open_mps_session(case, meta)
+        mps_products = run_mps(case, meta, session=session)
     for index, setting in enumerate(settings):
         c10, c12, phi12 = (float(value) for value in setting)
         oracle = run_reference(case, meta, setting, geometry=geometry)
@@ -361,52 +284,6 @@ def run_case(
                 "preview_seconds": mps["preview_seconds"],
                 "num_bright_field_pixels": mps["num_bright_field_pixels"],
             }
-        if metal_products is not None:
-            variants = metal_products[index]["variants"]
-            entry["metal"] = {
-                name: compare_products(
-                    oracle.object_wave,
-                    oracle.loss,
-                    oracle.mean_phase,
-                    variant["object_wave"],
-                    variant["loss"],
-                    variant["mean_phase"],
-                    object_phase=variant["object_phase"],
-                )
-                | {"provenance": variant["provenance"]}
-                for name, variant in variants.items()
-            }
-            # Direct topology comparison: the cached objective was the one
-            # the retired half-plane endpoint defect corrupted, so cached
-            # versus hybrid/streamed is stated on its own rather than through
-            # either backend's agreement with the oracle.
-            for name in sorted(variants):
-                if name == "cached":
-                    continue
-                entry[f"metal_cached_vs_{name}"] = compare_products(
-                    variants["cached"]["object_wave"],
-                    variants["cached"]["loss"],
-                    variants["cached"]["mean_phase"],
-                    variants[name]["object_wave"],
-                    variants[name]["loss"],
-                    variants[name]["mean_phase"],
-                    object_phase=variants[name]["object_phase"],
-                )
-            if mps_products is not None:
-                for name in sorted(variants):
-                    # Both backends are measured implementations here, so the
-                    # oracle's phase roles are filled by the native Metal
-                    # products; the object-phase metric compares Metal's own
-                    # phase kernel against the phase of the MPS object.
-                    entry[f"mps_vs_metal_{name}"] = compare_products(
-                        mps["object_wave"],
-                        mps["loss"],
-                        mps["mean_phase"],
-                        variants[name]["object_wave"],
-                        variants[name]["loss"],
-                        variants[name]["mean_phase"],
-                        object_phase=variants[name]["object_phase"],
-                    )
         report["aberrations"].append(entry)
     for offset, setting in enumerate(case.diagnostic_aberrations_A_rad):
         c10, c12, phi12 = (float(value) for value in setting)
@@ -483,21 +360,6 @@ def _gate_rows(report: dict[str, object]) -> list[tuple[str, str, float, float, 
         backends: list[tuple[str, dict, dict[str, float]]] = []
         if "mps" in entry:
             backends.append(("mps", entry["mps"], floor))
-        for variant, metrics in sorted(entry.get("metal", {}).items()):
-            backends.append((f"metal:{variant}", metrics, floor))
-        for key, metrics in sorted(entry.items()):
-            if key.startswith("mps_vs_metal_"):
-                backends.append(
-                    (f"mps-vs-metal:{key.removeprefix('mps_vs_metal_')}", metrics, floor)
-                )
-            elif key.startswith("metal_cached_vs_"):
-                backends.append(
-                    (
-                        f"metal cached-vs-{key.removeprefix('metal_cached_vs_')}",
-                        metrics,
-                        floor,
-                    )
-                )
         for label, metrics, floor_metrics in backends:
             for metric, key in (
                 ("object_relative_l2", "object_relative_l2"),
@@ -524,7 +386,7 @@ def _gate_rows(report: dict[str, object]) -> list[tuple[str, str, float, float, 
     return rows
 
 
-def print_report(report: dict[str, object], use_metal: bool) -> bool:
+def print_report(report: dict[str, object]) -> bool:
     """Print one case report and return whether every gate passed."""
 
     print(
@@ -563,36 +425,6 @@ def print_report(report: dict[str, object], use_metal: bool) -> bool:
                 f"      timings: object {_format_float(mps['object_seconds'])} s, "
                 f"objective {_format_float(mps['preview_seconds'])} s"
             )
-        for variant, metrics in sorted(entry.get("metal", {}).items()):
-            print(_metric_line(f"metal:{variant}", metrics))
-            provenance = metrics.get("provenance", {})
-            print(
-                f"      logical={provenance.get('logicalBrightfieldCount')} "
-                f"executed={provenance.get('executedBrightfieldCount')} "
-                f"cached={provenance.get('loggedCachedBrightfieldCount')} "
-                f"streamed={provenance.get('loggedStreamedBrightfieldCount')} "
-                f"budget={provenance.get('cacheBudgetBytes')}"
-            )
-        for key, metrics in sorted(entry.items()):
-            if key.startswith("mps_vs_metal_"):
-                print(
-                    _metric_line(
-                        f"mps vs metal:{key.removeprefix('mps_vs_metal_')}", metrics
-                    )
-                )
-            elif key.startswith("metal_cached_vs_"):
-                print(
-                    _metric_line(
-                        f"metal cached vs {key.removeprefix('metal_cached_vs_')}",
-                        metrics,
-                    )
-                )
-        if "metal" in entry:
-            print(
-                "      note: the native engine exposes no mean bright-field "
-                "phase product, so metal rows report the ssb_object_phase "
-                "kernel against the oracle object phase."
-            )
     rows = _gate_rows(report)
     failures = [row for row in rows if not row[4]]
     print("    gates:")
@@ -627,15 +459,6 @@ def main(argv: list[str] | None = None) -> int:
         "--force-export",
         action="store_true",
         help="rewrite the artifact even when it already exists",
-    )
-    parser.add_argument("--no-metal", action="store_true", help="skip the native Metal path")
-    parser.add_argument(
-        "--metal-only",
-        action="store_true",
-        help=(
-            "measure and gate only the native Metal pairs; skips the MPS path "
-            "so a Metal-only change gets an unambiguous exit status"
-        ),
     )
     parser.add_argument(
         "--reference-only",
@@ -673,35 +496,6 @@ def main(argv: list[str] | None = None) -> int:
             "also given; pass --export --force-export (or use "
             "`scripts/check_ssb_parity.sh --cpu-oracle --export --force-export`)."
         )
-    if args.metal_only and args.no_metal:
-        parser.error("--metal-only and --no-metal are mutually exclusive")
-    if args.metal_only and args.reference_only:
-        parser.error("--metal-only and --reference-only are mutually exclusive")
-
-    use_metal = not args.no_metal
-    use_mps = not args.metal_only
-    if args.metal_only:
-        print(
-            "NOTE: --metal-only - the MPS implementation is NOT measured in "
-            "this run. A PASS below is the native Metal acceptance signal "
-            "only; it is not a pass of the full parity gate, which is red on "
-            "this artifact because of the recorded MPS findings."
-        )
-    if args.reference_only:
-        use_metal = False
-    elif args.metal_only and metal_harness_path() is None:
-        raise SystemExit(
-            "--metal-only needs the native harness. Build it first with "
-            "`scripts/check_ssb_parity.sh --build-metal`."
-        )
-    elif use_metal and metal_harness_path() is None:
-        print(
-            "note: native Metal harness not built; measuring MPS against the "
-            "oracle only (run scripts/check_ssb_parity.sh --build-metal).",
-            file=sys.stderr,
-        )
-        use_metal = False
-
     reports = []
     passed = True
     for name in names:
@@ -711,26 +505,18 @@ def main(argv: list[str] | None = None) -> int:
         report = run_case(
             case,
             export=False,
-            use_metal=use_metal,
-            use_mps=use_mps,
             geometry=args.geometry,
             reference_only=args.reference_only,
         )
         reports.append(report)
-        passed = print_report(report, use_metal) and passed
+        passed = print_report(report) and passed
     if args.json:
         Path(args.json).write_text(
             json.dumps(reports, indent=2, sort_keys=True, default=float),
             encoding="utf-8",
         )
         print(f"\nreport: {args.json}")
-    if passed and not use_mps:
-        print(
-            "\nPASS: strict float32 parity (Metal pairs only, MPS not "
-            "measured - not a full-gate pass)"
-        )
-    else:
-        print("\n" + ("PASS: strict float32 parity" if passed else "FAIL: parity gate"))
+    print("\n" + ("PASS: strict float32 parity" if passed else "FAIL: parity gate"))
     return 0 if passed else 1
 
 

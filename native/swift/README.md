@@ -77,7 +77,7 @@ primary-only workflow.
 
 ```swift
 let fit = try SSBModelFit.findAberrations(
-  model: model, engine: engine, rotationDegrees: rotation,
+  model: model, rotationDegrees: rotation,
   darkField: darkField, scanSampling: scanSampling,
   onInitialFit: { initial in
     // Hand this Auto reconstruction to the application's display queue.

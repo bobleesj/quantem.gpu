@@ -401,8 +401,8 @@
           "gates": ["tests/hardware/mps/test_ssb_mps_cuda_reference.py", "tests/contracts/test_ssb_mps_close.py"]
         },
         "swift-metal": {
-          "level": "required",
-          "gates": ["native/swift/Tests/MetalSSBKernelsTests/MetalSSBKernelsTests.swift", "docs/maintainer/native-metal-ssb-migration.md"]
+          "level": "partial-hardware",
+          "gates": ["native/swift/Tests/MetalSSBKernelsTests/SSBRedrawReconstructionTests.swift", "native/swift/Tests/MetalSSBKernelsTests/SSBModelReconstructionTests.swift", "native/swift/Tests/MetalSSBKernelsTests/MetalSSBKernelsTests.swift", "docs/maintainer/native-joint-ssb.md"]
         },
         "webgpu": {
           "level": "partial-hardware",
@@ -427,8 +427,8 @@
           "gates": ["tests/hardware/mps/test_ssb_mps_cuda_reference.py", "tests/infrastructure/test_ssb_structure.py"]
         },
         "swift-metal": {
-          "level": "required",
-          "gates": ["native/swift/Tests/MetalSSBKernelsTests/MetalSSBKernelsTests.swift", "native/swift/Benchmarks/MetalSSBBenchmark/main.swift", "docs/maintainer/native-metal-ssb-migration.md"]
+          "level": "not-implemented",
+          "gates": ["native/swift/Tests/MetalSSBKernelsTests/SSBFifthOrderSearchTests.swift", "docs/maintainer/native-joint-ssb.md"]
         },
         "webgpu": {
           "level": "not-implemented",

@@ -1,5 +1,9 @@
 # Native Swift/Metal SSB migration
 
+> Retired 2026-10-25: the engine's non-model reconstruction, phase-variance objective and
+> optimizer described here were removed; native SSB is the joint model
+> ([Native SSB](native-joint-ssb.md)). This page is the 2026-08-19 migration record.
+
 This record freezes the extraction of reusable native SSB compute from the
 earlier iOS implementation into QuantEM.GPU. It does not migrate application
 UI, session state, navigation, plots, or cache-policy presentation.
@@ -25,9 +29,9 @@ into a SwiftPM library while leaving all UIKit and application ownership behind.
 | `MetalSSBGeometry` | Complete calibrated BF geometry in logical source order; row and column reciprocal arrays remain explicitly named |
 | `MetalSSBAberrations` | `c10Angstroms` and `c12Angstroms` in Angstrom; `phi12Radians` in radians |
 | `MetalSSBEngine.prepare(brightfield:)` | Plane-major lossless `uint8` BF buffer shaped `[logical_brightfield, 512, 512]` |
-| `reconstruct(aberrations:scanDetectorRotationDegrees:)` | Row-major 512×512 complex64 object and Fourier sum |
-| `phaseVariance(aberrations:scanDetectorRotationDegrees:)` | Exact full-logical-BF phase-variance objective |
-| `optimize(start:scanDetectorRotationDegrees:globalTrials:seed:...)` | Deterministic seeded TPE search, 200 trials by default, then Nelder–Mead |
+| `reconstruct(aberrations:scanDetectorRotationDegrees:)` | Row-major 512×512 complex64 object and Fourier sum (retired 2026-10-25) |
+| `phaseVariance(aberrations:scanDetectorRotationDegrees:)` | Exact full-logical-BF phase-variance objective (retired 2026-10-25) |
+| `optimize(start:scanDetectorRotationDegrees:globalTrials:seed:...)` | Deterministic seeded TPE search, 200 trials by default, then Nelder–Mead (retired 2026-10-25) |
 | `MetalSSBProvenance` | Source/compute dtype, no crop, scan bin 1, logical/executed/proven-zero BF counts, cached/streamed BF counts, and exact cache bytes |
 
 The engine retains all logical BF terms in normalization. The execution union

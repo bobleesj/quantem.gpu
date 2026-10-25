@@ -18,6 +18,15 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Removed
 
+- Native (Metal) SSB is model-based only: the engine's own non-model reconstruction and the phase-variance fit are
+  retired. Removed: `MetalSSBEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`, `phaseVariance`,
+  `optimize` and `MetalSSBPhaseVarianceResult`; `SSBOptimizer` and `SSBOptimizationProgress`; the phase-variance
+  branch of `SSBModelFit` with its `engine:` argument (`fit(model:options:)`, `findAberrations(model:...)`) and
+  `SSBFit.phaseVarianceLoss`; their `ssb.metal` kernels (accumulation, finalization, chi tables, fused phase loss
+  and moments); the `metal-ssb-benchmark` product, the `tests/metal` SSB harnesses with `check_metal_ssb*.sh`, and
+  the frozen phase-variance fit trajectory (`ssb_fit_gate.py` and its pin). `SSBFitOptions(objective:
+  .phaseVariance)` still decodes from saved runs and is refused as a fit; `MetalSSBSavedRun` runs still open, and
+  `MetalSSBEngine.phase(of:)` shows them. Python's `objective="phase_variance"` is unchanged.
 - Native (Metal) SSB: the `mean_phase` and `complex_wave` estimators are retired. `SSBPhaseEstimator`, the
   `estimator:` argument of `MetalSSBJointModel.reconstruct`, the mean-phase general and fused 1536-point kernels
   (`ssb-mean-phase`) and the complex-wave amplitude path are removed; the native reconstruction choices are

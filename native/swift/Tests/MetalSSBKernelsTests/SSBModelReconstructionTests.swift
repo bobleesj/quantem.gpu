@@ -346,7 +346,7 @@ final class SSBModelReconstructionTests: XCTestCase {
     }
     // The branched fit searches the first branch only and maps it.
     let fitted = try SSBModelFit.findAberrations(
-      model: model, engine: engine, rotationDegrees: rotation, darkField: nil,
+      model: model, rotationDegrees: rotation, darkField: nil,
       scanSampling: (0.4, 0.4),
       options: SSBFitOptions(trials: 40, compareStandard: false, maximumOrder: 1))
     XCTAssertNil(fitted.fits[0].mappedFromBranch)
@@ -373,7 +373,7 @@ final class SSBModelReconstructionTests: XCTestCase {
     let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
     for tilt in [true, false] {
       let fit = try SSBModelFit.fit(
-        model: model, engine: engine,
+        model: model,
         options: SSBFitOptions(tilt: tilt, trials: 40, compareStandard: false, maximumOrder: 1))
       let agreement = try XCTUnwrap(fit.sampleAgreement)
       let p = fit.point

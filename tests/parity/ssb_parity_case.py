@@ -1,17 +1,16 @@
 """Exact SSB parity cases, declaration export, and metric comparison.
 
-The strict gate compares three implementations at identical inputs:
+The strict gate compares two implementations at identical inputs:
 
-- the public Python ``quantem.gpu.SSB`` MPS path;
-- the native Swift ``MetalSSBKernels`` path through a standalone harness; and
+- the public Python ``quantem.gpu.SSB`` MPS path; and
 - the independent float64 reference in :mod:`ssb_double_reference`.
 
 Identical inputs are guaranteed by exporting one authoritative artifact per
 case: the production exact BF-column companion (``(BF, scan)`` exact integer
 counts plus its ``snapshots/cal.json`` declaration). The Python MPS path loads
-it through ``SSB.open(..., backend="mps")``; the native harness loads the same
-``.u16`` payload and the same declared BF pixel list. Nothing is binned,
-cropped, scaled, or approximated in any measured path.
+it through ``SSB.open(..., backend="mps")``. Nothing is binned, cropped,
+scaled, or approximated in any measured path. (The retired native non-model
+engine's harness read the same ``.u16`` payload.)
 
 Generated data lives outside the repository under the runs root
 (``QUANTEM_SSB_PARITY_RUNS``, default
@@ -429,15 +428,6 @@ def export_case(
     }
     scientific.update(shared_geometry(case, source))
     scientific["counts_exactness"] = exactness
-    scientific["metal_geometry"] = metal_geometry(scientific)
-    scientific["metal_geometry_unrotated"] = {
-        "brightfieldKX": scientific["brightfield_kx_unrotated"],
-        "brightfieldKY": scientific["brightfield_ky_unrotated"],
-        "brightfieldAlphaSquared": scientific["brightfield_alpha_squared_unrotated"],
-        "brightfieldAperture": scientific["brightfield_aperture_unrotated"],
-        "brightfieldCos2Phi": scientific["brightfield_cos2phi_unrotated"],
-        "brightfieldSin2Phi": scientific["brightfield_sin2phi_unrotated"],
-    }
     (root / "case.json").write_text(
         json.dumps(scientific, indent=2, sort_keys=True), encoding="utf-8"
     )
@@ -677,41 +667,6 @@ def shared_geometry(case: SSBParityCase, source: Path) -> dict[str, object]:
     }
 
 
-def metal_geometry(case_meta: dict[str, object]) -> dict[str, object]:
-    """Return the ``MetalSSBGeometry`` JSON consumed by the Swift harness.
-
-    The calibrated rotation is already folded into these float32 arrays, so the
-    harness declares ``referenceRotationDegrees = 0`` and the native engine
-    applies no second rotation.
-    """
-
-    return {
-        "brightfieldKX": case_meta["brightfield_kx"],
-        "brightfieldKY": case_meta["brightfield_ky"],
-        "brightfieldAlphaSquared": case_meta["brightfield_alpha_squared"],
-        "brightfieldAperture": case_meta["brightfield_aperture"],
-        "brightfieldCos2Phi": case_meta["brightfield_cos2phi"],
-        "brightfieldSin2Phi": case_meta["brightfield_sin2phi"],
-        "qxByRow": case_meta["qx_by_row"],
-        "qyByColumn": case_meta["qy_by_column"],
-        "wavelengthAngstroms": np.float32(case_meta["wavelength_angstrom"]).item(),
-        "semiangleRadians": np.float32(
-            float(case_meta["semiangle_mrad"]) * 1e-3
-        ).item(),
-        "angularSamplingYRadians": np.float32(
-            case_meta["detector_sampling_rad"][0]
-        ).item(),
-        "angularSamplingXRadians": np.float32(
-            case_meta["detector_sampling_rad"][1]
-        ).item(),
-        "dcValue": [
-            float(np.float32(case_meta["dc_value_exact"])),
-            float(np.float32(0.0)),
-        ],
-        "referenceRotationDegrees": float(np.float32(0.0)),
-    }
-
-
 def load_case_declaration(case: SSBParityCase) -> dict[str, object]:
     """Return the exported ``case.json`` for one case."""
 
@@ -807,14 +762,13 @@ def compare_products(
     ``object_phase_*`` is the phase image a reconstruction displays, the
     argument of the complex object. Every backend's object supports it, so it
     is the cross-backend phase metric. Pass ``object_phase`` to measure a
-    backend's own phase kernel (the native Metal ``ssb_object_phase`` output);
-    omit it to derive the phase from ``object_wave``.
+    backend's own phase kernel; omit it to derive the phase from
+    ``object_wave``.
 
     ``mean_phase_*`` is the objective's own phase product, the mean over the
     bright-field set of the per-BF inverse-transform phase. The MPS public
-    ``preview`` returns it; the native Metal API exposes its variance (loss)
-    but not the mean itself, so Metal entries leave ``mean_phase`` as ``None``
-    rather than comparing a different quantity under the same name.
+    ``preview`` returns it; a backend without it passes ``mean_phase`` as
+    ``None`` rather than comparing a different quantity under the same name.
     """
 
     reference_object = np.asarray(reference_object, dtype=np.complex128)
