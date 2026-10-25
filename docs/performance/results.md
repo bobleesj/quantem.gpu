@@ -11,6 +11,11 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
 
 ## SSB reconstruction and interaction, 2026-10-24
 
+The [direct phase viewer handoff check](ssb/reports/2026-10-24-direct-live-handoff.md)
+records a corrected cache invalidation when opening a viewer at unchanged
+optics. Cached numerical regularization updates and first preparation are
+timed separately; these observations do not establish browser frame rate.
+
 The [anonymous C10 cache and FFT transfer benchmark](rendering/reports/2026-10-24-ssb-c10-cache-transfer.md)
 retains full data and higher-order corrections. It separates CUDA cache
 experiments, an isolated WebGPU transfer improvement and actual notebook
