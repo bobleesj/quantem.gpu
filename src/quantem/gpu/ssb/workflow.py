@@ -1830,15 +1830,14 @@ class DirectPtycho:
         TPE search is performed. ``trials`` changes the initial budget and
         ``seed`` defaults to 42.
 
-        On CUDA both refinements use exact derivatives of the agreement: the
-        low-order Newton its exact gradient and Hessian, the fifth-order
-        refinement (``refinement="auto"``, i.e. ``"bfgs"``) a bounded
-        trust-region quasi-Newton on exact gradients, started from a Hessian
-        of every 64th bright-field pixel, first on every 8th pixel and then
-        converged on all of them; steps are accepted on the full objective
-        summed in float64. ``refinement="newton"`` keeps the earlier
-        finite-difference fifth-order Newton as the reference trajectory; MPS
-        uses it by default.
+        On CUDA and MPS both refinements use exact derivatives of the
+        agreement: the low-order Newton its exact gradient and Hessian, the
+        fifth-order refinement (``refinement="auto"``, i.e. ``"bfgs"``) a
+        bounded trust-region quasi-Newton on exact gradients, started from a
+        Hessian of every 64th bright-field pixel, first on every 8th pixel and
+        then converged on all of them; steps are accepted on the full
+        objective summed in float64. ``refinement="newton"`` keeps the earlier
+        finite-difference fifth-order Newton as the reference trajectory.
 
         In a live notebook, ``show=True`` displays the initial fit at Auto
         sampling. After standard/broad refinement, resident CUDA sessions

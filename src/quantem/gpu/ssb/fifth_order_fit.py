@@ -21,7 +21,7 @@ from .persistence import load_result, result_paths
 def _objective(ssb, gradients=False):
     """Use the same coordinates and model on the session's physical backend.
 
-    ``gradients=True`` returns the same objective with exact gradients where the backend has them (CUDA).
+    ``gradients=True`` returns the same objective with exact gradients (CUDA and MPS).
     """
     backend = ssb._backend()
     if ssb.backend == "cuda":
@@ -36,13 +36,17 @@ def _objective(ssb, gradients=False):
         from .mps.fifth_order import Objective
 
         backend.cache_rotation(np.deg2rad(ssb.scan_detector_rotation_deg))
+        if gradients:
+            from .mps.exact_derivatives import FifthOrderGradients
+
+            return FifthOrderGradients(backend._prepared)
         return Objective(backend._prepared)
     raise NotImplementedError("Fifth-order fitting requires a CUDA or MPS session.")
 
 
 def _exact_gradients(ssb) -> bool:
     """Whether the session's backend serves exact fifth-order gradients."""
-    return ssb.backend == "cuda"
+    return ssb.backend in ("cuda", "mps")
 
 
 def _refine_with_gradients(objective, start, bounds, norm, cap, *, on_progress=None):
