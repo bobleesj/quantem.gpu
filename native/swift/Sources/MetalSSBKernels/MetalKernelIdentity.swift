@@ -88,6 +88,13 @@ enum SSBKernelRegistry {
     files: ["ssb_fifth_order", "ssb_fifth_agreement", "ssb_fifth_order_gradient"],
     registeredSourceSHA256: "9a751b5a12baee7e35949fa73fddc266e1b59c3d0614cefe09e064bbff04f8d8")
 
+  /// The regularized direct reconstructions (`phase`, `complex`): the k-only pixel terms, the normal equations of every
+  /// scan frequency with its supported aliases (`direct_normal_equations`, float32 per BF pixel, float-float across
+  /// batches) and the wave of the solved spectrum; the systems are solved in float64 on the CPU.
+  static let direct = Entry(
+    name: "ssb-direct", version: "0.1", files: ["ssb_joint", "ssb_fifth_order", "ssb_direct"],
+    registeredSourceSHA256: "unregistered")
+
   /// SHA-256 of an entry's shipped source files, concatenated in order.
   static func sourceSHA256(_ entry: Entry) throws -> String {
     MetalKernelIdentity.sha256(Data(try MetalSSBShaderSource.load(entry.files).utf8))

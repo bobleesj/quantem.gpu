@@ -23,6 +23,9 @@ import Native4DSTEMIO
 // decision taken with the searched fit instead. --check-maximum evaluates the kept low-order fit's neighbours
 // one stencil-Newton tolerance away along each Newton coordinate (C10, C12 x/y, tilt row/column, depth), and
 // with --baseline RESULT.json the same for that run's kept low-order fit.
+//   metal-ssb-fit-benchmark --cache DIR --direct-parity LIMITS.json --cuda-dir DIR [--limits 2,10] [--factors 1,3]
+//     [--output PARITY.json] [--phase-out DIR]
+//     ssb, phase and complex of the limits' optics against CUDA's arrays, with timings (DirectParity.swift).
 //   metal-ssb-fit-benchmark --cache DIR --objective-bench RUN.json [--repeats 3] [--output BENCH.json]
 //     [--search-kernels-only]
 //     times the agreement objectives at fixed candidates instead of fitting (ObjectiveBenchmark.swift).
@@ -66,6 +69,9 @@ struct Options {
   var limits: [Double] = [2, 3, 4, 6, 10]
   /// `--objective-bench` times only the exact-gradient search's calls.
   var searchKernelsOnly = false
+  var directParity: URL?
+  var cudaDirectory: URL?
+  var directFactors: [Int]?
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -131,6 +137,9 @@ struct Options {
       case "--estimators": estimators = URL(fileURLWithPath: try value(flag))
       case "--limits": limits = try value(flag).split(separator: ",").compactMap { Double($0) }
       case "--search-kernels-only": searchKernelsOnly = true
+      case "--direct-parity": directParity = URL(fileURLWithPath: try value(flag))
+      case "--cuda-dir": cudaDirectory = URL(fileURLWithPath: try value(flag))
+      case "--factors": directFactors = try value(flag).split(separator: ",").compactMap { Int($0) }
       default: throw failure("Unknown argument \(flag)")
       }
     }
@@ -581,6 +590,14 @@ guard setup.pixels == caseRecord.pixels else { throw failure("BF selection diffe
 let counts = try mapped(options.cache.appendingPathComponent("counts.bin"), device: device)
 guard let countType = MetalSSBCountType(rawValue: caseRecord.countType) else {
   throw failure("Unknown count type")
+}
+if let sweep = options.directParity {
+  try directParity(
+    sweep: sweep, limits: options.limits, cudaDirectory: options.cudaDirectory ?? sweep.deletingLastPathComponent(),
+    output: options.output, phaseOut: options.phaseOut, device: device, calibration: caseRecord.calibration,
+    geometry: setup.geometry, counts: counts, countType: countType,
+    rotationEstimate: caseRecord.rotationEstimateDegrees, factors: options.directFactors)
+  exit(0)
 }
 if let sweep = options.estimators, let directory = options.phaseOut {
   try estimatorExport(

@@ -117,7 +117,11 @@ extension MetalSSBJointModel {
         throw SSBDirectError.unsupportedSampling(upsamplingFactor)
       }
       try point.validate()
-      throw SSBDirectError.notImplemented(method)
+      try point.jointParameters.validate()
+      if isCancelled() { throw CancellationError() }
+      return try reconstructDirect(
+        point, upsamplingFactor: upsamplingFactor, complex: method == .complex, regularization: regularization,
+        isCancelled: isCancelled)
     }
   }
 }

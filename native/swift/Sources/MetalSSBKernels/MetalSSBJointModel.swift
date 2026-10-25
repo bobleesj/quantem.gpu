@@ -148,6 +148,9 @@ public final class MetalSSBJointModel {
   /// The value stage's part of `lastLowOrderGPUSeconds` (zero when the call had no separate value stage).
   public private(set) var lastLowOrderValueGPUSeconds = 0.0
   private var fifthOrderGradient: SSBFifthOrderGradient?
+  /// The regularized direct solver (`phase`, `complex`), built on first use; it keeps the layout and the prepared
+  /// normal equations of the current optics.
+  private var directSolver: SSBDirectSolver?
 
   /// The number of active bright-field pixels of the objective.
   var brightFieldPixelCount: Int { activeIndices.count }
@@ -185,7 +188,7 @@ public final class MetalSSBJointModel {
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
         "ssb_redraw", "ssb_low_order", "ssb_fifth_agreement", "ssb_fifth_order_gradient",
-        "ssb_joint_agreement", "ssb_low_order_derivatives",
+        "ssb_joint_agreement", "ssb_low_order_derivatives", "ssb_direct",
       ]),
       options: options)
     self.library = library
@@ -850,6 +853,38 @@ public final class MetalSSBJointModel {
     result.kernel = meanPhaseKernel
     return result
   }
+
+  /// `.phase` / `.complex` of `reconstruct(_:upsamplingFactor:method:regularization:isCancelled:)`.
+  func reconstructDirect(
+    _ point: SSBModelPoint, upsamplingFactor: Int, complex: Bool, regularization: SSBDirectRegularization,
+    isCancelled: () -> Bool
+  ) throws -> MetalSSBJointPhase {
+    try validatePreparation()
+    let started = Date()
+    if directSolver == nil {
+      directSolver = try SSBDirectSolver(
+        device: device, queue: queue, library: library, geometry: geometry, activeIndices: activeIndices)
+    }
+    let solver = directSolver!
+    let (phase, amplitude, n) = try solver.reconstruct(
+      point, factor: upsamplingFactor, complex: complex, regularization: regularization,
+      rotation: scanDetectorRotationDegrees, k: kBuffer, visit: visit, isCancelled: isCancelled)
+    var result = MetalSSBJointPhase(
+      phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
+      wallSeconds: Date().timeIntervalSince(started), parameters: point.jointParameters,
+      scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
+      point: point, amplitude: amplitude, estimator: .phaseOfMean,
+      kernel: MetalKernelIdentity(
+        name: SSBKernelRegistry.direct.name, version: SSBKernelRegistry.direct.version,
+        sourceSHA256: solver.sourceSHA256,
+        variant: "\(complex ? "complex" : "phase") factor=\(upsamplingFactor) depth=\(point.depthSpreadAngstroms != 0 ? "on" : "off")"))
+    result.method = complex ? .complex : .phase
+    result.regularization = regularization
+    return result
+  }
+
+  /// Stage times of the latest `.phase` / `.complex` reconstruction (benchmarks).
+  @_spi(SSBBenchmark) public var lastDirectTiming: SSBDirectTiming? { directSolver?.lastTiming }
 
   // General complex FFT path retained for other sizes and nonzero boundary
   // support. It is also the independent GPU control for the specialized path.
