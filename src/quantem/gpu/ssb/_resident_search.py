@@ -798,12 +798,17 @@ def fit_resident(
     start=None,
     fixed_aberrations: dict[str, float] | None = None,
     standard_only: bool = False,
+    derivatives=None,
 ) -> dict[str, object]:
     """Fit the joint model with resident adaptive search and Newton refinement.
 
     Parameters use the existing engine units. ``evaluate`` accepts resident
     encoded model trials and returns resident extended scores. Public callers
     use ``SSB.find_aberrations(tilt=True)``; no solver setting is needed.
+    ``derivatives`` (``cuda.exact_derivatives.LowOrderDerivatives``) polishes
+    on the exact gradient and Hessian of the same objective
+    (``_exact_newton``) instead of finite-difference stencils; the search and
+    its trials are unchanged. A fit with fixed aberrations keeps the stencils.
     ``standard_only=True`` runs only the standard comparison (the 200-trial
     search at depth spread 0 that ``compare_standard`` adds) and returns its
     ``standard_fit``, ``standard`` and timing: the same values a full fit with
@@ -888,7 +893,15 @@ def fit_resident(
     begin = time.perf_counter()
     if polish is None:
         polish_starts = 0
-    if polish_starts:
+    exact = derivatives is not None and fixed_aberrations is None and polish_starts > 0
+    if exact:
+        from quantem.gpu.ssb import _exact_newton
+
+        host_point, fit, exact_starts = _exact_newton.fit(
+            derivatives, device.host(points), device.host(scores), lower, upper, start=start,
+            starts=polish_starts, basins=bool(trials) and BASIN_CHECK)
+        state = None
+    elif polish_starts:
         point, value, state = _newton(
             device,
             evaluate,
@@ -911,10 +924,12 @@ def fit_resident(
             constants=f"\n#define COUNT {len(points)}\n",
         )
         state = None
-    device.sync(point, value)
+    if not exact:
+        device.sync(point, value)
+        host_point = device.host(point)[0]
+        fit = float(device.host(value)[0])
     timings["refinement_s"] = time.perf_counter() - begin
-    best = dict(zip(PARAMETERS, device.host(point)[0].tolist(), strict=True))
-    fit = float(device.host(value)[0])
+    best = dict(zip(PARAMETERS, np.asarray(host_point, dtype=float).tolist(), strict=True))
     if not math.isfinite(fit) or fit <= 0:
         raise ValueError(
             "Joint tilt fitting found no positive finite agreement. Check scan sampling and signal in the fitting band, or use tilt=False, objective='phase_variance'."
@@ -936,16 +951,19 @@ def fit_resident(
         else []
     )
     best["phi12"] = (best["phi12"] + math.pi / 2) % math.pi - math.pi / 2
-    newton = [] if state is None else device.host(state)
-    diagnostics = [
-        {
-            "iterations": int(row[59]),
-            "evaluations": int(row[60]),
-            "converged": bool(row[61]),
-        }
-        for row in newton
-        if row[58] > 0
-    ]
+    if exact:
+        diagnostics = exact_starts
+    else:
+        newton = [] if state is None else device.host(state)
+        diagnostics = [
+            {
+                "iterations": int(row[59]),
+                "evaluations": int(row[60]),
+                "converged": bool(row[61]),
+            }
+            for row in newton
+            if row[58] > 0
+        ]
     return {
         **best,
         "fit": fit,
@@ -963,6 +981,7 @@ def fit_resident(
         "optimizer": {
             "search": "resident multivariate TPE",
             "refinement": polish if polish_starts else None,
+            "derivatives": "exact" if exact else "finite differences" if polish_starts else None,
             "device": backend,
             "host_numerical_search": False,
             "precision": "three-float expansion" if backend == "mps" else "float64",

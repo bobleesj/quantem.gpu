@@ -20,6 +20,9 @@ from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
 
 # where a zero-trial refinement starts when the session has no aberrations (as on MPS)
 _DEFAULT_START = {"C10": 0.0, "C12": 50.0, "phi12": 0.0}
+# The joint fit's Newton polishes on the exact gradient and Hessian of the agreement (cuda/exact_derivatives.py);
+# False keeps the resident finite-difference stencils as the reference trajectory.
+EXACT_NEWTON = True
 
 
 def fit_standard(
@@ -96,8 +99,13 @@ def fit_sample(
 
         if options.get("polish_starts", 3) == 0:
             options = {**options, "polish": None}
+        derivatives = None
+        if EXACT_NEWTON:
+            from quantem.gpu.ssb.cuda.exact_derivatives import LowOrderDerivatives
+
+            derivatives = LowOrderDerivatives(accel, band_inv_A)
         return fit_resident(lambda trial: accel.thick.fit_resident(trial, band_inv_A),
-                            backend="cuda", band_inv_A=band_inv_A, **options)
+                            backend="cuda", band_inv_A=band_inv_A, derivatives=derivatives, **options)
     return fit_sample_search(lambda c10, c12, phi12, tilt, thickness: accel.thick.fit(c10, c12, phi12, tilt, thickness, band_inv_A),
                              objective_batch=lambda rows: accel.thick.fit_batch(rows, band_inv_A),
                              batch_polish=True,
