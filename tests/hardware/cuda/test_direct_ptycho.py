@@ -50,14 +50,14 @@ def test_compare_methods_and_change_only_regularization(acquisition):
         cp.testing.assert_array_equal(ssb.object_wave, old.object_wave)
         phase = ptycho.run(optics, method="phase", upsampling_factor="auto")
         original = phase.object_wave.copy()
-        prepared = ptycho._prepared_direct[1]
+        prepared = ptycho._prepared_direct[1]["phase"]
         changed = ptycho.run(
             optics,
             method="phase",
             phase_regularization=0.1,
             upsampling_factor="auto",
         )
-        assert ptycho._prepared_direct[1] is prepared
+        assert ptycho._prepared_direct[1]["phase"] is prepared
         cp.testing.assert_array_equal(phase.object_wave, original)
         assert not cp.array_equal(changed.object_wave, original)
         preview, loss = ptycho.preview(
@@ -85,14 +85,14 @@ def test_compare_methods_and_change_only_regularization(acquisition):
         assert (
             complex_result.reconstruction_diagnostics["training_relative_sse"] >= 0
         )
-        before = ptycho._prepared_direct[1]
+        before = ptycho._prepared_direct[1]["complex"]
         ptycho.run(
             optics,
             method="complex",
             aberrations={"C10_nm": optics["C10_nm"] + 1},
             upsampling_factor="auto",
         )
-        assert ptycho._prepared_direct[1] is not before
+        assert ptycho._prepared_direct[1]["complex"] is not before
         restored = ptycho.run(
             optics,
             method="complex",

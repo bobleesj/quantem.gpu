@@ -72,7 +72,13 @@ def settings(
 
 
 def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=False):
-    """Reuse the last prepared system only while every fixed input agrees."""
+    """Reuse a prepared system while every fixed input agrees.
+
+    One prepared system per method is kept for the current data and optics, so
+    switching phase -> complex -> phase prepares each once (about 92 + 170 MB on
+    the 512 x 512 test field). Any change to the optics, sampling or prior drops
+    both.
+    """
     if session.backend != "cuda":
         raise NotImplementedError(
             "Regularized direct reconstruction currently requires CUDA; use method='ssb' on MPS."
@@ -97,14 +103,17 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
         tuple(optics["sample_tilt_mrad"]),
         optics["depth_spread_nm"],
         factor,
-        policy["method"],
         policy["smoothness_inv_A"],
         policy["detector_weighting"],
     )
     cached = getattr(session, "_prepared_direct", None)
-    if force or cached is None or cached[0] != key:
-        # Retain one system, so exploring changed optics cannot grow memory without bound.
+    if cached is None or cached[0] != key:
+        # Retain the current optics only, so exploring changed optics cannot grow memory without bound.
         session._prepared_direct = None
+        cached = session._prepared_direct = key, {}
+    prepared = cached[1].get(policy["method"])
+    if force or prepared is None:
+        cached[1].pop(policy["method"], None)
         prepared = PreparedDirect.prepare(
             engine,
             optics,
@@ -113,9 +122,7 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
             smoothness_inv_A=policy["smoothness_inv_A"],
             detector_weighting=policy["detector_weighting"],
         )
-        session._prepared_direct = key, prepared
-    else:
-        prepared = cached[1]
+        cached[1][policy["method"]] = prepared
     return prepared.solve(
         policy["phase_regularization"],
         policy.get("amplitude_regularization"),

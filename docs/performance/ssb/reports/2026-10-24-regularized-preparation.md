@@ -94,3 +94,92 @@ With A and B, a per-frame rebuild after a C10/C12 change would cost about 0.9 s 
 - **complex64 `@` for the Gram.** It is the fastest variant (0.25 s phase) but the relative error is 4e-6 to 1e-5; the Gram feeds `eigh` and `solve` at strengths down to 0.01 of the scale, so a float32 reduction over 9298 terms is the wrong place to lose precision. The float64-accumulating kernel is nearly as fast at 2e-14.
 - **Reusing the preparation across C10/C12.** Not possible without recomputing the transfer and its Gram (point 2); only about 0.4 s is data-only.
 - **Blaming the eigendecomposition or the per-frequency loop.** `eigh` is 0.2 s and the loop overhead about 0.6 s; neither explains the 9 s.
+
+# Preparation in one kernel per alias count: 9.1 s to 35 ms (2026-10-24, later)
+
+## Question
+
+Can the regularized preparation run at an interactive rate, so that a defocus or astigmatism slider in ShowPtycho shows phase-only or amplitude + phase at full 3x Auto sampling within about 33 ms (30 fps), at float32-level precision, and can phase and complex both stay prepared at one optics?
+
+## Answer
+
+Yes for phase (35 ms through `run`, 34-35 ms preparation alone), close for complex (51 ms through `run`, 46-47 ms preparation). Both 180x to 270x faster than before. Phase -> complex -> phase at one optics now prepares each once; the third call takes 1 ms and returns the first call's wave bit for bit.
+
+## Setup
+
+As above: frame 151, 512 x 512 scan, 9298 BF pixels, factor 3, the saved broad fit; GPU 0 (RTX PRO 6000 Workstation, 188 SMs), live-env. Other agents shared GPU 0 during the day, so every timing run first waited for 5 s below 10 % utilization (`prep-fast/wait_idle.sh`). Scripts in the scratchpad `prep-fast/`: `reg_time2.py` (the public-API table, `reg_time.py` plus two optics-change rows), `time_prep.py` (`PreparedDirect.prepare` alone, and with solve and phase image), `compare.py` (old against new on every prepared array), `precision.py`, `ablate*.py`, `peak.py`, `peak2.py`, `images.py`. "Before" ran the committed `direct.py` and `direct_workflow.py` on an otherwise identical source tree.
+
+## Raw numbers
+
+Public API (`ptycho.run(fit, upsampling_factor="auto", compute_loss=False, ...)`), median of 3 processes:
+
+| Call | before | after |
+|---|---|---|
+| ssb (first in process) | 0.203 s | 0.209 s |
+| ssb again | 0.056 s | 0.063 s |
+| phase, first (prepare) | 9.122 s | 0.120 s |
+| phase, strength only | 0.001 s | 0.001 s |
+| complex, first (prepare) | 9.356 s | 0.077 s |
+| complex, amplitude strength only | 0.003 s | 0.004 s |
+| phase again after complex | 9.032 s | 0.001 s |
+| phase, C10 + 0.5 nm (new optics) | 9.134 s | 0.035 s |
+| complex, C10 + 0.5 nm (new optics) | 9.385 s | 0.051 s |
+
+The first phase call includes loading the kernels for each alias count (CuPy disk cache) and the data-only layout (about 85 ms, once per process and data). The optics-change rows are the slider case.
+
+Preparation alone (`time_prep.py`, 7 calls per process, 3 processes): phase 34.4-35.2 ms minimum, 35.2 ms median; complex 45.8-48.1 ms minimum, 47.4 ms median. With solve and phase image: phase 35.4-35.6 ms, complex 48.9-49.9 ms.
+
+Measured throughput of this card (`peak.py`, `peak2.py`, independent FMA chains): float64 0.886 T FMA/s, float32 59 T FMA/s (1/67), float -> double conversion as costly as a float64 add, copy 1.47 TB/s.
+
+Gram accumulation choices inside the same kernel design (an earlier shared-memory version of the kernel; `precision.py`, minimum of 7, errors against plain float64 sums of exact float32 products):
+
+| Accumulation | phase prep | complex prep | Gram | right side | phase image |
+|---|---|---|---|---|---|
+| float64 sums, exact products | 122 ms | 327 ms | reference | reference | reference |
+| float32-pair (two-sum) sums | 56 ms | 102 ms | 3.5e-14 | 4.0e-14 | 5e-8 |
+| float32 products, float64 sums | 61 ms | 141 ms | 1.4e-9 | 2.5e-8 | 2.7e-7 |
+| float32 products and sums | 53 ms | 86 ms | 1.9e-7 | 2.6e-7 | 2.7e-7 |
+
+Float64 alone needs about 58 ms (phase) and 138 ms (complex) of float64 operations for the products that remain after skipping zero transfer, before any transfer is evaluated, so the 100 ms floor (and 33 ms) is impossible for complex with float64 arithmetic on this card. With float32-level precision accepted for this CUDA path, the shipped kernel sums in float32 per lane (about 300 terms) and merges the 32 lanes in float64.
+
+Ablations of the shipped kernel (`ablate10.py`, minimum of 5, preparation):
+
+| Variant | phase | complex |
+|---|---|---|
+| shipped | 35.1 ms | 45.6 ms |
+| sums of diagonal entries only (transfer kept) | 31.0 ms | 30.8 ms |
+| transfer replaced by a cheap function of k and q (all sums kept) | 14.3 ms | 21.5 ms |
+| G_qk gather replaced by a constant | 29.0 ms | 41.5 ms |
+
+Register budget (`rr.py`, `lb.py`): complex at the compiler's choice (255 registers, 8 warps per SM) 61 ms; capped at 168 registers (12 warps) 45 ms; phase capped at 96 registers 34 ms instead of 35-36 ms.
+
+Agreement with the previous implementation, test field: Gram 1.9e-7 to 3.1e-7 and right side 6e-8 to 3.7e-7 of the largest entry, eigenvalues 1.7e-7 to 3.0e-7, signal power 7e-9, phase images 2.5e-7 to 3.0e-7 of the largest phase (8.9e-8 rad), log-amplitude 3.5e-7 absolute. `before_after_phase.png` and `before_after_complex.png` (scratchpad) show the full field and a 256 x 256 crop before, after and the difference: identical by eye; the phase difference is noise at 1e-7 rad, the log-amplitude difference is isolated float32 ulps at |w| = 1.
+
+Kept device memory: phase 91.7 MB, complex 170.4 MB per prepared method, plus 15.7 MB of data-only layout on the engine.
+
+## What changed
+
+1. **One kernel per alias count, one warp per frequency** (`direct_normal_equations<count, complex, parts>`). Lanes walk the BF pixels; each lane evaluates the transfer of its pixel for every alias (the expressions of `weak_object._transfer`) and adds every entry a <= b of the augmented Gram [T G]^H W [T G] to sums in registers. The Gram, the right side T^H W G and the signal power come out of one reduction; there is no chunk loop, no complex128 copy of the transfer and no host synchronization per chunk.
+2. **Exact zeros skipped.** A transfer term is zero outside the lens where the two apertures overlap; its chi, sinc and phase factor are not evaluated there.
+3. **k-only terms once.** chi(k), the aperture at k and the detector row are computed once per preparation (`direct_pixel_terms`), and the BF pixels run in 4 x 8 detector tiles so the lanes of a warp branch alike (about 10 %).
+4. **Data-only layout kept on the engine** (`_layout`): dose, weights, scale, aliases per frequency, prior and pixel order, with every host round trip, are computed once per data, sampling and prior; an optics change runs only kernels.
+5. **Phase eigenbasis in one kernel** (`direct_eigenbasis<n>`, one thread per frequency, cyclic complex Jacobi): 1.3 ms instead of 33 ms for cuSOLVER's batched `syevj`. Its loops are fully unrolled: with runtime indices into the local arrays the optimized NVRTC build returned wrong eigenvalues for n >= 5 (correct under `-G`).
+6. **One prepared system per method** (`direct_workflow.solve`): `_prepared_direct` is `(optics key, {method: prepared})`, so phase and complex at the same optics are both kept; any optics, sampling or prior change drops both.
+
+## Conclusion
+
+1. The 9 s was a badly shaped GEMM, then host loops; with both gone the preparation is bound by evaluating the float32 transfer at about 5e9 (pixel, alias) pairs: replacing it with a trivial function takes phase from 35 to 14 ms and complex from 46 to 22 ms. The off-diagonal sums cost 4 ms (phase) and 15 ms (complex), the strided G_qk gather 4-6 ms.
+2. Float64 arithmetic cannot reach 100 ms for complex on this card (138 ms of float64 operations alone, measured rate); float32 sums with a float64 merge agree with the previous complex128 path to a few float32 ulps, the same size as two float32 evaluations of the transfer differ (point 4).
+3. Complex is register bound: its 45 running sums per lane fill the register file; capping registers at 168 for 12 resident warps gave 61 -> 45 ms.
+4. Bit-level agreement with the previous preparation is not possible from a fused kernel: identical transfer source compiled into a different kernel differs by one float32 ulp in 35-43 % of values (FMA contraction), which alone puts the Gram 2-3e-8 apart. The new test (`tests/hardware/cuda/test_ssb_prepared_methods.py`) keeps the previous preparation verbatim as a reference and checks Gram, right side and eigenvalues at 1e-6 of the largest entry, power at 1e-7, images at 2e-6 of their largest value (log|w| at 4 float32 ulps of 1).
+
+## Rejected ideas
+
+- **Materializing the transfer with the existing ElementwiseKernel, then reducing.** Keeps the transfer bit identical, but writes and reads 40-80 GB per preparation; 0.09 s of transfer evaluation alone at 1.5 TB/s.
+- **Shared-memory staging of a tile of V per block, warps over entries.** Per-tile stores, ballots and barriers cost more than the products (phase 55 ms, complex 100 ms at best); the register-only warp design replaced it.
+- **Skipping products whose 32-pixel column is all zero.** Saves no time once V lives in registers; the per-entry branch costs as much as the four FMAs.
+- **Several frequencies per warp to share pixel loads and G sectors.** Doubles the running sums; register pressure made phase 43-107 ms.
+- **Sharing a pixel tile between the warps of a block through shared memory.** Barriers across warps with different aperture-overlap work: phase 47-56 ms, complex 115 ms.
+- **Splitting the entries of a complex system over several blocks.** Each block evaluates the transfer again: 70-124 ms.
+- **Fast intrinsics (`__sinf`, `__cosf`).** Saved only 1-6 ms in an earlier version, at about 1e-6 absolute error in the transfer.
+- **Prefetching the next pixel's G_qk one step ahead.** No change.
