@@ -91,12 +91,12 @@ def test_drag_builds_between_frames_and_rebuilds_outside(ptycho):
         return ptycho.preview(aberrations, method="phase", phase_regularization=0.03, upsampling_factor=3,
                               sample_tilt_mrad=tilt, depth_spread_nm=depth, compute_loss=False, output="native")[0]
 
-    ptycho._direct_window = None
+    ptycho._direct_windows = {}
     first = direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": 12.1}, tilt, depth, 3, policy)
     cp.testing.assert_array_equal(first, exact({**coefs, "C10_nm": 12.1}))
     while not direct_workflow.advance(ptycho):
         pass
-    window = ptycho._direct_window[1].series
+    window = ptycho._direct_windows["C10_nm"][1].series
     assert window.ready and window.center == 12.1
     inside = window.center + 0.6 * window.half_width
     phase = direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": inside}, tilt, depth, 3, policy)
@@ -104,9 +104,32 @@ def test_drag_builds_between_frames_and_rebuilds_outside(ptycho):
     assert float(cp.abs(phase - expected).max()) <= 2e-6 * float(cp.abs(expected).max())
     outside = window.center + 1.5 * window.half_width
     direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": outside}, tilt, depth, 3, policy)
-    assert ptycho._direct_window[1].series is not window and ptycho._direct_window[1].series.center == outside
+    assert ptycho._direct_windows["C10_nm"][1].series is not window
+    assert ptycho._direct_windows["C10_nm"][1].series.center == outside
+    # moving C12 invalidates the C10 window, whose held inputs include C12
     direct_workflow.drag(ptycho, "C12_nm", {**coefs, "C10_nm": outside, "C12_nm": 3.2}, tilt, depth, 3, policy)
-    assert ptycho._direct_window[1].control == "C12_nm" and not ptycho._direct_window[1].series.ready
+    assert list(ptycho._direct_windows) == ["C12_nm"] and not ptycho._direct_windows["C12_nm"][1].series.ready
+
+
+def test_prepared_windows_serve_the_first_frame_of_a_grab(ptycho):
+    """After a release, windows asked for at idle make the next grab start on window frames."""
+    policy = direct_workflow.settings("complex", 0.03, 0.05, None, None)
+    coefs, tilt, depth = dict(ABERRATIONS), OPTICS["sample_tilt_mrad"], OPTICS["depth_spread_nm"]
+    ptycho._direct_windows = {}
+    direct_workflow.prepare(ptycho, ("C10_nm", "phi12_deg"), coefs, tilt, depth, 3, policy)
+    steps = 0
+    while not direct_workflow.advance(ptycho):
+        steps += 1
+    assert steps == 2 * 13 - 1
+    moved = {**coefs, "phi12_deg": coefs["phi12_deg"] + 0.5}
+    assert ptycho._direct_windows["phi12_deg"][1].series.covers(moved["phi12_deg"])
+    phase = direct_workflow.drag(ptycho, "phi12_deg", moved, tilt, depth, 3, policy)
+    expected = ptycho.preview(moved, method="complex", phase_regularization=0.03, amplitude_regularization=0.05,
+                              upsampling_factor=3, sample_tilt_mrad=tilt, depth_spread_nm=depth,
+                              compute_loss=False, output="native")[0]
+    assert float(cp.abs(phase - expected).max()) <= 2e-6 * float(cp.abs(expected).max())
+    # the C10 window held phi12 at its old value
+    assert list(ptycho._direct_windows) == ["phi12_deg"]
 
 
 # ---
@@ -127,15 +150,15 @@ def test_ssb_window_matches_exact_preview(ptycho, control):
         return ptycho.preview(aberrations, upsampling_factor=3, sample_tilt_mrad=tilt, depth_spread_nm=depth,
                               compute_loss=False, output="native")[0]
 
-    ptycho._direct_window = None
+    ptycho._direct_windows = {}
     first = direct_workflow.drag(ptycho, control, coefs, tilt, depth, 3, policy)
     cp.testing.assert_array_equal(first, exact(coefs))
     while not direct_workflow.advance(ptycho):
         pass
-    window = ptycho._direct_window[1]
+    window = ptycho._direct_windows[control][1]
     series = window.series
     for value, relative in [(series.nodes[3], 1e-6)] + [(series.center + series.half_width * x, 2e-6) for x in (-1.0, 0.43, 1.0)]:
         phase = direct_workflow.drag(ptycho, control, {**coefs, control: value}, tilt, depth, 3, policy)
         expected = exact({**coefs, control: value})
         assert float(cp.abs(phase - expected).max()) <= relative * float(cp.abs(expected).max())
-    assert ptycho._direct_window[1] is window
+    assert ptycho._direct_windows[control][1] is window

@@ -136,58 +136,99 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     (``policy`` from ``settings("ssb", ...)``, plus an optional
     ``phase_estimator``) on a fine grid is served from a `WaveWindow`: the
     single-sideband terms interpolated, the triple-overlap terms exact. A
-    window for another control, other held inputs, or a value outside it is
-    replaced by one centred on this value; `advance` then builds it one node
-    at a time between frames, with exact frames meanwhile. Committed frames
-    and saved results never come from a window, so they remain the exact model.
+    window is valid while every other input is unchanged and the value lies
+    inside it; otherwise a new one is centred on this value. `advance` builds
+    windows one node at a time between frames, with exact frames meanwhile,
+    and `prepare` asks for windows before a grab. Committed frames and saved
+    results never come from a window, so they remain the exact model.
     """
     method = policy.get("method", "ssb")
-    value = float(coefs.get(control, 0.0))
-    if session.backend != "cuda" or session._streamed is not None:
+    if not _windowed(session, factor, policy):
         return _exact(session, coefs, tilt, depth, factor, policy)
-    if method == "ssb":
-        if factor == 1 or policy.get("phase_estimator", "phase_of_mean") != "phase_of_mean":
+    if method != "ssb":
+        key = _inputs(session, coefs, tilt, depth, factor, policy)[2]
+        cached = getattr(session, "_prepared_direct", None)
+        if cached is not None and cached[0] == key and method in cached[1]:
             return _exact(session, coefs, tilt, depth, factor, policy)
-        engine = session._backend()._get_accelerator()
-        held = ("ssb", *_inputs(session, {**coefs, control: None}, tilt, depth, factor, policy)[2])
-        window = getattr(session, "_direct_window", None)
-        if window is None or window[0] != held or window[1].control != control or not window[1].series.covers(value):
-            from quantem.gpu.ssb.cuda.thick import WaveWindow
-
-            session._direct_window = None
-            window = session._direct_window = held, WaveWindow(engine.thick, coefs, control, tilt, depth, factor)
-        if window[1].series.ready:
-            return window[1].phase(value)
+    window = _window(session, control, coefs, tilt, depth, factor, policy, first=True)
+    if not window.series.ready:
         return _exact(session, coefs, tilt, depth, factor, policy)
-    from quantem.gpu.ssb.cuda.direct import DragWindow
+    value = float(coefs.get(control, 0.0))
+    if method == "ssb":
+        return window.phase(value)
+    wave, _ = window.solve(value, policy["phase_regularization"], policy.get("amplitude_regularization"),
+                           complex_object=method == "complex")
+    return cp.angle(wave).astype(cp.float32)
 
-    engine, optics, key = _inputs(session, coefs, tilt, depth, factor, policy)
-    cached = getattr(session, "_prepared_direct", None)
-    if cached is not None and cached[0] == key and method in cached[1]:
-        return _exact(session, coefs, tilt, depth, factor, policy)
-    held = _inputs(session, {**coefs, control: None}, tilt, depth, factor, policy)[2]
-    complex_object = method == "complex"
-    window = getattr(session, "_direct_window", None)
-    if (window is None or window[0] != held or window[1].control != control
-            or not window[1].series.covers(value) or (complex_object and not window[1].complex_object)):
-        # drop the old window first: a complex one holds about 2 GB on the test field
-        session._direct_window = None
-        window = session._direct_window = held, DragWindow(
-            engine, optics, control, factor, complex_object=complex_object,
-            smoothness_inv_A=policy["smoothness_inv_A"], detector_weighting=policy["detector_weighting"],
-        )
-    if window[1].series.ready:
-        wave, _ = window[1].solve(value, policy["phase_regularization"], policy.get("amplitude_regularization"),
-                                  complex_object=complex_object)
-        return cp.angle(wave).astype(cp.float32)
-    return _exact(session, coefs, tilt, depth, factor, policy)
+
+@_on_scan_gpu
+def prepare(session, controls, coefs, tilt, depth, factor, policy):
+    """Ask for windows along ``controls`` at the current optics, so the next grab of one starts on window frames.
+
+    Serves: the idle time after a slider is released, while the pointer moves
+    to the next one. Nothing is computed here; `advance` builds them.
+    """
+    if _windowed(session, factor, policy):
+        for control in controls:
+            _window(session, control, coefs, tilt, depth, factor, policy)
 
 
 @_on_scan_gpu
 def advance(session) -> bool:
-    """Add one node to the pending drag window; True when there is nothing left to build."""
-    window = getattr(session, "_direct_window", None)
-    return window is None or window[1].step()
+    """Add one node to the first incomplete window (the one dragged last first); True when none is left."""
+    windows = [window for _, window in getattr(session, "_direct_windows", {}).values()]
+    pending = [window for window in windows if not window.series.ready]
+    if pending:
+        pending[0].step()
+    return all(window.series.ready for window in windows)
+
+
+def _windowed(session, factor, policy) -> bool:
+    """Whether drags of this method can use a window: CUDA, a resident region, and for SSB the fine-grid coherent sum."""
+    if session.backend != "cuda" or session._streamed is not None:
+        return False
+    if policy.get("method", "ssb") == "ssb":
+        return factor > 1 and policy.get("phase_estimator", "phase_of_mean") == "phase_of_mean"
+    return True
+
+
+def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False):
+    """The session's window along ``control`` for these inputs, new (unbuilt) unless a valid one exists.
+
+    Windows whose held inputs no longer match these are dropped first: a
+    complex one holds about 2 GB on the test field. ``first`` puts this one
+    ahead in `advance`'s order.
+    """
+    method = policy.get("method", "ssb")
+    complex_object = method == "complex"
+    kind = "ssb" if method == "ssb" else "direct"
+    windows = getattr(session, "_direct_windows", None)
+    if windows is None:
+        windows = session._direct_windows = {}
+    for name, (held, window) in list(windows.items()):
+        if held != (kind, *_inputs(session, {**coefs, name: None}, tilt, depth, factor, policy)[2]):
+            del windows[name]
+    held = (kind, *_inputs(session, {**coefs, control: None}, tilt, depth, factor, policy)[2])
+    entry = windows.get(control)
+    value = float(coefs.get(control, 0.0))
+    if entry is None or not entry[1].series.covers(value) or (complex_object and not entry[1].complex_object):
+        windows.pop(control, None)
+        engine = session._backend()._get_accelerator()
+        if kind == "ssb":
+            from quantem.gpu.ssb.cuda.thick import WaveWindow
+
+            window = WaveWindow(engine.thick, coefs, control, tilt, depth, factor)
+        else:
+            from quantem.gpu.ssb.cuda.direct import DragWindow
+
+            window = DragWindow(engine, _inputs(session, coefs, tilt, depth, factor, policy)[1], control, factor,
+                                complex_object=complex_object, smoothness_inv_A=policy["smoothness_inv_A"],
+                                detector_weighting=policy["detector_weighting"])
+        entry = held, window
+    windows[control] = entry
+    if first:
+        session._direct_windows = {control: entry, **{name: other for name, other in windows.items() if name != control}}
+    return entry[1]
 
 
 def _exact(session, coefs, tilt, depth, factor, policy):
