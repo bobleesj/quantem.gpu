@@ -246,7 +246,7 @@ def test_mapped_branch_is_the_exact_180_degree_image():
     assert first.aberrations["C10_nm"] == 6.25 and first.sample_tilt_mrad == (-0.07, -3.28)
 
 
-@pytest.mark.parametrize("backend, expected", [("cuda", "bfgs"), ("mps", "newton")])
+@pytest.mark.parametrize("backend, expected", [("cuda", "bfgs"), ("mps", "bfgs"), ("webgpu", "newton")])
 def test_auto_refinement_uses_exact_gradients_where_the_backend_has_them(monkeypatch, backend, expected):
     import sys
 
@@ -285,7 +285,7 @@ def test_auto_refinement_uses_exact_gradients_where_the_backend_has_them(monkeyp
 
 
 def test_bfgs_on_a_backend_without_gradients_fails_before_computation():
-    session = SimpleNamespace(backend="mps", _find_aberrations=Mock())
+    session = SimpleNamespace(backend="webgpu", _find_aberrations=Mock())
     with pytest.raises(ValueError, match="exact fifth-order gradients"):
         fifth_order_fit.fit_fifth_order(
             session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,

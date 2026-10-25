@@ -78,9 +78,17 @@ def _estimated():
                detector_sampling_mrad=detector_sampling_mrad)
 
 
-def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp_path, estimate):
-    """Known answer (atoms positive, right rotation 0 deg): an estimate of 180 deg ends at 0 deg after two fits."""
+@pytest.mark.parametrize("mapped", [True, False])
+def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp_path, estimate, monkeypatch, mapped):
+    """Known answer (atoms positive, right rotation 0 deg): an estimate of 180 deg ends at 0 deg.
+
+    By default the branch at 0 deg is the exact image of the fit at 180 deg; ``MAP_OPPOSITE_BRANCH=False`` fits it
+    independently, with the direct fit's settings and start.
+    """
+    from quantem.gpu.ssb import workflow
+
     _require_cuda()
+    monkeypatch.setattr(workflow, "MAP_OPPOSITE_BRANCH", mapped)
     direct = _simulated(0.0).find_aberrations(search="primary", check_rotation=False, verbose=False)
     estimate(180.0)
     session = _estimated()
@@ -90,9 +98,19 @@ def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp
     assert branches.kept == branches.chosen == 1
     assert checked.scan_detector_rotation_deg == pytest.approx(0.0, abs=1e-9)
     assert session.scan_detector_rotation_deg == pytest.approx(0.0, abs=1e-9)   # session keeps it
-    # the branch at 0 deg is an independent fit with the direct fit's settings and start
-    assert checked.aberrations == direct.aberrations
-    np.testing.assert_array_equal(_host(checked.phase), _host(direct.phase))
+    if mapped:
+        # the image of the 180 deg fit: the direct fit's maximum to well within the fit tolerances
+        first = branches.branches[0]
+        assert checked.aberrations["C10_nm"] == -first.aberrations["C10_nm"]
+        assert checked.sample_tilt_mrad == tuple(-value for value in first.sample_tilt_mrad)
+        assert checked.aberrations["C10_nm"] == pytest.approx(direct.aberrations["C10_nm"], abs=1e-3)
+        assert checked.aberrations["C12_nm"] == pytest.approx(direct.aberrations["C12_nm"], abs=1e-3)
+        assert checked.sample_tilt_mrad == pytest.approx(direct.sample_tilt_mrad, abs=1e-2)
+        assert _correlation(_host(checked.phase), _host(direct.phase)) > 0.9999
+    else:
+        # the branch at 0 deg is an independent fit with the direct fit's settings and start
+        assert checked.aberrations == direct.aberrations
+        np.testing.assert_array_equal(_host(checked.phase), _host(direct.phase))
     assert _correlation(branches.branches[0].phase, -_host(direct.phase)) > 0.99
     figure = checked.show("rotation")
     # the phase-tail panel (log axis) sits below the two branch phases
@@ -169,13 +187,20 @@ def test_rotation_plus_180_is_the_conjugate_object_with_every_aberration_flipped
     np.testing.assert_array_equal(_host(same.phase), _host(conjugate.phase))
 
 
+@pytest.mark.parametrize("mapped", [True, False])
 @pytest.mark.parametrize("rotation", [0.0, 180.0])
-def test_joint_fit_runs_two_independent_searches(rotation, estimate, monkeypatch, tmp_path):
-    """Joint calibration fits both branches with fresh searches and keeps the one with bright columns."""
+def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatch, tmp_path):
+    """Joint calibration fits both branches and keeps the one with bright columns.
+
+    By default one search fits the estimated rotation and the other branch gets its exact image;
+    ``MAP_OPPOSITE_BRANCH=False`` runs two fresh searches.
+    """
     from quantem.gpu import SSB
+    from quantem.gpu.ssb import workflow
     from quantem.gpu.ssb.persistence import load_result, result_paths
 
     _require_cuda()
+    monkeypatch.setattr(workflow, "MAP_OPPOSITE_BRANCH", mapped)
     estimate(rotation)
     data, detector_sampling_mrad = _simulated_crystal((3.0, -4.0))
     source = tmp_path / "tilted_crystal.npy"
@@ -194,12 +219,14 @@ def test_joint_fit_runs_two_independent_searches(rotation, estimate, monkeypatch
     monkeypatch.setattr(session, "_fit_tilt", measured_fit)
     try:
         result = session.find_aberrations(search="primary", tilt=True, save_dir=tmp_path / "joint", verbose=False)
-        # two searches, neither started from the other's fit
-        assert fit_calls == [(rotation, False), ((rotation + 180.0) % 360.0, False)]
+        searches = 1 if mapped else 2
+        # one search, or two, neither started from the other's fit
+        assert fit_calls == [(rotation, False), ((rotation + 180.0) % 360.0, False)][:searches]
         assert result.scan_detector_rotation_deg == 0.0
         assert result.sample_tilt_mrad == pytest.approx((3.0, -4.0), abs=1.0)
-        assert len(result.trial_records) == 2 * result.num_trials == 400
-        assert {record["scan_detector_rotation_deg"] for record in result.trial_records} == {0.0, 180.0}
+        assert len(result.trial_records) == searches * result.num_trials == searches * 200
+        assert {record["scan_detector_rotation_deg"] for record in result.trial_records} == (
+            {rotation} if mapped else {0.0, 180.0})
         kept = result.rotation_branches.branches[result.rotation_branches.kept]
         np.testing.assert_array_equal(_host(result.phase), kept.phase)
 
@@ -214,7 +241,7 @@ def test_joint_fit_runs_two_independent_searches(rotation, estimate, monkeypatch
         finer = session.reconstruct(restored, upsampling_factor=2)
         assert finer.phase.shape == tuple(2 * size for size in result.phase.shape)
         assert finer.rotation_branches is restored.rotation_branches
-        assert len(fit_calls) == 2
+        assert len(fit_calls) == (1 if mapped else 2)
     finally:
         session.close()
 

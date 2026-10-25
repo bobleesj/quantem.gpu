@@ -111,19 +111,19 @@ def test_opposite_branch_point_has_the_same_agreement(simulation):
 
 def test_exact_fit_reaches_the_finite_difference_agreement(simulation):
     """The default fit (exact Newton, exact-gradient fifth order, mapped branch) against the earlier algorithms."""
-    import quantem.gpu.ssb.cuda.optimizer as optimizer
+    import quantem.gpu.ssb._exact_newton as exact_newton
     import quantem.gpu.ssb.workflow as workflow
 
     data, _, detector_mrad = simulation
     with session(data, detector_mrad, "cuda") as ssb:
         exact = ssb.find_aberrations(show=False, verbose=False, check_rotation="both")
-    previous = optimizer.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH
-    optimizer.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH = False, False
+    previous = exact_newton.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH
+    exact_newton.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH = False, False
     try:
         with session(data, detector_mrad, "cuda") as ssb:
             reference = ssb.find_aberrations(show=False, verbose=False, check_rotation="both", refinement="newton")
     finally:
-        optimizer.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH = previous
+        exact_newton.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH = previous
     assert exact.refinement == "bfgs" and reference.refinement == "newton"
     assert exact.scan_detector_rotation_deg == reference.scan_detector_rotation_deg
     assert exact.rotation_branches.kept == reference.rotation_branches.kept
