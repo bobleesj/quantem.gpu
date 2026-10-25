@@ -22,7 +22,7 @@ constant bool DIRECT_COMPLEX [[function_constant(61)]];  // log-amplitude and ph
 constant uint DIRECT_FIRST [[function_constant(62)]];    // first augmented entry of this part
 constant uint DIRECT_LAST [[function_constant(63)]];     // one past the last entry of this part
 constexpr constant uint DIRECT_MAX_ALIASES = 16u;
-constexpr constant uint DIRECT_MAX_SHARE = 96u;
+constexpr constant uint DIRECT_MAX_SHARE = 192u;
 constant uint DIRECT_DIM = DIRECT_COMPLEX ? 2u * DIRECT_ALIASES : DIRECT_ALIASES;
 constant uint DIRECT_WIDTH = DIRECT_DIM + 1u;
 constant uint DIRECT_OUTPUTS = DIRECT_WIDTH * (DIRECT_WIDTH + 1u) / 2u;
@@ -87,6 +87,49 @@ inline float2 direct_side(float dr, float dc, float sign, float shift, float4 gk
     return float2(amplitude * c, sign * amplitude * s);
 }
 
+// w conj(v_a) v_b onto entry i (a <= b) of this part's running sums, in CUDA's order of operations.
+inline void direct_add(thread float2* sum, uint i, float2 va, float2 vb, float w) {
+    if (i < DIRECT_FIRST || i >= DIRECT_LAST) return;
+    const float ur = w * va.x, ui = -w * va.y;
+    float2 s = sum[i - DIRECT_FIRST];
+    s.x = metal::fma(ur, vb.x, metal::fma(-ui, vb.y, s.x));
+    s.y = metal::fma(ur, vb.y, metal::fma(ui, vb.x, s.y));
+    sum[i - DIRECT_FIRST] = s;
+}
+
+// Entry (a, b), a <= b, of the row-major augmented upper triangle.
+inline uint direct_entry(uint a, uint b) { return a * DIRECT_WIDTH - a * (a - 1u) / 2u + (b - a); }
+
+// One BF pixel's products w conj(v_a) v_b. An alias whose sidebands are both closed has zero columns, so its products
+// are exact zeros and skipped; the open aliases are visited in pairs (neighbouring frequencies of a SIMD group mostly
+// agree, so these branches stay coherent). Every entry still receives its products in BF pixel order.
+inline void direct_accumulate(thread float2* sum, thread const float2* v, float w) {
+    const uint C = DIRECT_ALIASES, P = DIRECT_DIM - DIRECT_ALIASES;  // P: first phase column
+    bool open[DIRECT_MAX_ALIASES];
+#pragma unroll
+    for (uint a = 0; a < C; ++a) {
+        open[a] = v[P + a].x != 0.0f || v[P + a].y != 0.0f;
+        if (DIRECT_COMPLEX) open[a] = open[a] || v[a].x != 0.0f || v[a].y != 0.0f;
+    }
+#pragma unroll
+    for (uint a = 0; a < C; ++a) {
+        if (!open[a]) continue;
+#pragma unroll
+        for (uint b = a; b < C; ++b) {
+            if (!open[b]) continue;
+            direct_add(sum, direct_entry(P + a, P + b), v[P + a], v[P + b], w);
+            if (DIRECT_COMPLEX) {
+                direct_add(sum, direct_entry(a, b), v[a], v[b], w);
+                direct_add(sum, direct_entry(a, P + b), v[a], v[P + b], w);
+                if (b != a) direct_add(sum, direct_entry(b, P + a), v[b], v[P + a], w);
+            }
+        }
+        direct_add(sum, direct_entry(P + a, DIRECT_DIM), v[P + a], v[DIRECT_DIM], w);
+        if (DIRECT_COMPLEX) direct_add(sum, direct_entry(a, DIRECT_DIM), v[a], v[DIRECT_DIM], w);
+    }
+    direct_add(sum, direct_entry(DIRECT_DIM, DIRECT_DIM), v[DIRECT_DIM], v[DIRECT_DIM], w);
+}
+
 kernel void direct_normal_equations(device const float2* g [[buffer(0)]],
     device const uint2* frequency [[buffer(1)]], device const float2* alias [[buffer(2)]],
     device const float4* pixel [[buffer(3)]], device const float* coefficients [[buffer(4)]],
@@ -118,25 +161,7 @@ kernel void direct_normal_equations(device const float2* g [[buffer(0)]],
             v[DIRECT_DIM - DIRECT_ALIASES + a] = float2(-(t1.y - t2.y), t1.x - t2.x);
             if (DIRECT_COMPLEX) v[a] = t1 + t2;
         }
-        // Columns of an alias with both sidebands closed are zero: skip their products (the SIMD group's
-        // neighbouring frequencies mostly agree, so the branches stay coherent).
-#pragma unroll
-        for (uint a = 0; a < DIRECT_WIDTH; ++a) {
-            if (a < DIRECT_DIM && v[a].x == 0.0f && v[a].y == 0.0f) continue;
-            // w conj(v_a) v_b
-            const float ur = w * v[a].x, ui = -w * v[a].y;
-#pragma unroll
-            for (uint b = a; b < DIRECT_WIDTH; ++b) {
-                const uint i = a * DIRECT_WIDTH - a * (a - 1u) / 2u + (b - a);
-                if (i >= DIRECT_FIRST && i < DIRECT_LAST) {
-                    if (b < DIRECT_DIM && v[b].x == 0.0f && v[b].y == 0.0f) continue;
-                    float2 s = sum[i - DIRECT_FIRST];
-                    s.x = metal::fma(ur, v[b].x, metal::fma(-ui, v[b].y, s.x));
-                    s.y = metal::fma(ur, v[b].y, metal::fma(ui, v[b].x, s.y));
-                    sum[i - DIRECT_FIRST] = s;
-                }
-            }
-        }
+        direct_accumulate(sum, v, w);
     }
     // Float-float accumulation of this batch's sums (two-sum on each component).
     device float4* out = sums + (size_t)f * DIRECT_OUTPUTS + DIRECT_FIRST;

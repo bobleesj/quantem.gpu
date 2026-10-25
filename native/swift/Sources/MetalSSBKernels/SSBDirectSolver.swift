@@ -104,7 +104,7 @@ final class SSBDirectSolver {
   }
 
   /// Augmented entries per dispatch: the float32 running sums stay in registers below this.
-  static let maximumShare = 96
+  static let maximumShare = 192
   static let maximumAliases = 16
   static let batch = 512
 
