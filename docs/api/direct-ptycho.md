@@ -181,7 +181,7 @@ phase_001.show(
 Full fields appear above their matching zooms. Every panel uses the first
 result's phase limits, and each title identifies the method and regularization.
 Use `interactive=False` (the default) for a static Matplotlib figure, or
-`interactive=True` for linked Show2D inspection. `size` accepts `"small"`,
+`interactive=True` for linked interactive inspection. `size` accepts `"small"`,
 `"medium"`, `"large"`, and `"xlarge"`; `columns` sets methods per row.
 Interactive comparisons require matching pixel grids. These viewers inspect
 saved results; `ptycho.show()` opens ShowPtycho for live aberration edits.
@@ -263,7 +263,7 @@ amplitude + phase agrees within 0.05 Å.
 - `series.reconstruct("phase", phase_regularization=0.05)`: rebuilds a method
   after the series from each frame's saved optics (`series.fits[k]`) and shifts.
 - `series.show(interactive=False)`: the combined image of each method with the
-  displacement and C10/C12 traces; `interactive=True` returns Show2D.
+  displacement and C10/C12 traces; `interactive=True` returns an interactive viewer.
   Pixels no frame reaches are masked, not drawn as data.
 
 With `save_dir`, each frame's optics and shift are saved as it finishes. A

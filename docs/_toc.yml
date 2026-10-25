@@ -151,6 +151,12 @@ parts:
           sections:
           - file: performance/ssb/reports/2026-10-25-ssb-redraw-precision
           - file: performance/ssb/reports/2026-10-24-ssb-shared-coordinates
+          - file: performance/ssb/reports/2026-10-24-direct-live-handoff
+          - file: performance/ssb/reports/2026-10-24-drift-live-notch
+          - file: performance/ssb/reports/2026-10-24-drift-method-comparison
+          - file: performance/ssb/reports/2026-10-24-native-metal-ssb-redraw
+          - file: performance/ssb/reports/2026-10-24-redraw-symmetry-and-drag-window
+          - file: performance/ssb/reports/2026-10-24-regularized-preparation
           - file: performance/ssb/reports/2026-10-24-ssb-compact-support
           - file: performance/ssb/reports/2026-10-24-ssb-closed-sideband
           - file: performance/ssb/reports/2026-10-23-ssb-zero-contributions
