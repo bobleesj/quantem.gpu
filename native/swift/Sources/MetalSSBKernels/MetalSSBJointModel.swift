@@ -126,6 +126,7 @@ public final class MetalSSBJointModel {
   private var batchPower: MTLBuffer?
   private var coherent: SSBCoherentReconstruction
   private var fifthOrder: SSBFifthOrderAgreement?
+  private var fifthOrderGradient: SSBFifthOrderGradient?
 
   public var wavelengthAngstroms: Double {
     geometry.modelWavelengthAngstroms ?? Double(geometry.wavelengthAngstroms)
@@ -159,7 +160,7 @@ public final class MetalSSBJointModel {
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
-        "ssb_redraw",
+        "ssb_fifth_order_gradient", "ssb_redraw",
       ]),
       options: options)
     self.library = library
@@ -406,6 +407,75 @@ public final class MetalSSBJointModel {
       rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
       probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
       isCancelled: isCancelled)
+  }
+
+  /// The fifth-order agreement of each candidate (bit-identical to `fifthOrderAgreements`) and its exact gradient
+  /// with respect to the objective row [depth (A), tilt row (rad), tilt column (rad), 28 packed coefficients (A)].
+  /// Per-term arithmetic is float32 on Metal; the gradient partials are reduced in Double.
+  /// A `qStride` above 1 returns only the gradient of the agreement over every qStride-th band frequency, scaled by
+  /// the ratio of the full to the subsampled band weight (agreement NaN): a cheap steering curvature, never the
+  /// objective.
+  /// `gradients: false` returns the agreements alone (empty gradients) and keeps their projections, so
+  /// `fifthOrderRetainedGradients` of the same candidates adds only the gradient pass.
+  func fifthOrderAgreementsAndGradients(
+    _ points: [SSBModelPoint], packedCoefficients: [[Float]], qStride: Int = 1,
+    gradients: Bool = true, isCancelled: () -> Bool = { false }
+  ) throws -> [(agreement: Double, gradient: [Double])] {
+    try validatePreparation()
+    for point in points { try point.validate() }
+    guard packedCoefficients.count == points.count,
+      packedCoefficients.allSatisfy({ $0.count == 28 && $0.allSatisfy(\.isFinite) })
+    else {
+      throw MetalSSBError.invalidGeometry(
+        "Supply 28 finite Cartesian coefficients per SSB candidate.")
+    }
+    if isCancelled() { throw CancellationError() }
+    if points.isEmpty { return [] }
+    if fifthOrderGradient == nil {
+      fifthOrderGradient = try SSBFifthOrderGradient(device: device, queue: queue, library: library)
+    }
+    let rows = zip(points, packedCoefficients).map { point, packed in
+      [
+        Float(point.depthSpreadAngstroms), Float(point.sampleTiltMrad[0] * 1e-3),
+        Float(point.sampleTiltMrad[1] * 1e-3),
+      ] + packed
+    }
+    var ratio = 1.0
+    if qStride > 1 {
+      let w = UnsafeBufferPointer(
+        start: weights.contents().assumingMemoryBound(to: Float.self), count: bandCount)
+      let sub = stride(from: 0, to: bandCount, by: qStride).reduce(0.0) { $0 + Double(w[$1]) }
+      ratio = w.reduce(0.0) { $0 + Double($1) } / sub
+    }
+    return try fifthOrderGradient!.evaluate(
+      rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
+      probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
+      qStride: qStride, gradients: gradients, isCancelled: isCancelled
+    ).map { ($0.agreement, $0.gradient.map { $0 * ratio }) }
+  }
+
+  /// The agreements and gradients of the candidates of the last value-only
+  /// `fifthOrderAgreementsAndGradients(gradients: false)`, reusing its objective pass; other candidates are
+  /// evaluated in full.
+  func fifthOrderRetainedGradients(
+    _ points: [SSBModelPoint], packedCoefficients: [[Float]], isCancelled: () -> Bool = { false }
+  ) throws -> [(agreement: Double, gradient: [Double])] {
+    try validatePreparation()
+    guard let fifthOrderGradient else {
+      return try fifthOrderAgreementsAndGradients(
+        points, packedCoefficients: packedCoefficients, isCancelled: isCancelled)
+    }
+    let rows = zip(points, packedCoefficients).map { point, packed in
+      [
+        Float(point.depthSpreadAngstroms), Float(point.sampleTiltMrad[0] * 1e-3),
+        Float(point.sampleTiltMrad[1] * 1e-3),
+      ] + packed
+    }
+    return try fifthOrderGradient.retainedGradients(
+      rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
+      probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
+      isCancelled: isCancelled
+    ).map { ($0.agreement, $0.gradient) }
   }
 
   /// The exact float32 inputs of the agreement objective at the current rotation, for an independent

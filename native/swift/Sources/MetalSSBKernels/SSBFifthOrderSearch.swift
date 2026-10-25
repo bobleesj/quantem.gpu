@@ -19,6 +19,11 @@ public enum SSBFifthOrderSearch {
     public let iterations: Int
     public let stop: String
     public let trace: [Sample]
+    /// Exact-gradient search only: full-band gradient passes, gradient evaluations on a band subsample for the
+    /// steering Hessian, and the subsample stride. `evaluations` then counts full-band objective passes.
+    public var gradientEvaluations: Int? = nil
+    public var subsampledGradients: Int? = nil
+    public var hessianStride: Int? = nil
   }
 
   /// The same dimensionless box as `fifth_order_fit.py`: C10, Cartesian C12, tilt, depth,
