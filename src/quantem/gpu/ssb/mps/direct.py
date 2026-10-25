@@ -532,21 +532,10 @@ def _layout(backend, factor: int, smoothness_inv_A: float, detector_weighting: s
 
 
 def _bright_field_frequencies(backend) -> np.ndarray:
-    """(k row, k column) in 1/A of every stored BF pixel after the scan rotation, float32 rounded once from float64.
-
-    The detector offsets from the disk centre, their scaling and the passive rotation by -rotation are formed in
-    float64, so k carries no float32 rounding of the centre (a common shift of every k, which tilts the whole transfer).
-    """
-    prepared, selection = backend._prepared, backend._selection
-    center_row, center_col = selection.bright_field_center_px
-    k_row = (selection.rows.astype(np.float64) - center_row) * (prepared.ang_y_rad / prepared.wavelength)
-    k_col = (selection.cols.astype(np.float64) - center_col) * (prepared.ang_x_rad / prepared.wavelength)
-    angle = -math.radians(backend._scan_detector_rotation_deg)
-    k = np.stack((k_row * math.cos(angle) + k_col * math.sin(angle),
-                  -k_row * math.sin(angle) + k_col * math.cos(angle)), axis=1)
-    if prepared.bf_storage_indices_np is not None:
-        k = k[prepared.bf_storage_indices_np]
-    return np.ascontiguousarray(k, np.float32)
+    """(k row, k column) in 1/A of every stored BF pixel after the scan rotation: the prepared SSB state's k, formed
+    in float64 and rounded once (``prepared.bright_field_frequencies``)."""
+    prepared = backend._prepared
+    return np.ascontiguousarray(np.stack((prepared.kx_np, prepared.ky_np), axis=1), np.float32)
 
 
 def _coefficients(aberrations: dict[str, float]) -> np.ndarray:

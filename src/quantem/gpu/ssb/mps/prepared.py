@@ -102,30 +102,12 @@ def prepare_selection(
     mx = require_mlx()
     bf_row = selection.rows
     bf_col = selection.cols
-    center = selection.bright_field_center_px
-    detector_shape = selection.detector_shape
     wavelength = float(wavelength_A_from_kV(float(voltage_kV)))
-    reciprocal_sampling = (
-        detector_sampling_mrad[0] * 1e-3 / wavelength,
-        detector_sampling_mrad[1] * 1e-3 / wavelength,
-    )
-    sampling = (
-        1.0 / (reciprocal_sampling[0] * detector_shape[0]),
-        1.0 / (reciprocal_sampling[1] * detector_shape[1]),
-    )
+    semiangle_rad = float(semiangle_mrad) * 1e-3
+    ang_y_rad = float(detector_sampling_mrad[0]) * 1e-3
+    ang_x_rad = float(detector_sampling_mrad[1]) * 1e-3
     q_row_np, q_col_np = _spatial_frequencies(scan_shape, scan_sampling)
-
-    recip_y = 1.0 / (sampling[0] * detector_shape[0])
-    recip_x = 1.0 / (sampling[1] * detector_shape[1])
-    kx_np = (bf_row.astype(np.float32) - center[0]) * recip_y
-    ky_np = (bf_col.astype(np.float32) - center[1]) * recip_x
-    if scan_detector_rotation_deg:
-        angle = math.radians(-float(scan_detector_rotation_deg))
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        kx_np, ky_np = kx_np * cos_a + ky_np * sin_a, -kx_np * sin_a + ky_np * cos_a
-    kx_np = np.asarray(kx_np, dtype=np.float32)
-    ky_np = np.asarray(ky_np, dtype=np.float32)
+    kx_np, ky_np = bright_field_frequencies(selection, ang_y_rad, ang_x_rad, wavelength, scan_detector_rotation_deg)
 
     q_row_mx = mx.array(q_row_np, dtype=mx.float32)
     q_col_mx = mx.array(q_col_np, dtype=mx.float32)
@@ -133,9 +115,6 @@ def prepare_selection(
     ky_mx = mx.array(ky_np, dtype=mx.float32)
     qx = q_row_mx[None, :, None]
     qy = q_col_mx[None, None, :]
-    semiangle_rad = float(semiangle_mrad) * 1e-3
-    ang_y_rad = float(detector_sampling_mrad[0]) * 1e-3
-    ang_x_rad = float(detector_sampling_mrad[1]) * 1e-3
     alpha_k2_1d, cos2_k_1d, sin2_k_1d, aperture_k_1d = compute_geometry(
         mx,
         kx_mx,
@@ -393,24 +372,9 @@ def retarget_prepared_rotation(
     """Update rotation-dependent geometry without rebuilding source FFT evidence."""
 
     mx = prepared.mx
-    reciprocal_y = prepared.ang_y_rad / prepared.wavelength
-    reciprocal_x = prepared.ang_x_rad / prepared.wavelength
-    kx_np = (
-        selection.rows.astype(np.float32) - selection.bright_field_center_px[0]
-    ) * reciprocal_y
-    ky_np = (
-        selection.cols.astype(np.float32) - selection.bright_field_center_px[1]
-    ) * reciprocal_x
-    if scan_detector_rotation_deg:
-        angle = math.radians(-float(scan_detector_rotation_deg))
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        kx_np, ky_np = (
-            kx_np * cos_a + ky_np * sin_a,
-            -kx_np * sin_a + ky_np * cos_a,
-        )
-    kx_np = np.asarray(kx_np, dtype=np.float32)
-    ky_np = np.asarray(ky_np, dtype=np.float32)
+    kx_np, ky_np = bright_field_frequencies(
+        selection, prepared.ang_y_rad, prepared.ang_x_rad, prepared.wavelength, scan_detector_rotation_deg,
+    )
     if prepared.bf_storage_indices_np is not None:
         indices = prepared.bf_storage_indices_np
         kx_np = kx_np[indices]
@@ -453,6 +417,29 @@ def retarget_prepared_rotation(
     prepared.aperture_k_1d = aperture_k_1d
     for name, value in zip(_PAIR_GEOMETRY_FIELDS, geometry):
         setattr(prepared, name, value)
+
+
+def bright_field_frequencies(
+    selection: BrightfieldDisk,
+    ang_y_rad: float,
+    ang_x_rad: float,
+    wavelength: float,
+    scan_detector_rotation_deg: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """(k row, k column) in 1/A of every selected BF pixel after the scan rotation, float32 rounded once.
+
+    The offsets from the disk centre, their scaling and the passive rotation by -rotation are all formed in float64.
+    Rounding the centre to float32 first (100 px carries up to 4e-6 px of rounding) would shift every k alike, a
+    coherent tilt of the whole transfer, rather than leave one independent rounding per pixel.
+    """
+    center_row, center_col = selection.bright_field_center_px
+    k_row = (selection.rows.astype(np.float64) - float(center_row)) * (ang_y_rad / wavelength)
+    k_col = (selection.cols.astype(np.float64) - float(center_col)) * (ang_x_rad / wavelength)
+    if scan_detector_rotation_deg:
+        angle = -math.radians(float(scan_detector_rotation_deg))
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        k_row, k_col = k_row * cos_a + k_col * sin_a, -k_row * sin_a + k_col * cos_a
+    return k_row.astype(np.float32), k_col.astype(np.float32)
 
 
 def resolve_bf_selection(
