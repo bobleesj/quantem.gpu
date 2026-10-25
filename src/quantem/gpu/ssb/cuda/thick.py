@@ -599,8 +599,7 @@ class WaveWindow:
         self.tilt = tuple(float(value) for value in (tilt or (0.0, 0.0)))
         self.depth_A = float(depth_nm or 0.0) * ENGINE_PER_NM
         self.qrow, self.qcol = thick._frequencies(factor)
-        center = float(aberrations_nm.get(control, 0.0))
-        self.series = chebyshev.Series(center, chebyshev.half_width(thick.engine, aberrations_nm, control))
+        self.series = chebyshev.series(thick.engine, aberrations_nm, control)
         self.shape = None
 
     def step(self) -> bool:

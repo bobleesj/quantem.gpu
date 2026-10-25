@@ -16,7 +16,6 @@ import pytest
 
 from quantem.gpu import DirectPtycho
 from quantem.gpu.ssb import direct_workflow
-from quantem.gpu.ssb.cuda import chebyshev
 from quantem.gpu.ssb.cuda.direct import DragWindow, PreparedDirect
 
 pytestmark = pytest.mark.slow
@@ -122,7 +121,7 @@ def test_prepared_windows_serve_the_first_frame_of_a_grab(ptycho):
     steps = 0
     while not direct_workflow.advance(ptycho):
         steps += 1
-    assert steps == 2 * (chebyshev.ORDER + 1) - 1
+    assert steps == sum(tiles[0].series.order + 1 for _, tiles, _ in ptycho._direct_windows.values()) - 1
     moved = {**coefs, "phi12_deg": coefs["phi12_deg"] + 0.5}
     assert ptycho._direct_windows["phi12_deg"][1][0].series.covers(moved["phi12_deg"])
     phase = direct_workflow.drag(ptycho, "phi12_deg", moved, tilt, depth, 3, policy)

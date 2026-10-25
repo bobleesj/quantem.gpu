@@ -678,8 +678,7 @@ class DragWindow:
         self.complex_object = complex_object
         self.options = dict(complex_object=complex_object, smoothness_inv_A=smoothness_inv_A,
                             detector_weighting=detector_weighting, eigenbasis=False)
-        center = float(optics["aberrations"].get(control, 0.0))
-        self.series = chebyshev.Series(center, chebyshev.half_width(engine, optics["aberrations"], control))
+        self.series = chebyshev.series(engine, optics["aberrations"], control)
         self.template = None
 
     def step(self) -> bool:
