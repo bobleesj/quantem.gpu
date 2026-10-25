@@ -117,7 +117,7 @@ def test_tilt_refit_from_the_previous_scan_needs_no_search():
     assert abs(refit.sample_tilt_mrad[0] - searched.sample_tilt_mrad[0]) < 0.1
     assert abs(refit.sample_tilt_mrad[1] - searched.sample_tilt_mrad[1]) < 0.1
     assert abs(refit.aberrations["C10_nm"] - searched.aberrations["C10_nm"]) < 0.1
-    with pytest.raises(ValueError, match="num_trials=0"):
+    with pytest.raises(ValueError, match="trials=0"):
         _session(data, det_mrad).find_aberrations(search="primary", tilt=True, num_trials=0, refinement="newton", check_rotation=False, verbose=False)
 
 

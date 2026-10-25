@@ -155,3 +155,74 @@ def test_group_support_keeps_full_bf_phase_after_rotation(depth, higher, monkeyp
                 np.testing.assert_array_equal(candidate, expected)
     finally:
         ssb.close()
+
+
+def test_higher_order_coefficients_are_independent_between_streams():
+    """Concurrent viewers retain their own fifth-order optical coefficients."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    import cupy as cp
+
+    sessions = [_synthetic_session()[0] for _ in range(2)]
+    optics = [
+        {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": 15.0, "C21_nm": 50.0, "C50_nm": 800000.0},
+        {"C10_nm": 7.0, "C12_nm": 2.0, "phi12_deg": -23.0, "C21_nm": -30.0, "C50_nm": -400000.0},
+    ]
+
+    def reconstruct(index):
+        with cp.cuda.Device(0), cp.cuda.Stream(non_blocking=True):
+            phase, _ = sessions[index].preview(
+                optics[index], sample_tilt_mrad=(3.0, -4.0),
+                depth_spread_nm=18.0, upsampling_factor=2,
+                phase_estimator="phase_of_mean", compute_loss=False,
+            )
+            return np.asarray(phase).copy()
+
+    try:
+        references = [reconstruct(i) for i in range(2)]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            for _ in range(3):
+                for actual, expected in zip(pool.map(reconstruct, range(2)), references):
+                    np.testing.assert_array_equal(actual, expected)
+    finally:
+        for session in sessions:
+            session.close()
+
+
+def test_native_512_joint_optics_keep_phase_with_bounded_workspace():
+    """Changing defocus keeps full fifth-order phase independent of workspace size."""
+    from quantem.gpu import SSB
+
+    from tests.hardware.test_ssb_coherent_higher_order import ANGLES, COEFS, NAMES
+
+    rng = np.random.default_rng(81)
+    counts = rng.integers(10, 80, size=(512, 512, 16, 16), dtype=np.uint16)
+    row, col = np.meshgrid(np.arange(16) - 7.5, np.arange(16) - 7.5, indexing="ij")
+    counts[:, :, np.hypot(row, col) < 6] += 100
+    with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=30,
+             scan_sampling_A=(0.3, 0.3), detector_sampling_mrad=(5.0, 5.0),
+             scan_detector_rotation_deg=17) as ssb:
+        options = {
+            "phase_estimator": "phase_of_mean", "upsampling_factor": 1,
+            "sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": 18.0,
+            "compute_loss": False,
+        }
+        before, _ = ssb.preview(COEFS, **options)
+        assert ssb.num_bright_field_pixels > 64
+        for defocus in (-8.0, 3.0, -8.0):
+            optics = COEFS | {"C10_nm": defocus}
+            full, _ = ssb.preview(optics, **options)
+            engine = ssb._backend()._get_accelerator()
+            magnitudes = np.asarray([optics[f"{name}_nm"] for name in NAMES], dtype=np.float32) * 10
+            bounded, _ = engine.thick.reconstruct(
+                defocus * 10, optics["C12_nm"] * 10, math.radians(optics["phi12_deg"]),
+                (-9.0, 5.0), 180.0, chunk_bytes=512 * 512 * 16,
+                phase_estimator="phase_of_mean", compute_loss=False,
+                higher_order_magnitudes=magnitudes,
+                higher_order_angles=np.asarray(ANGLES, dtype=np.float32),
+            )
+            np.testing.assert_allclose(full, bounded.get(), atol=1e-6, rtol=1e-5)
+            if defocus == -8.0:
+                np.testing.assert_array_equal(full, before)
+            else:
+                assert np.std(full - before) > 1e-6
