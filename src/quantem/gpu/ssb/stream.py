@@ -9,16 +9,16 @@ per-frame time is dominated by reading the compressed acquisition, far inside th
 
 Each new phase is also placed live: registered against the frame placed before it by the lattice-safe band
 registration of quantem.gpu.drift, with Bragg-spot bands from the first frame, and added in register to a
-combined image that grows with the drift. On the measured series this adds 0.08 s a frame and agrees with the full pairwise
-drift to 0.09 Å over 107 Å of drift; ``SSBStream.align`` then re-places every frame by that pairwise drift.
+combined image that grows with the drift. On the measured series this adds 0.013 s a frame (median) and
+agrees with the full pairwise drift to 0.09 Å over 107 Å of drift; ``SSBStream.align`` then re-places every frame by that pairwise drift.
 
 With ``save_dir`` each frame's optics and shift are written as it finishes, so a restarted kernel
 reconstructs the finished frames from them, with no refit and no registration, and continues.
 
 ``method`` adds the regularized phase-only and amplitude + phase reconstructions at each frame's optics,
 moved by the shifts measured on the SSB phase: on a measured 40-frame series at 1536 x 1536 (2026-10-24,
-one GPU) they cost a median 0.039 s and 0.050 s a frame beside SSB's 0.034 s, 0.92 s a frame in all
-against 0.86 s for SSB alone, with identical shifts and a 26 GB peak above the reference session.
+one GPU) they cost a median 0.039 s and 0.050 s a frame beside SSB's 0.034 s, 0.84 s a frame in all,
+with shifts identical to SSB alone and a 26 GB peak above the reference session.
 """
 
 import copy

@@ -250,9 +250,9 @@ default) draws the newest frame, the combined image and the drift so far, at
 most twice a second.
 
 On a measured 40-frame series (512 x 512 scan, 192 x 192 detector, 1536 x 1536
-output, one GPU) a frame costs a median 0.92 s with phase-only and amplitude +
-phase (0.86 s with SSB alone): 0.49 s reading the file, 0.05 s refitting,
-0.03-0.05 s per method, 0.08 s registering. Registration on SSB, phase-only or
+output, one GPU) a frame costs a median 0.84 s with phase-only and amplitude +
+phase: 0.49 s reading the file, 0.05 s refitting, 0.03-0.05 s per method,
+0.013 s registering. Registration on SSB, phase-only or
 amplitude + phase agrees within 0.05 Å.
 
 - `series.report()`: per frame, the refit optics, evaluations, shift against
