@@ -19,7 +19,7 @@ traced to a row here.
   device, and dataset. Retired versions stay listed with their last numbers.
 
 Timings are median / p90 ms per reconstruction. Device for all rows: MacBook
-Pro, Apple M5 Max, 40-core GPU, 128 GB, macOS 26.4. Data: the first acquisition,
+Pro, Apple M5 Max, 40-core GPU, 128 GB, macOS 26.4. Data: a thick-crystal acquisition (the first below),
 512 × 512 × 192 × 192, 8,806 bright-field pixels, 300 keV, 30 mrad; 256²
 rows use the same acquisition's full detector at a 256² scan
 (`docs/performance/ssb/reports/2026-10-24-native-metal-ssb-redraw.md`).
@@ -90,11 +90,11 @@ GPU ms per center (median of seven calls, command-buffer GPU time; `metal-ssb-fi
 on the kept low-order fit of each app-matched case and three seeded random centers near it), Apple M5 Max,
 2026-10-25. The v0.2 numbers were taken with heavier background GPU load than v0.1's: the unchanged
 `ssb-joint-agreement` v0.2 single candidate measured 8.5 / 9.1 / 17.4 ms with v0.1 and 9.8 / 11.7 / 19.7 ms with
-v0.2. Fits (median of three, interleaved with the v0.1 build): Newton 0.91 → 0.34 s (film), 1.47 → 0.57 s
+v0.2. Fits (median of three, interleaved with the v0.1 build): Newton 0.91 → 0.34 s (first), 1.47 → 0.57 s
 (second acquisition), 1.83 → 0.74 s (third); same centers per start, same kept branch, low-order parameters
 within 2e-6 nm / 3.2e-5° / 1e-6 mrad.
 
-| Kernel | Status | Source digest | Serves | Validated | film (8,807 BF, 44,247 q) | Second (9,298 BF, 44,255 q) | Third (8,930 BF, 77,842 q) | Parity | Replaced by | Retired |
+| Kernel | Status | Source digest | Serves | Validated | First (8,807 BF, 44,247 q) | Second (9,298 BF, 44,255 q) | Third (8,930 BF, 77,842 q) | Parity | Replaced by | Retired |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ssb-low-order-derivatives` v0.4 | **active** | `bd5adb61d4b7` | as v0.3: v0.3 with the deleted agreement kernels removed from the shared `ssb_joint` source; derivative kernels unchanged | 2026-10-25 | as v0.3 | as v0.3 | as v0.3 | outputs bitwise those of v0.3 on the synthetic test scene (agreements, derivatives, gradients, reconstructions, drag previews, full fit; 2026-10-25) | — | — |
 | `ssb-low-order-derivatives` v0.3 | **retired** (superseded by v0.4, same kernels) | `0158114dc413` | as v0.2: v0.2 with the retired `mean_phase` kernels removed from the shared `ssb_joint` source; derivative kernels unchanged | 2026-10-25 | as v0.2 | as v0.2 | as v0.2 | as v0.2 | `ssb-low-order-derivatives` v0.4 | 2026-10-25 |
@@ -108,11 +108,11 @@ The exact-gradient search's calls, GPU ms per call (command buffer; the wall tim
 both together on all BF pixels; the same on every 8th BF pixel (coarse stage); the start Hessian batch (29
 candidates on every 64th BF pixel). Min / median over 27 calls from three short runs alternating with v0.1 (the GPU
 throttles under sustained load and shows about 38% background use from the desktop, so long single runs read up to
-1.8x slower). Data as below: the first acquisition (8,807 BF pixels, 44,247 band frequencies), the second (9,298,
+1.8x slower). Data as below: the first, a thick-crystal acquisition (8,807 BF pixels, 44,247 band frequencies), the second (9,298,
 44,255) and the third acquisition (8,930, 77,842). Benchmark: `metal-ssb-fit-benchmark --objective-bench RUN.json
 --search-kernels-only`, 2026-10-25.
 
-| Kernel | Status | Source digest | Serves | Validated | film | Second | Third | Parity | Replaced by | Retired |
+| Kernel | Status | Source digest | Serves | Validated | First | Second | Third | Parity | Replaced by | Retired |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ssb-fifth-gradient` v0.3 | **active** (`SSBModelFit.HigherOrderSearch.exactGradient*`) | `16e118d89846` | as v0.2: v0.2 with the deleted `fifth_agreement` removed from the shared `ssb_fifth_order` source; gradient kernels unchanged | 2026-10-25 | as v0.2 | as v0.2 | as v0.2 | outputs bitwise those of v0.2 on the synthetic test scene (agreements, derivatives, gradients, reconstructions, drag previews, full fit; 2026-10-25) | — | — |
 | `ssb-fifth-gradient` v0.2 | **retired** (superseded by v0.3, same kernels) | `9a751b5a12ba` | exact gradient of the fifth-order agreement (28 z: coefficients, depth, tilt) on all BF pixels or every n-th, after the `ssb-fifth-agreement` v0.3 value pass (`fifth_gradient_scale`, `fifth_gradient_rows`) | 2026-10-25 | all BF: value 9.8 / 11.0, gradient 16.5 / 18.4, both 27.8 / 29.2; every 8th: 1.35 / 1.40, 2.11 / 2.25, 3.45 / 3.63; Hessian batch 10.7 / 11.9 | all BF: 10.2 / 11.5, 17.9 / 19.7, 28.5 / 31.6; every 8th: 1.38 / 1.49, 2.21 / 2.33, 3.60 / 3.97; Hessian 11.3 / 12.6 | all BF: 18.4 / 18.8, 30.6 / 32.8, 49.1 / 52.9; every 8th: 2.21 / 2.50, 3.61 / 4.32, 5.97 / 7.06; Hessian 19.9 / 21.4 | `SSBFifthOrderGradientTests` (double-precision central differences of all 28 z: worst 2.9e-6 of max\|g\| on all BF pixels, 2.6e-6 on every 3rd; value pass bit-identical to `fifthOrderAgreements`); measured against v0.1 at the same points: gradients within 3.5e-6 of max\|g\| at the search starts (within 4.6e-5 at the optima, where the gradient is float32 noise), agreements within 1.9e-7 | `ssb-fifth-gradient` v0.3 | 2026-10-25 |
@@ -128,7 +128,7 @@ threadgroup memory; v0.1 evaluated three 28-term bases per pair) and shifts them
 monomial sums to the 28 packed coefficients in double. A BF subsample keeps at least 32 pixels.
 
 Fifth-order stage of the full native fit (`metal-ssb-fit-benchmark --cache CASE --repeats 3`, median, runs alternating
-with v0.1 on the same busy machine): film 0.91 → 0.46 s, second 1.31 → 0.60 s, third 1.36 → 0.68 s; same kept branch
+with v0.1 on the same busy machine): first 0.91 → 0.46 s, second 1.31 → 0.60 s, third 1.36 → 0.68 s; same kept branch
 and rotation; Double-summed final agreement relative to v0.1 +1.5e-7, −1.5e-8, −2.6e-8 (float32 rounding of the
 reassociated value pass; C10 within 3.5e-4 nm).
 
@@ -137,11 +137,11 @@ reassociated value pass; C10 within 3.5e-4 nm).
 GPU ms per candidate objective (median of three calls; command-buffer GPU time, which the wall time of the
 call exceeds by at most 0.3 ms) at a fit's kept rotation. Fifth order: one candidate, four seeded random
 candidates, the 57-point Newton diagonal stencil, 64 random candidates. Low order: one candidate, eight (one
-search-trial batch) and 64 random candidates. Data: the first acquisition (8,805 BF pixels, 44,247 band
+search-trial batch) and 64 random candidates. Data: the first, a thick-crystal acquisition (8,805 BF pixels, 44,247 band
 frequencies), a second 512² acquisition (9,296 BF, 44,255) and a third (8,928 BF, 77,842), all 300 keV,
 30 mrad. Benchmark: `metal-ssb-fit-benchmark --objective-bench RUN.json`, 2026-10-25.
 
-| Kernel | Status | Source digest | Serves | Validated | film | Second | Third | Parity | Replaced by | Retired |
+| Kernel | Status | Source digest | Serves | Validated | First | Second | Third | Parity | Replaced by | Retired |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ssb-fifth-agreement` v0.4 | **active** | `1c42b235b1d7` | as v0.3: v0.3 with the deleted `fifth_agreement` (v0.1) removed from `ssb_fifth_order`; agreement kernels unchanged | 2026-10-25 | as v0.3 | as v0.3 | as v0.3 | outputs bitwise those of v0.3 on the synthetic test scene (agreements, derivatives, gradients, reconstructions, drag previews, full fit; 2026-10-25); `SSBFifthOrderNumericsTests.testRowsKernelMatchesDoublePrecisionDefinition` (within 1.2e-6 of the float64 objective) | — | — |
 | `ssb-fifth-agreement` v0.3 | **retired** (superseded by v0.4, same kernels) | `2d385e96d9c4` | `fifthOrderAgreements` (fifth-order fit, stencil Newton, gradient check) and the value pass of `ssb-fifth-gradient` v0.2 on all BF pixels or every n-th | 2026-10-25 | as v0.2 (10.7 / 6.3 / 5.9 / 7.5 back to back with v0.2 at 10.9 / 6.3 / 7.0 / 7.6) | as v0.2 | as v0.2 | v0.2's per-pair code plus a BF stride: bit-identical to v0.2 on every candidate set of the three acquisitions; `SSBFifthOrderGradientTests` (every 3rd BF pixel against the float64 objective) | `ssb-fifth-agreement` v0.4 | 2026-10-25 |
@@ -158,7 +158,7 @@ Both v0.2 kernels (and `ssb-fifth-agreement` v0.3, which adds the BF stride) eva
   full expression runs only for SIMD groups with a lane in the one-pixel edge ring (a one-trip `simd_ballot`
   loop, since the compiler if-converts plain uniform branches). Divisions use the correctly rounded reciprocal
   with a Markstein correction, which reproduces IEEE division. The edge, alpha^2 and the depth-sinc arguments
-  are bitwise those of v0.1 on every (k, q) pair of film and of the third acquisition.
+  are bitwise those of v0.1 on every (k, q) pair of the first and third acquisitions.
 - `fast::sin` / `fast::sincos` equal `precise::` with fast math off except for 1-ulp differences in about one
   argument in 1e7, at less than half the cost.
 - A threadgroup computes one to four candidates per thread with no padding candidates.
