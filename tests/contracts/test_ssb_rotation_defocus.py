@@ -114,10 +114,11 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
         finally:
             closed.append(True)
 
-    parent = SimpleNamespace(scan_shape=(128, 128), scan_detector_rotation_deg=340.0,
+    parent = SimpleNamespace(input_scan_shape=(128, 128), scan_detector_rotation_deg=340.0,
                              select_region=select_region, aberrations={"C10_nm": 4.0})
     comparison = compare_rotation_defocus(parent, num_trials=200, refinement="newton", verbose=False)
     assert len(selections) == len(closed) == 1
+    assert selections[0][0] == (0, 128, 0, 128)
     assert [row[0] for row in calls] == [160.0, 160.0, 340.0, 340.0]
     assert all(row[1] == initial and row[2:4] == (None, None) for row in calls)
     assert [row[4]["search_ranges"]["C10_nm"] for row in calls] == [(-30, 0), (0, 30)] * 2
