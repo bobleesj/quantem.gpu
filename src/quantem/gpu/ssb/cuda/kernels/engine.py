@@ -262,9 +262,28 @@ extern "C" __global__ void thick_wave_sum(
 #ifdef SSB_HIGHER_ORDER
     , const float* coefficients
 #endif
+#ifdef SSB_WAVE_ORDER
+    , const int* order   // BF pixel at each position of the sum, in compact detector cells
+#endif
+#ifdef SSB_WAVE_QLIST
+    , const int* qlist, int num_q   // the only frequencies that can contribute; partial holds one slot each
+#endif
     ) {
-    int q = blockIdx.x * blockDim.x + threadIdx.x;
+#ifdef SSB_WAVE_ORDER
+#define WAVE_BF(b) order[b]
+#else
+#define WAVE_BF(b) (b)
+#endif
     int plane = rows * output_cols;
+#ifdef SSB_WAVE_QLIST
+    int slot = blockIdx.x * blockDim.x + threadIdx.x;
+    int q = slot < num_q ? qlist[slot] : plane;
+    size_t slots = num_q;
+#else
+    int q = blockIdx.x * blockDim.x + threadIdx.x;
+    int slot = q;
+    size_t slots = plane;
+#endif
     int start = first_bf + blockIdx.y * group_size;
     int stop = min(start + group_size, num_bf);
     double2 sum = make_double2(0.0, 0.0);
@@ -317,7 +336,7 @@ extern "C" __global__ void thick_wave_sum(
     // A block none of whose frequencies meets this BF group (beyond the support, or culled) only writes its zeros:
     // the per-tile BF setup below would otherwise run for nothing.
     if (!__syncthreads_or(contributes)) {
-        if (q < plane) partial[(size_t)blockIdx.y * plane + q] = sum;
+        if (q < plane) partial[(size_t)blockIdx.y * slots + slot] = sum;
         return;
     }
     // The BF pixel's own geometry and chi(k) are the same for every frequency: computed once per block and tile.
@@ -327,7 +346,7 @@ extern "C" __global__ void thick_wave_sum(
         int tile_stop = min(tile + WAVE_TILE, stop);
         __syncthreads();
         for (int b = tile + threadIdx.x; b < tile_stop; b += blockDim.x) {
-            probe_k[b - tile] = thick_probe_k(krow[b], kcol[b], wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10,
+            probe_k[b - tile] = thick_probe_k(krow[WAVE_BF(b)], kcol[WAVE_BF(b)], wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10,
                                               C12, cos2phi12, sin2phi12, factor, &chi_k[b - tile]
 #ifdef SSB_HIGHER_ORDER
                                               , coefficients
@@ -337,9 +356,9 @@ extern "C" __global__ void thick_wave_sum(
         __syncthreads();
         if (!contributes) continue;
         for (int b = tile; b < tile_stop; ++b) {
-            float2 g = source[(size_t)b * stride + offset];
+            float2 g = source[(size_t)WAVE_BF(b) * stride + offset];
             if (conjugate) g.y = -g.y;
-            float2 v = thick_correct_k(g, qr, qc, krow[b], kcol[b], probe_k[b - tile], chi_k[b - tile],
+            float2 v = thick_correct_k(g, qr, qc, krow[WAVE_BF(b)], kcol[WAVE_BF(b)], probe_k[b - tile], chi_k[b - tile],
                 wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10, C12, cos2phi12, sin2phi12, factor, thickness, theta_r, theta_c
 #ifdef SSB_HIGHER_ORDER
                 , coefficients
@@ -352,7 +371,7 @@ extern "C" __global__ void thick_wave_sum(
     if (q >= plane) return;
     sum.x += (double)high_re + (double)low_re;
     sum.y += (double)high_im + (double)low_im;
-    partial[(size_t)blockIdx.y * plane + q] = sum;
+    partial[(size_t)blockIdx.y * slots + slot] = sum;
 }
 """
 thick_wave_sum_kernel = cp.RawKernel("#define SSB_WAVE\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")

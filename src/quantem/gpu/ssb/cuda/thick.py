@@ -45,6 +45,8 @@ class ThickSample:
         self._wave_sum_buffer = None
         self._wave_pairing = None
         self._wave_bounds = None
+        self._wave_cells = None
+        self._wave_lens_cache = None
 
     def reconstruct(
         self,
@@ -239,15 +241,27 @@ class ThickSample:
         # and float64 accumulation while reducing that intermediate traffic.
         fine_grid = rows > cache["ny"] and cols > cache["nx"]
         group_size = 128 if fine_grid else 32
-        groups = max(1, min(16, math.ceil(num_bright_field_pixels / group_size),
-                            chunk_bytes // (rows * cols * 16)))
-        shape = (groups, rows, unique_cols)
+        order = frequencies = None
+        slots = rows * unique_cols
+        if pairs == 2:
+            # Triple overlap needs |q| <= R: a quarter of the support, so the sum runs over that list of
+            # frequencies only, and over BF pixels in compact cells, whose small boxes cull the lens better.
+            group_size, order = 64, self._wave_order()
+            frequencies = self._wave_lens(qrow, qcol, unique_cols)
+            slots = frequencies.size
+        # a short frequency list affords more BF groups per launch within the same partial memory
+        groups = max(1, min(16 if frequencies is None else 64, math.ceil(num_bright_field_pixels / group_size),
+                            chunk_bytes // ((rows * cols if frequencies is None else slots) * 16)))
+        shape = (groups, slots)
         if self._wave_sum_buffer is None or self._wave_sum_buffer.shape != shape:
             self._wave_sum_buffer = cp.empty(shape, dtype=cp.complex128)
         partial = self._wave_sum_buffer
         # Native grids do not benefit from group culling; that kernel does not
         # read the bounds argument and keeps its existing execution path.
-        bounds = self._wave_group_bounds(group_size) if fine_grid else cache["kx_bf"]
+        if not fine_grid:
+            bounds = cache["kx_bf"]
+        else:
+            bounds = self._wave_group_bounds(group_size) if order is None else self._wave_group_bounds(group_size, order)
         spectrum = cp.zeros((rows, unique_cols), dtype=cp.complex128)
         params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
         kernel = thick_wave_sum_bounded_kernel if fine_grid else thick_wave_sum_kernel
@@ -257,17 +271,22 @@ class ThickSample:
             kernel = _pair_kernel(pairs, higher_order_magnitudes is not None)
         if higher_order_magnitudes is not None:
             params = (*params, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
+        if order is not None:
+            params = (*params, order, frequencies, np.int32(slots))
         for start in range(0, num_bright_field_pixels, group_size * groups):
             active = min(groups, math.ceil((num_bright_field_pixels - start) / group_size))
             kernel(
-                (math.ceil(rows * unique_cols / 128), active), (128,),
+                (math.ceil(slots / 128), active), (128,),
                 (engine.G_qk, qrow, qcol, cache["kx_bf"], cache["ky_bf"], partial, bounds,
                  np.int32(num_bright_field_pixels), np.int32(cache["ny"]), np.int32(cache["nx"]),
                  np.int32(engine.G_qk.shape[-1]), np.int32(rows), np.int32(cols), np.int32(unique_cols),
                  np.int32(start), np.int32(group_size), np.complex64(engine._dc_value_host),
                  *params),
             )
-            spectrum += partial[:active].sum(axis=0, dtype=cp.complex128)
+            if frequencies is None:
+                spectrum += partial[:active].sum(axis=0, dtype=cp.complex128).reshape(rows, unique_cols)
+            else:
+                spectrum.ravel()[frequencies] += partial[:active].sum(axis=0, dtype=cp.complex128)
         return spectrum
 
     def _wave_phase(self, spectrum: cp.ndarray, rows: int, cols: int) -> cp.ndarray:
@@ -298,14 +317,16 @@ class ThickSample:
         return ((cp.fft.fftfreq(ny) * ny * cache["qx_1d"][1]).astype(cp.float32),
                 (cp.fft.fftfreq(nx) * nx * cache["qy_1d"][1]).astype(cp.float32))
 
-    def _wave_group_bounds(self, group_size: int) -> cp.ndarray:
-        """Cache exact coordinate bounds for each complete BF group on GPU."""
+    def _wave_group_bounds(self, group_size: int, order: cp.ndarray | None = None) -> cp.ndarray:
+        """Cache exact coordinate bounds for each complete BF group on GPU (of the pixels in ``order``, if given)."""
         cache = self.engine._cache
         krow, kcol = cache["kx_bf"], cache["ky_bf"]
         cached = self._wave_bounds
         if (cached is not None and cached[0] == group_size
-                and cached[1] is krow and cached[2] is kcol):
+                and cached[1] is krow and cached[2] is kcol and cached[4] is order):
             return cached[3]
+        if order is not None:
+            krow, kcol = krow[order], kcol[order]
         # Repeat the final coordinate only to pad the reduction. The correction
         # loop still stops at the actual BF count, with its original sum order.
         padding = (-krow.size) % group_size
@@ -316,8 +337,35 @@ class ThickSample:
         bounds = cp.stack(limits, axis=1)
         # Array identity also invalidates this cache after rotation or an
         # explicitly requested BF subset, even when the BF count is unchanged.
-        self._wave_bounds = (group_size, krow, kcol, bounds)
+        self._wave_bounds = (group_size, cache["kx_bf"], cache["ky_bf"], bounds, order)
         return bounds
+
+    def _wave_lens(self, qrow: cp.ndarray, qcol: cp.ndarray, unique_cols: int) -> cp.ndarray:
+        """Flat indices, row-major, of the stored frequencies with |q| <= R, where both sideband apertures can be open."""
+        cache = self.engine._cache
+        cached = self._wave_lens_cache
+        if cached is not None and cached[0] is qrow and cached[1] is qcol and cached[2] == unique_cols:
+            return cached[3]
+        radius = (cache["semiangle_rad"] + 0.5 * max(cache["ang_y_rad"], cache["ang_x_rad"])) / self.engine.wavelength
+        radius *= 1 + 8 * np.finfo(np.float32).eps
+        inside = qrow[:, None] ** 2 + qcol[None, :unique_cols] ** 2 <= radius**2
+        frequencies = cp.flatnonzero(inside).astype(cp.int32)
+        self._wave_lens_cache = (qrow, qcol, unique_cols, frequencies)
+        return frequencies
+
+    def _wave_order(self) -> cp.ndarray:
+        """BF pixels sorted into square cells of a quarter BF radius, so 64 consecutive pixels span a small box."""
+        cache = self.engine._cache
+        krow, kcol = cache["kx_bf"], cache["ky_bf"]
+        cached = self._wave_cells
+        if cached is not None and cached[0] is krow and cached[1] is kcol:
+            return cached[2]
+        radius = (cache["semiangle_rad"] + 0.5 * max(cache["ang_y_rad"], cache["ang_x_rad"])) / self.engine.wavelength
+        cell_row = cp.floor(krow / (radius / 4)).astype(cp.int32)
+        cell_col = cp.floor(kcol / (radius / 4)).astype(cp.int32)
+        order = cp.lexsort(cp.stack((kcol, krow, cell_col, cell_row))).astype(cp.int32)
+        self._wave_cells = (krow, kcol, order)
+        return order
 
     def _wave_columns(self, rows: int, cols: int) -> int:
         """Use paired frequencies only beyond the full soft-aperture support.
@@ -524,7 +572,8 @@ def _pair_kernel(pairs: int, higher_order: bool):
 
         correction = kernels._HIGHER_CORRECTION_SOURCE if higher_order else kernels._THICK_CORRECTION_SOURCE
         _pair_kernels[key] = cp.RawKernel(
-            f"#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n#define SSB_WAVE_PAIRS {pairs}\n" + correction
+            f"#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n#define SSB_WAVE_PAIRS {pairs}\n"
+            + ("#define SSB_WAVE_ORDER\n#define SSB_WAVE_QLIST\n" if pairs == 2 else "") + correction
             + kernels._THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
     return _pair_kernels[key]
 
