@@ -48,3 +48,13 @@ the finite-difference stencil of 13 or 28 objective evaluations per Newton itera
 | Kernel | Status | Source digest | Serves | Validated | One evaluation, film 512² (GPU) | Parity |
 |---|---|---|---|---|---|---|
 | `ssb-low-order-derivatives` v0.1 | **active** | `40da0bd64def` | primary-fit Newton (value, gradient, Hessian) | 2026-10-25 | pass 1 ≈ 16 ms + pass 2 ≈ 50 ms (≈ 7 objective evaluations; the stencil it replaces is 13–28) | `SSBModelReconstructionTests.testLowOrderDerivativesMatchFiniteDifferences` (gradient and Hessian against Richardson differences, ≤ 4e-4 relative; value against the agreement objective ≤ 1e-6) |
+
+## Native SSB fifth-order gradient (`MetalSSBKernels`)
+
+Timings: Apple M5 Max, the first acquisition kept branch (8,805 BF pixels, 44,247 band frequencies), wall time per
+call of one candidate, host to GPU to host. The fifth-order objective `fifth_agreement` (in `ssb_fifth_order`,
+registered with `ssb-per-term`) is 25.0 ms single / 22.0 ms each in a batch of 28.
+
+| Kernel | Status | Source digest | Serves | Validated | Value + gradient, one candidate | Parity | Replaced by | Retired |
+|---|---|---|---|---|---|---|---|---|
+| `ssb-fifth-gradient` v0.1 | **active** (`SSBModelFit.HigherOrderSearch.exactGradient*`) | `dc8d80c38d16` | exact gradient of the fifth-order agreement (28 z: coefficients, depth, tilt); BF- or band-subsampled agreement for steering | 2026-10-25 | 66.2 ms (objective pass + gradient pass ≈ 2.65 objectives); gradient pass alone ≈ 41 ms | `SSBFifthOrderGradientTests` (double-precision central differences, worst 3.6e-6 of max\|g\|; value pass bit-identical to `fifth_agreement`) | — | — |

@@ -29,6 +29,8 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
   /// Set 1 to retain the original low-order fit, including its reference trajectory.
   public var maximumOrder: Int
   public var maxHigherOrderEvaluations: Int
+  /// The fifth-order search; saved runs without it used the finite-difference Newton search.
+  public var higherOrderSearch: SSBModelFit.HigherOrderSearch = .finiteDifferenceNewton
 
   public init(
     tilt: Bool = true, objective: SSBObjective = .agreement, trials: Int = 200, seed: Int = 42,
@@ -47,7 +49,7 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case tilt, objective, trials, seed, compareStandard, tiltLimitMrad, maximumOrder,
-      maxHigherOrderEvaluations
+      maxHigherOrderEvaluations, higherOrderSearch
   }
 
   /// Old saved runs describe the original primary fit, never an implicit fifth-order fit.
@@ -62,6 +64,9 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
     maximumOrder = try c.decodeIfPresent(Int.self, forKey: .maximumOrder) ?? 1
     maxHigherOrderEvaluations =
       try c.decodeIfPresent(Int.self, forKey: .maxHigherOrderEvaluations) ?? 5000
+    higherOrderSearch =
+      try c.decodeIfPresent(SSBModelFit.HigherOrderSearch.self, forKey: .higherOrderSearch)
+      ?? .finiteDifferenceNewton
   }
 
   /// A short name for the method, as the results and the app state it.
@@ -385,35 +390,19 @@ public enum SSBModelFit {
       )
     }
     let started = Date()
-    let coordinates = SSBFifthOrderCoordinates(
-      wavelengthAngstroms: model.wavelengthAngstroms,
-      semiangleRadians: model.semiangleRadians)
-    let start = coordinates.initial(primary.point)
-    let normalization = try model.fifthOrderAgreements(
-      [primary.point],
-      packedCoefficients: [coordinates.pack(start)], isCancelled: isCancelled)[0]
-    guard normalization.isFinite, normalization > 0 else {
-      throw MetalSSBError.invalidGeometry(
-        "The higher-order fit needs a positive finite initial agreement. Check calibration and signal in the fitting band."
-      )
-    }
-    let result = try SSBFifthOrderSearch.refine(
-      { rows in
-        try model.fifthOrderAgreements(
-          rows.map(coordinates.point),
-          packedCoefficients: rows.map(coordinates.pack), isCancelled: isCancelled
-        ).map { $0 / normalization }
-      }, start: start, maxEvaluations: options.maxHigherOrderEvaluations,
+    let refined = try refineFifthOrder(
+      primary.point, model: model, search: options.higherOrderSearch,
+      maxEvaluations: options.maxHigherOrderEvaluations,
       progress: { progress("Fifth-order Newton", $0, $1) }, isCancelled: isCancelled)
     var timings = primary.timings
     timings["higher_order_refinement_s"] = Date().timeIntervalSince(started)
     var fit = SSBFit(
       scanDetectorRotationDegrees: primary.scanDetectorRotationDegrees,
-      point: coordinates.point(result.coordinates), options: options,
-      sampleAgreement: result.agreement * normalization, standardAgreement: nil, tiltFitGain: nil,
+      point: refined.point, options: options,
+      sampleAgreement: refined.agreement, standardAgreement: nil, tiltFitGain: nil,
       phaseVarianceLoss: nil, trialCount: primary.trialCount, timings: timings)
-    fit.higherOrderRefinement = result
-    fit.higherOrderNormalization = normalization
+    fit.higherOrderRefinement = refined.result
+    fit.higherOrderNormalization = refined.normalization
     return fit
   }
 }

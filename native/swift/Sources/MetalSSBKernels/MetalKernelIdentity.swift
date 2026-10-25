@@ -60,6 +60,11 @@ enum SSBKernelRegistry {
     name: "ssb-low-order-derivatives", version: "0.1", files: ["ssb_low_order"],
     registeredSourceSHA256: "40da0bd64def2fcb21831f57777020331306e755495047031a40c41ef727b48b")
 
+  /// The exact fifth-order agreement gradient and its BF / band-subsample objective (fitting, not reconstruction).
+  static let fifthGradient = Entry(
+    name: "ssb-fifth-gradient", version: "0.1", files: ["ssb_fifth_order_gradient"],
+    registeredSourceSHA256: "dc8d80c38d16c05d6d43fba517620f772475995581d1dda42ca65d4c792d52e5")
+
   /// SHA-256 of an entry's shipped source files, concatenated in order.
   static func sourceSHA256(_ entry: Entry) throws -> String {
     MetalKernelIdentity.sha256(Data(try MetalSSBShaderSource.load(entry.files).utf8))

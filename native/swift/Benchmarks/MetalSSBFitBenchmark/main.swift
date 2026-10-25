@@ -10,6 +10,9 @@ import Native4DSTEMIO
 //
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --scan-step A [--kv 300] [--semiangle 30]
 //     [--index DIR] [--max-order 5] [--trials 200] [--repeats 1] [--output RESULT.json]
+//     [--search newton|gradient] [--fifth-only BASELINE.json [--gradient-check]]
+// --fifth-only starts the fifth-order stage at the kept low-order fit and rotation of an earlier result;
+// --gradient-check compares the exact gradient with central differences there and at the earlier optimum.
 //     [--compare-standard] [--dark-field DARK.f32] [--verify-branches] [--check-maximum]
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --export-dark-field DARK.f32
 //
@@ -33,6 +36,13 @@ struct Options {
   var repeats = 1
   var output: URL?
   var dump: URL?
+  var search = SSBModelFit.HigherOrderSearch.finiteDifferenceNewton
+  var fifthOnly: URL?
+  var gradientCheck = false
+  var gradientSettings = SSBFifthOrderGradientSearch.Settings()
+  var verbose = false
+  var curvature = false
+  var score: URL?
   var detectorSampling: Double?
   var center: (Double, Double)?
   var radius: Double?
@@ -66,6 +76,28 @@ struct Options {
       case "--repeats": repeats = Int(try value(flag)) ?? 1
       case "--output": output = URL(fileURLWithPath: try value(flag))
       case "--dump": dump = URL(fileURLWithPath: try value(flag))
+      case "--search":
+        switch try value(flag) {
+        case "newton": search = .finiteDifferenceNewton
+        case "gradient": search = .exactGradient
+        case "gradient-coarse": search = .exactGradientCoarseToFine
+        case let other:
+          throw failure("Unknown search \(other); use newton, gradient or gradient-coarse")
+        }
+      case "--fifth-only": fifthOnly = URL(fileURLWithPath: try value(flag))
+      case "--gradient-check": gradientCheck = true
+      case "--hessian-stride": gradientSettings.hessianBFStride = Int(try value(flag)) ?? 64
+      case "--initial-radius": gradientSettings.initialRadius = Double(try value(flag)) ?? 1
+      case "--max-radius": gradientSettings.maxRadius = Double(try value(flag)) ?? 64
+      case "--gain-tolerance": gradientSettings.gainTolerance = Double(try value(flag)) ?? 1e-8
+      case "--coarse-stride": gradientSettings.coarseBFStride = Int(try value(flag)) ?? 1
+      case "--coarse-tolerance": gradientSettings.coarseTolerance = Double(try value(flag)) ?? 1e-7
+      case "--fine-radius": gradientSettings.fineRadius = Double(try value(flag)) ?? 0.1
+      case "--update":
+        gradientSettings.update = SSBFifthOrderGradientSearch.Update(rawValue: try value(flag)) ?? .bfgs
+      case "--verbose": verbose = true
+      case "--curvature": curvature = true
+      case "--score": score = URL(fileURLWithPath: try value(flag))
       case "--detector-sampling": detectorSampling = Double(try value(flag))
       case "--center":
         let parts = try value(flag).split(separator: ",").compactMap { Double($0) }
@@ -531,7 +563,12 @@ guard let countType = MetalSSBCountType(rawValue: caseRecord.countType) else {
   throw failure("Unknown count type")
 }
 var results: [[String: Any]] = []
-for repeatIndex in 0..<options.repeats {
+if let baselineURL = options.fifthOnly {
+  results = try fifthOnly(
+    baselineURL: baselineURL, options: options, device: device, setup: setup, counts: counts,
+    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees)
+}
+for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
   try autoreleasepool {
     let prepareStarted = Date()
     let engine = try MetalSSBEngine(device: device, geometry: setup.geometry)
@@ -544,9 +581,10 @@ for repeatIndex in 0..<options.repeats {
     var lastStage = ""
     let fitStarted = Date()
     var initialSeconds = 0.0
-    let options5 = SSBFitOptions(
+    var options5 = SSBFitOptions(
       trials: options.trials, compareStandard: options.compareStandard,
       maximumOrder: options.maximumOrder)
+    options5.higherOrderSearch = options.search
     let sampling = (
       caseRecord.calibration.scanSamplingRowAngstroms,
       caseRecord.calibration.scanSamplingColumnAngstroms
@@ -643,6 +681,7 @@ for repeatIndex in 0..<options.repeats {
 }
 let summary: [String: Any] = [
   "schema": "quantem-gpu-ssb-fit-benchmark/v1", "cache": options.cache.path,
+  "search": options.search.rawValue,
   "load_s": Date().timeIntervalSince(loadStarted), "results": results,
 ]
 let data = try JSONSerialization.data(
