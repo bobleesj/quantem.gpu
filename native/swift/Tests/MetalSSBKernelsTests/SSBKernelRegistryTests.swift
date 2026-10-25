@@ -10,6 +10,8 @@ final class SSBKernelRegistryTests: XCTestCase {
   private let entries = [
     SSBKernelRegistry.redraw, SSBKernelRegistry.perTerm, SSBKernelRegistry.meanPhase,
     SSBKernelRegistry.fifthAgreement,
+    SSBKernelRegistry.lowOrderDerivatives,
+    SSBKernelRegistry.fifthGradient,
   ]
 
   func testShippedSourceMatchesRegisteredVersion() throws {

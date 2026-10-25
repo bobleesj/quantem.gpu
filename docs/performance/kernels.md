@@ -37,6 +37,28 @@ variant compilation and warm-up); the steady drag rate above excludes it.
 In-app timings are `MetalSSBJointPhase.wallSeconds` on an otherwise idle GPU
 with one app instance on the built-in display.
 
+## Native SSB fit (`MetalSSBKernels`)
+
+The primary (low-order) fit's trust-region Newton climbs on the exact gradient and Hessian of the agreement
+in C10, C12 (two Cartesian components), the sample tilt and the depth spread. One evaluation is two passes
+over every (band frequency, bright-field pixel): the objective's sums, then, with each band frequency's
+model sum known, the 51 k-sums its first and second derivatives need (`ssb_low_order.metal`). It replaces
+the finite-difference stencil of 13 or 28 objective evaluations per Newton iteration.
+
+| Kernel | Status | Source digest | Serves | Validated | One evaluation, film 512² (GPU) | Parity |
+|---|---|---|---|---|---|---|
+| `ssb-low-order-derivatives` v0.1 | **active** | `40da0bd64def` | primary-fit Newton (value, gradient, Hessian) | 2026-10-25 | pass 1 ≈ 16 ms + pass 2 ≈ 50 ms (≈ 7 objective evaluations; the stencil it replaces is 13–28) | `SSBModelReconstructionTests.testLowOrderDerivativesMatchFiniteDifferences` (gradient and Hessian against Richardson differences, ≤ 4e-4 relative; value against the agreement objective ≤ 1e-6) |
+
+## Native SSB fifth-order gradient (`MetalSSBKernels`)
+
+Timings: Apple M5 Max, the first acquisition kept branch (8,805 BF pixels, 44,247 band frequencies), wall time per
+call of one candidate, host to GPU to host. The fifth-order objective `fifth_agreement` (in `ssb_fifth_order`,
+registered with `ssb-per-term`) is 25.0 ms single / 22.0 ms each in a batch of 28.
+
+| Kernel | Status | Source digest | Serves | Validated | Value + gradient, one candidate | Parity | Replaced by | Retired |
+|---|---|---|---|---|---|---|---|---|
+| `ssb-fifth-gradient` v0.1 | **active** (`SSBModelFit.HigherOrderSearch.exactGradient*`) | `dc8d80c38d16` | exact gradient of the fifth-order agreement (28 z: coefficients, depth, tilt); BF- or band-subsampled agreement for steering | 2026-10-25 | 66.2 ms (objective pass + gradient pass ≈ 2.65 objectives); gradient pass alone ≈ 41 ms | `SSBFifthOrderGradientTests` (double-precision central differences, worst 3.6e-6 of max\|g\|; value pass bit-identical to `fifth_agreement`) | — | — |
+
 ## Fit objectives (`MetalSSBJointModel` agreement)
 
 GPU ms per candidate objective (median of three batches; command-buffer GPU time, which the wall time of the
