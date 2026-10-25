@@ -38,6 +38,28 @@ variant compilation and warm-up); the steady drag rate above excludes it.
 In-app timings are `MetalSSBJointPhase.wallSeconds` on an otherwise idle GPU
 with one app instance on the built-in display.
 
+## Native regularized direct reconstruction (`MetalSSBKernels`)
+
+Methods `phase` and `complex` of `MetalSSBJointModel.reconstruct(_:upsamplingFactor:method:regularization:)`
+(`SSBDirectSolver`, `ssb_direct.metal`), the port of the CUDA `PreparedDirect`: per scan frequency the normal
+equations of every supported output alias (`direct_normal_equations`: the weak-object transfer per BF pixel in
+float32 with CUDA's expressions, products of open alias pairs, float32 batch sums met in float-float across BF
+batches), then float64 Cholesky solves of the damped systems on the CPU, then one inverse FFT of the packed
+eta + i phi spectrum (`direct_wave`). The layout (frequencies, aliases, priors, detector weights, dose) is kept
+per data, factor, prior and weighting; the prepared normal equations per optics, one per method (a complex
+system also serves `phase`), so a damping change only solves again.
+
+Wall ms on an Apple M5 Max (`metal-ssb-fit-benchmark --direct-parity` / `--fixture-parity`, 2026-10-25): a
+measured 512 × 512 acquisition (9,298 BF pixels, 0.373 Å step, Auto 3×, 3–6 aliases per frequency) and a
+0.525 Å-step one (9,289 BF pixels, Auto 4×, 7–12 aliases). "Optics change" is a call at new optics (layout and
+kernels kept: prepare + solve + wave; GPU prepare in brackets); "damping change" reuses the prepared system.
+The first call of a process adds the layout (3–7 ms) and kernel specialization (about 50–80 ms). In the app
+(headed, 2026-10-25): a C10 edit with Complex selected 484 ms, Phase's first render 353 ms.
+
+| Kernel | Status | Source digest | Serves | Validated | Optics change 1× / 2× / 3× (0.373 Å) | Optics change 4× (0.525 Å) | Damping change | Parity | Replaced by | Retired |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `ssb-direct` v0.1 | **active** | `8d1237658f22` | methods `phase` and `complex`, 1–4× | 2026-10-25 | phase 53 / 128–148 / 175–183 (GPU 170); complex 54–57 / 204–210 / 280–287 (GPU 272–278) | phase 468 (GPU 450); complex 1228 (GPU 1201) | phase 0.7–4.7, complex 0.9–7.0 at 1–4×; 15 at 4× complex | five measured acquisitions × their optics × 1× and Auto × 5–7 regularization presets against CUDA (182 reconstructions): phase rms 4e-8–1.8e-7 rad, correlation ≥ 0.9999999999, complex amplitude relative rms ≤ 1.6e-7; against a float64 oracle the same size as CUDA's own error; `SSBDirectReconstructionTests` (synthetic, in-test float64 reference) | — | — |
+
 ## Native SSB fit (`MetalSSBKernels`)
 
 The primary (low-order) fit's trust-region Newton climbs on the exact gradient and Hessian of the agreement

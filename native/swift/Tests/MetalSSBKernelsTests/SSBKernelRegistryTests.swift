@@ -11,7 +11,7 @@ final class SSBKernelRegistryTests: XCTestCase {
     SSBKernelRegistry.redraw, SSBKernelRegistry.perTerm,
     SSBKernelRegistry.fifthAgreement, SSBKernelRegistry.jointAgreement,
     SSBKernelRegistry.lowOrderDerivatives, SSBKernelRegistry.lowOrderDerivativesReference,
-    SSBKernelRegistry.fifthGradient,
+    SSBKernelRegistry.fifthGradient, SSBKernelRegistry.direct,
   ]
 
   func testShippedSourceMatchesRegisteredVersion() throws {

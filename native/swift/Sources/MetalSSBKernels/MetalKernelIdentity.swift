@@ -93,7 +93,7 @@ enum SSBKernelRegistry {
   /// batches) and the wave of the solved spectrum; the systems are solved in float64 on the CPU.
   static let direct = Entry(
     name: "ssb-direct", version: "0.1", files: ["ssb_joint", "ssb_fifth_order", "ssb_direct"],
-    registeredSourceSHA256: "unregistered")
+    registeredSourceSHA256: "8d1237658f22e859004f998cbfcba22ffffa0c0de9f907d21c6bde66bf5672f3")
 
   /// SHA-256 of an entry's shipped source files, concatenated in order.
   static func sourceSHA256(_ entry: Entry) throws -> String {

@@ -6,6 +6,16 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+### Added
+
+- Native (Metal) regularized direct reconstructions, ShowPtycho's `phase` and `complex` beside `ssb`:
+  `MetalSSBJointModel.reconstruct(_:upsamplingFactor:method:regularization:)` with `SSBReconstructionMethod` and
+  `SSBDirectRegularization` (phase and amplitude damping, smoothness prior, detector weighting), the same fitted
+  optics, tilt, depth and Auto output sampling as SSB (`ssb-direct` v0.1). On five measured 512 x 512 acquisitions,
+  1x and Auto, every regularization preset: within 2e-7 rad rms of CUDA, complex amplitude within 2e-7 of its
+  mean. On an Apple M5 Max an optics change takes about 0.18 s (phase) and 0.28 s (complex) at 3x, a damping change
+  1-7 ms.
+
 ### Removed
 
 - Native (Metal) SSB: the `mean_phase` and `complex_wave` estimators are retired. `SSBPhaseEstimator`, the
