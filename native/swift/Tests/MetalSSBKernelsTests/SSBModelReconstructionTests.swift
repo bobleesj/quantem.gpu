@@ -17,13 +17,15 @@ final class SSBModelReconstructionTests: XCTestCase {
   }
 
   /// `scan` is 128 (the default) or another supported size; the pattern is the same function of position.
-  static func scene(scan: Int = 128) throws -> Scene {
+  /// `radius` is the BF selection radius in detector pixels; the aperture's support ends at 4.5 pixels, so a
+  /// larger radius selects BF pixels without transfer.
+  static func scene(scan: Int = 128, radius: Double = 3.6) throws -> Scene {
     let calibration = MetalSSBCalibration(
       voltageKV: 300, semiangleMrad: 30, scanSamplingRowAngstroms: 0.4,
       scanSamplingColumnAngstroms: 0.4,
       detectorSamplingRowMrad: 7.5, detectorSamplingColumnMrad: 7.5,
       brightfieldCenterRowPixels: 5.4,
-      brightfieldCenterColumnPixels: 5.7, brightfieldRadiusPixels: 3.6)
+      brightfieldCenterColumnPixels: 5.7, brightfieldRadiusPixels: radius)
     let detector = 12
     // A weak lattice with a slow gradient, so the phase has structure at several frequencies.
     var sums = [UInt64](repeating: 0, count: detector * detector)

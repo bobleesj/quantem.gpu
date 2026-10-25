@@ -208,6 +208,8 @@ public final class MetalSSBEngine {
   private let geometry: MetalSSBGeometry
   private let cacheBudgetBytes: Int?
   private let activeBrightfieldIndices: [Int]
+  /// The logical BF pixels outside the aperture's support (no transfer, never cached), ascending.
+  private let inactiveBrightfieldIndices: [Int]
 
   private let convertPipeline: MTLComputePipelineState
   private let fftPipeline: MTLComputePipelineState
@@ -265,6 +267,8 @@ public final class MetalSSBEngine {
       )
     }
     activeBrightfieldIndices = activeIndices
+    let active = Set(activeIndices)
+    inactiveBrightfieldIndices = (0..<geometry.logicalBrightfieldCount).filter { !active.contains($0) }
     let library = try Self.makeLibrary(device: device)
     convertPipeline = try Self.makePipeline(
       device: device,
@@ -490,6 +494,7 @@ public final class MetalSSBEngine {
       activeIndices: activeBrightfieldIndices, rotation: scanDetectorRotationDegrees,
       band: bandInverseAngstroms, provenance: currentProvenance(),
       visit: { [self] batchSize, body in try visitSpectra(batchSize: batchSize, body) },
+      visitInactive: { [self] batchSize, body in try visitInactiveSpectra(batchSize: batchSize, body) },
       validatePreparation: { [self] in
         guard prepared, preparationGeneration == generation else {
           throw MetalSSBError.invalidGeometry(
@@ -517,6 +522,22 @@ public final class MetalSSBEngine {
       guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
       try encodeBrightfield(
         Array(activeBrightfieldIndices[offset..<(offset + count)]), rawBuffer, commands)
+      encodeForwardFFT(commands, batch: count)
+      try commitAndWait(commands)
+      try body(fftA, 0, false, offset, count)
+    }
+  }
+
+  /// The full spectra of the BF pixels outside the aperture's support, in `inactiveBrightfieldIndices` order and
+  /// batches of at most 8, streamed like the uncached tail: the regularized solves' inverse-mean weights need their
+  /// scan means (Python weights every selected BF pixel).
+  private func visitInactiveSpectra(batchSize: Int, _ body: MetalSSBJointModel.SpectrumVisitor) throws {
+    guard prepared, let encodeBrightfield else { throw MetalSSBError.notPrepared }
+    for offset in stride(from: 0, to: inactiveBrightfieldIndices.count, by: min(8, max(1, batchSize))) {
+      let count = min(8, max(1, batchSize), inactiveBrightfieldIndices.count - offset)
+      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
+      try encodeBrightfield(
+        Array(inactiveBrightfieldIndices[offset..<(offset + count)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: count)
       try commitAndWait(commands)
       try body(fftA, 0, false, offset, count)
