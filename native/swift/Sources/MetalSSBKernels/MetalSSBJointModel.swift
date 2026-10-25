@@ -134,9 +134,6 @@ public final class MetalSSBJointModel {
   /// `fifthOrderAgreements` call, for benchmarks; excludes host encoding and the host band reduction.
   public private(set) var lastAgreementGPUSeconds = 0.0
   private var lowOrder: SSBLowOrderDerivatives?
-  /// Tests only: true evaluates `lowOrderDerivatives` with `ssb_low_order.metal` (ssb-low-order-derivatives
-  /// v0.1), the parity reference of the production v0.2. There is no runtime fallback.
-  var referenceLowOrderDerivatives = false
   /// GPU execution time (command-buffer GPU start to end, summed over its command buffers) of the latest
   /// `lowOrderDerivatives` call, for benchmarks.
   public private(set) var lastLowOrderGPUSeconds = 0.0
@@ -182,7 +179,7 @@ public final class MetalSSBJointModel {
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_model", "ssb_separable", "ssb_fifth_order",
-        "ssb_redraw", "ssb_low_order", "ssb_fifth_agreement", "ssb_fifth_order_gradient",
+        "ssb_redraw", "ssb_fifth_agreement", "ssb_fifth_order_gradient",
         "ssb_joint_agreement", "ssb_low_order_derivatives", "ssb_direct",
       ]),
       options: options)
@@ -486,7 +483,6 @@ public final class MetalSSBJointModel {
     _ rows: [[Double]], twoStage: Bool = false, isCancelled: () -> Bool = { false }
   ) throws -> [SSBLowOrderDerivatives.Result] {
     let (evaluator, inputs) = try lowOrderEvaluator()
-    evaluator.reference = referenceLowOrderDerivatives
     let results = try evaluator.evaluate(
       rows: rows, inputs: inputs, twoStage: twoStage, isCancelled: isCancelled)
     lastLowOrderGPUSeconds = evaluator.lastGPUSeconds

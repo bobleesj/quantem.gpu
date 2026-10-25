@@ -72,16 +72,12 @@ enum SSBKernelRegistry {
 
   /// The primary fit's exact low-order value, gradient and Hessian (trust-region Newton), `SSBLowOrderDerivatives`:
   /// the value pass, the derivative pass and the fused pass of `ssb_low_order_derivatives` (with the aperture and
-  /// quotient helpers of `ssb_joint_agreement`). v0.1 is `lowOrderDerivativesReference`. v0.3 is v0.2 with the
-  /// retired `mean_phase` kernels removed from `ssb_joint`; the derivative kernels are unchanged.
+  /// quotient helpers of `ssb_joint_agreement`). v0.3 is v0.2 with the retired `mean_phase` kernels removed from
+  /// `ssb_joint`; the derivative kernels are unchanged. v0.1 (`ssb_low_order`) was deleted on 2026-10-25.
   static let lowOrderDerivatives = Entry(
     name: "ssb-low-order-derivatives", version: "0.3",
     files: ["ssb_joint", "ssb_joint_agreement", "ssb_low_order_derivatives"],
     registeredSourceSHA256: "0158114dc4138747c7faed27019542d6ffec91c4f2b101109bfa6f015887f215")
-  /// v0.1 (`ssb_low_order`): retired, the parity reference of v0.2 / v0.3 in the tests.
-  static let lowOrderDerivativesReference = Entry(
-    name: "ssb-low-order-derivatives", version: "0.1", files: ["ssb_low_order"],
-    registeredSourceSHA256: "40da0bd64def2fcb21831f57777020331306e755495047031a40c41ef727b48b")
 
   /// The exact fifth-order agreement gradient on all BF pixels or every n-th (`fifth_gradient_scale`,
   /// `fifth_gradient_rows`) after the `fifthAgreement` value pass (fitting, not reconstruction). v0.1

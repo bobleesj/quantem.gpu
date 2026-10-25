@@ -37,21 +37,15 @@ final class SSBLowOrderDerivatives {
   static let fusedFields = 43
   /// The value, the six first derivatives and the 21 distinct second derivatives.
   static let outputs = 28
-  static let referenceFields = 51
 
-  /// Tests only: true evaluates with `ssb_low_order.metal` (ssb-low-order-derivatives v0.1), the parity reference
-  /// of v0.3. There is no runtime fallback.
-  var reference = false
   /// GPU time of the latest `values`, `derivatives(at:)` or `evaluate` (command-buffer GPU start to end, summed).
   private(set) var lastGPUSeconds = 0.0
-  /// The latest `evaluate`'s GPU time of its value stage (zero for the reference, which has one command buffer).
+  /// The latest `evaluate`'s GPU time of its value stage (zero for the fused pass).
   private(set) var lastValueGPUSeconds = 0.0
 
   private let device: MTLDevice
   private let queue: MTLCommandQueue
   private let valueSums, valueReduce, gradientSums, gradientCombine, fusedSums, fusedCombine:
-    MTLComputePipelineState
-  private let referenceSums, referenceReduce, referenceDerivativeSums, referenceCombine:
     MTLComputePipelineState
   private var workspaces: [String: MTLBuffer] = [:]
   /// The rows, trial buffer and inputs of the latest `values` call, whose sums `derivatives(at:)` reads.
@@ -74,10 +68,6 @@ final class SSBLowOrderDerivatives {
     gradientCombine = try pipeline("low_order_gradient_combine")
     fusedSums = try pipeline("low_order_fused_sums")
     fusedCombine = try pipeline("low_order_fused_combine")
-    referenceSums = try pipeline("low_order_sums")
-    referenceReduce = try pipeline("low_order_reduce_sums")
-    referenceDerivativeSums = try pipeline("low_order_derivative_sums")
-    referenceCombine = try pipeline("low_order_derivative_combine")
   }
 
   private func workspace(_ name: String, bytes: Int, shared: Bool = false) throws -> MTLBuffer {
@@ -271,7 +261,6 @@ final class SSBLowOrderDerivatives {
     -> [Result]
   {
     lastValueGPUSeconds = 0
-    if reference { return try evaluateReference(rows: rows, inputs: inputs, isCancelled: isCancelled) }
     guard twoStage else { return try fused(rows: rows, inputs: inputs, isCancelled: isCancelled) }
     _ = try values(rows: rows, inputs: inputs, isCancelled: isCancelled)
     let valueSeconds = lastGPUSeconds
@@ -411,106 +400,5 @@ final class SSBLowOrderDerivatives {
       }
     }
     return Result(value: totals[0], gradient: gradient, hessian: hessian)
-  }
-
-  /// v0.1 (`ssb_low_order.metal`): both passes per candidate in one command buffer, sharing the workspaces.
-  private func evaluateReference(rows: [[Double]], inputs: Inputs, isCancelled: () -> Bool) throws
-    -> [Result]
-  {
-    lastGPUSeconds = 0
-    staged = nil
-    fusedResults = nil
-    guard !rows.isEmpty else { return [] }
-    if isCancelled() { throw CancellationError() }
-    let n = inputs.bandCount
-    let chunks = inputs.chunks
-    let derivativeChunks = (inputs.count + Self.derivativeChunk - 1) / Self.derivativeChunk
-    let trial = try trialBuffer(rows)
-    let partialAB = try workspace("reference_partial_ab", bytes: chunks * n * 16)
-    let partialSS = try workspace("reference_partial_ss", bytes: chunks * n * 8)
-    let ab = try workspace("reference_ab", bytes: n * 16)
-    let ss = try workspace("reference_ss", bytes: n * 8)
-    let partial = try workspace(
-      "reference_partial", bytes: derivativeChunks * Self.referenceFields * n * 4)
-    let output = try workspace(
-      "reference_output", bytes: rows.count * Self.outputs * n * 4, shared: true)
-    var one: UInt32 = 1
-    var step = inputs.rowStep
-    var chunkSize = UInt32(Self.derivativeChunk)
-    var chunkCount = UInt32(derivativeChunks)
-    try run { commands in
-      try inputs.grid.withUnsafeBytes { gridBytes in
-        for candidate in rows.indices {
-          let trialOffset = candidate * 6 * 4
-          let first = try Self.encoder(commands, referenceSums)
-          for (index, buffer) in [inputs.band, inputs.k, inputs.q, partialAB, partialSS].enumerated() {
-            first.setBuffer(buffer, offset: 0, index: index)
-          }
-          first.setBytes(gridBytes.baseAddress!, length: gridBytes.count, index: 5)
-          first.setBuffer(trial, offset: trialOffset, index: 6)
-          first.setBytes(&one, length: 4, index: 7)
-          first.setBuffer(inputs.probeGeometry, offset: 0, index: 8)
-          first.setBuffer(inputs.neighbour, offset: 0, index: 9)
-          first.setBytes(&step, length: 8, index: 10)
-          first.dispatchThreads(
-            MTLSize(width: n, height: chunks, depth: 1),
-            threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
-          first.endEncoding()
-          let reduction = try Self.encoder(commands, referenceReduce)
-          for (index, buffer) in [partialAB, partialSS, ab, ss].enumerated() {
-            reduction.setBuffer(buffer, offset: 0, index: index)
-          }
-          reduction.setBytes(gridBytes.baseAddress!, length: gridBytes.count, index: 4)
-          reduction.setBytes(&one, length: 4, index: 5)
-          reduction.dispatchThreads(
-            MTLSize(width: n, height: 1, depth: 1),
-            threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
-          reduction.endEncoding()
-          let second = try Self.encoder(commands, referenceDerivativeSums)
-          for (index, buffer) in [inputs.band, inputs.k, inputs.q, partial].enumerated() {
-            second.setBuffer(buffer, offset: 0, index: index)
-          }
-          second.setBytes(gridBytes.baseAddress!, length: gridBytes.count, index: 4)
-          second.setBuffer(trial, offset: trialOffset, index: 5)
-          second.setBytes(&one, length: 4, index: 6)
-          second.setBuffer(inputs.probeGeometry, offset: 0, index: 7)
-          second.setBuffer(inputs.neighbour, offset: 0, index: 8)
-          second.setBytes(&step, length: 8, index: 9)
-          second.setBuffer(ab, offset: 0, index: 10)
-          second.setBytes(&chunkSize, length: 4, index: 11)
-          second.setBytes(&chunkCount, length: 4, index: 12)
-          second.dispatchThreads(
-            MTLSize(width: n, height: derivativeChunks, depth: 1),
-            threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
-          second.endEncoding()
-          let last = try Self.encoder(commands, referenceCombine)
-          for (index, buffer) in [partial, ab, ss, inputs.q, inputs.weights].enumerated() {
-            last.setBuffer(buffer, offset: 0, index: index)
-          }
-          last.setBuffer(output, offset: candidate * Self.outputs * n * 4, index: 5)
-          last.setBytes(gridBytes.baseAddress!, length: gridBytes.count, index: 6)
-          last.setBuffer(trial, offset: trialOffset, index: 7)
-          last.setBytes(&one, length: 4, index: 8)
-          last.setBytes(&chunkCount, length: 4, index: 9)
-          last.setBytes(&step, length: 8, index: 10)
-          last.dispatchThreads(
-            MTLSize(width: n, height: 1, depth: 1),
-            threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
-          last.endEncoding()
-        }
-      }
-    }
-    if isCancelled() { throw CancellationError() }
-    let values = output.contents().assumingMemoryBound(to: Float.self)
-    return try rows.indices.map { candidate in
-      var totals = [Double](repeating: 0, count: Self.outputs)
-      for field in 0..<Self.outputs {
-        let start = (candidate * Self.outputs + field) * n
-        var total = 0.0
-        for i in 0..<n { total += Double(values[start + i]) }
-        totals[field] = total
-      }
-      return try Self.result(totals, depth: rows[candidate][5])
-    }
   }
 }

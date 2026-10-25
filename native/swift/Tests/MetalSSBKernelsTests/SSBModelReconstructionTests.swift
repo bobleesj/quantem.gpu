@@ -478,12 +478,9 @@ final class SSBModelReconstructionTests: XCTestCase {
           worstHessian))
       XCTAssertLessThan(worstGradient, 2e-3)
       XCTAssertLessThan(worstHessian, 2e-3)
-      // The fused pass (above), the value pass followed by the derivative pass, and v0.1 at the same rows: the
-      // same value (bitwise for the two v0.2 paths), the derivatives to float32 summation order.
+      // The fused pass (above) and the value pass followed by the derivative pass at the same rows: the same
+      // value bitwise, the derivatives to float32 summation order.
       let twoStage = try model.lowOrderDerivatives(rows, twoStage: true)
-      model.referenceLowOrderDerivatives = true
-      let reference = try model.lowOrderDerivatives(rows)
-      model.referenceLowOrderDerivatives = false
       func worst(_ a: [SSBLowOrderDerivatives.Result], _ b: [SSBLowOrderDerivatives.Result]) -> (
         value: Double, derivatives: Double
       ) {
@@ -505,15 +502,12 @@ final class SSBModelReconstructionTests: XCTestCase {
         return (value, derivatives)
       }
       let stages = worst(results, twoStage)
-      let parity = worst(results, reference)
       print(
         String(
-          format: "LOW_ORDER_DERIVATIVES depth %.0f two-stage value %.1e derivatives %.1e; v0.1 value %.1e derivatives %.1e",
-          point.depthSpreadAngstroms, stages.value, stages.derivatives, parity.value, parity.derivatives))
+          format: "LOW_ORDER_DERIVATIVES depth %.0f two-stage value %.1e derivatives %.1e",
+          point.depthSpreadAngstroms, stages.value, stages.derivatives))
       XCTAssertEqual(stages.value, 0)
       XCTAssertLessThan(stages.derivatives, 1e-4)
-      XCTAssertLessThan(parity.value, 1e-6)
-      XCTAssertLessThan(parity.derivatives, 1e-4)
     }
   }
 
