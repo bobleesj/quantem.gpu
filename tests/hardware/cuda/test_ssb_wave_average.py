@@ -106,19 +106,18 @@ def test_wave_average_chunking_and_inactive_higher_order_angles(depth):
     try:
         candidate, loss = ssb.preview(
             aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth,
-            upsampling_factor=4, phase_estimator="phase_of_mean", compute_loss=False,
+            upsampling_factor=4, compute_loss=False,
         )
         assert loss is None
         batched, _ = engine.thick.reconstruct(
-            -80.0, 40.0, -0.7, tilt, depth * 10, upsampling_factor=4,
-            phase_estimator="phase_of_mean", compute_loss=False,
+            -80.0, 40.0, -0.7, tilt, depth * 10, upsampling_factor=4, compute_loss=False,
             chunk_bytes=2 * 512 * 512 * 24,
         )
         np.testing.assert_allclose(cp.asnumpy(batched), candidate, atol=1e-6, rtol=0)
         # an azimuth left on a higher order whose magnitude is zero selects the packed coefficients
         packed, _ = ssb.preview(
             aberrations | {"phi21_deg": math.degrees(1.2)}, sample_tilt_mrad=tilt, depth_spread_nm=depth,
-            upsampling_factor=4, phase_estimator="phase_of_mean", compute_loss=False,
+            upsampling_factor=4, compute_loss=False,
         )
         np.testing.assert_allclose(packed, candidate, atol=1e-6, rtol=0)
     finally:
@@ -173,8 +172,7 @@ def test_higher_order_coefficients_are_independent_between_streams():
         with cp.cuda.Device(0), cp.cuda.Stream(non_blocking=True):
             phase, _ = sessions[index].preview(
                 optics[index], sample_tilt_mrad=(3.0, -4.0),
-                depth_spread_nm=18.0, upsampling_factor=2,
-                phase_estimator="phase_of_mean", compute_loss=False,
+                depth_spread_nm=18.0, upsampling_factor=2, compute_loss=False,
             )
             return np.asarray(phase).copy()
 
@@ -203,7 +201,7 @@ def test_native_512_joint_optics_keep_phase_with_bounded_workspace():
              scan_sampling_A=(0.3, 0.3), detector_sampling_mrad=(5.0, 5.0),
              scan_detector_rotation_deg=17) as ssb:
         options = {
-            "phase_estimator": "phase_of_mean", "upsampling_factor": 1,
+            "upsampling_factor": 1,
             "sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": 18.0,
             "compute_loss": False,
         }
@@ -216,8 +214,7 @@ def test_native_512_joint_optics_keep_phase_with_bounded_workspace():
             magnitudes = np.asarray([optics[f"{name}_nm"] for name in NAMES], dtype=np.float32) * 10
             bounded, _ = engine.thick.reconstruct(
                 defocus * 10, optics["C12_nm"] * 10, math.radians(optics["phi12_deg"]),
-                (-9.0, 5.0), 180.0, chunk_bytes=512 * 512 * 16,
-                phase_estimator="phase_of_mean", compute_loss=False,
+                (-9.0, 5.0), 180.0, chunk_bytes=512 * 512 * 16, compute_loss=False,
                 higher_order_magnitudes=magnitudes,
                 higher_order_angles=np.asarray(ANGLES, dtype=np.float32),
             )

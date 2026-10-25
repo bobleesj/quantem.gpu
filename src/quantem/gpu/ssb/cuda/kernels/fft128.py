@@ -7,7 +7,6 @@
 from quantem.gpu.ssb.cuda.kernels.common import (
     CustomFFTBase,
     build_cuda_code,
-    corrected_fourier_sum_source,
 )
 
 _TWIDDLE_DECL = '__constant__ float2 TWIDDLE_128[128];'
@@ -263,7 +262,7 @@ __global__ void ifft128_cols_accumulate_t32_mr8(
     partial_sumsq[out_base + (size_t)pos3 * 128 + col] = sq3;
 }
 
-''' + corrected_fourier_sum_source(128) + "\n"
+'''
 
 
 class CustomFFT128(CustomFFTBase):
@@ -276,7 +275,6 @@ class CustomFFT128(CustomFFTBase):
             rows="ifft128_rows_fused_pk_t32_mr8_packed",
             cols="ifft128_cols_t32_mr8",
             cols_accumulate="ifft128_cols_accumulate_t32_mr8",
-            rows_full=None,
             twiddle_name="TWIDDLE_128",
             rows_block=(32, 8, 1),
             rows_grid_y=16,

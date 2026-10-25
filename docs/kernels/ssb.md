@@ -348,13 +348,14 @@ O[\mathbf R]
 O_b[\mathbf R;\hat{\boldsymbol\theta}].
 $$
 
-With `phase_estimator="complex_wave"` the public result stores this complex64
-object wave, with phase $\phi=\arg O$ and amplitude $|O|$. The default
-estimators store a phase-only wave with unit amplitude and record
-`amplitude_estimated=False`: CUDA's `phase_of_mean` keeps $\phi=\arg O$, and
-MPS's `mean_phase` averages the per-contribution phases $\arg O_b$. The
-optimizer's $\bar\phi$ is part of the variance objective; it is not
-substituted for the final phase.
+SSB keeps its phase, $\phi=\arg O$ (`phase_of_mean`), on CUDA and MPS, and the
+public result stores a phase-only wave with unit amplitude, recorded as
+`amplitude_estimated=False`. Amplitude is the regularized `method="complex"`'s.
+The optimizer's $\bar\phi$, the mean of the per-contribution phases
+$\arg O_b$, is part of the variance objective; it is not substituted for the
+final phase. (The `mean_phase` estimator, which displayed $\bar\phi$, and the
+`complex_wave` estimator, which stored $O$ itself at 1x, were retired on
+2026-10-25.)
 
 The final reduction is also ordinary array code:
 

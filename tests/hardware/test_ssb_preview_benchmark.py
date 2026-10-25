@@ -50,7 +50,6 @@ def test_changed_defocus_benchmark_preserves_calibration(sample):
             ssb.aberrations,
             upsampling_factor=1,
             compute_loss=False,
-            phase_estimator="phase_of_mean",
             sample_tilt_mrad=ssb.sample_tilt_mrad or (0, 0),
             depth_spread_nm=ssb.depth_spread_nm or 0,
         )

@@ -14,7 +14,6 @@ import numpy as np
 
 from quantem.gpu.ssb.cuda.kernels.engine import (
     THICK_FIT_MAX_BATCH,
-    thick_correct_kernel,
     thick_correct_full_kernel,
     thick_correct_planes_kernel,
     thick_fit_batch_kernel,
@@ -58,97 +57,91 @@ class ThickSample:
         compute_loss: bool = True,
         chunk_bytes: int = 1 << 30,
         upsampling_factor: int = 1,
-        phase_estimator: str = "mean_phase",
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
-        """Mean phase and variance loss for a thick, tilted crystal (see ``thick_correct_kernel``).
+        """SSB phase of a thick, tilted crystal at ``upsampling_factor``, and the native-grid phase-variance loss.
 
-        Same outputs and definitions as ``SSBEngine.reconstruct_with_loss`` (mean over bright-field pixels of the
-        per-pixel phase; loss = mean over the image of the per-pixel phase variance), with each pixel's SSB correction
-        averaged over the sample depth. ``sample_tilt_mrad`` = (row, col) in the scan frame, ``thickness`` in the C10 unit; thickness
-        0 reproduces the standard reconstruction. Reference path: element-wise correction then one inverse FFT per pixel,
-        processed in chunks of bright-field pixels, not the fused FFT kernels, so it is slower than the standard path.
-
-        ``phase_of_mean`` sums corrected spectra in bounded BF groups before a
-        single inverse FFT and phase extraction; it reads upsampling aliases
-        directly from the native spectra without a per-BF expanded image. Linear averaging commutes with
-        the inverse FFT, but not with phase extraction. Its diagnostic loss is
-        evaluated separately with the legacy estimator on the native grid.
+        Each pixel's SSB correction is averaged over the sample depth (see ``thick_correct_kernel``);
+        ``sample_tilt_mrad`` = (row, col) in the scan frame, ``thickness`` in the C10 unit, and thickness 0 reproduces
+        standard SSB. The corrected spectra are summed in bounded BF groups before a single inverse FFT and phase
+        extraction (``phase_of_mean``); upsampling aliases are read directly from the native spectra without a per-BF
+        expanded image. Linear averaging commutes with the inverse FFT, but not with phase extraction. The loss,
+        when asked for, is ``phase_variance``'s on the native grid.
         """
-        engine = self.engine
-        if phase_estimator not in ("mean_phase", "phase_of_mean"):
-            raise ValueError(
-                "phase_estimator must be 'mean_phase' or 'phase_of_mean'; "
-                f"got {phase_estimator!r}."
-            )
-        average_wave = phase_estimator == "phase_of_mean"
-        cache = engine._cache
-        num_bright_field_pixels, ny, nx = engine._bf_grid()
-        native_ny, native_nx = ny, nx
         if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
             raise ValueError("upsampling_factor must be 1, 2, 3, 4, or 8.")
         qrow, qcol = self._frequencies(upsampling_factor)
-        ny, nx = qrow.size, qcol.size
-        qx, qy = qrow.reshape(1, ny, 1), qcol.reshape(1, 1, nx)
-        if average_wave:
-            return self._reconstruct_wave(
-                C10, C12, phi12, sample_tilt_mrad, thickness, qx.ravel(), qy.ravel(),
-                compute_loss=compute_loss, chunk_bytes=chunk_bytes,
-                higher_order_magnitudes=higher_order_magnitudes,
-                higher_order_angles=higher_order_angles,
-            )
-        if upsampling_factor == 1 and higher_order_magnitudes is None:
-            return self._reconstruct_native(C10, C12, phi12, sample_tilt_mrad, thickness, compute_loss, chunk_bytes)
+        return self._reconstruct_wave(
+            C10, C12, phi12, sample_tilt_mrad, thickness, qrow, qcol,
+            compute_loss=compute_loss, chunk_bytes=chunk_bytes,
+            higher_order_magnitudes=higher_order_magnitudes,
+            higher_order_angles=higher_order_angles,
+        )
+
+    def phase_variance(
+        self,
+        C10: float,
+        C12: float,
+        phi12: float,
+        sample_tilt_mrad: tuple[float, float],
+        thickness: float,
+        chunk_bytes: int = 1 << 30,
+        higher_order_magnitudes: np.ndarray | None = None,
+        higher_order_angles: np.ndarray | None = None,
+    ) -> tuple[cp.ndarray, float]:
+        """The phase-variance objective on the native grid: (mean over BF pixels of each corrected phase, loss).
+
+        Same definitions as ``SSBEngine.reconstruct_with_loss`` (the loss is the mean over the image of the per-pixel
+        variance of the bright-field phases), with each pixel's correction averaged over the sample depth. C10/C12
+        optics run ``_native_phase_variance``; higher orders the reference loop below: element-wise correction, then
+        one inverse FFT per pixel, in chunks of bright-field pixels.
+        """
+        if higher_order_magnitudes is None:
+            return self._native_phase_variance(C10, C12, phi12, sample_tilt_mrad, thickness, chunk_bytes)
+        engine = self.engine
+        cache = engine._cache
+        num_bright_field_pixels, ny, nx = engine._bf_grid()
+        qx, qy = cache["qx_1d"].reshape(1, ny, 1), cache["qy_1d"].reshape(1, 1, nx)
         half = engine.gqk_is_half_plane()
         # other half of the plane for a real bright-field image: G(-q) = conj(G(q))
-        neg_rows = cp.asarray((-np.arange(native_ny)) % native_ny)
-        neg_cols = cp.asarray((native_nx - np.arange(native_nx // 2 + 1, native_nx)) % native_nx)
+        neg_rows = cp.asarray((-np.arange(ny)) % ny)
+        neg_cols = cp.asarray((nx - np.arange(nx // 2 + 1, nx)) % nx)
         chunk = max(1, int(chunk_bytes // (ny * nx * 8 * 3)))
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
         phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
-        params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
-        kernel = thick_correct_kernel
-        if higher_order_magnitudes is not None:
-            kernel = thick_correct_full_kernel
-            params = (*params, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
+        params = (*self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness),
+                  cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
         for start in range(0, num_bright_field_pixels, chunk):
             stop = min(num_bright_field_pixels, start + chunk)
             if half:
                 source = engine.G_qk[start:stop]
-                full = cp.empty((stop - start, native_ny, native_nx), dtype=cp.complex64)
-                full[:, :, : native_nx // 2 + 1] = source
-                full[:, :, native_nx // 2 + 1:] = cp.conj(source[:, neg_rows][:, :, neg_cols])
+                full = cp.empty((stop - start, ny, nx), dtype=cp.complex64)
+                full[:, :, : nx // 2 + 1] = source
+                full[:, :, nx // 2 + 1:] = cp.conj(source[:, neg_rows][:, :, neg_cols])
             else:
                 full = engine.G_qk[start:stop]
-            if upsampling_factor != 1:
-                full = cp.tile(full, (1, upsampling_factor, upsampling_factor))
             kx = cache["kx_bf"][start:stop].reshape(-1, 1, 1)
             ky = cache["ky_bf"][start:stop].reshape(-1, 1, 1)
-            corrected = kernel(full, qx, qy, kx, ky, *params)
-            if upsampling_factor != 1:
-                # Exclude scan-mean replicas; retain the true DC below.
-                corrected[:, ::native_ny, ::native_nx] = 0
+            corrected = thick_correct_full_kernel(full, qx, qy, kx, ky, *params)
             corrected[:, 0, 0] = engine._dc_value_host
             angles = cp.angle(cp.fft.ifft2(corrected, axes=(1, 2)))
             phase_sum += angles.sum(axis=0)
-            if compute_loss:
-                phase_sumsq += (angles * angles).sum(axis=0)
+            phase_sumsq += (angles * angles).sum(axis=0)
             del full, corrected, angles
         mean_phase = phase_sum / float(num_bright_field_pixels)
-        if not compute_loss:
-            return mean_phase, None
         loss = float(cp.mean(phase_sumsq / float(num_bright_field_pixels) - mean_phase * mean_phase))
         return mean_phase, loss
 
-    def _reconstruct_native(self, C10, C12, phi12, sample_tilt_mrad, thickness, compute_loss, chunk_bytes):
-        """``reconstruct`` at the native sampling with C10/C12 optics: the same per-pixel correction, phase and loss.
+    def _native_phase_variance(self, C10, C12, phi12, sample_tilt_mrad, thickness, chunk_bytes):
+        """``phase_variance`` with C10/C12 optics: the same per-pixel correction, phase and loss.
 
         The fit's native phase diagnostic and every slider-release loss run this. Each group of BF pixels is corrected
         straight into full-plane spectra (``thick_correct_planes_kernel`` reads the stored half plane's mirror in
         place), inverse transformed without the 1 / (ny nx) scale, which the phase does not see (a power of two, so the
         angles are the same bits), and reduced to per-pixel phase sums by ``thick_phase_moments_kernel`` without
-        storing the angle images. The reference loop above materialized the full plane, the angles and their squares.
+        storing the angle images. A reference loop materializing the full plane, the angles and their squares gives
+        the same values.
         """
         engine = self.engine
         cache = engine._cache
@@ -157,7 +150,7 @@ class ThickSample:
         chunk = min(num_bright_field_pixels, max(1, int(chunk_bytes // (plane * 8 * 3))))
         planes = cp.empty((chunk, ny, nx), dtype=cp.complex64)
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
-        phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32) if compute_loss else phase_sum
+        phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
         params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
         qrow = cache["qx_1d"].astype(cp.float32, copy=False)
         qcol = cache["qy_1d"].astype(cp.float32, copy=False)
@@ -172,10 +165,8 @@ class ThickSample:
             )
             images = cupyx.scipy.fft.ifft2(group, axes=(1, 2), norm="forward", overwrite_x=True)
             thick_phase_moments_kernel((blocks,), (256,), (images, phase_sum, phase_sumsq, np.int32(count),
-                                                           np.int32(plane), np.int32(compute_loss)))
+                                                           np.int32(plane), np.int32(1)))
         mean_phase = phase_sum / float(num_bright_field_pixels)
-        if not compute_loss:
-            return mean_phase, None
         loss = float(cp.mean(phase_sumsq / float(num_bright_field_pixels) - mean_phase * mean_phase))
         return mean_phase, loss
 
@@ -202,9 +193,8 @@ class ThickSample:
         phase = self._wave_phase(spectrum, qrow.size, qcol.size)
         loss = None
         if compute_loss:
-            _, loss = self.reconstruct(
-                C10, C12, phi12, sample_tilt_mrad, thickness,
-                compute_loss=True, chunk_bytes=chunk_bytes,
+            _, loss = self.phase_variance(
+                C10, C12, phi12, sample_tilt_mrad, thickness, chunk_bytes=chunk_bytes,
                 higher_order_magnitudes=higher_order_magnitudes,
                 higher_order_angles=higher_order_angles,
             )

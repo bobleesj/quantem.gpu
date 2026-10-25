@@ -65,7 +65,7 @@ def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monk
             self.name = name
 
         def preview_upsampled(self, aberrations, *, compute_loss, higher_order_magnitudes=None, higher_order_angles=None, **kwargs):
-            assert kwargs["phase_estimator"] == "phase_of_mean"
+            assert "phase_estimator" not in kwargs  # SSB has one estimator, the phase of the mean wave
             received[self.name] = (aberrations, higher_order_magnitudes, higher_order_angles)
             return np.zeros((2, 2), np.float32), 0.5 if compute_loss else None
 

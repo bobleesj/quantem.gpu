@@ -10,7 +10,6 @@ the ~14 GB packed_m/packed_p cache that previously stored precomputed values.
 from quantem.gpu.ssb.cuda.kernels.common import (
     CustomFFTBase,
     build_cuda_code,
-    corrected_fourier_sum_source,
 )
 
 _TWIDDLE_DECL = '__constant__ float2 TWIDDLE_256[256];'
@@ -89,132 +88,6 @@ __global__ void ifft256_rows_fused_pk_t64_mr8_packed(
 	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
 	        C10, C12, cos2phi12, sin2phi12, factor,
 	        pk_re, pk_im, ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos3, 256u, (unsigned int)gqk_cols));
-
-    if (row == 0 && tid == 0) {
-        res0 = make_float2(dc_real, dc_imag);
-    }
-
-    __shared__ float2 s[8][256];
-    float2* srow = s[threadIdx.y];
-    srow[bit_reverse4_8((unsigned int)pos0)] = res0;
-    srow[bit_reverse4_8((unsigned int)pos1)] = res1;
-    srow[bit_reverse4_8((unsigned int)pos2)] = res2;
-    srow[bit_reverse4_8((unsigned int)pos3)] = res3;
-    __syncthreads();
-
-    for (int m = 4; m <= 256; m <<= 2) {
-        int quarter = m >> 2;
-        int butterfly = tid;
-        int j = butterfly % quarter;
-        int k = butterfly / quarter;
-        int idx0s = k * m + j;
-        int idx1s = idx0s + quarter;
-        int idx2s = idx1s + quarter;
-        int idx3s = idx2s + quarter;
-        int tw = j * (256 / m);
-        float2 x0 = srow[idx0s];
-        float2 x1 = cmul(TWIDDLE_256[tw], srow[idx1s]);
-        float2 x2 = cmul(TWIDDLE_256[tw * 2], srow[idx2s]);
-        float2 x3 = cmul(TWIDDLE_256[tw * 3], srow[idx3s]);
-
-        float2 t0 = cadd(x0, x2);
-        float2 t1 = csub(x0, x2);
-        float2 t2 = cadd(x1, x3);
-        float2 t3 = csub(x1, x3);
-        float2 y0 = cadd(t0, t2);
-        float2 y2 = csub(t0, t2);
-        float2 it3 = cmul_i(t3);
-        float2 y1 = cadd(t1, it3);
-        float2 y3 = csub(t1, it3);
-
-        srow[idx0s] = y0;
-        srow[idx1s] = y1;
-        srow[idx2s] = y2;
-        srow[idx3s] = y3;
-        __syncthreads();
-    }
-
-    out[idx0] = srow[pos0];
-    out[idx1] = srow[pos1];
-    out[idx2] = srow[pos2];
-    out[idx3] = srow[pos3];
-}
-
-// Full-aberration variant of ifft256_rows_fused_pk_t64_mr8_packed. Same
-// structure; gamma_mul_pk_onthefly → gamma_mul_pk_onthefly_full, with
-// the host-precomputed Chebyshev coefficient arrays instead of raw
-// (mags, angles).  See chi_full in kernels/common.py.
-__global__ void ifft256_rows_fused_pk_full_t64_mr8_packed(
-    const float* __restrict__ kx_bf,
-    const float* __restrict__ ky_bf,
-    const float* __restrict__ qx_1d,
-    const float* __restrict__ qy_1d,
-    float wavelength,
-    float semiangle_rad,
-    float ang_y_rad,
-    float ang_x_rad,
-    const float* __restrict__ abr_mag_scaled,
-    const float* __restrict__ abr_cm,
-    const float* __restrict__ abr_sm,
-    const float2* __restrict__ pk,
-    const float2* __restrict__ G_qk,
-	    float2* __restrict__ out,
-	    float dc_real,
-	    float dc_imag,
-	    int num_bf,
-	    int gqk_cols
-	) {
-    int bf = blockIdx.z;
-    int row = blockIdx.y * 8 + threadIdx.y;
-    int tid = threadIdx.x;
-    if (bf >= num_bf || row >= 256 || tid >= 64) {
-        return;
-    }
-    int base = (bf * 256 + row) * 256;
-    int pos0 = tid;
-    int pos1 = tid + 64;
-    int pos2 = tid + 128;
-    int pos3 = tid + 192;
-    int idx0 = base + pos0;
-    int idx1 = base + pos1;
-    int idx2 = base + pos2;
-    int idx3 = base + pos3;
-    float2 pkv = pk[bf];
-    float pk_re = pkv.x;
-    float pk_im = pkv.y;
-
-    float kx = __ldg(&kx_bf[bf]);
-    float ky = __ldg(&ky_bf[bf]);
-    float qx = __ldg(&qx_1d[row]);
-
-	    float2 res0 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos0]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm, pk_re, pk_im,
-	        ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos0, 256u, (unsigned int)gqk_cols));
-	    float2 res1 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos1]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm, pk_re, pk_im,
-	        ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos1, 256u, (unsigned int)gqk_cols));
-	    float2 res2 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos2]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm, pk_re, pk_im,
-	        ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos2, 256u, (unsigned int)gqk_cols));
-	    float2 res3 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos3]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm, pk_re, pk_im,
-	        ld_gqk_maybe_herm(
 	            G_qk, (unsigned long long)bf, (unsigned int)row,
 	            (unsigned int)pos3, 256u, (unsigned int)gqk_cols));
 
@@ -430,7 +303,7 @@ __global__ void ifft256_cols_accumulate_t64_mr8(
     partial_sum[o3] = s3; partial_sumsq[o3] = q3;
 }
 
-''' + corrected_fourier_sum_source(256) + "\n"
+'''
 
 
 class CustomFFT256(CustomFFTBase):
@@ -443,7 +316,6 @@ class CustomFFT256(CustomFFTBase):
             rows="ifft256_rows_fused_pk_t64_mr8_packed",
             cols="ifft256_cols_t64_mr8",
             cols_accumulate="ifft256_cols_accumulate_t64_mr8",
-            rows_full="ifft256_rows_fused_pk_full_t64_mr8_packed",
             twiddle_name="TWIDDLE_256",
             rows_block=(64, 8, 1),
             rows_grid_y=32,

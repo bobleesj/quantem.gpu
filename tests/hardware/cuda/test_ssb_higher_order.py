@@ -99,8 +99,20 @@ def test_higher_order_preview_matches_float64_chi_reference():
         )
         magnitudes, angles = _packed(*coefficients)
         aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
-        phase, loss = ssb.preview(_aberrations(*coefficients), phase_estimator="mean_phase")
-        dragged, no_loss = ssb.preview(_aberrations(*coefficients), compute_loss=False, phase_estimator="mean_phase")
+        from quantem.gpu.ssb.units import ENGINE_PER_NM, aberrations_to_engine, higher_order_arrays, validate_aberrations
+
+        image, loss = ssb.preview(_aberrations(*coefficients))
+        dragged, no_loss = ssb.preview(_aberrations(*coefficients), compute_loss=False)
+        # the phase-variance objective the loss reports, with its own mean BF phase, as the session hands it the optics
+        mapping = validate_aberrations(_aberrations(*coefficients), higher_order=True)
+        engine_coefficients = aberrations_to_engine(mapping)
+        session_magnitudes, session_angles = higher_order_arrays(mapping)
+        phase, objective_loss = ssb._backend()._get_accelerator().thick.phase_variance(
+            engine_coefficients["C10"], engine_coefficients["C12"], engine_coefficients["phi12"], (0.0, 0.0), 0.0,
+            higher_order_magnitudes=session_magnitudes * np.float32(ENGINE_PER_NM), higher_order_angles=session_angles,
+        )
+        phase = cp.asnumpy(phase)
+        assert loss == objective_loss
         reference = KrivanekSSB.from_ssb(ssb)
         reference.magnitudes_A = magnitudes.astype(np.float64) * 10.0    # the engine takes Angstrom
         reference.angles_rad = angles.astype(np.float64)
@@ -110,22 +122,22 @@ def test_higher_order_preview_matches_float64_chi_reference():
         # instead of k - q differs by 2.6e-3. (2.0e-6 before the sign fix, where the two errors partly cancelled.)
         np.testing.assert_allclose(phase, expected.cpu().numpy(), atol=1e-5)
         assert loss == pytest.approx(expected_loss, rel=1e-6)
-        np.testing.assert_array_equal(dragged, phase)
+        np.testing.assert_array_equal(dragged, image)
         assert no_loss is None
-        two_term, _ = ssb.preview(aberrations, phase_estimator="mean_phase")
+        two_term, _ = ssb.preview(aberrations)
         # the higher orders change the image on the scale of the image itself, far above the parity tolerance
-        assert (phase - two_term).std() > 0.5 * two_term.std()
+        assert (image - two_term).std() > 0.5 * two_term.std()
     finally:
         ssb.close()
 
 
 def test_two_term_coefficients_through_the_full_kernel_equal_the_standard_preview():
-    """With C21..C56 zero, the 14-term chi is the C10/C12 polynomial; an angle left on a zero magnitude has no effect."""
+    """With C21..C56 zero, the 14-term mapping is the C10/C12 polynomial; an angle left on a zero magnitude has no effect."""
     ssb = _session_256()
     try:
         aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
-        standard, standard_loss = ssb.preview(aberrations, phase_estimator="mean_phase")
-        full, full_loss = ssb.preview(_aberrations({0: -8.0, 1: 4.0}, {1: -0.7, 2: 1.2}), phase_estimator="mean_phase")
+        standard, standard_loss = ssb.preview(aberrations)
+        full, full_loss = ssb.preview(_aberrations({0: -8.0, 1: 4.0}, {1: -0.7, 2: 1.2}))
         # measured 2026-10-07: 1.7e-8 rad max, identical loss
         np.testing.assert_allclose(full, standard, atol=1e-7)
         assert full_loss == pytest.approx(standard_loss, rel=1e-7)

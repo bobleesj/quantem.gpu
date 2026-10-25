@@ -400,10 +400,17 @@ def fit_sample(
         from quantem.gpu.ssb._resident_search import fit_resident
         from quantem.gpu.ssb.mps.resident_fit import evaluate
 
+        from quantem.gpu.ssb import _exact_newton
+
         if options.get("polish_starts", 3) == 0:
             options = {**options, "polish": None}
+        derivatives = None
+        if _exact_newton.EXACT_NEWTON:
+            from quantem.gpu.ssb.mps.exact_derivatives import LowOrderDerivatives
+
+            derivatives = LowOrderDerivatives(prepared, band_inv_A)
         return fit_resident(lambda trial: evaluate(prepared, trial, band_inv_A),
-                            backend="mps", band_inv_A=band_inv_A, **options)
+                            backend="mps", band_inv_A=band_inv_A, derivatives=derivatives, **options)
     return fit_sample_search(
         lambda c10, c12, phi12, tilt, thickness: thick_fit(prepared, C10=c10, C12=c12, phi12=phi12, sample_tilt_mrad=tilt,
                                                            thickness=thickness, band_inv_A=band_inv_A),

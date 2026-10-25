@@ -165,7 +165,7 @@ def test_torch_reference_matches_cuda_engine():
         if thickness == 0.0:
             phase, loss = engine.reconstruct_with_loss(C10, C12, phi12)
         else:
-            phase, loss = engine.thick.reconstruct(C10, C12, phi12, tilt, thickness)
+            phase, loss = engine.thick.phase_variance(C10, C12, phi12, tilt, thickness)
         torch_phase, torch_loss = reference.reconstruct(C10, C12, phi12, tilt, thickness)
         np.testing.assert_allclose(torch_phase.cpu().numpy(), cp.asnumpy(phase), atol=2e-5)
         assert abs(torch_loss - float(loss)) <= 1e-4 * abs(float(loss))

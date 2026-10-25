@@ -380,13 +380,12 @@ above 1024 up to 4096, including rectangular grids, uint8/uint16 ANS, C10/C12,
 and optional sample tilt/depth. Smaller rectangular scans retain their existing
 square computational padding.
 It uses complex64 forward spectra, complex128 summation/inverse FFT and
-float32 phase. Its default `phase_of_mean` estimator matches the existing CUDA
+float32 phase. Its phase of the mean wave matches the existing CUDA
 wave-average path within floating-point FFT rounding, not bit for bit.
 Use `compute_loss=False` for the bounded path. Full-field per-detector
-phase-variance loss, higher-order aberrations, `mean_phase` and
-complex-amplitude reconstruction still use the existing Fourier-stack backend
-for 1024 scans, retaining their prior behavior and memory cost. Those operations
-are unsupported above 1024. Fit diagnostics remain available on the small
+phase-variance loss and higher-order aberrations still use the existing
+Fourier-stack backend for 1024 scans, retaining their prior behavior and
+memory cost. Those operations are unsupported above 1024. Fit diagnostics remain available on the small
 region. A full 1024 fit remains available, but an explicit smaller region avoids
 keeping its entire Fourier stack during optimization.
 
@@ -517,12 +516,12 @@ of returning a zero-agreement fit.
 searching. CUDA and MPS use `phase_of_mean` at every output factor, including
 all 14 higher-order terms. Both return phase-only complex waves with unit amplitude,
 recorded as `amplitude_estimated=False`. That amplitude is not a measured
-specimen transmission. Use explicit `phase_estimator="complex_wave"` for a
-native thin-sample complex-object reconstruction when amplitude is needed.
+specimen transmission. Use `run(method="complex")` when amplitude is needed
+([Choose a direct reconstruction](direct-ptycho.md)).
 
 `result.upsampling_factor` and `result.object_sampling_A` record the output factor and
 `(row, col)` pixel spacing. Input sampling stays in the saved signature. Changing the
-estimator, sampling, or scientific parameters invalidates saved-result reuse.
+method, sampling, or scientific parameters invalidates saved-result reuse.
 
 ### Inspect and replay search trials
 
@@ -667,8 +666,7 @@ noise, coherence, aberrations and alias separation can reduce useful bandwidth.
 See the [direct-ptychography upsampling paper](https://arxiv.org/abs/2507.18610).
 More than 8× raises an explicit limit error. CUDA and MPS support all 14
 aberration terms at every listed factor, with or without specimen tilt and
-depth correction. Both use `phase_of_mean` automatically. Explicit
-`phase_estimator="mean_phase"` retains the historical diagnostic comparison.
+depth correction. Both reconstruct the phase of the mean wave (`phase_of_mean`).
 The aberration search and loss remain on the native grid. Upsampling excludes
 replicas of the scan mean while retaining the normalization at the true origin.
 
@@ -958,18 +956,15 @@ It does not create a second public result type.
 
 ### Phase averaging
 
-The historical `preview(..., phase_estimator="mean_phase")` averages the phase of
-each corrected bright-field detector contribution. At higher output sampling,
-detector-dependent structure in the added frequency bands can compress contrast
-through this nonlinear phase extraction. This is not an FFT brightness factor.
-
-Taking a phase is nonlinear: `angle(mean(waves))` is not
+SSB reconstructs the phase of the bright-field mean wave (`phase_of_mean`): the
+corrected spectra are combined before one inverse FFT, and the phase is taken
+once. Taking a phase is nonlinear: `angle(mean(waves))` is not
 `mean(angle(waves))`. Taking each angle first discards amplitude information
-and can compress reconstructed contrast. Combining the corrected spectra
-before one inverse FFT gives the same wave sum as summing separate inverse
-FFTs, because both operations are linear. The diagnostic loss remains the
-native-grid per-detector phase variance. Stronger contrast alone does not
-establish quantitative phase accuracy.
+and compresses reconstructed contrast, most at higher output sampling, where
+detector-dependent structure in the added frequency bands enters the phase
+extraction. Combining the corrected spectra before one inverse FFT gives the
+same wave sum as summing separate inverse FFTs, because both operations are
+linear. Stronger contrast alone does not establish quantitative phase accuracy.
 
 QuantEM's `DirectPtychography` SSB implementation uses a related but distinct
 weak-phase convention: multiply by `-1j * conj(gamma) / abs(gamma)`, inverse
@@ -977,7 +972,8 @@ transform, take the real part, normalize by BF weight, and sum contributions.
 It does not average per-contribution phase angles. Do not describe our
 DC-referenced `angle(mean(waves))` as numerically identical to that output.
 
-CUDA and MPS default to phase after complex-wave averaging, including higher orders:
+CUDA and MPS use it at every output factor, including 1x, with higher orders
+and with sample tilt and depth:
 
 ```python
 phase, native_loss = ptycho.preview(
@@ -985,37 +981,29 @@ phase, native_loss = ptycho.preview(
     sample_tilt_mrad=aberrations.sample_tilt_mrad,
     depth_spread_nm=aberrations.depth_spread_nm,
     upsampling_factor=4,
-    phase_estimator="phase_of_mean",
 )
 ```
 
-Both estimators use the same supplied aberration polynomial and depth weights, the
-same measured diffraction patterns and the supplied calibration. Fitting never
-runs inside `preview`. Diagnostic loss retains the original native-grid
-per-detector phase variance, even for wave averaging. Use
-`compute_loss=False` when only the image is needed.
+Fitting never runs inside `preview`. The diagnostic loss is the native-grid
+per-detector phase variance at every output factor. Use `compute_loss=False`
+when only the image is needed.
 
-The estimator choice applies at **every** output factor, including 1x. CUDA
-and MPS previews use wave averaging at 1x as well; request `mean_phase`
-explicitly to reproduce historical preview output. To compare 1x/2x/3x/4x
-scientifically, use the same estimator at each factor. Switching from legacy
-1x to wave-average 2x introduces an estimator change as well as a sampling change.
+The per-detector phase average (`phase_estimator="mean_phase"`) and the 1x
+complex object (`phase_estimator="complex_wave"`) were retired on 2026-10-25.
+Asking for either raises an error naming its replacement, the regularized
+`method="phase"` or `method="complex"` (see
+[Choose a direct reconstruction](direct-ptycho.md)). Saved results and
+records that name a retired estimator still load as they were saved, with a
+one-line notice; `run()` reconstructs them again with SSB. `phase_estimator`
+otherwise accepts only `"phase_of_mean"`, the default.
 
 Reduced contrast compression from wave averaging does not establish
 quantitative phase accuracy. Known-phase controls still show amplitude
 attenuation, and improvement is not uniform across tested noise/sampling cases.
-There is no fitted gain, display normalization or detector interpolation in
-this option. Higher-order corrections, tilt/depth and automatic sampling can
-be combined on both backends. The fit still searches C10/C12 and specimen
-geometry; higher-order coefficients are supplied corrections, not extra fitted parameters.
-
-This estimator does not change the native aberration-search objective.
-It is also accepted by `reconstruct`, where it participates in saved-result reuse.
-Live uses the same public preview default on both backends.
-If persisting the returned array, record `phase_estimator`,
-`upsampling_factor`, native scan sampling, aberrations, tilt and depth alongside
-it. Any application adopting the option must include the estimator in its
-scientific product/cache identity, rather than reuse an older phase product.
+There is no fitted gain, display normalization or detector interpolation.
+Higher-order corrections, tilt/depth and automatic sampling can be combined on
+both backends. The fit still searches C10/C12 and specimen geometry;
+higher-order coefficients are supplied corrections, not extra fitted parameters.
 
 Regression checks on the chosen physical CUDA device:
 
@@ -1024,9 +1012,9 @@ CUDA_VISIBLE_DEVICES=1 python -m pytest tests/hardware/cuda/test_ssb_wave_averag
 ```
 
 These compare public output against independent Torch per-detector inverse
-transforms at 1x/2x/3x/4x, with and without depth/tilt, unchanged native loss,
-return to the legacy estimator, and memory-batch invariance. They validate the
-implementation, not absolute phase accuracy.
+transforms at 1x/2x/3x/4x, with and without depth/tilt, unchanged native loss
+and memory-batch invariance. They validate the implementation, not absolute
+phase accuracy.
 
 ## Thick, tilted crystals
 

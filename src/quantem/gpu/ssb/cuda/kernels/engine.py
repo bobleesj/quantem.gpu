@@ -28,33 +28,6 @@ accumulate_phase_moments = cp.ElementwiseKernel(
     "ssb_accumulate_phase_moments",
 )
 
-# Mean phase kernel: avoids materializing a full phase buffer.
-mean_phase_kernel = cp.RawKernel(r'''
-extern "C" __global__
-void mean_phase(
-    const float2* __restrict__ corrected,
-    float* __restrict__ out,
-    int num_bf,
-    int ny,
-    int nx
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = ny * nx;
-    if (idx >= total) return;
-    int y = idx / nx;
-    int x = idx - y * nx;
-    size_t base = (size_t)y * (size_t)nx + (size_t)x;
-    size_t plane = (size_t)ny * (size_t)nx;
-    float sum = 0.0f;
-    for (int b = 0; b < num_bf; ++b) {
-        size_t off = (size_t)b * plane + base;
-        float2 v = corrected[off];
-        sum += atan2f(v.y, v.x);
-    }
-    out[base] = sum / (float)num_bf;
-}
-''', 'mean_phase')
-
 # Fused kernel: sum + sumsq of per-BF angles in a single pass.
 # Used by reconstruct_with_loss to avoid running the correction pipeline twice.
 sum_sumsq_phase_kernel = cp.RawKernel(r'''
@@ -380,7 +353,7 @@ thick_wave_sum_bounded_kernel = cp.RawKernel(
     "thick_wave_sum",
 )
 
-# Corrected full-plane spectra of a group of BF pixels for ThickSample.reconstruct (mean_phase, native grid): the
+# Corrected full-plane spectra of a group of BF pixels for ThickSample.phase_variance (the native grid): the
 # element-wise thick_correct of each stored value, with the half plane's mirror read in place, G(-q) = conj G(q), and the
 # DC replaced by the session's dc value. One launch replaces the full-plane copy (two gathers, a conjugate and a copy)
 # and the element-wise correction; the values are the same.
@@ -658,76 +631,4 @@ pk_kernel = cp.ElementwiseKernel(
         pk = thrust::complex<float>(aperture_k * cos_k, -aperture_k * sin_k);
     """,
     name="pk_kernel",
-)
-
-# Full-aberration pk kernel.  Computes pk = aperture(k) * exp(-i·χ(k)) for all
-# 14 Krivanek aberrations up to 5th order.  Used by SSBEngine.reconstruct_full
-# for explorer manual higher-order slider drag.  The three-parameter pk_kernel above is
-# NOT modified and continues to serve the optimization hot path.
-#
-# mags[14] and angles[14] follow the Krivanek order:
-#   0: C10, 1: C12/phi12,  2: C21/phi21, 3: C23/phi23,
-#   4: C30, 5: C32/phi32,  6: C34/phi34,
-#   7: C41/phi41, 8: C43/phi43, 9: C45/phi45,
-#   10: C50, 11: C52/phi52, 12: C54/phi54, 13: C56/phi56
-#
-# Input kx, ky are per-BF-pixel reciprocal-space coordinates (1/Angstrom); aperture_k
-# is the precomputed soft-edge mask; wavelength and kfactor=2π/wavelength are
-# passed in to avoid recomputation.
-# Fast variant using host-precomputed Chebyshev-ready arrays (see
-# kernels.common.pack_aberration_coefs).  Replaces 14 cosf per BF pixel with
-# ~20 FMAs via direct cos(φ)/sin(φ) from (kx, ky) + Chebyshev recurrence.
-pk_kernel_full = cp.ElementwiseKernel(
-    in_params="""
-        float32 kx, float32 ky, float32 aperture_k,
-        float32 wavelength, float32 kfactor,
-        raw float32 abr_mag_scaled, raw float32 abr_cm, raw float32 abr_sm
-        """,
-    out_params="complex64 pk",
-    operation="""
-        float r2 = kx * kx + ky * ky;
-        float inv_r = (r2 > 1e-30f) ? rsqrtf(r2) : 0.0f;
-        float r = r2 * inv_r;
-        float alpha = wavelength * r;
-        float c1 = kx * inv_r;
-        float s1 = ky * inv_r;
-        float c2 = fmaf(2.0f * c1, c1, -1.0f);
-        float s2 = 2.0f * s1 * c1;
-        float c3 = fmaf(c1, c2, -s1 * s2);
-        float s3 = fmaf(s1, c2,  c1 * s2);
-        float c4 = fmaf(c2, c2, -s2 * s2);
-        float s4 = 2.0f * s2 * c2;
-        float c5 = fmaf(c1, c4, -s1 * s4);
-        float s5 = fmaf(s1, c4,  c1 * s4);
-        float c6 = fmaf(c2, c4, -s2 * s4);
-        float s6 = fmaf(s2, c4,  c2 * s4);
-
-        float a2 = alpha * alpha;
-        float a3 = a2 * alpha;
-        float a4 = a2 * a2;
-        float a5 = a4 * alpha;
-        float a6 = a3 * a3;
-
-        float chi = 0.0f;
-        chi = fmaf(a2 * abr_mag_scaled[0], 1.0f,
-              fmaf(a2 * abr_mag_scaled[1], fmaf(c2, abr_cm[1],  s2 * abr_sm[1]),  chi));
-        chi = fmaf(a3 * abr_mag_scaled[2], fmaf(c1, abr_cm[2],  s1 * abr_sm[2]),
-              fmaf(a3 * abr_mag_scaled[3], fmaf(c3, abr_cm[3],  s3 * abr_sm[3]),  chi));
-        chi = fmaf(a4 * abr_mag_scaled[4], 1.0f,
-              fmaf(a4 * abr_mag_scaled[5], fmaf(c2, abr_cm[5],  s2 * abr_sm[5]),
-              fmaf(a4 * abr_mag_scaled[6], fmaf(c4, abr_cm[6],  s4 * abr_sm[6]),  chi)));
-        chi = fmaf(a5 * abr_mag_scaled[7], fmaf(c1, abr_cm[7],  s1 * abr_sm[7]),
-              fmaf(a5 * abr_mag_scaled[8], fmaf(c3, abr_cm[8],  s3 * abr_sm[8]),
-              fmaf(a5 * abr_mag_scaled[9], fmaf(c5, abr_cm[9],  s5 * abr_sm[9]),  chi)));
-        chi = fmaf(a6 * abr_mag_scaled[10], 1.0f,
-              fmaf(a6 * abr_mag_scaled[11], fmaf(c2, abr_cm[11], s2 * abr_sm[11]),
-              fmaf(a6 * abr_mag_scaled[12], fmaf(c4, abr_cm[12], s4 * abr_sm[12]),
-              fmaf(a6 * abr_mag_scaled[13], fmaf(c6, abr_cm[13], s6 * abr_sm[13]), chi))));
-        chi *= kfactor;
-
-        float sin_k, cos_k;
-        __sincosf(chi, &sin_k, &cos_k);
-        pk = thrust::complex<float>(aperture_k * cos_k, -aperture_k * sin_k);
-    """,
-    name="pk_kernel_full",
 )

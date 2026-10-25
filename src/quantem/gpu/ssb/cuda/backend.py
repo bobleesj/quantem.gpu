@@ -292,14 +292,16 @@ class CudaSSBBackend:
         return path, engine.bf_source_write_seconds
 
     def result(self, *, compute_loss: bool = True) -> SSBResult:
-        """Reconstruct the complex object at the current aberrations, with the phase-variance loss unless disabled.
+        """The SSB phase at the current aberrations (``fit()``'s final reconstruction), with the phase-variance loss.
 
-        Each call reconstructs from scratch (after ``fit()`` this is the final reconstruction).
+        The phase is the native-grid phase of the bright-field mean wave, as ``preview_upsampled`` computes it at
+        factor 1, held as a unit-amplitude wave; ``compute_loss=False`` skips the loss.
         """
         accel = self._get_accelerator()
         try:
-            object_wave = accel.reconstruct_object(
-                self.aberrations["C10"], self.aberrations["C12"], self.aberrations["phi12"],
+            phase, _ = accel.thick.reconstruct(
+                self.aberrations["C10"], self.aberrations["C12"], self.aberrations["phi12"], (0.0, 0.0), 0.0,
+                compute_loss=False,
             )
         except cp.cuda.memory.OutOfMemoryError:
             raise self._out_of_memory("reconstruction") from None
@@ -312,7 +314,7 @@ class CudaSSBBackend:
         elapsed_s = self._elapsed_optimize + self._elapsed_refine
         brightfield = self.browser_state().brightfield
         return SSBResult(
-            object_wave=object_wave,
+            object_wave=cp.exp(1j * phase),
             backend="cuda",
             aberrations=self.aberrations.copy(),
             scan_detector_rotation_deg=math.degrees(self._scan_detector_rotation_rad),
@@ -330,6 +332,8 @@ class CudaSSBBackend:
             bright_field_radius_px=brightfield.bright_field_radius_px,
             bright_field_edge_radius_px=brightfield.bright_field_edge_radius_px,
             trial_records=self._trial_records,
+            phase_estimator="phase_of_mean",
+            amplitude_estimated=False,
         )
 
     def fit(
@@ -405,46 +409,6 @@ class CudaSSBBackend:
                                 time.perf_counter() - started)
         return result
 
-    def reconstruct_result(
-        self,
-        aberrations: dict[str, float],
-        *,
-        compute_loss: bool = True,
-    ) -> SSBResult:
-        """Reconstruct the CUDA complex object at fixed aberrations."""
-
-        self.aberrations.update(aberrations)
-        return self.result(compute_loss=compute_loss)
-
-    def preview(
-        self,
-        aberrations: dict[str, float],
-        *,
-        compute_loss: bool,
-        higher_order_magnitudes: np.ndarray | None,
-        higher_order_angles: np.ndarray | None,
-    ) -> tuple[cp.ndarray, float | None]:
-        """Return one device-resident float32 phase and optional exact loss."""
-        accel = self._get_accelerator()
-        coefficients = aberrations["C10"], aberrations["C12"], aberrations["phi12"]
-        if higher_order_magnitudes is not None and accel._custom_fft._size == 128:
-            # The 128 fused kernels carry C10/C12 only; the depth-aware reference path at zero depth is the same
-            # model and estimator (mean phase over BF pixels, phase-variance loss), so higher orders work there too.
-            return accel.thick.reconstruct(
-                *coefficients, (0.0, 0.0), 0.0, compute_loss=compute_loss,
-                higher_order_magnitudes=higher_order_magnitudes, higher_order_angles=higher_order_angles,
-            )
-        if higher_order_magnitudes is not None:
-            if compute_loss:
-                phase, loss = accel.reconstruct_full_with_loss(higher_order_magnitudes, higher_order_angles)
-            else:
-                phase, loss = accel.reconstruct_full(higher_order_magnitudes, higher_order_angles), None
-        elif compute_loss:
-            phase, loss = accel.reconstruct_with_loss(*coefficients)
-        else:
-            phase, loss = accel.reconstruct(*coefficients), None
-        return phase, None if loss is None else float(loss)
-
     def preview_upsampled(
         self,
         aberrations: dict[str, float],
@@ -453,48 +417,32 @@ class CudaSSBBackend:
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_A: float = 0.0,
-        phase_estimator: str = "mean_phase",
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
-        """Upsampled depth-aware SSB with the diagnostic loss kept on the native grid."""
+        """SSB phase (of the bright-field mean wave) at the output factor, with the diagnostic loss on the native grid.
+
+        The loss is the phase variance over bright-field pixels: the engine's fused two-term pass for a thin sample,
+        else ``ThickSample.phase_variance``.
+        """
         accel = self._get_accelerator()
         coefficients = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
         phase, _ = accel.thick.reconstruct(
             *coefficients, sample_tilt_mrad, depth_spread_A, compute_loss=False,
             upsampling_factor=upsampling_factor,
-            phase_estimator=phase_estimator,
             higher_order_magnitudes=higher_order_magnitudes,
             higher_order_angles=higher_order_angles,
         )
         loss = None
         if compute_loss:
             if depth_spread_A > 0 or higher_order_magnitudes is not None:
-                _, loss = accel.thick.reconstruct(
-                    *coefficients, sample_tilt_mrad, depth_spread_A, compute_loss=True,
+                _, loss = accel.thick.phase_variance(
+                    *coefficients, sample_tilt_mrad, depth_spread_A,
                     higher_order_magnitudes=higher_order_magnitudes,
                     higher_order_angles=higher_order_angles,
                 )
             else:
                 _, loss = accel.reconstruct_with_loss(*coefficients)
-        return phase, loss
-
-    def preview_sample(
-        self,
-        aberrations: dict[str, float],
-        sample: dict[str, float],
-        *,
-        compute_loss: bool,
-    ) -> tuple[cp.ndarray, float | None]:
-        """Phase (and phase-variance loss) for a thick, tilted sample: ``ThickSample.reconstruct``.
-
-        ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "depth_spread_A"} (depth spread in the C10 unit, Angstrom; 0 = standard
-        SSB exactly)."""
-        phase, loss = self._get_accelerator().thick.reconstruct(
-            aberrations["C10"], aberrations["C12"], aberrations["phi12"],
-            (float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
-            float(sample.get("depth_spread_A", 0.0)), compute_loss=compute_loss,
-        )
         return phase, loss
 
     def fit_sample(self, **options) -> dict[str, object]:

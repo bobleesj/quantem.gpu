@@ -278,7 +278,10 @@ Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.
 forwards to `.run(...)` with a deprecation warning. Saved calibration/result
 schemas and their reading paths remain unchanged. The series entry point is
 `DirectPtycho.run_series(...)`; the previous spelling remains readable.
-The established `SSBResult` type holds all three direct methods.
+The established `SSBResult` type holds all three direct methods. The older SSB
+phase estimators are retired: `phase_estimator="mean_phase"` raises naming
+`method="phase"`, and `"complex_wave"` naming `method="complex"`. Results saved
+with them still load as saved, with a one-line notice.
 
 Iterative object/probe refinement is the separate `myptycho.IterativePtycho`
 workflow, also using `.run(...)`. Slices belong to its object model. Optical

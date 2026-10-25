@@ -25,8 +25,12 @@ COEFS = {f"{name}_nm": value for name, value in zip(NAMES, MAGNITUDES)} | {
 }
 
 
-def reference(ssb, coefs, factor, tilt, depth, estimator="phase_of_mean"):
-    """Evaluate polar chi and each detector wave independently in float64."""
+def reference(ssb, coefs, factor, tilt, depth, phase_variance=False):
+    """Evaluate polar chi and each detector wave independently in float64.
+
+    Returns the SSB phase (of the mean wave), or with ``phase_variance`` the phase-variance objective's mean BF phase
+    and loss.
+    """
     if ssb.backend == "mps":
         p = ssb._backend()._prepared
         g = np.asarray(p.g_qk)
@@ -78,11 +82,11 @@ def reference(ssb, coefs, factor, tilt, depth, estimator="phase_of_mean"):
         corrected[::native, ::native] = 0
         corrected[0, 0] = dc
         total += corrected
-        if estimator == "mean_phase":
+        if phase_variance:
             phase = np.angle(np.fft.ifft2(corrected))
             moments[0] += phase
             moments[1] += phase * phase
-    if estimator == "phase_of_mean":
+    if not phase_variance:
         total[0, 0] += (num_bf - len(g)) * dc
         return np.angle(np.fft.ifft2(total)), None
     mean = moments[0] / num_bf
@@ -97,7 +101,7 @@ def test_all_orders_coherent_tilt_and_upsampling_match_polar_oracle(factor, dept
                                   sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth)
         expected, _ = reference(ssb, COEFS, factor, (-9., 5.), depth)
         np.testing.assert_allclose(phase, expected, rtol=0, atol=5e-6)
-        _, native_loss = reference(ssb, COEFS, 1, (-9., 5.), depth, "mean_phase")
+        _, native_loss = reference(ssb, COEFS, 1, (-9., 5.), depth, phase_variance=True)
         assert loss == pytest.approx(native_loss, rel=1e-5, abs=1e-10)
         explicit, _ = ssb.preview(COEFS, upsampling_factor=factor,
                                  sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth,

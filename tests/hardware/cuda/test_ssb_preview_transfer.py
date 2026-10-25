@@ -17,7 +17,7 @@ def test_host_preview_matches_gpu_and_survives_later_updates(factor):
     optics = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0,
               "C21_nm": 50.0, "phi21_deg": 23.0, "C50_nm": 800000.0}
     options = {"sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": 18.0,
-               "compute_loss": False, "phase_estimator": "phase_of_mean"}
+               "compute_loss": False}
     try:
         native, _ = ssb.preview(optics, upsampling_factor=factor, output="native", **options)
         expected = cp.asnumpy(native)

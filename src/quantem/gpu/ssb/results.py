@@ -23,6 +23,41 @@ if TYPE_CHECKING:
 # 180-degree branch the scan-detector rotation is on, so the branch is left as given.
 COLUMN_SIGN_MIN = 0.2
 
+# SSB reconstructs the phase of the bright-field mean wave, ``phase_of_mean`` (``method="ssb"``). The older estimators
+# were retired on 2026-10-25, each in favour of the regularized method named here. Saved results and records that name
+# one still load as they were saved; asking for one raises an error naming its replacement.
+RETIRED_PHASE_ESTIMATORS = {"mean_phase": "phase", "complex_wave": "complex"}
+
+
+def check_phase_estimator(phase_estimator: str | None) -> None:
+    """Accept ``None`` or ``"phase_of_mean"``; raise for any other estimator, naming the method that replaces it.
+
+    Examples
+    --------
+    >>> check_phase_estimator("phase_of_mean")  # what method="ssb" computes
+    """
+    if phase_estimator in (None, "phase_of_mean"):
+        return
+    method = RETIRED_PHASE_ESTIMATORS.get(phase_estimator)
+    if method == "phase":
+        raise ValueError("phase_estimator='mean_phase' was retired. method='ssb' reconstructs the phase of the mean "
+                         "wave; for the regularized phase reconstruction use method='phase'.")
+    if method == "complex":
+        raise ValueError("phase_estimator='complex_wave' was retired. Use method='complex', which reconstructs "
+                         "amplitude and phase together.")
+    raise ValueError(f"phase_estimator must be 'phase_of_mean' (what method='ssb' computes) or omitted; "
+                     f"got {phase_estimator!r}.")
+
+
+def retired_estimator_note(phase_estimator: object, record: str) -> str | None:
+    """The one-line notice for a saved ``record`` whose image a retired estimator made; None otherwise."""
+    method = RETIRED_PHASE_ESTIMATORS.get(phase_estimator) if isinstance(phase_estimator, str) else None
+    if method is None:
+        return None
+    return (f"SSB: {record} was saved with the retired {phase_estimator} estimator and loads as saved; "
+            f"run(method='ssb') reconstructs the phase of the mean wave, run(method='{method}') replaces "
+            f"{phase_estimator}.")
+
 
 @dataclass
 class SSBResult(Mapping[str, float]):
@@ -81,9 +116,12 @@ class SSBResult(Mapping[str, float]):
     reconstruction_diagnostics : dict[str, object]
         Model conventions and optional training prediction error. This is not
         the conventional phase-variance ``loss`` or an independent validation.
-    phase_estimator : str
-        ``mean_phase`` or ``phase_of_mean`` for phase-only reconstruction;
-        ``complex_wave`` identifies a direct complex-object reconstruction.
+    phase_estimator : str | None
+        ``phase_of_mean`` for SSB (the phase of the bright-field mean wave);
+        a regularized result records its method, ``phase`` or ``complex``.
+        None marks a backend fit's working image, which the session replaces
+        with its SSB phase. Results saved with the retired ``mean_phase`` or
+        ``complex_wave`` estimators load with that name.
     amplitude_estimated : bool
         False for phase-only paths, whose complex wave has unit amplitude.
     loss : float | None
@@ -136,7 +174,7 @@ class SSBResult(Mapping[str, float]):
     reconstruction_method: str = "ssb"
     reconstruction_options: dict[str, object] = field(default_factory=dict)
     reconstruction_diagnostics: dict[str, object] = field(default_factory=dict)
-    phase_estimator: str = "complex_wave"
+    phase_estimator: str | None = None
     amplitude_estimated: bool = True
     source_path: str | None = None
     bright_field_center_px: tuple[float, float] | None = None
@@ -189,7 +227,8 @@ class SSBResult(Mapping[str, float]):
     def __repr__(self) -> str:
         lines = ["SSB Result" if self.reconstruction_method == "ssb" else f"Direct {self.reconstruction_method} result"]
         lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsampling_factor}x output")
-        lines.append(f"  Estimator      {self.phase_estimator}")
+        if self.phase_estimator is not None:
+            lines.append(f"  Estimator      {self.phase_estimator}")
         if not self.amplitude_estimated:
             lines.append("  Amplitude      not estimated (unit-amplitude phase representation)")
         if self.loss is not None:

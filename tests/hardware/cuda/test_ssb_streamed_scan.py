@@ -133,10 +133,9 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
             with io.load(exported, backend="cuda") as reopened:
                 actual_counts = cp.from_dlpack(reopened.read())
                 cp.testing.assert_array_equal(actual_counts[..., 0, :], expected_counts)
-            historical, _ = session.preview(ABERRATIONS, compute_loss=False, phase_estimator="mean_phase")
-            assert historical.shape == (1024, 1024) and np.isfinite(historical).all()
-            coherent = session.reconstruct(fitted, compute_loss=False, phase_estimator="complex_wave")
-            assert coherent.amplitude_estimated and coherent.phase.shape == (1024, 1024)
+            # the phase-variance loss still reads the full Fourier stack at 1024
+            phase, loss = session.preview(ABERRATIONS)
+            assert phase.shape == (1024, 1024) and np.isfinite(phase).all() and np.isfinite(loss)
             # Dense reference is limited to 1024; the public large path matches it.
             values[..., 2, 3] = 0
             with SSB(values, **SETTINGS, scan_detector_rotation_flipped=True) as dense:

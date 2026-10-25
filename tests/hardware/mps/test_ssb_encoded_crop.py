@@ -100,10 +100,8 @@ def test_encoded_crop_prepares_the_decoded_crop_bit_for_bit(flipped, scan_region
         assert g_observed.shape == g_expected.shape
         assert np.array_equal(g_observed.view(np.uint32), g_expected.view(np.uint32))
         aberrations = {"C10": -40.0, "C12": 12.0, "phi12": 0.4}
-        phase_expected, loss_expected = expected.preview(aberrations, compute_loss=True, higher_order_magnitudes=None,
-                                                         higher_order_angles=None)
-        phase_observed, loss_observed = observed.preview(aberrations, compute_loss=True, higher_order_magnitudes=None,
-                                                         higher_order_angles=None)
+        phase_expected, loss_expected = expected.phase_variance(aberrations)
+        phase_observed, loss_observed = observed.phase_variance(aberrations)
         assert np.array_equal(phase_observed, phase_expected) and loss_observed == loss_expected
         columns = np.zeros((5, int(np.prod(observed.scan_shape))), np.float32)
         reference = np.zeros_like(columns)
