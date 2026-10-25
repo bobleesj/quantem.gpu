@@ -3,6 +3,7 @@
 Dated records retain their original workload, backend, source revision and
 acceptance limits. They are evidence, not a statement of current release speed.
 
+- [Redraw at slider speed: q, -q symmetry for SSB and a drag window for regularized methods](2026-10-24-redraw-symmetry-and-drag-window.md)
 - [Lower CUDA SSB staging memory without changing numerical results](2026-10-22-ssb-staging-memory.md)
 - [Initial fitting before fifth-order refinement](2026-10-22-ssb-initialization-and-refinement.md)
 - [Reuse Fourier preparation in four-case SSB review](2026-10-22-rotation-comparison-reuse.md)
