@@ -126,6 +126,9 @@ public final class MetalSSBJointModel {
   private var batchPower: MTLBuffer?
   private var coherent: SSBCoherentReconstruction
   private var fifthOrder: SSBFifthOrderAgreement?
+  /// GPU execution time (command-buffer GPU start to end) of the latest `agreements` or
+  /// `fifthOrderAgreements` call, for benchmarks; excludes host encoding and the host band reduction.
+  public private(set) var lastAgreementGPUSeconds = 0.0
 
   public var wavelengthAngstroms: Double {
     geometry.modelWavelengthAngstroms ?? Double(geometry.wavelengthAngstroms)
@@ -402,10 +405,12 @@ public final class MetalSSBJointModel {
         Float(point.sampleTiltMrad[1] * 1e-3),
       ] + packed
     }
-    return try fifthOrder!.evaluate(
+    let scores = try fifthOrder!.evaluate(
       rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
       probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
       isCancelled: isCancelled)
+    lastAgreementGPUSeconds = fifthOrder!.lastGPUSeconds
+    return scores
   }
 
   /// The exact float32 inputs of the agreement objective at the current rotation, for an independent
@@ -507,6 +512,7 @@ public final class MetalSSBJointModel {
       dispatch(reduction, width: bandCount, height: Int(batch))
     }
     try finish(commands)
+    lastAgreementGPUSeconds = commands.gpuEndTime - commands.gpuStartTime
     // The band power in double precision from the float32 BF sums, as the MPS band reduction.
     let sums = batchPower.contents().assumingMemoryBound(to: SIMD4<Float>.self)
     let weight = weights.contents().assumingMemoryBound(to: Float.self)

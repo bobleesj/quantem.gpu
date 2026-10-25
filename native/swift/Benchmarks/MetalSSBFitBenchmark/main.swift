@@ -10,6 +10,8 @@ import Native4DSTEMIO
 //
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --scan-step A [--kv 300] [--semiangle 30]
 //     [--index DIR] [--max-order 5] [--trials 200] [--repeats 1] [--output RESULT.json]
+//   metal-ssb-fit-benchmark --cache DIR --objective-bench RUN.json [--repeats 3] [--output BENCH.json]
+//     times the agreement objectives at fixed candidates instead of fitting (ObjectiveBenchmark.swift).
 
 struct Options {
   var input: URL?
@@ -27,6 +29,7 @@ struct Options {
   var center: (Double, Double)?
   var radius: Double?
   var darkField = true
+  var objectiveBench: URL?
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -56,6 +59,7 @@ struct Options {
         center = (parts[0], parts[1])
       case "--radius": radius = Double(try value(flag))
       case "--no-dark-field": darkField = false
+      case "--objective-bench": objectiveBench = URL(fileURLWithPath: try value(flag))
       default: throw failure("Unknown argument \(flag)")
       }
     }
@@ -378,6 +382,12 @@ let darkFieldURL = options.cache.appendingPathComponent("dark_field.f32")
 let darkField: [Float]? =
   options.darkField && FileManager.default.fileExists(atPath: darkFieldURL.path)
   ? try Data(contentsOf: darkFieldURL).withUnsafeBytes { Array($0.bindMemory(to: Float.self)) } : nil
+if let run = options.objectiveBench {
+  try objectiveBenchmark(
+    run: run, device: device, geometry: setup.geometry, counts: counts, countType: countType,
+    repeats: options.repeats, output: options.output)
+  exit(0)
+}
 var results: [[String: Any]] = []
 for repeatIndex in 0..<options.repeats {
   try autoreleasepool {

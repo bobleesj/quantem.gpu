@@ -13,6 +13,8 @@ final class SSBFifthOrderAgreement {
   private let queue: MTLCommandQueue
   private let probe, agreement, power, score: MTLComputePipelineState
   private var workspaces: [String: MTLBuffer] = [:]
+  /// GPU time of the latest `evaluate` command buffer.
+  private(set) var lastGPUSeconds = 0.0
 
   init(device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary) throws {
     self.device = device
@@ -112,6 +114,7 @@ final class SSBFifthOrderAgreement {
     if let error = commands.error {
       throw MetalSSBError.commandExecution(error.localizedDescription)
     }
+    lastGPUSeconds = commands.gpuEndTime - commands.gpuStartTime
     if isCancelled() { throw CancellationError() }
     let values = scores.contents().assumingMemoryBound(to: Float.self)
     let result = rows.indices.map { Double(values[$0]) }
