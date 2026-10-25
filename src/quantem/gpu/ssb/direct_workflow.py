@@ -4,6 +4,8 @@ import hashlib
 import json
 import math
 import time
+from contextlib import nullcontext
+from functools import wraps
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.ssb.persistence import load_result, result_paths
@@ -114,47 +116,89 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
     )
 
 
-def drag(session, control, coefs, tilt, depth, factor, policy):
-    """The wave while ``control`` is dragged, every other input held.
+def _on_scan_gpu(function):
+    """Run with the session's GPU current, as the session's own methods do: drags arrive from a widget, not a method."""
+    @wraps(function)
+    def on_scan_gpu(session, *args):
+        with nullcontext() if session._device is None else cp.cuda.Device(session._device):
+            return function(session, *args)
+    return on_scan_gpu
 
-    Served from the session's `DragWindow` along that control when it is
-    complete and covers the value, from the prepared system when the optics
-    are those already prepared (a strength drag), and otherwise exactly by
-    `solve`. A window for another control, other fixed inputs, or a value
-    outside it is replaced by a new one centred on this value; `advance` then
-    builds it one node at a time between frames. Committed frames and saved
-    results always use `solve`, so they remain the exact model.
+
+@_on_scan_gpu
+def drag(session, control, coefs, tilt, depth, factor, policy):
+    """The float32 phase (on the device) while ``control`` is dragged, every other input held.
+
+    Serves: ShowPtycho slider drags, C10, C12 and phi12 typically, at 3x on
+    the full scan. Regularized methods are served from a `DragWindow` along
+    that control, from the prepared system when the optics are those already
+    prepared (a strength drag), and otherwise exactly by `solve`. SSB
+    (``policy`` from ``settings("ssb", ...)``, plus an optional
+    ``phase_estimator``) on a fine grid is served from a `WaveWindow`: the
+    single-sideband terms interpolated, the triple-overlap terms exact. A
+    window for another control, other held inputs, or a value outside it is
+    replaced by one centred on this value; `advance` then builds it one node
+    at a time between frames, with exact frames meanwhile. Committed frames
+    and saved results never come from a window, so they remain the exact model.
     """
+    method = policy.get("method", "ssb")
+    value = float(coefs.get(control, 0.0))
+    if session.backend != "cuda" or session._streamed is not None:
+        return _exact(session, coefs, tilt, depth, factor, policy)
+    if method == "ssb":
+        if factor == 1 or policy.get("phase_estimator", "phase_of_mean") != "phase_of_mean":
+            return _exact(session, coefs, tilt, depth, factor, policy)
+        engine = session._backend()._get_accelerator()
+        held = ("ssb", *_inputs(session, {**coefs, control: None}, tilt, depth, factor, policy)[2])
+        window = getattr(session, "_direct_window", None)
+        if window is None or window[0] != held or window[1].control != control or not window[1].series.covers(value):
+            from quantem.gpu.ssb.cuda.thick import WaveWindow
+
+            session._direct_window = None
+            window = session._direct_window = held, WaveWindow(engine.thick, coefs, control, tilt, depth, factor)
+        if window[1].series.ready:
+            return window[1].phase(value)
+        return _exact(session, coefs, tilt, depth, factor, policy)
     from quantem.gpu.ssb.cuda.direct import DragWindow
 
-    if session.backend != "cuda" or session._streamed is not None:
-        return solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
     engine, optics, key = _inputs(session, coefs, tilt, depth, factor, policy)
     cached = getattr(session, "_prepared_direct", None)
-    if cached is not None and cached[0] == key and policy["method"] in cached[1]:
-        return solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
+    if cached is not None and cached[0] == key and method in cached[1]:
+        return _exact(session, coefs, tilt, depth, factor, policy)
     held = _inputs(session, {**coefs, control: None}, tilt, depth, factor, policy)[2]
-    complex_object = policy["method"] == "complex"
+    complex_object = method == "complex"
     window = getattr(session, "_direct_window", None)
-    value = float(coefs.get(control, 0.0))
     if (window is None or window[0] != held or window[1].control != control
-            or not window[1].covers(value) or (complex_object and not window[1].complex_object)):
+            or not window[1].series.covers(value) or (complex_object and not window[1].complex_object)):
         # drop the old window first: a complex one holds about 2 GB on the test field
         session._direct_window = None
         window = session._direct_window = held, DragWindow(
             engine, optics, control, factor, complex_object=complex_object,
             smoothness_inv_A=policy["smoothness_inv_A"], detector_weighting=policy["detector_weighting"],
         )
-    if window[1].ready:
-        return window[1].solve(value, policy["phase_regularization"], policy.get("amplitude_regularization"),
-                               complex_object=complex_object)
-    return solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
+    if window[1].series.ready:
+        wave, _ = window[1].solve(value, policy["phase_regularization"], policy.get("amplitude_regularization"),
+                                  complex_object=complex_object)
+        return cp.angle(wave).astype(cp.float32)
+    return _exact(session, coefs, tilt, depth, factor, policy)
 
 
+@_on_scan_gpu
 def advance(session) -> bool:
     """Add one node to the pending drag window; True when there is nothing left to build."""
     window = getattr(session, "_direct_window", None)
     return window is None or window[1].step()
+
+
+def _exact(session, coefs, tilt, depth, factor, policy):
+    """The exact phase, as ``preview(..., output="native")`` computes it."""
+    method = policy.get("method", "ssb")
+    if method == "ssb":
+        phase, _ = session.preview(coefs, compute_loss=False, upsampling_factor=factor, sample_tilt_mrad=tilt or (0.0, 0.0),
+                                   depth_spread_nm=depth or 0.0, phase_estimator=policy.get("phase_estimator"), output="native")
+        return phase
+    wave, _ = solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
+    return cp.angle(wave).astype(cp.float32)
 
 
 def _inputs(session, coefs, tilt, depth, factor, policy):
@@ -173,8 +217,8 @@ def _inputs(session, coefs, tilt, depth, factor, policy):
         tuple(optics["sample_tilt_mrad"]),
         optics["depth_spread_nm"],
         factor,
-        policy["smoothness_inv_A"],
-        policy["detector_weighting"],
+        policy.get("smoothness_inv_A"),
+        policy.get("detector_weighting"),
     )
     return engine, optics, key
 

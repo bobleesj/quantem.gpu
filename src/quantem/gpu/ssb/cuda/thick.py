@@ -25,7 +25,9 @@ from quantem.gpu.ssb.cuda.kernels.engine import (
     thick_wave_sum_bounded_kernel,
     thick_wave_sum_bounded_full_kernel,
 )
+from quantem.gpu.ssb.cuda import chebyshev
 from quantem.gpu.ssb.higher_order import pack_coefficients
+from quantem.gpu.ssb.units import ENGINE_PER_NM, aberrations_to_engine, higher_order_arrays, validate_aberrations
 
 
 class ThickSample:
@@ -84,15 +86,9 @@ class ThickSample:
         native_ny, native_nx = ny, nx
         if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
             raise ValueError("upsampling_factor must be 1, 2, 3, 4, or 8.")
-        if upsampling_factor != 1:
-            ny, nx = ny * upsampling_factor, nx * upsampling_factor
-            # Same field of view: Fourier spacing is unchanged. Tile measured
-            # scan-frequency aliases, then evaluate the kernel at the new q.
-            qx = (cp.fft.fftfreq(ny) * ny * cache["qx_1d"][1]).astype(cp.float32).reshape(1, ny, 1)
-            qy = (cp.fft.fftfreq(nx) * nx * cache["qy_1d"][1]).astype(cp.float32).reshape(1, 1, nx)
-        else:
-            qx = cache["qx_1d"].reshape(1, ny, 1)
-            qy = cache["qy_1d"].reshape(1, 1, nx)
+        qrow, qcol = self._frequencies(upsampling_factor)
+        ny, nx = qrow.size, qcol.size
+        qx, qy = qrow.reshape(1, ny, 1), qcol.reshape(1, 1, nx)
         if average_wave:
             return self._reconstruct_wave(
                 C10, C12, phi12, sample_tilt_mrad, thickness, qx.ravel(), qy.ravel(),
@@ -197,6 +193,42 @@ class ThickSample:
         higher_order_angles: np.ndarray | None,
     ) -> tuple[cp.ndarray, float | None]:
         """Accumulate float32 corrections in float64 before a single inverse FFT."""
+        spectrum = self._wave_spectrum(
+            C10, C12, phi12, sample_tilt_mrad, thickness, qrow, qcol, chunk_bytes=chunk_bytes,
+            higher_order_magnitudes=higher_order_magnitudes, higher_order_angles=higher_order_angles,
+        )
+        phase = self._wave_phase(spectrum, qrow.size, qcol.size)
+        loss = None
+        if compute_loss:
+            _, loss = self.reconstruct(
+                C10, C12, phi12, sample_tilt_mrad, thickness,
+                compute_loss=True, chunk_bytes=chunk_bytes,
+                higher_order_magnitudes=higher_order_magnitudes,
+                higher_order_angles=higher_order_angles,
+            )
+        return phase, loss
+
+    def _wave_spectrum(
+        self,
+        C10: float,
+        C12: float,
+        phi12: float,
+        sample_tilt_mrad: tuple[float, float],
+        thickness: float,
+        qrow: cp.ndarray,
+        qcol: cp.ndarray,
+        *,
+        chunk_bytes: int,
+        higher_order_magnitudes: np.ndarray | None,
+        higher_order_angles: np.ndarray | None,
+        pairs: int = 0,
+    ) -> cp.ndarray:
+        """The BF sum of corrected spectra, (rows, unique columns) complex128, before the mirror and the FFT.
+
+        ``pairs`` 1 or 2 sums only the single-sideband or only the triple-overlap
+        terms (fine grids); their sum is the full spectrum (0), which the
+        SSB drag window uses to interpolate the first and evaluate the second.
+        """
         engine = self.engine
         cache = engine._cache
         num_bright_field_pixels = int(cache["num_bright_field_pixels"])
@@ -221,6 +253,9 @@ class ThickSample:
         kernel = thick_wave_sum_bounded_kernel if fine_grid else thick_wave_sum_kernel
         if higher_order_magnitudes is not None:
             kernel = thick_wave_sum_bounded_full_kernel if fine_grid else thick_wave_sum_full_kernel
+        if pairs:
+            kernel = _pair_kernel(pairs, higher_order_magnitudes is not None)
+        if higher_order_magnitudes is not None:
             params = (*params, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
         for start in range(0, num_bright_field_pixels, group_size * groups):
             active = min(groups, math.ceil((num_bright_field_pixels - start) / group_size))
@@ -233,6 +268,12 @@ class ThickSample:
                  *params),
             )
             spectrum += partial[:active].sum(axis=0, dtype=cp.complex128)
+        return spectrum
+
+    def _wave_phase(self, spectrum: cp.ndarray, rows: int, cols: int) -> cp.ndarray:
+        """float32 phase of the BF-averaged wave from ``_wave_spectrum``'s half or full plane."""
+        num_bright_field_pixels = int(self.engine._cache["num_bright_field_pixels"])
+        unique_cols = spectrum.shape[1]
         if unique_cols != cols:
             # Every term obeys F(-q) = -conj(F(q)): G(-q, k) = conj G(q, k) for real
             # counts, and t1(-q, k) = conj t2(q, k), t2(-q, k) = conj t1(q, k) with
@@ -241,16 +282,21 @@ class ThickSample:
             negative = -cp.conj(spectrum[(-cp.arange(rows)) % rows, 1:cols // 2][:, ::-1])
             spectrum = cp.concatenate((spectrum, negative), axis=1)
         # the BF sum and the inverse FFT run in complex128; the phase is returned float32 like every other path
-        phase = cp.angle(cp.fft.ifft2(spectrum / num_bright_field_pixels)).astype(cp.float32)
-        loss = None
-        if compute_loss:
-            _, loss = self.reconstruct(
-                C10, C12, phi12, sample_tilt_mrad, thickness,
-                compute_loss=True, chunk_bytes=chunk_bytes,
-                higher_order_magnitudes=higher_order_magnitudes,
-                higher_order_angles=higher_order_angles,
-            )
-        return phase, loss
+        return cp.angle(cp.fft.ifft2(spectrum / num_bright_field_pixels)).astype(cp.float32)
+
+    def _frequencies(self, upsampling_factor: int) -> tuple[cp.ndarray, cp.ndarray]:
+        """Row and column frequencies (1/A) of the output grid.
+
+        Same field of view at every factor: Fourier spacing is unchanged; the
+        measured scan-frequency aliases are tiled and the kernels evaluated at
+        the new q.
+        """
+        cache = self.engine._cache
+        if upsampling_factor == 1:
+            return cache["qx_1d"], cache["qy_1d"]
+        ny, nx = cache["ny"] * upsampling_factor, cache["nx"] * upsampling_factor
+        return ((cp.fft.fftfreq(ny) * ny * cache["qx_1d"][1]).astype(cp.float32),
+                (cp.fft.fftfreq(nx) * nx * cache["qy_1d"][1]).astype(cp.float32))
 
     def _wave_group_bounds(self, group_size: int) -> cp.ndarray:
         """Cache exact coordinate bounds for each complete BF group on GPU."""
@@ -465,3 +511,76 @@ class ThickSample:
             C10, C12, math.cos(2.0 * phi12), math.sin(2.0 * phi12), engine._factor,
             thickness, sample_tilt_mrad[0] * 1e-3, sample_tilt_mrad[1] * 1e-3,
         ))
+
+
+_pair_kernels = {}
+
+
+def _pair_kernel(pairs: int, higher_order: bool):
+    """The fine-grid wave sum restricted to one class of sideband terms (``_wave_spectrum(pairs=)``)."""
+    key = pairs, higher_order
+    if key not in _pair_kernels:
+        from quantem.gpu.ssb.cuda.kernels import engine as kernels
+
+        correction = kernels._HIGHER_CORRECTION_SOURCE if higher_order else kernels._THICK_CORRECTION_SOURCE
+        _pair_kernels[key] = cp.RawKernel(
+            f"#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n#define SSB_WAVE_PAIRS {pairs}\n" + correction
+            + kernels._THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
+    return _pair_kernels[key]
+
+
+class WaveWindow:
+    """The fine-grid SSB spectrum along one aberration control, for redrawing while it is dragged.
+
+    Serves: ShowPtycho SSB drags of C10, C12 or phi12 with a fitted higher-order
+    probe held, at 3x on the full 512 x 512 scan.
+
+    A term with one sideband aperture open has gamma / |gamma| = sign(w)
+    exp(-i (chi(k -+ q) - chi(k))), an entire function of the control, so the
+    BF sum of those terms is kept as a Chebyshev series (`chebyshev.Series`,
+    one exact `_wave_spectrum(pairs=1)` per node). Where both apertures are
+    open the normalization |gamma| depends on the optics and has zeros on the
+    real axis, so those triple-overlap terms (15 % of the nonzero terms, all at
+    |q| <= R, on the test field) are summed exactly every frame
+    (``pairs=2``). The two parts add to the full spectrum.
+    """
+
+    def __init__(self, thick, aberrations_nm: dict, control: str, tilt, depth_nm: float, factor: int):
+        self.thick, self.aberrations, self.control = thick, dict(aberrations_nm), control
+        self.tilt = tuple(float(value) for value in (tilt or (0.0, 0.0)))
+        self.depth_A = float(depth_nm or 0.0) * ENGINE_PER_NM
+        self.qrow, self.qcol = thick._frequencies(factor)
+        center = float(aberrations_nm.get(control, 0.0))
+        self.series = chebyshev.Series(center, chebyshev.half_width(thick.engine, aberrations_nm, control))
+        self.shape = None
+
+    def step(self) -> bool:
+        """Add the single-sideband spectrum at the next node; True once the window is complete."""
+        if self.series.ready:
+            return True
+        spectrum = self._spectrum(self.series.nodes[self.series.added], pairs=1)
+        self.shape = spectrum.shape
+        self.series.add(spectrum)
+        return self.series.ready
+
+    def phase(self, value: float) -> cp.ndarray:
+        """The float32 phase at control ``value`` (inside the window)."""
+        spectrum = self.series.evaluate(value).reshape(self.shape) + self._spectrum(value, pairs=2)
+        return self.thick._wave_phase(spectrum, self.qrow.size, self.qcol.size)
+
+    def _spectrum(self, value: float, *, pairs: int) -> cp.ndarray:
+        """``_wave_spectrum`` at the control value, with the engine arguments ``SSB.preview`` derives."""
+        aberrations = validate_aberrations({**self.aberrations, self.control: value}, higher_order=True)
+        coefs = aberrations_to_engine(aberrations)
+        magnitudes, angles = higher_order_arrays(aberrations) or (None, None)
+        if magnitudes is not None and not np.any(magnitudes[2:]):
+            # the two-term kernels then read the same float32 coefficients the 14-term kernel would
+            coefs = {"C10": float(magnitudes[0]) * ENGINE_PER_NM, "C12": float(magnitudes[1]) * ENGINE_PER_NM,
+                     "phi12": float(angles[1])}
+            magnitudes = angles = None
+        elif magnitudes is not None:
+            magnitudes = magnitudes * np.float32(ENGINE_PER_NM)
+        return self.thick._wave_spectrum(
+            coefs["C10"], coefs["C12"], coefs["phi12"], self.tilt, self.depth_A, self.qrow, self.qcol,
+            chunk_bytes=1 << 30, higher_order_magnitudes=magnitudes, higher_order_angles=angles, pairs=pairs,
+        )

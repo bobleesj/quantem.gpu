@@ -158,6 +158,13 @@ __device__ float2 thick_correct_k(float2 G, float qx, float qy, float kx, float 
         // the soft aperture edge, but omit phases and depth weights at zero.
         if (g_k.w == 0.0f || (g_m.w == 0.0f && g_p.w == 0.0f)) return make_float2(0.0f, 0.0f);
 #endif
+#if defined(SSB_WAVE_PAIRS) && SSB_WAVE_PAIRS == 1
+        // single-sideband terms only: gamma / |gamma| = sign(w) exp(-i (chi_m - chi_k)), entire in the optics
+        if (g_m.w != 0.0f && g_p.w != 0.0f) return make_float2(0.0f, 0.0f);
+#elif defined(SSB_WAVE_PAIRS) && SSB_WAVE_PAIRS == 2
+        // both sidebands open (triple overlap): the normalization depends on the optics
+        if (g_m.w == 0.0f || g_p.w == 0.0f) return make_float2(0.0f, 0.0f);
+#endif
         float chi_m = factor * g_m.x * fmaf(C12, fmaf(g_m.y, cos2phi12, g_m.z * sin2phi12), C10);
         float chi_p = factor * g_p.x * fmaf(C12, fmaf(g_p.y, cos2phi12, g_p.z * sin2phi12), C10);
 #ifdef SSB_HIGHER_ORDER
@@ -267,7 +274,10 @@ extern "C" __global__ void thick_wave_sum(
     size_t offset = 0, stride = (size_t)native_rows * stored_cols;
     bool conjugate = false;
     if (q == 0) {
+#if !defined(SSB_WAVE_PAIRS) || SSB_WAVE_PAIRS == 1
+        // the scan mean belongs to one class of a split sum, not both
         sum = make_double2((double)dc.x * (stop-start), (double)dc.y * (stop-start));
+#endif
     } else if (q < plane) {
         int row = q / output_cols, col = q % output_cols;
         qr = qrow[row]; qc = qcol[col];
@@ -292,11 +302,23 @@ extern "C" __global__ void thick_wave_sum(
         overlap = fminf(minus_row*minus_row + minus_col*minus_col,
                         plus_row*plus_row + plus_col*plus_col) <= radius*radius;
 #endif
+#if defined(SSB_WAVE_PAIRS) && SSB_WAVE_PAIRS == 2
+        // both shifted apertures must meet the group, and they overlap only for |q| <= half the support
+        overlap = fmaxf(minus_row*minus_row + minus_col*minus_col,
+                        plus_row*plus_row + plus_col*plus_col) <= radius*radius;
+        support *= 0.5f * (1.0f + 8.0f * 1.1920928955078125e-7f);
+#endif
         contributes = !dc_alias && qr*qr + qc*qc <= support*support && overlap;
         int sr = row % native_rows, sc = col % native_cols;
         conjugate = stored_cols != native_cols && sc >= stored_cols;
         if (conjugate) { sr = (native_rows-sr) % native_rows; sc = native_cols-sc; }
         offset = (size_t)sr * stored_cols + sc;
+    }
+    // A block none of whose frequencies meets this BF group (beyond the support, or culled) only writes its zeros:
+    // the per-tile BF setup below would otherwise run for nothing.
+    if (!__syncthreads_or(contributes)) {
+        if (q < plane) partial[(size_t)blockIdx.y * plane + q] = sum;
+        return;
     }
     // The BF pixel's own geometry and chi(k) are the same for every frequency: computed once per block and tile.
     __shared__ float4 probe_k[WAVE_TILE];

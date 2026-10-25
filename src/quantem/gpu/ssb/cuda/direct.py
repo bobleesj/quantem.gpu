@@ -5,13 +5,13 @@ The transfer is the same tilted, finite-depth probe model used by SSB fitting.
 Regularization acts on the solution, never on a rendered image.
 """
 
-import math
 import weakref
 from dataclasses import dataclass
 
 import cupy as cp
 import numpy as np
 
+from quantem.gpu.ssb.cuda import chebyshev
 from quantem.gpu.ssb.cuda.kernels.engine import _THICK_GEOMETRY_SOURCE
 from quantem.gpu.ssb.higher_order import CHI_SOURCE, pack_coefficients
 from quantem.gpu.ssb.units import higher_order_arrays
@@ -321,13 +321,6 @@ __global__ void direct_cholesky(const complex<double>* gram, const complex<doubl
     }
 }
 """
-# coefficient row n gains weight[n] * node values: one Chebyshev node of a DragWindow
-_accumulate = cp.ElementwiseKernel(
-    "raw complex128 values, raw float64 weight, int64 size",
-    "complex128 coefficient",
-    "coefficient += weight[i / size] * values[i % size]",
-    "direct_window_accumulate",
-)
 _kernels = {}
 
 
@@ -670,29 +663,14 @@ class DragWindow:
     same) at 3x on the full 512 x 512 scan, 1 ms phase and 3 ms complex per
     frame after a 0.45 / 0.75 s build.
 
-    Along one control c (``C10_nm``, ``phi12_deg``, ...) with everything else
-    fixed, every Gram entry and right side is sum_k f_k exp(i (c - c0) u_k),
-    an entire function of c, so on [c0 - h, c0 + h] its Chebyshev series
-    converges like 2 (z / 2)^(N + 1) / (N + 1)!, z = h max|u|. ``step`` adds
-    one exact preparation at a Chebyshev node x_j = cos(pi (j + 1/2) / (N + 1))
-    to the coefficients c_n = (2 / (N + 1)) sum_j T_n(x_j) F(x_j) (c_0 halved);
-    once all N + 1 are in, ``solve`` evaluates any c in the window as
-    F = sum_n c_n T_n(x), one matrix-vector product, then a float64 Cholesky
-    solve per frequency, instead of evaluating the transfer at every BF pixel.
-
-    max|u| is the spread of d chi / dc over the aperture, as chi enters every
-    product as a difference of two pupil points: for a magnitude C_nm,
-    (2 pi / lambda) alpha^(n+1) / (n + 1), doubled for m > 0 where the
-    derivative changes sign; for an azimuth phi_nm, m C_nm times that, doubled.
-    h = 3 / max|u| with N = 12 keeps the truncation (3.6e-7 of the largest Gram
-    entry on the test field) below the float32 transfer's own error.
-
-    A complex window also holds the phase statistics as its lower-right block,
+    Along one control with everything else fixed, every Gram entry and right
+    side is an entire function of the control (`chebyshev`), so ``step`` adds
+    one exact preparation at a Chebyshev node and ``solve`` evaluates any value
+    in the window as one matrix-vector product, then a float64 Cholesky solve
+    per frequency, instead of evaluating the transfer at every BF pixel. A
+    complex window also holds the phase statistics as its lower-right block,
     so one build serves both regularized methods.
     """
-
-    order = 12
-    reach = 3.0
 
     def __init__(self, engine, optics, control: str, factor: int, *, complex_object: bool,
                  smoothness_inv_A: float, detector_weighting: str):
@@ -700,45 +678,25 @@ class DragWindow:
         self.complex_object = complex_object
         self.options = dict(complex_object=complex_object, smoothness_inv_A=smoothness_inv_A,
                             detector_weighting=detector_weighting, eigenbasis=False)
-        self.center = float(optics["aberrations"].get(control, 0.0))
-        spread = _phase_spread(engine, optics["aberrations"], control)
-        self.half_width = self.reach / spread if spread > 0 else math.inf
-        nodes = np.cos(np.pi * (np.arange(self.order + 1) + 0.5) / (self.order + 1))
-        self.nodes = list(self.center + (0.0 if math.isinf(self.half_width) else self.half_width) * nodes)
-        weights = (2.0 / (self.order + 1)) * np.cos(np.outer(np.arange(self.order + 1), np.arccos(nodes)))
-        weights[0] *= 0.5
-        self.weights = cp.asarray(weights)
-        self.coefficients = None
-        self.added = 0
-
-    @property
-    def ready(self) -> bool:
-        return self.added == self.order + 1
-
-    def covers(self, value: float) -> bool:
-        return abs(value - self.center) <= self.half_width
+        center = float(optics["aberrations"].get(control, 0.0))
+        self.series = chebyshev.Series(center, chebyshev.half_width(engine, optics["aberrations"], control))
+        self.template = None
 
     def step(self) -> bool:
         """Add the next node's exact statistics; True once the window is complete."""
-        if self.ready:
+        if self.series.ready:
             return True
-        aberrations = {**self.optics["aberrations"], self.control: self.nodes[self.added]}
+        aberrations = {**self.optics["aberrations"], self.control: self.series.nodes[self.series.added]}
         prepared = PreparedDirect.prepare(self.engine, {**self.optics, "aberrations": aberrations},
                                           self.factor, **self.options)
-        values = cp.concatenate([part.ravel() for group in prepared.groups for part in (group.gram, group.rhs)])
-        if self.coefficients is None:
-            self.coefficients = cp.zeros((self.order + 1, values.size), cp.complex128)
-            self.template = prepared
-        _accumulate(values, self.weights[:, self.added], np.int64(values.size), self.coefficients)
-        self.added += 1
-        return self.ready
+        self.template = self.template or prepared
+        self.series.add(cp.concatenate([part.ravel() for group in prepared.groups for part in (group.gram, group.rhs)]))
+        return self.series.ready
 
     def solve(self, value: float, phase_regularization: float, amplitude_regularization: float | None,
               *, complex_object: bool):
         """The wave at control ``value`` (inside the window), as PreparedDirect.solve without the loss."""
-        x = 0.0 if math.isinf(self.half_width) else (value - self.center) / self.half_width
-        basis = cp.asarray(np.cos(np.arange(self.order + 1) * np.arccos(np.clip(x, -1.0, 1.0))))
-        values = basis.astype(cp.complex128) @ self.coefficients
+        values = self.series.evaluate(value)
         template = self.template
         spectra = [cp.zeros(template.shape, cp.complex64), cp.zeros(template.shape, cp.complex64)]
         at = 0
@@ -765,18 +723,6 @@ class DragWindow:
             )
             _scatter(spectra, group.rows, group.cols, coefficients, complex_object, self.factor)
         return _wave(spectra, template.incident_scale)
-
-
-def _phase_spread(engine, aberrations, control: str) -> float:
-    """max|u| of `DragWindow`: the range of d chi / d control over the aperture, in radians per unit."""
-    digits = control.split("_")[0].lstrip("Cphi")
-    n, m = int(digits[0]), int(digits[1])
-    alpha = engine._cache["semiangle_rad"] + 0.5 * max(engine._cache["ang_y_rad"], engine._cache["ang_x_rad"])
-    per_A = 2 * np.pi / engine.wavelength * alpha ** (n + 1) / (n + 1)
-    if control.startswith("phi"):
-        return 2 * m * per_A * 10 * abs(aberrations.get(f"C{n}{m}_nm", 0.0)) * np.pi / 180
-    return (2 if m else 1) * per_A * 10
-
 
 def _scatter(spectra, rows, cols, coefficients, complex_object, factor):
     """Place one group's alias coefficients (log-amplitude first, then phase) and their Hermitian mirrors."""

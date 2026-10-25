@@ -1,4 +1,4 @@
-"""Drag windows: the Chebyshev statistics along one control against exact preparation.
+"""Drag windows: the Chebyshev series along one control against exact preparation and SSB preview.
 
 At a Chebyshev node the window reproduces that node's own exact statistics, so
 the images differ only by the solver (float64 Cholesky here, eigenbasis or LU
@@ -64,8 +64,8 @@ def test_window_matches_exact_preparation(ptycho, control):
         while not window.step():
             pass
         amplitude = 0.05 if complex_object else None
-        node = window.nodes[3]
-        for value, relative in [(node, 1e-6)] + [(window.center + window.half_width * x, 2e-6) for x in (-1.0, -0.43, 0.71, 1.0)]:
+        node = window.series.nodes[3]
+        for value, relative in [(node, 1e-6)] + [(window.series.center + window.series.half_width * x, 2e-6) for x in (-1.0, -0.43, 0.71, 1.0)]:
             aberrations = {**ABERRATIONS, control: value}
             exact = PreparedDirect.prepare(engine, {**OPTICS, "aberrations": aberrations}, 3,
                                            complex_object=complex_object, **OPTIONS)
@@ -86,21 +86,56 @@ def test_drag_builds_between_frames_and_rebuilds_outside(ptycho):
     """Exact frames until the window is complete, window frames inside it, a new window outside it."""
     policy = direct_workflow.settings("phase", 0.03, None, None, None)
     coefs, tilt, depth = dict(ABERRATIONS), OPTICS["sample_tilt_mrad"], OPTICS["depth_spread_nm"]
+
+    def exact(aberrations):
+        return ptycho.preview(aberrations, method="phase", phase_regularization=0.03, upsampling_factor=3,
+                              sample_tilt_mrad=tilt, depth_spread_nm=depth, compute_loss=False, output="native")[0]
+
     ptycho._direct_window = None
-    first, _ = direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": 12.1}, tilt, depth, 3, policy)
-    exact, _ = direct_workflow.solve(ptycho, {**coefs, "C10_nm": 12.1}, tilt, depth, 3, policy, compute_loss=False)
-    cp.testing.assert_array_equal(first, exact)
+    first = direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": 12.1}, tilt, depth, 3, policy)
+    cp.testing.assert_array_equal(first, exact({**coefs, "C10_nm": 12.1}))
+    while not direct_workflow.advance(ptycho):
+        pass
+    window = ptycho._direct_window[1].series
+    assert window.ready and window.center == 12.1
+    inside = window.center + 0.6 * window.half_width
+    phase = direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": inside}, tilt, depth, 3, policy)
+    expected = exact({**coefs, "C10_nm": inside})
+    assert float(cp.abs(phase - expected).max()) <= 2e-6 * float(cp.abs(expected).max())
+    outside = window.center + 1.5 * window.half_width
+    direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": outside}, tilt, depth, 3, policy)
+    assert ptycho._direct_window[1].series is not window and ptycho._direct_window[1].series.center == outside
+    direct_workflow.drag(ptycho, "C12_nm", {**coefs, "C10_nm": outside, "C12_nm": 3.2}, tilt, depth, 3, policy)
+    assert ptycho._direct_window[1].control == "C12_nm" and not ptycho._direct_window[1].series.ready
+
+
+# ---
+
+
+@pytest.mark.parametrize("control", ["C10_nm", "phi12_deg"])
+def test_ssb_window_matches_exact_preview(ptycho, control):
+    """SSB drags: single-sideband part interpolated, triple overlap exact, against the full 14-term preview.
+
+    The two classes partition the terms, so at a node only the float64 order
+    of the BF sum differs (tolerance 1e-6 of the largest phase); between nodes
+    the truncation adds below 4e-7 (tolerance 2e-6).
+    """
+    coefs, tilt, depth = dict(ABERRATIONS), OPTICS["sample_tilt_mrad"], OPTICS["depth_spread_nm"]
+    policy = direct_workflow.settings("ssb", None, None, None, None)
+
+    def exact(aberrations):
+        return ptycho.preview(aberrations, upsampling_factor=3, sample_tilt_mrad=tilt, depth_spread_nm=depth,
+                              compute_loss=False, output="native")[0]
+
+    ptycho._direct_window = None
+    first = direct_workflow.drag(ptycho, control, coefs, tilt, depth, 3, policy)
+    cp.testing.assert_array_equal(first, exact(coefs))
     while not direct_workflow.advance(ptycho):
         pass
     window = ptycho._direct_window[1]
-    assert window.ready and window.center == 12.1
-    inside = window.center + 0.6 * window.half_width
-    wave, _ = direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": inside}, tilt, depth, 3, policy)
-    expected, _ = direct_workflow.solve(ptycho, {**coefs, "C10_nm": inside}, tilt, depth, 3, policy, compute_loss=False)
-    [(difference, scale, _)] = _differences(wave, expected, False)
-    assert difference <= 2e-6 * scale
-    outside = window.center + 1.5 * window.half_width
-    direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": outside}, tilt, depth, 3, policy)
-    assert ptycho._direct_window[1] is not window and ptycho._direct_window[1].center == outside
-    direct_workflow.drag(ptycho, "C12_nm", {**coefs, "C10_nm": outside, "C12_nm": 3.2}, tilt, depth, 3, policy)
-    assert ptycho._direct_window[1].control == "C12_nm" and not ptycho._direct_window[1].ready
+    series = window.series
+    for value, relative in [(series.nodes[3], 1e-6)] + [(series.center + series.half_width * x, 2e-6) for x in (-1.0, 0.43, 1.0)]:
+        phase = direct_workflow.drag(ptycho, control, {**coefs, control: value}, tilt, depth, 3, policy)
+        expected = exact({**coefs, control: value})
+        assert float(cp.abs(phase - expected).max()) <= relative * float(cp.abs(expected).max())
+    assert ptycho._direct_window[1] is window
