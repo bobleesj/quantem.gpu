@@ -77,8 +77,8 @@ def _disk_session(n=128, source_path=None, detector_sampling=(10.0, 10.0)):
     )
 
 
-def _zero_inserted_reference(prepared, factor, coefs, tilt, depth, estimator):
-    """Independent GPU scan construction, followed by the existing model graph."""
+def _zero_inserted_reference(prepared, factor, coefs, tilt, depth):
+    """Independent GPU scan construction, followed by the existing model graph: the phase of the mean wave."""
     from quantem.gpu.ssb.mps.prepared import expand_hermitian_mx
     from quantem.gpu.ssb.mps.thick_sample import _compiled_terms, _params
 
@@ -87,9 +87,7 @@ def _zero_inserted_reference(prepared, factor, coefs, tilt, depth, estimator):
     n = native * factor
     q = mx.array((np.fft.fftfreq(n) * n * float(prepared.q_row[1])).astype(np.float32))
     params = _params(prepared, *coefs, tilt, depth)
-    total = mx.zeros(
-        (n, n), dtype=mx.complex64 if estimator == "phase_of_mean" else mx.float32
-    )
+    total = mx.zeros((n, n), dtype=mx.complex64)
     for start in range(0, prepared.g_qk.shape[0], 7):
         stop = min(start + 7, prepared.g_qk.shape[0])
         source = expand_hermitian_mx(mx, prepared.g_qk[start:stop], native)
@@ -108,32 +106,22 @@ def _zero_inserted_reference(prepared, factor, coefs, tilt, depth, estimator):
         )
         corrected = (real + 1j * imag) / mx.maximum(mx.sqrt(weight2), 1e-8)
         corrected[:, 0, 0] = prepared.dc_value
-        if estimator == "phase_of_mean":
-            total = total + mx.sum(corrected, axis=0)
-        else:
-            wave = mx.fft.ifft2(corrected)
-            total = total + mx.sum(mx.arctan2(mx.imag(wave), mx.real(wave)), axis=0)
+        total = total + mx.sum(corrected, axis=0)
         mx.eval(total)
-    if estimator == "phase_of_mean":
-        total[0, 0] = (
-            total[0, 0]
-            + (prepared.num_bright_field_pixels - prepared.g_qk.shape[0])
-            * prepared.dc_value
-        )
-        wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
-        total = mx.arctan2(mx.imag(wave), mx.real(wave))
-    else:
-        total = total / prepared.num_bright_field_pixels
+    total[0, 0] = (
+        total[0, 0]
+        + (prepared.num_bright_field_pixels - prepared.g_qk.shape[0])
+        * prepared.dc_value
+    )
+    wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
+    total = mx.arctan2(mx.imag(wave), mx.real(wave))
     mx.eval(total)
     return np.asarray(total)
 
 
 @pytest.mark.parametrize("factor", [1, 2, 3, 4, 8])
-@pytest.mark.parametrize("estimator", ["mean_phase", "phase_of_mean"])
 @pytest.mark.parametrize("depth_nm", [0.0, 18.0])
-def test_alias_sampling_preserves_gpu_model_and_native_loss(
-    factor, estimator, depth_nm
-):
+def test_alias_sampling_preserves_gpu_model_and_native_loss(factor, depth_nm):
     _require_mps()
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
     sample = {"sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": depth_nm}
@@ -141,11 +129,9 @@ def test_alias_sampling_preserves_gpu_model_and_native_loss(
         native, native_loss = ssb.preview(coefs, **sample)
         prepared = ssb._backend()._prepared
         expected = _zero_inserted_reference(
-            prepared, factor, (-80.0, 40.0, -0.7), (-9, 5), depth_nm * 10, estimator
+            prepared, factor, (-80.0, 40.0, -0.7), (-9, 5), depth_nm * 10
         )
-        phase, loss = ssb.preview(
-            coefs, **sample, upsampling_factor=factor, phase_estimator=estimator
-        )
+        phase, loss = ssb.preview(coefs, **sample, upsampling_factor=factor)
         assert phase.shape == (128 * factor, 128 * factor)
         np.testing.assert_allclose(phase, expected, rtol=0, atol=2e-5)
         assert loss == native_loss
@@ -165,10 +151,13 @@ def test_fused_depth_model_at_all_native_sizes(n, atol):
 
     with _disk_session(n) as ssb:
         coefs = {"C10_nm": 3.0, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)}
-        phase, loss = ssb.preview(
-            coefs, sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=15.0,
-            phase_estimator="mean_phase",  # Preserve the fused mean-phase oracle.
+        _, preview_loss = ssb.preview(coefs, sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=15.0)
+        # the phase-variance objective's own mean BF phase, the fused model's product
+        phase, loss = ssb._backend().sample_phase_variance(
+            {"C10": 30.0, "C12": 5.0, "phi12": 0.3},
+            {"tilt_row_mrad": 5.0, "tilt_col_mrad": -3.0, "depth_spread_A": 150.0},
         )
+        assert preview_loss == loss
         expected, expected_loss = reconstruct_thick_reference(
             ssb._backend()._prepared,
             C10=30.0,
@@ -181,8 +170,7 @@ def test_fused_depth_model_at_all_native_sizes(n, atol):
         assert abs(loss - expected_loss) <= 1e-6 * abs(expected_loss)
 
 
-@pytest.mark.parametrize("estimator", ["mean_phase", "phase_of_mean"])
-def test_slider_changes_match_fresh_sessions(estimator):
+def test_slider_changes_match_fresh_sessions():
     """Reuse a session while changing optics, rotation, and output sampling."""
     _require_mps()
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
@@ -202,7 +190,6 @@ def test_slider_changes_match_fresh_sessions(estimator):
             options = dict(
                 sample_tilt_mrad=tilt, depth_spread_nm=depth,
                 upsampling_factor=factor, compute_loss=False,
-                phase_estimator=estimator,
             )
             reused.set_rotation(rotation)
             phase, _ = reused.preview(aberrations, **options)
@@ -212,11 +199,8 @@ def test_slider_changes_match_fresh_sessions(estimator):
             np.testing.assert_array_equal(phase, expected)
 
 
-@pytest.mark.parametrize("estimator,factor,higher", [
-    ("mean_phase", 1, False), ("phase_of_mean", 3, False),
-    ("mean_phase", 1, True),
-])
-def test_cancelled_preview_returns_no_partial_result_and_session_recovers(estimator, factor, higher):
+@pytest.mark.parametrize("factor,higher", [(1, False), (3, False), (1, True)])
+def test_cancelled_preview_returns_no_partial_result_and_session_recovers(factor, higher):
     """A renewed drag can abandon a diagnostic and reuse the same GPU session."""
     from concurrent.futures import CancelledError
 
@@ -224,8 +208,7 @@ def test_cancelled_preview_returns_no_partial_result_and_session_recovers(estima
     coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
     if higher:
         coefs.update(C21_nm=20., phi21_deg=12.)
-    settings = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18.,
-                    phase_estimator=estimator, upsampling_factor=factor)
+    settings = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18., upsampling_factor=factor)
     with _disk_session() as ssb:
         expected, expected_loss = ssb.preview(coefs, **settings)
         checks = []
@@ -256,8 +239,7 @@ def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch)
     monkeypatch.setattr(upsampling, "_WORK_BYTES", (128 * 3) ** 2 * 8 * 3)
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     settings = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=18.0,
-                    phase_estimator="phase_of_mean", upsampling_factor=3,
-                    compute_loss=False)
+                    upsampling_factor=3, compute_loss=False)
     with _poisson_disk_session() as ssb:
         expected, _ = ssb.preview(coefs, **settings)
         assert ssb._backend()._prepared.g_qk.shape[0] > 4 * 64
@@ -287,8 +269,7 @@ def test_interruptible_native_loss_keeps_exact_full_bf_sums(monkeypatch, depth_n
 
     _require_mps()
     coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
-    options = dict(phase_estimator="mean_phase", sample_tilt_mrad=(-9., 5.),
-                   depth_spread_nm=depth_nm)
+    options = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth_nm)
     with _disk_session(512) as ssb:
         expected, expected_loss = ssb.preview(coefs, **options)
         for tile in [8, 17]:
@@ -422,17 +403,14 @@ def test_coherent_reconstruction_preserves_anisotropic_aperture(depth_nm):
         )
         expected = _zero_inserted_reference(
             ssb._backend()._prepared, 3, (-80.0, 40.0, -0.7),
-            (-9.0, 5.0), depth_nm * 10, "phase_of_mean",
+            (-9.0, 5.0), depth_nm * 10,
         )
         np.testing.assert_allclose(phase, expected, rtol=0, atol=2e-5)
 
 
-@pytest.mark.parametrize("estimator", ["phase_of_mean", "mean_phase"])
 @pytest.mark.parametrize("higher", [False, True])
-def test_zero_depth_specialization_preserves_all_phase_bits(
-    monkeypatch, estimator, higher,
-):
-    """Turning depth off retains the full phase of the general optical model."""
+def test_zero_depth_specialization_preserves_all_phase_bits(monkeypatch, higher):
+    """Turning depth off retains the full phase of the general optical model, and with higher orders its loss."""
     _require_mps()
     from quantem.gpu.ssb.mps import upsampling as up
 
@@ -442,9 +420,9 @@ def test_zero_depth_specialization_preserves_all_phase_bits(
     with _disk_session() as ssb:
         settings = dict(
             sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=0.0,
-            upsampling_factor=3, phase_estimator=estimator, compute_loss=False,
+            upsampling_factor=3, compute_loss=higher,
         )
-        actual, _ = ssb.preview(coefs, **settings)
+        actual, actual_loss = ssb.preview(coefs, **settings)
         coherent = up._coherent_alias_kernel
         detector = up._alias_correction_kernel
         with monkeypatch.context() as general:
@@ -454,8 +432,10 @@ def test_zero_depth_specialization_preserves_all_phase_bits(
             general.setattr(
                 up, "_alias_correction_kernel", lambda has_depth=True: detector(True),
             )
-            expected, _ = ssb.preview(coefs, **settings)
+            expected, expected_loss = ssb.preview(coefs, **settings)
         np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+        # the higher-order phase variance corrects each BF pixel with the per-detector kernel
+        assert actual_loss == expected_loss
 
 
 @pytest.mark.parametrize("factor", [1, 2, 3])

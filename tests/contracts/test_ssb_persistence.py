@@ -64,18 +64,6 @@ class _Backend:
     def preview_upsampled(self, aberrations, **kwargs):
         return self.preview(aberrations, **kwargs)
 
-    def reconstruct_result(self, aberrations, *, compute_loss=True):
-        from quantem.gpu import SSBResult
-
-        self.reconstruct_calls += 1
-        return SSBResult(
-            object_wave=np.full((2, 2), 3 + 4j, dtype=np.complex64),
-            backend=self.backend,
-            aberrations=dict(aberrations),
-            loss=0.25 if compute_loss else None,
-            timings={"reconstruct": 0.2},
-        )
-
 
 def _session(monkeypatch, source, backend, device="mps"):
     from quantem.gpu.ssb import workflow
@@ -624,7 +612,6 @@ def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypat
                 "depth_spread_A": 150.0, "fit": 9.0, "gain": 1.5, "trial_records": []}
 
     backend.fit_sample = fit_sample
-    backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
     settings = dict(tilt=tilt, save_dir=saved, check_rotation=False, verbose=False)
     first = _session(monkeypatch, source, backend).find_aberrations(search="primary", **settings)
     explicit = _session(monkeypatch, source, backend).find_aberrations(search="primary",
@@ -669,7 +656,6 @@ def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_
                 "gain": None, "trial_records": []}
 
     backend.fit_sample = fit_sample
-    backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
     optics = {"C10_nm": -10.1, "C12_nm": .4, "phi12_deg": 15.0}
     settings = dict(tilt=True, fixed_aberrations=optics, save_dir=tmp_path / "result",
                     check_rotation=False, compare_standard=False, verbose=False)

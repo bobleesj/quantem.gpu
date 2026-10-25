@@ -766,9 +766,10 @@ def compare_products(
     ``object_wave``.
 
     ``mean_phase_*`` is the objective's own phase product, the mean over the
-    bright-field set of the per-BF inverse-transform phase. The MPS public
-    ``preview`` returns it; a backend without it passes ``mean_phase`` as
-    ``None`` rather than comparing a different quantity under the same name.
+    bright-field set of the per-BF inverse-transform phase. The MPS backend's
+    ``phase_variance`` returns it with the loss; a backend without it passes
+    ``mean_phase`` as ``None`` rather than comparing a different quantity
+    under the same name.
     """
 
     reference_object = np.asarray(reference_object, dtype=np.complex128)

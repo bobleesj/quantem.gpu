@@ -9,14 +9,13 @@ from tests.hardware.cuda.test_ssb_thick_sample import _synthetic_session
 pytestmark = pytest.mark.slow
 
 
-@pytest.mark.parametrize("estimator", ["mean_phase", "phase_of_mean", "complex_wave"])
-def test_reconstruction_does_not_export_phase(monkeypatch, estimator):
+def test_reconstruction_does_not_export_phase(monkeypatch):
     import cupy as cp
 
     ssb, _ = _synthetic_session()
     values = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
     try:
-        expected = ssb.reconstruct(aberrations=values, phase_estimator=estimator)
+        expected = ssb.reconstruct(aberrations=values)
         # Preparation may export tiny geometry metadata; repeated scientific
         # reconstruction must not export the image and upload it again.
         original_asnumpy = cp.asnumpy
@@ -28,10 +27,10 @@ def test_reconstruction_does_not_export_phase(monkeypatch, estimator):
 
         with monkeypatch.context() as patch:
             patch.setattr(cp, "asnumpy", no_host)
-            actual = ssb.reconstruct(aberrations=values, phase_estimator=estimator, force=True)
+            actual = ssb.reconstruct(aberrations=values, force=True)
         assert isinstance(actual.object_wave, cp.ndarray)
         cp.testing.assert_array_equal(actual.object_wave, expected.object_wave)
-        phase, _ = ssb.preview(values, phase_estimator="mean_phase")
+        phase, _ = ssb.preview(values)
         assert isinstance(phase, np.ndarray)
     finally:
         ssb.close()
@@ -61,8 +60,8 @@ def test_trial_replay_and_tilt_stay_on_device(monkeypatch):
         ssb.close()
 
 
-def test_mean_phase_trial_replay_owns_each_trial_wave():
-    """A later mean-phase kernel must not overwrite an earlier replayed image."""
+def test_trial_replay_owns_each_trial_wave():
+    """A later reconstruction must not overwrite an earlier replayed image."""
     import cupy as cp
 
     ssb, _ = _synthetic_session()
@@ -74,10 +73,10 @@ def test_mean_phase_trial_replay_owns_each_trial_wave():
             result = ssb.reconstruct(aberrations={
                 "C10_nm": values["C10_nm"], "C12_nm": values["C12_nm"],
                 "phi12_deg": values["phi12_deg"],
-            }, phase_estimator="mean_phase", compute_loss=False)
+            }, compute_loss=False)
             expected.append(result.object_wave.copy())
         assert any(not cp.array_equal(expected[0], frame) for frame in expected[1:])
-        replay = ssb.reconstruct(fitted, trial_ids=[0, 1, 2], phase_estimator="mean_phase")
+        replay = ssb.reconstruct(fitted, trial_ids=[0, 1, 2])
         cp.testing.assert_array_equal(replay.object_wave, cp.stack(expected))
     finally:
         ssb.close()

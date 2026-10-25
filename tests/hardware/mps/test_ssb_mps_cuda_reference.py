@@ -1804,7 +1804,7 @@ def test_mps_fit_reads_the_prepared_session_evidence(objective) -> None:
         bright_field_intensity_threshold=0.0, bright_field_center_px=None, bright_field_radius_px=3, scan_detector_rotation_deg=0.0,
     )
     start = {"C10": 0.0, "C12": 10.0, "phi12": 0.0}
-    phase, loss = session.preview(start, compute_loss=True, higher_order_magnitudes=None, higher_order_angles=None)
+    phase, loss = session.phase_variance(start)
     prepared = session._prepared
     result = session.fit(
         aberrations=start, trials=0, refinement=None, search_ranges=None,
@@ -1856,24 +1856,16 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     from quantem.gpu.ssb.mps import backend as mps_backend
 
     def reject_duplicate_reconstruction(*_args, **_kwargs):
-        raise AssertionError("the exact final fit phase should be retained")
+        raise AssertionError("the fit's final phase-variance pass should be retained")
 
     monkeypatch.setattr(
         mps_backend,
         "reconstruct_prepared",
         reject_duplicate_reconstruction,
     )
-    phase, loss = workflow.preview(
-        optimized.aberrations,
-        compute_loss=True,
-        # The fit retains the native loss estimator; coherent reconstruction
-        # is the public display default and has its own reconstruction path.
-        phase_estimator="mean_phase",
-    )
-    np.testing.assert_array_equal(
-        phase,
-        workflow._compute._fit_preview_phase,
-    )
+    # the SSB phase has its own reconstruction path; the loss is the fit's own phase-variance pass
+    phase, loss = workflow.preview(optimized.aberrations, compute_loss=True)
+    assert phase.shape == result.phase.shape
     assert loss == optimized.loss
 
 

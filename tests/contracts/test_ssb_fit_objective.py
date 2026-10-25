@@ -49,7 +49,6 @@ def test_standard_fit_passes_the_objective_and_refines_by_it(tmp_path, monkeypat
 def test_standard_fit_is_the_tilt_corrected_agreement(tmp_path, monkeypatch):
     backend = _Recording()
     backend.fit_sample = _fit_sample
-    backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
     session = _session(monkeypatch, _source(tmp_path), backend)
     fit = session.find_aberrations(search="primary", check_rotation=False, verbose=False)
     assert fit.objective == "agreement" and fit.sample_tilt_mrad == (3.0, -4.0)
@@ -105,7 +104,6 @@ def test_implicit_reconstruction_uses_default_fifth_order_fit(tmp_path, monkeypa
     """An unfitted session remains reconstructable on CUDA and MPS."""
     backend = _Recording()
     backend.fit_sample = _fit_sample
-    backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
     session = _session(monkeypatch, _source(tmp_path), backend)
     from quantem.gpu.ssb import fifth_order_fit
 

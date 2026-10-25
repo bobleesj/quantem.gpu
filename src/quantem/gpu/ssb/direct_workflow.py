@@ -136,9 +136,9 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     the full scan. Regularized methods are served from a `DragWindow` along
     that control, from the prepared system when the optics are those already
     prepared (a strength drag), and otherwise exactly by `solve`. SSB
-    (``policy`` from ``settings("ssb", ...)``, plus an optional
-    ``phase_estimator``) on a fine grid is served from a `WaveWindow`: the
-    single-sideband terms interpolated, the triple-overlap terms exact. A
+    (``policy`` from ``settings("ssb", ...)``) on a fine grid is served from
+    a `WaveWindow`: the single-sideband terms interpolated, the triple-overlap
+    terms exact. A
     window is valid while every other input is unchanged and the value lies
     inside it; otherwise a new one is centred on this value. `advance` builds
     windows one node at a time between frames, with exact frames meanwhile,
@@ -191,7 +191,7 @@ def _windowed(session, factor, policy) -> bool:
     if session.backend != "cuda" or session._streamed is not None:
         return False
     if policy.get("method", "ssb") == "ssb":
-        return factor > 1 and policy.get("phase_estimator", "phase_of_mean") == "phase_of_mean"
+        return factor > 1
     return True
 
 
@@ -248,7 +248,7 @@ def _exact(session, coefs, tilt, depth, factor, policy):
     method = policy.get("method", "ssb")
     if method == "ssb":
         phase, _ = session.preview(coefs, compute_loss=False, upsampling_factor=factor, sample_tilt_mrad=tilt or (0.0, 0.0),
-                                   depth_spread_nm=depth or 0.0, phase_estimator=policy.get("phase_estimator"), output="native")
+                                   depth_spread_nm=depth or 0.0, output="native")
         return phase
     wave, _ = solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
     return cp.angle(wave).astype(cp.float32)

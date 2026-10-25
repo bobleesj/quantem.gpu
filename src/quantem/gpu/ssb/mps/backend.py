@@ -23,7 +23,6 @@ from quantem.gpu.ssb.mps.hardware import (
     effective_phase_loss_chunk_bf,
     require_mlx,
 )
-from quantem.gpu.ssb.mps.kernels.object_sum import object_fourier_sum_dynamic
 from quantem.gpu.ssb.mps.optimizer import fit_sample, optimize_phase_variance
 from quantem.gpu.ssb.mps.optimizer import optimize as optimize_mps
 from quantem.gpu.ssb.mps.padding import pad_scan
@@ -36,8 +35,7 @@ from quantem.gpu.ssb.mps.prepared import (
 )
 from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
 from quantem.gpu.ssb.mps.thick_sample import reconstruct_thick
-from quantem.gpu.ssb.mps.upsampling import _reconstruct_upsampled
-from quantem.gpu.ssb.results import SSBResult
+from quantem.gpu.ssb.mps.upsampling import _reconstruct_upsampled, phase_variance_higher_order
 
 
 class MpsSSBBackend:
@@ -175,7 +173,7 @@ class MpsSSBBackend:
         )
         if not compute_loss and objective == "agreement":
             result.loss = None
-        # The fit's final phase answers the first preview at the fitted aberrations without a second reconstruction.
+        # The fit's final phase-variance pass answers the first loss at the fitted aberrations without a second one.
         self._fit_preview_phase = phase
         self._fit_preview_loss = None if result.loss is None else float(result.loss)
         self._fit_preview_aberrations = dict(result.aberrations)
@@ -185,93 +183,15 @@ class MpsSSBBackend:
         require_mlx().clear_cache()
         return result
 
-    def reconstruct_result(
-        self,
-        aberrations: dict[str, float],
-        *,
-        compute_loss: bool = True,
-    ):
-        """Reconstruct from the retained source FFT and geometry."""
+    def phase_variance(self, aberrations: dict[str, float]) -> tuple[np.ndarray, float]:
+        """The phase-variance objective at C10/C12 optics on the native grid: (mean BF phase, loss).
 
-        started = time.perf_counter()
-        if self._prepared is None:
-            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
-        object_wave = object_fourier_sum_dynamic(
-            self._prepared,
-            C10=float(aberrations["C10"]),
-            C12=float(aberrations["C12"]),
-            phi12=float(aberrations["phi12"]),
-            chunk_bf=self._chunk_bf,
-        )
-        loss = None
-        if compute_loss:
-            _unused_object, loss, _unused_phase = reconstruct_prepared(
-                self._prepared,
-                C10=float(aberrations["C10"]),
-                C12=float(aberrations["C12"]),
-                phi12=float(aberrations["phi12"]),
-                chunk_bf=self._phase_chunk_bf,
-                compute_loss=True,
-                compute_object=False,
-            )
-        result = SSBResult(
-            object_wave=np.asarray(object_wave).astype(np.complex64, copy=False),
-            backend="mps",
-            aberrations=dict(aberrations),
-            scan_detector_rotation_deg=self._scan_detector_rotation_deg,
-            loss=None if loss is None else float(loss),
-            elapsed_s=time.perf_counter() - started,
-            num_bright_field_pixels=self._selection.size,
-            voltage_kV=self._voltage_kV,
-            semiangle_mrad=self._semiangle_mrad,
-            object_sampling_A=tuple(float(value) for value in self._scan_sampling),
-            bright_field_center_px=self._selection.bright_field_center_px,
-            bright_field_radius_px=self._selection.bright_field_radius_px,
-            bright_field_edge_radius_px=self._selection.bright_field_edge_radius_px,
-        )
-        require_mlx().clear_cache()
-        return result
-
-    def preview(
-        self,
-        aberrations: dict[str, float],
-        *,
-        compute_loss: bool,
-        higher_order_magnitudes: np.ndarray | None,
-        higher_order_angles: np.ndarray | None,
-    ) -> tuple[np.ndarray, float | None]:
-        """Return one transient float32 phase and optional exact loss."""
-
-        if (
-            higher_order_magnitudes is None
-            and self._fit_preview_phase is not None
-            and aberrations == self._fit_preview_aberrations
-        ):
-            phase = self._fit_preview_phase.copy()
-            loss = self._fit_preview_loss if compute_loss else None
-            return phase, loss
-
-        if higher_order_magnitudes is not None:
-            if compute_loss:
-                phase, loss = self.reconstruct_full_with_loss(
-                    higher_order_magnitudes, higher_order_angles
-                )
-            else:
-                phase = self.reconstruct_full(
-                    higher_order_magnitudes, higher_order_angles
-                )
-                loss = None
-        elif compute_loss:
-            phase, loss = self.reconstruct_with_loss(
-                aberrations["C10"], aberrations["C12"], aberrations["phi12"]
-            )
-        else:
-            phase = self.reconstruct(
-                aberrations["C10"], aberrations["C12"], aberrations["phi12"]
-            )
-            loss = None
-        array = self.phase_to_numpy(phase)
-        return array, None if loss is None else float(loss)
+        A fit's own final pass answers the fitted aberrations without a second evaluation.
+        """
+        if self._fit_preview_phase is not None and aberrations == self._fit_preview_aberrations:
+            return self._fit_preview_phase.copy(), self._fit_preview_loss
+        phase, loss = self.reconstruct_with_loss(aberrations["C10"], aberrations["C12"], aberrations["phi12"])
+        return np.asarray(phase, dtype=np.float32), float(loss)
 
     def preview_upsampled(
         self,
@@ -281,55 +201,41 @@ class MpsSSBBackend:
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_A: float = 0.0,
-        phase_estimator: str = "mean_phase",
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
     ) -> tuple[np.ndarray, float | None]:
-        """Unfold measured aliases on Metal; preserve the native search loss."""
+        """SSB phase (of the bright-field mean wave) at the output factor, unfolding measured aliases on Metal.
+
+        The loss is the native-grid phase variance over bright-field pixels (``phase_variance``,
+        ``sample_phase_variance`` or ``phase_variance_higher_order``).
+        """
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
         higher = dict(higher_order_magnitudes=higher_order_magnitudes,
                       higher_order_angles=higher_order_angles)
-
-        def native():
-            """The native mean-phase reconstruction and its search loss; preview reads angles only with magnitudes."""
-            if higher_order_magnitudes is not None:
-                return _reconstruct_upsampled(
-                    self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
-                    thickness=depth_spread_A, upsampling_factor=1,
-                    phase_estimator="mean_phase", compute_loss=True, **higher,
-                )
-            if depth_spread_A > 0.0:
-                return self.preview_sample(
-                    aberrations, {"tilt_row_mrad": sample_tilt_mrad[0],
-                                  "tilt_col_mrad": sample_tilt_mrad[1],
-                                  "depth_spread_A": depth_spread_A}, compute_loss=True,
-                )
-            return self.preview(aberrations, compute_loss=True, **higher)
-
-        if compute_loss and phase_estimator == "mean_phase" and upsampling_factor == 1:
-            # The returned native per-BF phase already belongs to this loss;
-            # do not reconstruct it once more before computing the variance.
-            return native()
-        phase, _ = _reconstruct_upsampled(
+        phase = _reconstruct_upsampled(
             self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
-            thickness=depth_spread_A, upsampling_factor=upsampling_factor,
-            phase_estimator=phase_estimator,
-            **higher,
+            thickness=depth_spread_A, upsampling_factor=upsampling_factor, **higher,
         )
-        return phase, native()[1] if compute_loss else None
+        if not compute_loss:
+            return phase, None
+        if higher_order_magnitudes is not None:
+            _, loss = phase_variance_higher_order(
+                self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad, thickness=depth_spread_A, **higher,
+            )
+        elif depth_spread_A > 0.0:
+            _, loss = self.sample_phase_variance(
+                aberrations, {"tilt_row_mrad": sample_tilt_mrad[0], "tilt_col_mrad": sample_tilt_mrad[1],
+                              "depth_spread_A": depth_spread_A},
+            )
+        else:
+            _, loss = self.phase_variance(aberrations)
+        return phase, loss
 
-    def preview_sample(
-        self,
-        aberrations: dict[str, float],
-        sample: dict[str, float],
-        *,
-        compute_loss: bool,
-    ) -> tuple[np.ndarray, float | None]:
-        """Phase (and phase-variance loss) for a thick, tilted sample: ``thick_sample.reconstruct_thick``.
+    def sample_phase_variance(self, aberrations: dict[str, float], sample: dict[str, float]) -> tuple[np.ndarray, float]:
+        """The phase-variance objective for a thick, tilted sample: (mean BF phase, loss), ``thick_sample.reconstruct_thick``.
 
         ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "depth_spread_A"} (depth spread in the C10 unit, Angstrom; 0 = standard SSB).
-        Same contract as ``CudaSSBBackend.preview_sample``.
         """
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
@@ -340,7 +246,7 @@ class MpsSSBBackend:
             phi12=float(aberrations["phi12"]),
             sample_tilt_mrad=(float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
             thickness=float(sample.get("depth_spread_A", 0.0)),
-            compute_loss=compute_loss,
+            compute_loss=True,
             chunk_bf=self._phase_chunk_bf,
         )
         return phase, loss
@@ -558,58 +464,11 @@ class MpsSSBBackend:
         )
         return phase, float(loss)
 
-    def reconstruct(self, c10: float, c12: float, phi12: float):
-        """Return the exact full-BF phase reconstructed on Metal."""
-
-        if self._prepared is None:
-            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
-
-        _object_wave, _loss, phase = reconstruct_prepared(
-            self._prepared,
-            C10=float(c10),
-            C12=float(c12),
-            phi12=float(phi12),
-            chunk_bf=self._phase_chunk_bf,
-            compute_loss=False,
-            compute_object=False,
-        )
-        return phase
-
-    @staticmethod
-    def phase_to_numpy(phase) -> np.ndarray:
-        """Expose one MPS reconstruction as a host float32 image."""
-
-        return np.asarray(phase, dtype=np.float32)
-
-    @staticmethod
-    def _three_param_from_full(magnitudes_A, angles_rad) -> tuple[float, float, float]:
-        mags = np.asarray(magnitudes_A, dtype=np.float32)
-        angles = np.asarray(angles_rad, dtype=np.float32)
-        if np.any(mags[2:] != 0):
-            raise NotImplementedError(
-                "MPS SSB currently supports C10/C12/phi12 only. "
-                "Higher-order controls require a backend with the "
-                "'higher_order' capability."
-            )
-        return float(mags[0]), float(mags[1]), float(angles[1])
-
-    def reconstruct_full_with_loss(self, magnitudes_A, angles_rad):
-        """Reconstruct with the supported subset of full aberration inputs."""
-
-        c10, c12, phi12 = self._three_param_from_full(magnitudes_A, angles_rad)
-        return self.reconstruct_with_loss(c10, c12, phi12)
-
-    def reconstruct_full(self, magnitudes_A, angles_rad):
-        """Reconstruct with the supported subset of full aberration inputs."""
-
-        c10, c12, phi12 = self._three_param_from_full(magnitudes_A, angles_rad)
-        return self.reconstruct(c10, c12, phi12)
-
     def preview_context(self, num_bright_field_pixels: int):
         """Reusable reduced-BF context for drag previews (standard and thick): every ``num_bright_field_pixels / N``-th BF pixel.
 
-        Same deterministic subset rule as the CUDA backend's ``prepare_bf_subset``. Inside ``with context:`` both
-        ``preview`` and ``preview_sample`` reconstruct from the subset (mean over the subset's BF pixels).
+        Same deterministic subset rule as the CUDA backend's ``prepare_bf_subset``. Inside ``with context:``
+        ``preview_upsampled`` reconstructs from the subset (mean over the subset's BF pixels).
         """
 
         return _MpsBfSubset(self, int(num_bright_field_pixels))

@@ -61,11 +61,7 @@ def test_coherent_sum_matches_per_detector_correction(monkeypatch, factor, aniso
         wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
         expected = mx.arctan2(mx.imag(wave), mx.real(wave))
         mx.eval(expected)
-        actual, loss = up._reconstruct_upsampled(
-            prepared, **sample, upsampling_factor=factor,
-            phase_estimator="phase_of_mean",
-        )
-        assert loss is None
+        actual = up._reconstruct_upsampled(prepared, **sample, upsampling_factor=factor)
         # Existing MPS coherent-object tolerance; no reduced support or precision.
         np.testing.assert_allclose(actual, np.asarray(expected), rtol=0, atol=1e-7)
 
@@ -83,8 +79,7 @@ def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
     sample = {"sample_tilt_mrad": (-9., 5.), "depth_spread_nm": 18.}
     with _disk_session(native, detector_sampling=(8., 12.)) as ssb:
         compact, loss = ssb.preview(
-            coefs, **sample, upsampling_factor=2,
-            phase_estimator="phase_of_mean", compute_loss=False,
+            coefs, **sample, upsampling_factor=2, compute_loss=False,
         )
         monkeypatch.setattr(
             up, "_coherent_support",
@@ -95,8 +90,7 @@ def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
         # the compact geometry retained by the previous slider evaluation.
         ssb._backend()._prepared.upsampled_geometry = None
         dense, dense_loss = ssb.preview(
-            coefs, **sample, upsampling_factor=2,
-            phase_estimator="phase_of_mean", compute_loss=False,
+            coefs, **sample, upsampling_factor=2, compute_loss=False,
         )
         np.testing.assert_array_equal(compact, dense)
         assert loss is dense_loss is None

@@ -1415,34 +1415,11 @@ def _coherent_columns(prepared: PreparedMpsSSB, n: int) -> int:
     return n
 
 
-def _reconstruct_upsampled(
-    prepared: PreparedMpsSSB,
-    *,
-    C10: float,
-    C12: float,
-    phi12: float,
-    sample_tilt_mrad: tuple[float, float],
-    thickness: float,
-    upsampling_factor: int,
-    phase_estimator: str,
-    higher_order_magnitudes: np.ndarray | None = None,
-    higher_order_angles: np.ndarray | None = None,
-    compute_loss: bool = False,
-) -> tuple[np.ndarray, float | None]:
-    """Return the full fine-grid phase with every selected BF contribution.
-
-    ``mean_phase`` averages per-detector phases after their inverse FFTs.
-    ``phase_of_mean`` accumulates corrected spectra before one inverse FFT.
-    Both use complex64 arithmetic. Units match the prepared MPS engine:
-    lengths in Angstrom, tilt in mrad, and ``phi12`` in radians.
-    """
-    if phase_estimator not in ("mean_phase", "phase_of_mean"):
-        raise ValueError("Choose phase_estimator='mean_phase' or 'phase_of_mean'.")
-    if compute_loss and (upsampling_factor != 1 or phase_estimator != "mean_phase"):
-        raise ValueError("The phase-variance diagnostic requires native-grid mean_phase.")
+def _alias_inputs(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float,
+                  sample_tilt_mrad: tuple[float, float], thickness: float, n: int,
+                  higher_order_magnitudes: np.ndarray | None, higher_order_angles: np.ndarray | None):
+    """The n x n output frequencies, kernel scalars, packed coefficients (and the host copy) and the DC value."""
     mx = prepared.mx
-    source_n = int(prepared.scan_shape[0])
-    n = source_n * upsampling_factor
     cached_geometry = prepared.upsampled_geometry
     if cached_geometry is not None and cached_geometry[0] == n:
         qr, qc = cached_geometry[1:3]
@@ -1452,40 +1429,66 @@ def _reconstruct_upsampled(
         qc = mx.array((frequencies * float(prepared.q_col[1])).astype(np.float32))
         prepared.upsampled_geometry = (n, qr, qc, None, None)
     params = _params(prepared, C10, C12, phi12, sample_tilt_mrad, thickness)
-    higher = higher_order_magnitudes is not None
     packed = (pack_coefficients(higher_order_magnitudes, higher_order_angles)
-              if higher else np.zeros((14, 2), np.float32))
-    coefficients = mx.array(packed)
+              if higher_order_magnitudes is not None else np.zeros((14, 2), np.float32))
     dc = mx.array([complex(prepared.dc_value)], dtype=mx.complex64)
-    wave_mean = phase_estimator == "phase_of_mean"
-    if wave_mean and not higher and _SEPARABLE:
-        total = _separable_spectrum(prepared, qr, qc, params, np.array(params), dc, n)
-        wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
-        phase = mx.arctan2(mx.imag(wave), mx.real(wave))
-        mx.eval(phase)
-        checkpoint()
-        return np.asarray(phase, dtype=np.float32), None
-    chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
+    return qr, qc, params, mx.array(packed), packed, dc
+
+
+def _alias_probe(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float, params, coefficients,
+                 packed: np.ndarray, higher: bool):
+    """The per-BF probe terms of ``_alias_probe_kernel``, cached on ``prepared`` for the last optics."""
     stored = int(prepared.g_qk.shape[0])
     probe_key = (float(C10), float(C12), float(phi12), higher, packed.tobytes())
     cached_probe = prepared.upsampled_probe
     if cached_probe is not None and cached_probe[0] == probe_key:
-        probe = cached_probe[1]
+        return cached_probe[1]
+    probe = _alias_probe_kernel()(
+        inputs=[prepared.kx, prepared.ky, params, coefficients],
+        template=[("K", stored), ("HIGHER", higher)],
+        grid=(stored, 1, 1), threadgroup=(256, 1, 1),
+        output_shapes=[(stored, 5)], output_dtypes=[prepared.mx.float32],
+    )[0]
+    prepared.upsampled_probe = (probe_key, probe)
+    return probe
+
+
+def _reconstruct_upsampled(
+    prepared: PreparedMpsSSB,
+    *,
+    C10: float,
+    C12: float,
+    phi12: float,
+    sample_tilt_mrad: tuple[float, float],
+    thickness: float,
+    upsampling_factor: int,
+    higher_order_magnitudes: np.ndarray | None = None,
+    higher_order_angles: np.ndarray | None = None,
+) -> np.ndarray:
+    """Return the full fine-grid SSB phase with every selected BF contribution.
+
+    The corrected spectra are accumulated before one inverse FFT and the phase of
+    that bright-field mean wave is returned (``phase_of_mean``), in complex64
+    arithmetic. Units match the prepared MPS engine: lengths in Angstrom, tilt
+    in mrad, and ``phi12`` in radians.
+    """
+    mx = prepared.mx
+    n = int(prepared.scan_shape[0]) * upsampling_factor
+    higher = higher_order_magnitudes is not None
+    qr, qc, params, coefficients, packed, dc = _alias_inputs(
+        prepared, C10, C12, phi12, sample_tilt_mrad, thickness, n, higher_order_magnitudes, higher_order_angles)
+    if not higher and _SEPARABLE:
+        total = _separable_spectrum(prepared, qr, qc, params, np.array(params), dc, n)
     else:
-        probe = _alias_probe_kernel()(
-            inputs=[prepared.kx, prepared.ky, params, coefficients],
-            template=[("K", stored), ("HIGHER", higher)],
-            grid=(stored, 1, 1), threadgroup=(256, 1, 1),
-            output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
-        )[0]
-        prepared.upsampled_probe = (probe_key, probe)
-    if wave_mean:
+        chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
+        probe = _alias_probe(prepared, C10, C12, phi12, params, coefficients, packed, higher)
         columns = _coherent_columns(prepared, n) if not higher and upsampling_factor > 1 else n
         total = _coherent_spectrum(
             prepared, qr, qc, params, dc, probe, coefficients, higher, n,
             chunk, columns, has_depth=thickness != 0.0,
         )
         # Compacted inactive BF columns still carry the common real DC term.
+        stored = int(prepared.g_qk.shape[0])
         total[0, 0] = total[0, 0] + (prepared.num_bright_field_pixels - stored) * dc[0]
         if columns != n:
             # For the even C10/C12 probe, paired corrected frequencies are
@@ -1493,14 +1496,39 @@ def _reconstruct_upsampled(
             mirror_rows = mx.array((-np.arange(n)) % n)
             negative = -mx.conj(total[mirror_rows, 1:(n + 1) // 2][:, ::-1])
             total = mx.concatenate((total, negative), axis=1)
-        wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
-        phase = mx.arctan2(mx.imag(wave), mx.real(wave))
-        mx.eval(phase)
-        checkpoint()
-        return np.asarray(phase, dtype=np.float32), None
+    wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
+    phase = mx.arctan2(mx.imag(wave), mx.real(wave))
+    mx.eval(phase)
+    checkpoint()
+    return np.asarray(phase, dtype=np.float32)
 
+
+def phase_variance_higher_order(
+    prepared: PreparedMpsSSB,
+    *,
+    C10: float,
+    C12: float,
+    phi12: float,
+    sample_tilt_mrad: tuple[float, float],
+    thickness: float,
+    higher_order_magnitudes: np.ndarray,
+    higher_order_angles: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    """The phase-variance objective with higher orders on the native grid: (mean BF phase, loss).
+
+    Each BF pixel's corrected spectrum is inverse transformed on its own, and the
+    loss is the mean over the image of the per-pixel variance of those phases,
+    the definition ``reconstruct_with_loss`` evaluates for C10/C12 optics.
+    """
+    mx = prepared.mx
+    n = source_n = int(prepared.scan_shape[0])
+    qr, qc, params, coefficients, packed, dc = _alias_inputs(
+        prepared, C10, C12, phi12, sample_tilt_mrad, thickness, n, higher_order_magnitudes, higher_order_angles)
+    chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
+    stored = int(prepared.g_qk.shape[0])
+    probe = _alias_probe(prepared, C10, C12, phi12, params, coefficients, packed, True)
     total = mx.zeros((n, n), dtype=mx.float32)
-    squares = mx.zeros((n, n), dtype=mx.float32) if compute_loss else None
+    squares = mx.zeros((n, n), dtype=mx.float32)
     kernel = _alias_correction_kernel(thickness != 0.0)
     for start in range(0, stored, chunk):
         if (start // chunk) % _PENDING_CHUNKS == 0:
@@ -1523,7 +1551,7 @@ def _reconstruct_upsampled(
                 ("SOURCE_N", source_n),
                 ("G_COLS", int(prepared.g_qk.shape[-1])),
                 ("K", stop - start),
-                ("HIGHER", higher),
+                ("HIGHER", True),
             ],
             grid=(n, n, stop - start),
             threadgroup=(32, 8, 1),
@@ -1532,10 +1560,9 @@ def _reconstruct_upsampled(
         )[0]
         waves = ifft2_chunked(mx, corrected)
         total = total + phase_sum_from_complex(mx, waves)
-        if compute_loss:
-            angles = mx.arctan2(mx.imag(waves), mx.real(waves))
-            squares = squares + mx.sum(angles * angles, axis=0)
-            mx.eval(squares)
+        angles = mx.arctan2(mx.imag(waves), mx.real(waves))
+        squares = squares + mx.sum(angles * angles, axis=0)
+        mx.eval(squares)
         # Keep the same accumulation order while overlapping chunk submission.
         # Periodic completion bounds the number of live temporary arrays.
         mx.async_eval(total)
@@ -1544,5 +1571,5 @@ def _reconstruct_upsampled(
     phase = total / prepared.num_bright_field_pixels
     mx.eval(phase)
     checkpoint()
-    loss = float(mx.mean(squares / prepared.num_bright_field_pixels - phase * phase)) if compute_loss else None
+    loss = float(mx.mean(squares / prepared.num_bright_field_pixels - phase * phase))
     return np.asarray(phase, dtype=np.float32), loss

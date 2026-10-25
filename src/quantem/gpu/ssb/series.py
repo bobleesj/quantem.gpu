@@ -23,6 +23,7 @@ from quantem.gpu.ssb.results import (
     SSBResult,
     SSBSeriesResult,
     host_array,
+    retired_estimator_note,
 )
 from quantem.gpu.ssb.trials import resolve_trial_count
 from quantem.gpu.ssb.units import sampling_pair, validate_aberrations
@@ -693,8 +694,13 @@ def open_screen_record(
     path = Path(record).expanduser()
     config_path = path if path.name == "config.json" else path / "config.json"
     settings = screen_record_settings(config_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    note = retired_estimator_note(screen_record_fit(config).get("phase_estimator"), str(config_path))
+    if note is not None:
+        # the record's optics are used as they were fitted; only its stored image belongs to the retired estimator
+        print(note)
     if source is None:
-        source = json.loads(config_path.read_text(encoding="utf-8")).get("source_master")
+        source = config.get("source_master")
         if not source:
             raise ValueError(f"{config_path} names no source_master; pass source=.")
     if not Path(source).exists():

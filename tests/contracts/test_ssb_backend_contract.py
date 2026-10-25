@@ -19,13 +19,6 @@ class _Backend:
     def fit(self, **kwargs):
         raise NotImplementedError
 
-    def reconstruct_result(self, aberrations, *, compute_loss=True):
-        del compute_loss
-        raise NotImplementedError
-
-    def preview(self, aberrations, **kwargs):
-        return np.zeros(self.scan_shape, dtype=np.float32), None
-
     def cache_rotation(self, scan_detector_rotation_rad: float) -> None:
         self.scan_detector_rotation_rad = float(scan_detector_rotation_rad)
 
@@ -33,11 +26,8 @@ class _Backend:
         raise NotImplementedError
 
     def preview_upsampled(self, aberrations, **kwargs):
-        assert kwargs["phase_estimator"] == "phase_of_mean"
+        assert "phase_estimator" not in kwargs
         return np.zeros(self.scan_shape, dtype=np.float32), None
-
-    def preview_sample(self, aberrations, sample, *, compute_loss):
-        raise NotImplementedError
 
     def fit_sample(self, **options):
         raise NotImplementedError
@@ -86,51 +76,37 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
     assert reconstruct.parameters["compute_loss"].default is True
 
 
-def test_mps_reconstruct_honors_compute_loss(monkeypatch) -> None:
-    """MPS must reuse retained evidence and compute loss only when requested."""
+def test_mps_preview_honors_compute_loss(monkeypatch) -> None:
+    """MPS returns the SSB phase at the output factor and evaluates the native phase variance only when asked."""
     from quantem.gpu.ssb.mps import backend as mps_backend
 
-    requested = []
+    calls = []
     prepared = object()
 
-    def object_wave(candidate, **_kwargs):
-        assert candidate is prepared
-        return np.ones((2, 2), dtype=np.complex64)
+    def upsampled(candidate, **kwargs):
+        assert candidate is prepared and "phase_estimator" not in kwargs
+        calls.append(("phase", kwargs["upsampling_factor"]))
+        return np.ones((4, 4), dtype=np.float32)
 
-    def reconstruct(candidate, **kwargs):
-        assert candidate is prepared
-        requested.append(kwargs["compute_loss"])
-        return None, 0.25, np.zeros((2, 2), dtype=np.float32)
+    def variance(c10, c12, phi12):
+        calls.append("loss")
+        return np.zeros((2, 2), dtype=np.float32), 0.25
 
-    class FakeMlx:
-        @staticmethod
-        def clear_cache():
-            requested.append("clear")
-
-    monkeypatch.setattr(mps_backend, "object_fourier_sum_dynamic", object_wave)
-    monkeypatch.setattr(mps_backend, "reconstruct_prepared", reconstruct)
-    monkeypatch.setattr(mps_backend, "require_mlx", lambda: FakeMlx)
+    monkeypatch.setattr(mps_backend, "_reconstruct_upsampled", upsampled)
     backend = mps_backend.MpsSSBBackend.__new__(mps_backend.MpsSSBBackend)
     backend._prepared = prepared
-    backend._chunk_bf = 4
-    backend._phase_chunk_bf = 2
-    backend._voltage_kV = 300.0
-    backend._semiangle_mrad = 30.0
-    backend._scan_sampling = (1.0, 1.0)
-    backend._scan_detector_rotation_deg = 0.0
-    backend._selection = SimpleNamespace(
-        size=3,
-        bright_field_center_px=(1.0, 1.0),
-        bright_field_radius_px=1.0,
-        bright_field_edge_radius_px=1.0,
-    )
+    backend._fit_preview_phase = None
+    backend._fit_preview_loss = None
+    backend._fit_preview_aberrations = None
+    backend.reconstruct_with_loss = variance
 
     aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
-    without_loss = backend.reconstruct_result(aberrations, compute_loss=False)
-    with_loss = backend.reconstruct_result(aberrations, compute_loss=True)
-    assert without_loss.loss is None
-    assert with_loss.loss == 0.25
-    assert requested == ["clear", True, "clear"]
+    phase, without_loss = backend.preview_upsampled(aberrations, upsampling_factor=2, compute_loss=False)
+    _, with_loss = backend.preview_upsampled(aberrations, upsampling_factor=2, compute_loss=True)
+    assert phase.shape == (4, 4)
+    assert without_loss is None
+    assert with_loss == 0.25
+    assert calls == [("phase", 2), ("phase", 2), "loss"]
 
 
 def test_mps_rotation_retargets_geometry_without_repreparing_source(
@@ -327,7 +303,7 @@ def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> 
         ):
             called.add(node.attr)
     members = set(vars(SSBProtocol)) | set(SSBProtocol.__annotations__)
-    assert {"preview_upsampled", "preview_sample", "fit_sample"} <= called
+    assert {"preview_upsampled", "fit_sample"} <= called
     assert called <= members
 
 

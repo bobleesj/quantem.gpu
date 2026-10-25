@@ -144,24 +144,6 @@ def test_joint_history_carries_tilt_depth_and_objective():
         ssb.close()
 
 
-def test_explicit_complex_estimator_preserves_wave_amplitude():
-    import cupy as cp
-    from quantem.gpu.ssb.units import aberrations_to_engine
-
-    ssb, _ = _synthetic_session()
-    coefs = {'C10_nm': -8., 'C12_nm': 4., 'phi12_deg': math.degrees(-.7)}
-    try:
-        expected = ssb._backend().reconstruct_result(aberrations_to_engine(coefs))
-        result = ssb.reconstruct(aberrations=coefs, phase_estimator='complex_wave')
-        np.testing.assert_array_equal(cp.asnumpy(result.object_wave), cp.asnumpy(expected.object_wave))
-        assert result.amplitude_estimated
-        assert result.aberrations == coefs
-        with pytest.raises(ValueError, match='requires upsampling_factor=1'):
-            ssb.reconstruct(aberrations=coefs, phase_estimator='complex_wave', upsampling_factor=2)
-    finally:
-        ssb.close()
-
-
 def test_zero_trial_search_does_not_relabel_previous_search():
     ssb, _ = _synthetic_session()
     try:
@@ -184,13 +166,12 @@ def test_zero_trial_search_does_not_relabel_previous_search():
         ssb.close()
 
 
-@pytest.mark.parametrize('estimator', ['mean_phase', 'phase_of_mean', 'complex_wave'])
-def test_search_starts_from_the_current_public_coefficients(estimator):
+def test_search_starts_from_the_current_public_coefficients():
     """Changing coefficients before a refinement-only search must take effect."""
     ssb, _ = _synthetic_session()
     try:
         wanted = {'C10_nm': 9.0, 'C12_nm': 3.0, 'phi12_deg': math.degrees(0.25)}
-        ssb.reconstruct(aberrations=wanted, phase_estimator=estimator, compute_loss=False)
+        ssb.reconstruct(aberrations=wanted, compute_loss=False)
         result = ssb.find_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
                                       check_rotation=False, verbose=False)
         assert result.aberrations == wanted

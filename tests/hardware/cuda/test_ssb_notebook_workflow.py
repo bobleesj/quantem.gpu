@@ -41,8 +41,7 @@ def test_auto_grid_matches_explicit_grid_without_refitting(monkeypatch):
 
 
 @pytest.mark.parametrize('depth', [0., 12.])
-@pytest.mark.parametrize('estimator', ['mean_phase', 'phase_of_mean'])
-def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, estimator, depth, monkeypatch):
+def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, depth, monkeypatch):
     import cupy as cp
 
     ssb, _ = _synthetic_session()
@@ -54,12 +53,10 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, estimator
                                           check_rotation=False, verbose=False)
         correction = replace(correction, sample_tilt_mrad=(2., -3.), depth_spread_nm=depth)
         native, loss = ssb.preview(correction.aberrations, sample_tilt_mrad=correction.sample_tilt_mrad,
-                                  depth_spread_nm=correction.depth_spread_nm,
-                                  phase_estimator=estimator)
+                                  depth_spread_nm=correction.depth_spread_nm)
         results = {}
         for factor in (1, 2, 3, 4, 1):
-            result = ssb.reconstruct(correction, upsampling_factor=factor, phase_estimator=estimator,
-                                     save_dir=tmp_path / f'x{factor}')
+            result = ssb.reconstruct(correction, upsampling_factor=factor, save_dir=tmp_path / f'x{factor}')
             assert result.phase.shape == (128 * factor, 128 * factor)
             assert result.object_sampling_A == (.3 / factor, .3 / factor)
             assert result.loss == loss
@@ -68,7 +65,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, estimator
             assert result.depth_spread_nm == depth
             assert not result.amplitude_estimated
             assert result.upsampling_factor == factor
-            assert result.phase_estimator == estimator
+            assert result.phase_estimator == 'phase_of_mean'
             assert np.isfinite(cp.asnumpy(result.phase)).all()
             results[factor] = cp.asnumpy(result.phase)
         np.testing.assert_allclose(results[1], native, atol=1e-7)
@@ -76,8 +73,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, estimator
             raise AssertionError('Reconstruction must not refit')
         monkeypatch.setattr(ssb, 'find_aberrations', forbidden)
         for factor in (4, 3, 2, 1):
-            saved = ssb.reconstruct(correction, upsampling_factor=factor, phase_estimator=estimator,
-                                    save_dir=tmp_path / f'x{factor}')
+            saved = ssb.reconstruct(correction, upsampling_factor=factor, save_dir=tmp_path / f'x{factor}')
             # A source path cannot identify the direct array's crop or edits.
             # The saved image is refreshed; immutable SSB.open sources have
             # separate cache-reuse checks in test_ssb_persistence.
@@ -100,9 +96,9 @@ def test_default_correction_and_changed_sample_do_not_reuse_stale_phase():
         np.testing.assert_allclose(cp.asnumpy(native.phase), expected, atol=1e-7)
         ssb.depth_spread_nm = 12.
         ssb.sample_tilt_mrad = (2., -3.)
-        changed = ssb.reconstruct(phase_estimator='mean_phase')
+        changed = ssb.reconstruct()
         assert changed is not native
-        expected, _ = ssb.preview(correction.aberrations, sample_tilt_mrad=(2., -3.), depth_spread_nm=12., phase_estimator='mean_phase')
+        expected, _ = ssb.preview(correction.aberrations, sample_tilt_mrad=(2., -3.), depth_spread_nm=12.)
         np.testing.assert_allclose(cp.asnumpy(changed.phase), expected, atol=1e-7)
     finally:
         ssb.close()

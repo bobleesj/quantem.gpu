@@ -70,8 +70,6 @@ def save_calibration(result, path):
     method = result.reconstruction_method
     if method not in ("ssb", "phase", "complex"):
         raise ValueError(f"Unsupported direct reconstruction method {method!r}; save an SSB, phase or complex result.")
-    if method == "ssb" and result.phase_estimator not in ("phase_of_mean", "mean_phase"):
-        raise ValueError("ShowPtycho requires a phase-only SSB estimator. Save the result of ptycho.find_aberrations().")
     context = deepcopy(result.calibration_context)
     identity = context["session_identity"]
     if "source" not in identity:
@@ -106,9 +104,9 @@ def save_calibration(result, path):
             sample, scan_detector_rotation_deg=result.scan_detector_rotation_deg,
             scan_detector_rotation_flipped=result.scan_detector_rotation_flipped)),
         "loss": result.loss,
-        # This field selects the conventional SSB view when comparing methods;
-        # it does not describe the regularized solver recorded separately below.
-        "phase_estimator": result.phase_estimator if method == "ssb" else "phase_of_mean",
+        # ShowPtycho's conventional SSB view, the phase of the mean wave, whatever image the result holds (a result
+        # saved with a retired estimator included); the regularized solver is recorded separately below.
+        "phase_estimator": "phase_of_mean",
         "reconstruction_method": method,
         "reconstruction_options": deepcopy(result.reconstruction_options),
         "reconstruction_diagnostics": deepcopy(result.reconstruction_diagnostics),

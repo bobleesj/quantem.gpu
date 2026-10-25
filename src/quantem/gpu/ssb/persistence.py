@@ -17,7 +17,7 @@ import numpy as np
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.inspect import inspect as inspect_source
 from quantem.gpu.ssb.branches import RotationBranches
-from quantem.gpu.ssb.results import SSBResult, host_array
+from quantem.gpu.ssb.results import SSBResult, host_array, retired_estimator_note
 
 # One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
 # Bump it when fitted values acquire a different physical meaning or record layout: the automatic
@@ -137,6 +137,9 @@ def load_result(
     for name in ("object_sampling_A", "bright_field_center_px", "sample_tilt_mrad", "phase_clim", "fit_scan_region"):
         if isinstance(saved.get(name), list):
             saved[name] = tuple(saved[name])
+    note = retired_estimator_note(saved.get("phase_estimator"), f"{array_path.name} in {array_path.parent}")
+    if note is not None:
+        print(note)
     return SSBResult(
         object_wave=object_wave,
         rotation_branches=rotation_branches,

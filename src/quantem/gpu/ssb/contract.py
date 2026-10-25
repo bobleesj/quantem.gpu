@@ -65,9 +65,9 @@ class SSBProtocol(Protocol):
     CUDA and MPS implement this protocol in Python. Browser WebGPU mirrors the
     same semantic contract in ``webgpu/protocol.ts`` because its execution is
     asynchronous and browser-resident. Unsupported work must fail explicitly;
-    no implementation may fall back to CPU or change the BF evidence. MPS
-    raises ``NotImplementedError`` from ``preview_upsampled``: finer output
-    sampling and wave averaging are CUDA only.
+    no implementation may fall back to CPU or change the BF evidence.
+    ``preview_upsampled`` is every SSB image: the phase of the bright-field mean
+    wave at the output factor, with the phase-variance loss on the native grid.
     """
 
     backend: Literal["cuda", "mps"]
@@ -96,23 +96,7 @@ class SSBProtocol(Protocol):
         compute_loss: bool = True,
     ) -> SSBResult: ...
 
-    def reconstruct_result(
-        self,
-        aberrations: dict[str, float],
-        *,
-        compute_loss: bool = True,
-    ) -> SSBResult: ...
-
     def cache_rotation(self, scan_detector_rotation_rad: float) -> None: ...
-
-    def preview(
-        self,
-        aberrations: dict[str, float],
-        *,
-        compute_loss: bool,
-        higher_order_magnitudes: np.ndarray | None,
-        higher_order_angles: np.ndarray | None,
-    ) -> tuple[object, float | None]: ...
 
     def preview_upsampled(
         self,
@@ -122,17 +106,8 @@ class SSBProtocol(Protocol):
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float],
         depth_spread_A: float,
-        phase_estimator: str,
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
-    ) -> tuple[object, float | None]: ...
-
-    def preview_sample(
-        self,
-        aberrations: dict[str, float],
-        sample: dict[str, float],
-        *,
-        compute_loss: bool,
     ) -> tuple[object, float | None]: ...
 
     def fit_sample(self, **options) -> dict[str, object]: ...

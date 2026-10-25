@@ -94,7 +94,7 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
         assert again.num_trials == 0 and again.trial_records == []
         assert abs(again.aberrations["C10_nm"] - fitted.aberrations["C10_nm"]) < 0.5
         options = dict(sample_tilt_mrad=again.sample_tilt_mrad, depth_spread_nm=again.depth_spread_nm,
-                       phase_estimator="phase_of_mean", compute_loss=False)
+                       compute_loss=False)
         native, _ = ssb.preview(dict(again.aberrations), output="native", **options)
         host, _ = ssb.preview(dict(again.aberrations), **options)
         assert isinstance(native, cp.ndarray)
@@ -109,12 +109,12 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
 
 
 def test_native_previews_are_their_own_arrays_and_a_region_refit_starts_from_assigned_optics(acquisition, monkeypatch):
-    """Each native preview survives the next one (the mean-phase path reuses an engine buffer), and a region refit with no
-    trials starts from the aberrations a caller assigned to the session, not from zero."""
+    """Each native preview survives the next one, and a region refit with no trials starts from the aberrations a
+    caller assigned to the session, not from zero."""
     from quantem.gpu import SSB
 
     with SSB(acquisition, **SETTINGS) as ssb:
-        options = dict(phase_estimator="mean_phase", compute_loss=False)
+        options = dict(compute_loss=False)
         first, _ = ssb.preview({"C10_nm": 1.0, "C12_nm": 0.0, "phi12_deg": 0.0}, output="native", **options)
         kept = cp.asnumpy(first)
         ssb.preview({"C10_nm": 30.0, "C12_nm": 0.0, "phi12_deg": 0.0}, output="native", **options)

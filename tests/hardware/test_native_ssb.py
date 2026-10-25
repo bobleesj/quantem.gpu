@@ -81,8 +81,8 @@ def test_native_encoded_ssb_matches_dense_and_keeps_acquisition_open(tmp_path, b
             # the centre counts from the first pixel of the full detector, also in the session that decoded only its
             # crop; that session used to report the centre inside the crop
             assert native.bright_field_center_px == dense.bright_field_center_px == (11.5, 11.5)
-            cropped_result = native.reconstruct(aberrations=ABERRATIONS, phase_estimator="complex_wave")
-            dense_result = dense.reconstruct(aberrations=ABERRATIONS, phase_estimator="complex_wave")
+            cropped_result = native.run(aberrations=ABERRATIONS)
+            dense_result = dense.run(aberrations=ABERRATIONS)
             assert cropped_result.bright_field_center_px == dense_result.bright_field_center_px == (11.5, 11.5)
         np.testing.assert_array_equal(data[0, 0].cpu().numpy(), counts[0, 0])
 
@@ -116,8 +116,8 @@ def test_detector_sampling_defaults_to_the_semiangle_over_the_disk_edge_radius(t
                 expected, expected_loss = calibrated.preview(ABERRATIONS)
                 np.testing.assert_array_equal(phase, expected)
                 assert loss == expected_loss
-                result = automatic.reconstruct(aberrations=ABERRATIONS, phase_estimator="complex_wave")
-                assert result.bright_field_edge_radius_px == pytest.approx(radius, rel=1e-12)
+                disk = automatic._backend().browser_state().brightfield
+                assert disk.bright_field_edge_radius_px == pytest.approx(radius, rel=1e-12)
 
 
 def test_encoded_storage_is_refused_and_the_callers_acquisition_survives_close(tmp_path, backend):
