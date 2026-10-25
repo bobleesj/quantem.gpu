@@ -41,7 +41,16 @@ No. On MoS2 bilayer frames 151-191 the three drifts agree to 0.049 Å at most (0
 
 Same 40 frames, GPU 0 (600 W card), one warm-up: `drift()` takes 1.03 s for 114 pairs (9 ms a pair), `register` 20 ms for one pair with its own spot search. Registration is PyTorch on the GPU; `running` is CuPy. The CPU holds only bookkeeping: spot clustering (a dozen spots) and the least-squares solve (114 x 39).
 
-85 % of GPU time is one complex128 matrix product per pair: the sub-pixel refinement (`refine`) evaluates the correlation on a 301 x 301 grid (±1.5 px at 1/100 px) as (301 x 1536) @ (1536 x 1536) @ (1536 x 301), 5.3 ms a pair. A coarse-then-fine search (1/10 px over ±1.5, then 1/100 px over ±0.1) would cut that about tenfold, as would complex64. Neither is bit-exact with the frozen myptycho baseline, so neither is made without Bob's OK.
+85 % of GPU time was one complex128 matrix product per pair: the sub-pixel refinement (`refine`) evaluated the correlation on a 301 x 301 grid (±1.5 px at 1/100 px) as (301 x 1536) @ (1536 x 1536) @ (1536 x 301), 5.3 ms a pair.
+
+Now `refine` searches in two passes: every 1/10 px over ±1.5 px (31 x 31), then every 1/100 px within ±0.1 px of the best (21 x 21). Without the profiler, best of 3 after a warm-up, GPU 0:
+
+| | `drift()`, 40 frames, 114 pairs |
+|---|---|
+| one 1/100 px grid (frozen baseline) | 0.91 s |
+| two passes | 0.36 s (2.5x) |
+
+Against the frozen myptycho baseline the displacements are bit-identical on all 40 frames, the synthetic series and `register(151, 191)`. σ and the triple closure move in the last bit (3e-18 Å) because the offsets are now whole multiples of 1/100 px, not steps of a float arange. Of the 114 pair searches, 113 are unchanged; one pair, (151, 154), moves 0.1 px. That pair matched a wrong region 22 Å off (confidence 0.002) and drift rejects it with or without the change: its correlation is flat, so the coarse pass stops on another local maximum.
 
 ## Files
 
