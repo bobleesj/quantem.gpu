@@ -12,7 +12,7 @@ import XCTest
 /// loader's flagged-pixel median fill), `detector_sum.u64`, `optics.json` (`optics_sets`: name, `aberrations` with
 /// `C10_nm`, `C12_nm`, `phi12_deg`, `higher_order` [{order, symmetry, magnitude_A, angle_rad}], `sample_tilt_mrad`,
 /// `depth_spread_nm`, `rotation_deg`) and `references.json` (`references`: file, `amplitude_file`, method,
-/// `upsampling`, `factor` "1" or "auto", setting, `requested` regularization, optics) with the CUDA `.npy` arrays.
+/// `upsampling`, `factor` "1", "2" or "auto", setting, `requested` regularization, optics) with the CUDA `.npy` arrays.
 /// The default presets run unless `SSB_DIRECT_ALL=1`; `SSB_DIRECT_OPTICS` picks one optics set. Without the fixture
 /// these tests skip.
 ///
