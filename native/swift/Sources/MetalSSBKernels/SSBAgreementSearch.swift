@@ -13,6 +13,20 @@ public enum SSBAgreementSearch {
   /// Evaluates trial points (engine units) and returns their agreements.
   public typealias Evaluate = ([[Double]]) throws -> [Double]
 
+  /// The agreement with its exact gradient and Hessian in the Newton coordinates z = (C10, C12 cos 2 phi12,
+  /// C12 sin 2 phi12, tilt row, tilt column, depth spread), at each row of z.
+  public struct Derivatives: Sendable {
+    public let value: Double
+    public let gradient: [Double]
+    public let hessian: [[Double]]
+    public init(value: Double, gradient: [Double], hessian: [[Double]]) {
+      self.value = value
+      self.gradient = gradient
+      self.hessian = hessian
+    }
+  }
+  public typealias EvaluateDerivatives = ([[Double]]) throws -> [Derivatives]
+
   /// Python's `DEPTH_SPREAD_RANGE_A`.
   public static let depthSpreadRangeAngstroms: ClosedRange<Double> = 20...600
 
@@ -23,6 +37,8 @@ public enum SSBAgreementSearch {
 
   public struct NewtonStart: Codable, Sendable {
     public let iterations: Int
+    /// Objective evaluations: stencil points of the finite-difference Newton, or centers of the exact one (each
+    /// with its gradient and Hessian).
     public let evaluations: Int
     public let converged: Bool
   }
@@ -289,6 +305,9 @@ public enum SSBAgreementSearch {
 
   static let steps = [2.0, 2.0, 2.0, f(0.25), f(0.25), 5.0]
   static let tolerances = [f(0.05), f(0.05), f(0.05), f(0.005), f(0.005), f(0.5)]
+  /// The exact Newton's convergence tolerances: a tenth of the stencil Newton's. Its steps converge
+  /// quadratically, so the last center is within about this of the maximum for one or two more centers.
+  static let exactTolerances = tolerances.map { $0 / 10 }
 
   static func encode(_ p: [Double]) -> [Double] {
     var z = p
@@ -434,16 +453,25 @@ public enum SSBAgreementSearch {
     var evaluations = 0
     var converged = false
     var heading: [Double]
+    /// The start's z.
+    var origin: [Double] = []
+    /// A start of an earlier polish, present only for the pruning of the others.
+    var known = false
   }
 
   /// `_newton`: up to three starts, the `explicit` points first and then the best distinct trials, 30
   /// iterations. `prune` keeps only the highest start after the second step; without it every start climbs
   /// until it converges or meets a higher one.
+  ///
+  /// With `derivatives` every iteration evaluates each active center once, with its exact gradient and Hessian,
+  /// in place of the finite-difference stencil (2n + 1 points, or n(n + 3)/2 + 1 with the mixed terms), and
+  /// converges to `exactTolerances`. The trust region, bounds, acceptance and start pruning are the same.
   static func newton(
     _ evaluate: Evaluate, points: [[Double]], scores: [Double], lower boxLower: [Double],
     upper boxUpper: [Double], explicit: [[Double]], starts requested: Int, fixed: Bool,
     standard: Bool,
-    prune: Bool = true, isCancelled: () -> Bool
+    prune: Bool = true, derivatives: EvaluateDerivatives? = nil, known: [NewtonState] = [],
+    isCancelled: () -> Bool
   ) throws -> (point: [Double], agreement: Double, starts: [NewtonState]) {
     let starts = min(3, requested)
     let rank = ranks(scores)
@@ -457,10 +485,17 @@ public enum SSBAgreementSearch {
       }
       if different { chosen.append(p) }
     }
-    var state = chosen.map { p -> NewtonState in
-      let z = encode(p)
-      return NewtonState(center: z, heading: z)
-    }
+    var state =
+      known.map { finished -> NewtonState in
+        var kept = finished
+        kept.active = false
+        kept.known = true
+        return kept
+      }
+      + chosen.map { p -> NewtonState in
+        let z = encode(p)
+        return NewtonState(center: z, heading: z, origin: z)
+      }
     let scale = scores.reduce(f(1e-30)) { max($0, abs($1)) }
     var lower = boxLower
     var upper = boxUpper
@@ -471,42 +506,58 @@ public enum SSBAgreementSearch {
     let last = standard ? 3 : 6
     let n = last - first
     let free = (0..<6).map { standard ? $0 < 3 : !(fixed && $0 < 3) }
+    let tolerance = derivatives == nil ? tolerances : exactTolerances
     for iteration in 0..<30 {
       if isCancelled() { throw CancellationError() }
       let active = state.indices.filter { state[$0].active }
       if active.isEmpty { break }
       var designs: [[Double]] = []
       var sizes: [Int] = []
-      for k in active {
-        let size = 1 + 2 * n + (state[k].full ? n * (n - 1) / 2 : 0)
-        sizes.append(size)
-        for local in 0..<size {
-          var z = state[k].center
-          if local > 0 && local <= 2 * n {
-            let d = first + (local - 1) / 2
-            z[d] += steps[d] * (local % 2 == 1 ? 1 : -1)
-          }
-          if local > 2 * n {
-            var pair = 2 * n + 1
-            for i in first..<last {
-              for j in (i + 1)..<max(i + 1, last) {
-                if pair == local {
-                  z[i] += steps[i]
-                  z[j] += steps[j]
+      var exact: [Derivatives] = []
+      let values: [Double]
+      if let derivatives {
+        exact = try derivatives(active.map { state[$0].center })
+        guard exact.count == active.count,
+          exact.allSatisfy({ at in
+            at.value.isFinite && at.gradient.count == 6 && at.gradient.allSatisfy(\.isFinite)
+              && at.hessian.count == 6
+              && at.hessian.allSatisfy { $0.count == 6 && $0.allSatisfy(\.isFinite) }
+          })
+        else { throw SSBOptimizationError.nonFiniteLoss }
+        sizes = active.map { _ in 1 }
+        values = exact.map(\.value)
+      } else {
+        for k in active {
+          let size = 1 + 2 * n + (state[k].full ? n * (n - 1) / 2 : 0)
+          sizes.append(size)
+          for local in 0..<size {
+            var z = state[k].center
+            if local > 0 && local <= 2 * n {
+              let d = first + (local - 1) / 2
+              z[d] += steps[d] * (local % 2 == 1 ? 1 : -1)
+            }
+            if local > 2 * n {
+              var pair = 2 * n + 1
+              for i in first..<last {
+                for j in (i + 1)..<max(i + 1, last) {
+                  if pair == local {
+                    z[i] += steps[i]
+                    z[j] += steps[j]
+                  }
+                  pair += 1
                 }
-                pair += 1
               }
             }
+            designs.append(decode(z))
           }
-          designs.append(decode(z))
+        }
+        values = try evaluate(designs)
+        guard values.count == designs.count, values.allSatisfy(\.isFinite) else {
+          throw SSBOptimizationError.nonFiniteLoss
         }
       }
-      let values = try evaluate(designs)
-      guard values.count == designs.count, values.allSatisfy(\.isFinite) else {
-        throw SSBOptimizationError.nonFiniteLoss
-      }
       var offset = 0
-      for (k, size) in zip(active, sizes) {
+      for (position, (k, size)) in zip(active, sizes).enumerated() {
         var s = state[k]
         let value = values[offset] / scale
         var center = s.center
@@ -522,6 +573,18 @@ public enum SSBAgreementSearch {
           center = s.keptCenter
           g = s.keptGradient
           s.radius = min(s.radius, moved) / 4
+        } else if !exact.isEmpty {
+          let at = exact[position]
+          for d in first..<last {
+            g[d] = at.gradient[d] / scale
+            for e in first..<last { h[d][e] = at.hessian[d][e] / scale }
+          }
+          if s.hasPrevious && moved >= f(0.99) * s.radius { s.radius *= 2 }
+          s.keptCenter = center
+          s.keptGradient = g
+          s.keptHessian = h
+          s.keptValue = value
+          s.hasPrevious = true
         } else {
           var plus = [Double](repeating: 0, count: 6)
           for d in first..<last {
@@ -562,7 +625,7 @@ public enum SSBAgreementSearch {
           proposal[2] = proposal[2] * upper[1] / norm
         }
         let converged = (first..<last).allSatisfy {
-          abs(proposal[$0] - center[$0]) < tolerances[$0]
+          abs(proposal[$0] - center[$0]) < tolerance[$0]
         }
         if converged {
           s.active = false
@@ -605,7 +668,9 @@ public enum SSBAgreementSearch {
     where state[k].hasPrevious && state[k].keptValue > state[best].keptValue {
       best = k
     }
-    return (decode(state[best].keptCenter), state[best].keptValue * scale, state)
+    return (
+      decode(state[best].keptCenter), state[best].keptValue * scale, state.filter { !$0.known }
+    )
   }
 
   /// The second polish's relative margin (`BASIN_MARGIN`): a start that climbs back to the same maximum leaves
@@ -645,16 +710,32 @@ public enum SSBAgreementSearch {
 
   /// `_other_basins`: polish the alternate starts, each to its own maximum, and keep that result only when its
   /// agreement is higher by more than `basinMargin`.
+  ///
+  /// The exact Newton (`derivatives`) climbs only new basins: an alternate that is one of the first polish's
+  /// starts would retrace that start's deterministic climb and is not polished again, and the polished maximum
+  /// takes part in the start pruning, so an alternate that comes near it, or heads where it is, while lower,
+  /// stops.
   static func otherBasins(
     _ evaluate: Evaluate, points: [[Double]], scores: [Double], lower: [Double], upper: [Double],
-    first: (point: [Double], agreement: Double, starts: [NewtonState]), isCancelled: () -> Bool
+    first: (point: [Double], agreement: Double, starts: [NewtonState]),
+    derivatives: EvaluateDerivatives? = nil, isCancelled: () -> Bool
   ) throws -> (point: [Double], agreement: Double, starts: [NewtonState]) {
-    let alternates = alternateStarts(points: points, scores: scores, polished: first.point)
+    var alternates = alternateStarts(points: points, scores: scores, polished: first.point)
+    var known: [NewtonState] = []
+    if derivatives != nil {
+      let origins = first.starts.map(\.origin)
+      alternates = alternates.filter { !origins.contains(encode($0)) }
+      if let polished = first.starts.filter(\.hasPrevious).max(by: { $0.keptValue < $1.keptValue }) {
+        var marker = polished
+        marker.heading = polished.keptCenter
+        known = [marker]
+      }
+    }
     if alternates.isEmpty { return first }
     let second = try newton(
       evaluate, points: points, scores: scores, lower: lower, upper: upper, explicit: alternates,
       starts: alternates.count, fixed: false, standard: false, prune: false,
-      isCancelled: isCancelled)
+      derivatives: derivatives, known: known, isCancelled: isCancelled)
     let starts = first.starts + second.starts
     if second.agreement > first.agreement * (1 + basinMargin) {
       return (second.point, second.agreement, starts)
@@ -675,7 +756,8 @@ public enum SSBAgreementSearch {
   public static func fitTilt(
     _ evaluate: Evaluate, trials: Int = 200, seed: Int = 42, tiltLimitMrad: Double = 25,
     c10RangeAngstroms: ClosedRange<Double> = -300...300, c12MaximumAngstroms: Double = 200,
-    start: [Double]? = nil, refine: Bool = true, isCancelled: () -> Bool = { false }
+    start: [Double]? = nil, refine: Bool = true, derivatives: EvaluateDerivatives? = nil,
+    isCancelled: () -> Bool = { false }
   ) throws -> Result {
     guard trials >= 0, trials > 0 || start != nil else {
       throw MetalSSBError.invalidGeometry(
@@ -692,7 +774,7 @@ public enum SSBAgreementSearch {
     ]
     return try fit(
       evaluate, lower: lower, upper: upper, trials: trials, seed: seed, thin: false, start: start,
-      refine: refine, isCancelled: isCancelled)
+      refine: refine, derivatives: derivatives, isCancelled: isCancelled)
   }
 
   /// The model-based fit at depth spread 0 (`fit_standard_resident`, Newton): C10, C12 and phi12 with the
@@ -700,14 +782,15 @@ public enum SSBAgreementSearch {
   public static func fitStandard(
     _ evaluate: Evaluate, trials: Int = 200, seed: Int = 42,
     c10RangeAngstroms: ClosedRange<Double> = -400...400, c12MaximumAngstroms: Double = 100,
-    refine: Bool = true, isCancelled: () -> Bool = { false }
+    refine: Bool = true, derivatives: EvaluateDerivatives? = nil,
+    isCancelled: () -> Bool = { false }
   ) throws -> Result {
     guard trials > 0 else { throw MetalSSBError.invalidGeometry("Use at least one trial.") }
     let lower = [c10RangeAngstroms.lowerBound, 0, -Double.pi / 2, 0, 0, 0]
     let upper = [c10RangeAngstroms.upperBound, c12MaximumAngstroms, Double.pi / 2, 0, 0, 0]
     return try fit(
       evaluate, lower: lower, upper: upper, trials: trials, seed: seed, thin: true, start: nil,
-      refine: refine, isCancelled: isCancelled)
+      refine: refine, derivatives: derivatives, isCancelled: isCancelled)
   }
 
   /// The tilt fit's standard comparison: the best of a 200-trial search at depth spread 0, unrefined.
@@ -724,7 +807,8 @@ public enum SSBAgreementSearch {
 
   static func fit(
     _ evaluate: Evaluate, lower: [Double], upper: [Double], trials: Int, seed: Int, thin: Bool,
-    start: [Double]?, refine: Bool, isCancelled: () -> Bool
+    start: [Double]?, refine: Bool, derivatives: EvaluateDerivatives? = nil,
+    isCancelled: () -> Bool
   ) throws -> Result {
     let space = Space(lower: lower, upper: upper, fixed: false, thin: thin)
     let begin = Date()
@@ -746,14 +830,20 @@ public enum SSBAgreementSearch {
       var fitted = try newton(
         evaluate, points: points, scores: scores, lower: lower, upper: upper,
         explicit: thin ? [] : (start.map { [$0] } ?? []), starts: 3, fixed: false, standard: thin,
-        isCancelled: isCancelled)
+        derivatives: derivatives, isCancelled: isCancelled)
       if trials > 0 && !thin {
         fitted = try otherBasins(
           evaluate, points: points, scores: scores, lower: lower, upper: upper, first: fitted,
-          isCancelled: isCancelled)
+          derivatives: derivatives, isCancelled: isCancelled)
       }
       point = fitted.point
       agreement = fitted.agreement
+      if derivatives != nil {
+        // Report the fitted point on the search's own objective.
+        let values = try evaluate([point])
+        guard values.count == 1, values[0].isFinite else { throw SSBOptimizationError.nonFiniteLoss }
+        agreement = values[0]
+      }
       newtonStarts = fitted.starts.filter(\.hasPrevious).map {
         NewtonStart(iterations: $0.iterations, evaluations: $0.evaluations, converged: $0.converged)
       }

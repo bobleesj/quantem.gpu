@@ -359,6 +359,79 @@ final class SSBModelReconstructionTests: XCTestCase {
       model.scanDetectorRotationDegrees, fitted.fits[fitted.kept].scanDetectorRotationDegrees)
   }
 
+  /// The exact low-order gradient and Hessian against Richardson-extrapolated central differences of the
+  /// value and of the gradient, at points with and without tilt and depth spread; the value against the
+  /// agreement objective.
+  func testLowOrderDerivativesMatchFiniteDifferences() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try Self.scene()
+    let input = try XCTUnwrap(
+      s.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+    let points = [
+      SSBModelPoint(c10Angstroms: 61, c12Angstroms: 14, phi12Radians: 0.7),
+      SSBModelPoint(
+        c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -1.4, sampleTiltMrad: [2.5, -4],
+        depthSpreadAngstroms: 140),
+      SSBModelPoint(
+        c10Angstroms: 12, c12Angstroms: 30, phi12Radians: 0.2, sampleTiltMrad: [-7, 1.5],
+        depthSpreadAngstroms: 420),
+    ]
+    let steps = [2.0, 2.0, 2.0, 0.25, 0.25, 8.0]
+    for point in points {
+      let z = SSBAgreementSearch.encode([
+        point.c10Angstroms, point.c12Angstroms, point.phi12Radians, point.sampleTiltMrad[0],
+        point.sampleTiltMrad[1], point.depthSpreadAngstroms,
+      ])
+      var rows = [z]
+      for d in 0..<6 {
+        for scale in [1.0, 0.5] {
+          for sign in [1.0, -1.0] {
+            var shifted = z
+            shifted[d] += sign * scale * steps[d]
+            rows.append(shifted)
+          }
+        }
+      }
+      let results = try model.lowOrderDerivatives(rows)
+      let exact = results[0]
+      let agreement = try model.agreements([point])[0]
+      XCTAssertEqual(exact.value, agreement, accuracy: 2e-6 * agreement)
+      func richardson(_ d: Int, _ f: (SSBLowOrderDerivatives.Result) -> Double) -> Double {
+        let r = results[1 + 4 * d..<5 + 4 * d].map(f)
+        let coarse = (r[0] - r[1]) / (2 * steps[d])
+        let fine = (r[2] - r[3]) / steps[d]
+        return (4 * fine - coarse) / 3
+      }
+      // Scales: the change of the value and of each gradient component over one step.
+      let valueScale = (0..<6).map { abs(exact.gradient[$0]) * steps[$0] }.max()! + 1e-6 * agreement
+      var worstGradient = 0.0
+      var worstHessian = 0.0
+      for d in 0..<6 {
+        let numeric = richardson(d) { $0.value }
+        worstGradient = max(worstGradient, abs(numeric - exact.gradient[d]) * steps[d] / valueScale)
+        for e in 0..<6 {
+          let mixed = richardson(d) { $0.gradient[e] }
+          let scale = (0..<6).map { abs(exact.hessian[e][$0]) * steps[$0] * steps[e] }.max()! + 1e-6
+            * valueScale
+          worstHessian = max(
+            worstHessian, abs(mixed - exact.hessian[d][e]) * steps[d] * steps[e] / scale)
+        }
+      }
+      print(
+        String(
+          format: "LOW_ORDER_DERIVATIVES depth %.0f value rel %.2e gradient rel %.2e hessian rel %.2e",
+          point.depthSpreadAngstroms, (exact.value - agreement) / agreement, worstGradient,
+          worstHessian))
+      XCTAssertLessThan(worstGradient, 2e-3)
+      XCTAssertLessThan(worstHessian, 2e-3)
+    }
+  }
+
   func testCurlRotationRecoversAKnownAngle() {
     let (rows, columns) = (64, 80)
     func potential(_ r: Int, _ c: Int) -> Double {

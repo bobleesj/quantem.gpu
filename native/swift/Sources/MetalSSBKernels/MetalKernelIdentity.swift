@@ -31,7 +31,7 @@ public struct MetalKernelIdentity: Codable, Equatable, Hashable, Sendable {
   }
 }
 
-/// The registered native SSB reconstruction kernels; see `docs/performance/kernels.md`.
+/// The registered native SSB reconstruction and fit kernels; see `docs/performance/kernels.md`.
 enum SSBKernelRegistry {
   struct Entry {
     let name: String
@@ -54,6 +54,11 @@ enum SSBKernelRegistry {
   static let meanPhase = Entry(
     name: "ssb-mean-phase", version: "0.1", files: ["ssb_joint", "ssb_joint_fft", "ssb_fft"],
     registeredSourceSHA256: "4aa7c1da63913a45e8075c41a36497be32fbe527e5aaceaddb70eb340b9f7e53")
+
+  /// The primary fit's exact low-order gradient and Hessian (trust-region Newton), `SSBLowOrderDerivatives`.
+  static let lowOrderDerivatives = Entry(
+    name: "ssb-low-order-derivatives", version: "0.1", files: ["ssb_low_order"],
+    registeredSourceSHA256: "40da0bd64def2fcb21831f57777020331306e755495047031a40c41ef727b48b")
 
   /// SHA-256 of an entry's shipped source files, concatenated in order.
   static func sourceSHA256(_ entry: Entry) throws -> String {

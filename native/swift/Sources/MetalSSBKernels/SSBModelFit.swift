@@ -169,8 +169,12 @@ public enum SSBModelFit {
     try options.validate()
     var count = 0
     let total = options.trials
+    // Wall time of the search's objective evaluations; the rest of the search is the host's proposals.
+    var searchObjectiveSeconds = 0.0
     func evaluate(_ points: [[Double]]) throws -> [Double] {
       if isCancelled() { throw CancellationError() }
+      let started = Date()
+      defer { if count <= total { searchObjectiveSeconds += Date().timeIntervalSince(started) } }
       let values = try model.agreements(
         points.map {
           SSBModelPoint(
@@ -180,6 +184,16 @@ public enum SSBModelFit {
       count += points.count
       progress(count <= total ? "Search trials" : "Newton refinement", min(count, total), total)
       return values
+    }
+    // The Newton climbs on the exact gradient and Hessian of the same objective.
+    func derivatives(_ rows: [[Double]]) throws -> [SSBAgreementSearch.Derivatives] {
+      if isCancelled() { throw CancellationError() }
+      let values = try model.lowOrderDerivatives(rows, isCancelled: isCancelled)
+      count += rows.count
+      progress("Newton refinement", total, total)
+      return values.map {
+        SSBAgreementSearch.Derivatives(value: $0.value, gradient: $0.gradient, hessian: $0.hessian)
+      }
     }
     var timings: [String: Double] = [:]
     let rotation = model.scanDetectorRotationDegrees
@@ -192,11 +206,15 @@ public enum SSBModelFit {
           evaluate, seed: options.seed, isCancelled: isCancelled)
         timings["standard_comparison_s"] = Date().timeIntervalSince(started)
         count = 0
+        searchObjectiveSeconds = 0
       }
-      let result = try SSBAgreementSearch.fitTilt(
-        evaluate, trials: options.trials, seed: options.seed, tiltLimitMrad: options.tiltLimitMrad,
-        isCancelled: isCancelled)
+      let result = try withoutActuallyEscaping(derivatives) { exact in
+        try SSBAgreementSearch.fitTilt(
+          evaluate, trials: options.trials, seed: options.seed,
+          tiltLimitMrad: options.tiltLimitMrad, derivatives: exact, isCancelled: isCancelled)
+      }
       timings["coarse_search_s"] = result.searchSeconds
+      timings["coarse_search_objective_s"] = searchObjectiveSeconds
       timings["refinement_s"] = result.refinementSeconds
       let p = result.point
       var fit = SSBFit(
@@ -210,8 +228,11 @@ public enum SSBModelFit {
       fit.newtonStarts = result.newtonStarts
       return fit
     case (false, .agreement):
-      let result = try SSBAgreementSearch.fitStandard(
-        evaluate, trials: options.trials, seed: options.seed, isCancelled: isCancelled)
+      let result = try withoutActuallyEscaping(derivatives) { exact in
+        try SSBAgreementSearch.fitStandard(
+          evaluate, trials: options.trials, seed: options.seed, derivatives: exact,
+          isCancelled: isCancelled)
+      }
       timings["coarse_search_s"] = result.searchSeconds
       timings["refinement_s"] = result.refinementSeconds
       let p = result.point
