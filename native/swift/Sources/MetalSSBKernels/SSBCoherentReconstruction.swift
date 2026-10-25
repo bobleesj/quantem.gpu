@@ -159,10 +159,11 @@ final class SSBCoherentReconstruction {
     workspaces[name] = buffer
     return buffer
   }
-  /// The separable kernels (default) or the per-term reference kernel.
+  /// 8x only: the separable kernels (default) or the per-term kernel.
   var useSeparable = true
-  /// The interactive redraw kernels (`ssb_redraw.metal`, default at 1x-4x) or the earlier kernels above.
-  var useRedraw = true
+  /// Tests only: evaluate 1x-4x with the earlier separable/per-term kernels as an independent parity reference.
+  /// Reconstruction never falls back to them; 1x-4x always uses `ssb_redraw.metal`.
+  var referenceKernels = false
   private let library: MTLLibrary
   private let redrawMirrorPipeline: MTLComputePipelineState
   private var redrawPipelines: [String: MTLComputePipelineState] = [:]
@@ -312,9 +313,12 @@ final class SSBCoherentReconstruction {
   ) throws -> (phase: MTLBuffer, rows: Int, amplitude: MTLBuffer?) {
     wantAmplitude = amplitude
     defer { wantAmplitude = false }
-    if useRedraw && factor <= 4 {
+    // 1x-4x: the interactive redraw kernel, the only production path. 8x (an explicit manual override above the
+    // automatic 4x cap) is the one case on the earlier separable / per-term kernels.
+    if factor <= 4 && !referenceKernels {
       return try reconstructRedraw(point, factor: factor, visit: visit, isCancelled: isCancelled)
     }
+    precondition(factor == 8 || referenceKernels, "1x-4x reconstruction uses the redraw kernel only")
     let higher = point.hasHigherOrder
     let useSeparable = self.useSeparable && !higher
     let plan = try plan(factor: factor, higher: higher)

@@ -108,10 +108,11 @@ public final class MetalSSBJointModel {
     get { coherent.useSeparable }
     set { coherent.useSeparable = newValue }
   }
-  /// Whether 1x-4x phase_of_mean reconstructions use the interactive redraw kernel (default) or the kernels above.
+  /// Tests only: false evaluates 1x-4x with the earlier kernels as a parity reference. Production
+  /// reconstruction at 1x-4x always uses the redraw kernel; there is no runtime fallback.
   var redrawReconstruction: Bool {
-    get { coherent.useRedraw }
-    set { coherent.useRedraw = newValue }
+    get { !coherent.referenceKernels }
+    set { coherent.referenceKernels = !newValue }
   }
   /// The objective's phase evaluation; both give the same agreement to about 1e-6 relative.
   public var agreementKernel: SSBAgreementKernel = .angleSums
