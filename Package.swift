@@ -45,6 +45,10 @@ let package = Package(
       targets: ["MetalSSBRedrawBenchmark"]
     ),
     .executable(
+      name: "metal-ssb-fit-benchmark",
+      targets: ["MetalSSBFitBenchmark"]
+    ),
+    .executable(
       name: "metal-4dstem-binning-benchmark",
       targets: ["Metal4DSTEMBinningBenchmark"]
     ),
@@ -197,6 +201,11 @@ let package = Package(
       name: "MetalSSBRedrawBenchmark",
       dependencies: ["MetalSSBKernels"],
       path: "native/swift/Benchmarks/MetalSSBRedrawBenchmark"
+    ),
+    .executableTarget(
+      name: "MetalSSBFitBenchmark",
+      dependencies: ["MetalSSBKernels", "Metal4DSTEMStreamingIO", "Native4DSTEMIO"],
+      path: "native/swift/Benchmarks/MetalSSBFitBenchmark"
     ),
     .executableTarget(
       name: "Metal4DSTEMBinningBenchmark",

@@ -408,6 +408,47 @@ public final class MetalSSBJointModel {
       isCancelled: isCancelled)
   }
 
+  /// The exact float32 inputs of the agreement objective at the current rotation, for an independent
+  /// reference implementation: rotated BF coordinates `k` (1/A), band frequencies `q` (1/A), half-plane
+  /// weights, per-BF probe geometry (alpha^2, cos 2phi, sin 2phi, aperture) and the gathered evidence
+  /// `G[bf * bandCount + band]`. The physical constants are `wavelengthAngstroms`, `semiangleRadians`, the
+  /// angular sampling and `phaseFactor` of the geometry.
+  public func objectiveArrays() throws -> (
+    k: [SIMD2<Float>], q: [SIMD2<Float>], weights: [Float], probe: [SIMD4<Float>],
+    evidence: [SIMD2<Float>], constants: [String: Double]
+  ) {
+    try validatePreparation()
+    func read<T>(_ buffer: MTLBuffer, count: Int, as type: T.Type) throws -> [T] {
+      let bytes = count * MemoryLayout<T>.stride
+      let shared = try Self.allocate(device, bytes, shared: true)
+      let commands = try command()
+      guard let blit = commands.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
+      blit.copy(from: buffer, sourceOffset: 0, to: shared, destinationOffset: 0, size: bytes)
+      blit.endEncoding()
+      try finish(commands)
+      return Array(
+        UnsafeBufferPointer(start: shared.contents().assumingMemoryBound(to: T.self), count: count))
+    }
+    let count = activeIndices.count
+    return (
+      k: try read(kBuffer, count: count, as: SIMD2<Float>.self),
+      q: try read(qBuffer, count: bandCount, as: SIMD2<Float>.self),
+      weights: try read(weights, count: bandCount, as: Float.self),
+      probe: try read(probeGeometry, count: count, as: SIMD4<Float>.self),
+      evidence: try read(bandG, count: count * bandCount, as: SIMD2<Float>.self),
+      constants: [
+        "wavelength_A": Double(geometry.wavelengthAngstroms),
+        "semiangle_rad": Double(geometry.semiangleRadians),
+        "angular_row_rad": Double(geometry.angularSamplingYRadians),
+        "angular_column_rad": Double(geometry.angularSamplingXRadians),
+        "factor": Double(geometry.phaseFactor ?? Float.pi / geometry.wavelengthAngstroms),
+        "model_wavelength_A": wavelengthAngstroms, "model_semiangle_rad": semiangleRadians,
+        "rotation_deg": scanDetectorRotationDegrees,
+        "bf_count": Double(count), "band_count": Double(bandCount),
+      ]
+    )
+  }
+
   func agreements(rows: [[Float]], isCancelled: () -> Bool) throws -> [Double] {
     try validatePreparation()
     if rows.isEmpty { return [] }
