@@ -100,6 +100,11 @@ public final class MetalSSBJointModel {
     get { coherent.useSeparable }
     set { coherent.useSeparable = newValue }
   }
+  /// Whether 1x-4x phase_of_mean reconstructions use the interactive redraw kernel (default) or the kernels above.
+  var redrawReconstruction: Bool {
+    get { coherent.useRedraw }
+    set { coherent.useRedraw = newValue }
+  }
   /// The objective's phase evaluation; both give the same agreement to about 1e-6 relative.
   public var agreementKernel: SSBAgreementKernel = .angleSums
   private var neighbourBuffer: MTLBuffer
@@ -143,6 +148,7 @@ public final class MetalSSBJointModel {
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
+        "ssb_redraw",
       ]),
       options: options)
     self.library = library

@@ -127,6 +127,12 @@ final class SSBCoherentReconstruction {
     let qRow, qCol, rowIndices, colIndices: MTLBuffer
     let rows, cols: Int
     let half: Bool
+    /// Largest |output frequency index| with support on each axis.
+    let rowLimit, colLimit: Int
+  }
+  struct RedrawGrid {
+    var sourceN, outputN, gCols, count, bfOffset, sourceHalf, rowLimit, colLimit: UInt32
+    var support2: Float
   }
 
   private let device: MTLDevice
@@ -151,6 +157,13 @@ final class SSBCoherentReconstruction {
   }
   /// The separable kernels (default) or the per-term reference kernel.
   var useSeparable = true
+  /// The interactive redraw kernels (`ssb_redraw.metal`, default at 1x-4x) or the earlier kernels above.
+  var useRedraw = true
+  private let library: MTLLibrary
+  private let redrawMirrorPipeline: MTLComputePipelineState
+  private var redrawPipelines: [String: MTLComputePipelineState] = [:]
+  /// The largest BF pixel frequency magnitude.
+  private let maximumK: Float
 
   init(
     device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary, geometry: MetalSSBGeometry,
@@ -161,6 +174,8 @@ final class SSBCoherentReconstruction {
     self.geometry = geometry
     self.kBuffer = kBuffer
     kHost = k
+    self.library = library
+    maximumK = k.map { hypotf($0.x, $0.y) }.max() ?? 0
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
       guard let function = library.makeFunction(name: name) else {
         throw MetalSSBError.missingFunction(name)
@@ -174,6 +189,7 @@ final class SSBCoherentReconstruction {
     mirrorPipeline = try pipeline("model_mirror")
     originPipeline = try pipeline("model_set_origin")
     phasePipeline = try pipeline("model_wave_phase")
+    redrawMirrorPipeline = try pipeline("redraw_mirror")
     // Group bounds (row min, row max, column min, column max, radius^2), as _alias_group_bounds_kernel.
     let radius = Self.supportRadius(geometry)
     var values: [Float] = []
@@ -260,8 +276,11 @@ final class SSBCoherentReconstruction {
       !higher && factor > 1 && Double(n / 2) * Double(abs(rowStep)) > rowSupport
       && Double(n / 2) * Double(abs(colStep)) > colSupport
     let columns = half ? n / 2 + 1 : n
+    func limit(_ value: Double, _ step: Float) -> Double {
+      (value / Double(abs(step))).rounded(.up) + 1
+    }
     func support(_ value: Double, _ step: Float, _ count: Int) -> [UInt32] {
-      let limit = (value / Double(abs(step))).rounded(.up) + 1
+      let limit = limit(value, step)
       let indices: [Int] = (0..<count).filter { (index: Int) -> Bool in
         let integer: Int = index < (n - 1) / 2 + 1 ? index : index - n
         return Double(abs(integer)) <= limit
@@ -274,7 +293,8 @@ final class SSBCoherentReconstruction {
       qRow: try Self.buffer(device, frequencies(rowStep)),
       qCol: try Self.buffer(device, frequencies(colStep)),
       rowIndices: try Self.buffer(device, rows), colIndices: try Self.buffer(device, cols),
-      rows: rows.count, cols: cols.count, half: half)
+      rows: rows.count, cols: cols.count, half: half,
+      rowLimit: Int(limit(rowSupport, rowStep)), colLimit: Int(limit(colSupport, colStep)))
     plans[key] = plan
     return plan
   }
@@ -284,6 +304,9 @@ final class SSBCoherentReconstruction {
     visit: (Int, @escaping MetalSSBJointModel.SpectrumVisitor) throws -> Void,
     isCancelled: () -> Bool
   ) throws -> (phase: MTLBuffer, rows: Int) {
+    if useRedraw && factor <= 4 {
+      return try reconstructRedraw(point, factor: factor, visit: visit, isCancelled: isCancelled)
+    }
     let higher = point.hasHigherOrder
     let useSeparable = self.useSeparable && !higher
     let plan = try plan(factor: factor, higher: higher)
@@ -372,6 +395,110 @@ final class SSBCoherentReconstruction {
     }
     return try finishPhase(total: total, n: n, commands: pending ?? command(), mirror: plan.half)
   }
+
+  private func redrawPipeline(factor: Int, degree: Int, depth: Bool) throws -> MTLComputePipelineState {
+    let key = "\(factor)-\(degree)-\(depth)"
+    if let pipeline = redrawPipelines[key] { return pipeline }
+    let constants = MTLFunctionConstantValues()
+    var f = UInt32(factor), d = UInt32(degree), thick = depth
+    constants.setConstantValue(&f, type: .uint, index: 0)
+    constants.setConstantValue(&d, type: .uint, index: 1)
+    constants.setConstantValue(&thick, type: .bool, index: 2)
+    let function = try library.makeFunction(name: "redraw_coherent", constantValues: constants)
+    let pipeline = try device.makeComputePipelineState(function: function)
+    redrawPipelines[key] = pipeline
+    return pipeline
+  }
+
+  /// The interactive redraw (`ssb_redraw.metal`): the source half, every alias per thread, then mirrored.
+  private func reconstructRedraw(
+    _ point: SSBModelPoint, factor: Int,
+    visit: (Int, @escaping MetalSSBJointModel.SpectrumVisitor) throws -> Void,
+    isCancelled: () -> Bool
+  ) throws -> (phase: MTLBuffer, rows: Int) {
+    let higher = point.hasHigherOrder
+    let plan = try plan(factor: factor, higher: true)
+    var params = Self.parameters(geometry, point)
+    let packed = higher ? point.reconstructionCoefficients : nil
+    var polynomial =
+      packed.map { SSBRedrawPolynomial.full(coefficients: $0, wavelength: params[0]) }
+      ?? SSBRedrawPolynomial.primary(params)
+    let coefficients = try packed.map { try Self.buffer(device, $0) }
+    let pipeline = try redrawPipeline(
+      factor: factor, degree: higher ? 6 : 2, depth: point.depthSpreadAngstroms != 0)
+    let source = geometry.qxByRow.count
+    let n = source * factor
+    let total = try workspace("total", n * n * 8)
+    let commands = try command()
+    guard let blit = commands.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
+    blit.fill(buffer: total, range: 0..<(n * n * 8), value: 0)
+    blit.endEncoding()
+    var count = UInt32(kHost.count)
+    let probeEncoder = try encoder(commands, higher ? higherProbePipeline : probePipeline)
+    probeEncoder.setBuffer(kBuffer, offset: 0, index: 0)
+    probeEncoder.setBytes(&params, length: params.count * 4, index: 1)
+    probeEncoder.setBuffer(probe, offset: 0, index: 2)
+    probeEncoder.setBytes(&count, length: 4, index: 3)
+    if let coefficients { probeEncoder.setBuffer(coefficients, offset: 0, index: 4) }
+    dispatch(probeEncoder, width: kHost.count)
+    // Source rows above N/2 are mirrored, except the output Nyquist column, which has no partner on the grid:
+    // those rows run only when that column has support.
+    let nyquist = abs(n / 2 < (n - 1) / 2 + 1 ? n / 2 : n / 2 - n) <= plan.colLimit
+    let radius = Double(maximumK) + Double(Self.supportRadius(geometry))
+    let rowFloats = 4 + 2 * (higher ? 8 : 4)
+    var pending: MTLCommandBuffer? = commands
+    try withoutActuallyEscaping(isCancelled) { cancelled in
+      try visit(512) { [self] spectra, offset, half, bfOffset, batch in
+        if cancelled() { throw CancellationError() }
+        let commands = try pending ?? command()
+        var grid = RedrawGrid(
+          sourceN: UInt32(source), outputN: UInt32(n),
+          gCols: UInt32(half ? source / 2 + 1 : source), count: UInt32(batch),
+          bfOffset: UInt32(bfOffset), sourceHalf: half ? 1 : 0, rowLimit: UInt32(plan.rowLimit),
+          colLimit: UInt32(plan.colLimit), support2: Float(radius * radius * (1 + 1e-5)))
+        let compute = try encoder(commands, pipeline)
+        compute.setBuffer(spectra, offset: offset, index: 0)
+        compute.setBuffer(kBuffer, offset: 0, index: 1)
+        compute.setBytes(&params, length: params.count * 4, index: 2)
+        compute.setBuffer(probe, offset: 0, index: 3)
+        compute.setBytes(&polynomial, length: polynomial.count * 4, index: 4)
+        compute.setBuffer(total, offset: 0, index: 5)
+        compute.setBytes(&grid, length: MemoryLayout<RedrawGrid>.stride, index: 6)
+        compute.setBuffer(plan.qRow, offset: 0, index: 7)
+        compute.setBuffer(plan.qCol, offset: 0, index: 8)
+        // Per batch of 32 BF pixels: pixel values, the coefficient rows of each alias row, and per SIMD group
+        // and alias the column interval.
+        compute.setThreadgroupMemoryLength(Self.redrawBatch * 16, index: 0)
+        compute.setThreadgroupMemoryLength(Self.redrawBatch * factor * rowFloats * 4, index: 1)
+        compute.setThreadgroupMemoryLength(Self.redrawWidth / 32 * factor * factor * 16, index: 2)
+        compute.dispatchThreadgroups(
+          MTLSize(
+            width: source / Self.redrawWidth, height: nyquist ? source : source / 2 + 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: Self.redrawWidth, height: 1, depth: 1))
+        compute.endEncoding()
+        if half {
+          pending = commands
+        } else {
+          // A streamed batch reuses the engine's spectrum workspace: finish before the next batch.
+          try finish(commands)
+          pending = nil
+        }
+      }
+    }
+    let final = try pending ?? command()
+    var size = SIMD2<UInt32>(UInt32(n), UInt32(source))
+    let mirror = try encoder(final, redrawMirrorPipeline)
+    mirror.setBuffer(total, offset: 0, index: 0)
+    mirror.setBytes(&size, length: 8, index: 1)
+    mirror.dispatchThreads(
+      MTLSize(width: n, height: n, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 32, height: 4, depth: 1))
+    mirror.endEncoding()
+    return try finishPhase(total: total, n: n, commands: final, mirror: false)
+  }
+  /// `ssb_redraw.metal` launch constants: BF pixels per shared batch and threads per threadgroup.
+  static let redrawBatch = 32
+  static let redrawWidth = 128
 
   /// Mirror (per-term half spectra), set the common origin, inverse-transform and take the phase.
   private func finishPhase(
