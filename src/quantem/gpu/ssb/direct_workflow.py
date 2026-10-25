@@ -137,8 +137,9 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
 
     Serves: ShowPtycho slider drags, C10, C12 and phi12 typically, at 3x on
     the full scan. Regularized methods are served from a `DragWindow` along
-    that control, from the prepared system when the optics are those already
-    prepared (a strength drag), and otherwise exactly by `solve`. SSB
+    that control (``ssb.cuda.direct`` or ``ssb.mps.direct``), from the prepared
+    system when the optics are those already prepared (a strength drag), and
+    otherwise exactly by `solve`. SSB on CUDA
     (``policy`` from ``settings("ssb", ...)``) on a fine grid is served from
     a `WaveWindow`: the single-sideband terms interpolated, the triple-overlap
     terms exact. A
@@ -190,11 +191,11 @@ def advance(session) -> bool:
 
 
 def _windowed(session, factor, policy) -> bool:
-    """Whether drags of this method can use a window: CUDA, a resident region, and for SSB the fine-grid coherent sum."""
-    if session.backend != "cuda" or session._streamed is not None:
+    """Whether drags of this method can use a window: a resident region, and for SSB CUDA's fine-grid coherent sum."""
+    if session._streamed is not None:
         return False
     if policy.get("method", "ssb") == "ssb":
-        return factor > 1
+        return session.backend == "cuda" and factor > 1
     return True
 
 
@@ -229,16 +230,19 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
             width = 2 * tiles[0].series.half_width
             center = anchor + width * round((value - anchor) / width)
         tile_coefs = {**coefs, control: center}
-        engine = session._backend()._get_accelerator()
+        engine, optics, _ = _inputs(session, tile_coefs, tilt, depth, factor, policy)
         if kind == "ssb":
             from quantem.gpu.ssb.cuda.thick import WaveWindow
 
             window = WaveWindow(engine.thick, tile_coefs, control, tilt, depth, factor)
         else:
-            from quantem.gpu.ssb.cuda.direct import DragWindow
+            if session.backend == "cuda":
+                from quantem.gpu.ssb.cuda.direct import DragWindow
+            else:
+                from quantem.gpu.ssb.mps.direct import DragWindow
 
-            window = DragWindow(engine, _inputs(session, tile_coefs, tilt, depth, factor, policy)[1], control, factor,
-                                complex_object=complex_object, smoothness_inv_A=policy["smoothness_inv_A"],
+            window = DragWindow(engine, optics, control, factor, complex_object=complex_object,
+                                smoothness_inv_A=policy["smoothness_inv_A"],
                                 detector_weighting=policy["detector_weighting"])
     windows[control] = held, [window] + [tile for tile in tiles if tile is not window][:TILES - 1], anchor
     if first:
@@ -261,7 +265,9 @@ def _phase(session, wave):
     """The float32 phase of a direct wave: on the device for CUDA, a NumPy array for MPS."""
     if session.backend == "cuda":
         return cp.angle(wave).astype(cp.float32)
-    return np.angle(wave).astype(np.float32)
+    from quantem.gpu.ssb.mps.direct import wave_phase
+
+    return wave_phase(np.asarray(wave, np.complex64))
 
 
 def _inputs(session, coefs, tilt, depth, factor, policy):
