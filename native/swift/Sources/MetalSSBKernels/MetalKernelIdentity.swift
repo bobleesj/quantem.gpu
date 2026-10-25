@@ -68,8 +68,15 @@ enum SSBKernelRegistry {
     name: "ssb-mean-phase", version: "0.1", files: ["ssb_joint", "ssb_joint_fft", "ssb_fft"],
     registeredSourceSHA256: "4aa7c1da63913a45e8075c41a36497be32fbe527e5aaceaddb70eb340b9f7e53")
 
-  /// The primary fit's exact low-order gradient and Hessian (trust-region Newton), `SSBLowOrderDerivatives`.
+  /// The primary fit's exact low-order value, gradient and Hessian (trust-region Newton), `SSBLowOrderDerivatives`:
+  /// the value pass, the derivative pass and the fused pass of `ssb_low_order_derivatives` (with the aperture and
+  /// quotient helpers of `ssb_joint_agreement`). v0.1 is `lowOrderDerivativesReference`.
   static let lowOrderDerivatives = Entry(
+    name: "ssb-low-order-derivatives", version: "0.2",
+    files: ["ssb_joint", "ssb_joint_agreement", "ssb_low_order_derivatives"],
+    registeredSourceSHA256: "6178f0ed161301c32b6c0d59dda6c0fd7bf00baa9a324d375a281513a0802d76")
+  /// v0.1 (`ssb_low_order`): retired, the parity reference of v0.2 in the tests.
+  static let lowOrderDerivativesReference = Entry(
     name: "ssb-low-order-derivatives", version: "0.1", files: ["ssb_low_order"],
     registeredSourceSHA256: "40da0bd64def2fcb21831f57777020331306e755495047031a40c41ef727b48b")
 

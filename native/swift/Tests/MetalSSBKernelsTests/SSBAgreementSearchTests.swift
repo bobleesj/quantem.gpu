@@ -157,6 +157,64 @@ final class SSBAgreementSearchTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(fit.agreement, reference.agreement)
   }
 
+  /// The staged exact Newton (values first, derivatives only where a step uses them) reaches the same point as
+  /// the one-stage exact Newton and asks for fewer derivatives: none at a rejected step or at the starts that the
+  /// second iteration's pruning stops.
+  func testStagedExactNewtonMatchesOneStage() throws {
+    let target = [37.25, 30, -12, 3.5, -1.25, 151]
+    let curvature = [0.25, 1, 1, 400, 400, 0.01]
+    func exact(_ z: [Double]) -> SSBAgreementSearch.Derivatives {
+      var value = 1.0e6
+      var gradient = [Double](repeating: 0, count: 6)
+      var hessian = [[Double]](repeating: [Double](repeating: 0, count: 6), count: 6)
+      for d in 0..<6 {
+        let x = d == 5 ? abs(z[d]) : z[d]
+        // A quartic term in C10 makes some steps overshoot and get rejected.
+        let r = x - target[d]
+        value -= curvature[d] * r * r + (d == 0 ? 0.002 * r * r * r * r : 0)
+        let slope = -2 * curvature[d] * r - (d == 0 ? 0.008 * r * r * r : 0)
+        gradient[d] = slope * (d == 5 && z[d] < 0 ? -1 : 1)
+        hessian[d][d] = -2 * curvature[d] - (d == 0 ? 0.024 * r * r : 0)
+      }
+      return SSBAgreementSearch.Derivatives(value: value, gradient: gradient, hessian: hessian)
+    }
+    let oneStage = Recorder()
+    var centers = 0
+    let reference = try SSBAgreementSearch.fitTilt(
+      oneStage.evaluate,
+      derivatives: { rows in
+        centers += rows.count
+        return rows.map(exact)
+      })
+    let staged = Recorder()
+    var latest: [[Double]] = []
+    var latestFused = false
+    var valueRows = 0
+    var fusedRows = 0
+    var derivativeOnlyRows = 0
+    let fit = try SSBAgreementSearch.fitTilt(
+      staged.evaluate,
+      staged: SSBAgreementSearch.StagedDerivatives(
+        values: { rows, withDerivatives in
+          latest = rows
+          latestFused = withDerivatives
+          valueRows += rows.count
+          if withDerivatives { fusedRows += rows.count }
+          return rows.map { exact($0).value }
+        },
+        derivatives: { indices in
+          if !latestFused { derivativeOnlyRows += indices.count }
+          return indices.map { exact(latest[$0]) }
+        }))
+    XCTAssertEqual(staged.rows, oneStage.rows)
+    XCTAssertEqual(fit.point, reference.point)
+    XCTAssertEqual(fit.agreement, reference.agreement)
+    XCTAssertEqual(valueRows, centers)
+    XCTAssertEqual(fit.newtonStarts.map(\.evaluations), reference.newtonStarts.map(\.evaluations))
+    print("STAGED_NEWTON centers \(centers) fused \(fusedRows) derivative-only \(derivativeOnlyRows)")
+    XCTAssertLessThan(fusedRows + derivativeOnlyRows, centers)
+  }
+
   func testRandomStreamsAndRanks() {
     // The first MT19937 outputs for seed 5489 (the reference generator's default seed).
     var generator = SSBAgreementSearch.MersenneTwister(seed: 5489)

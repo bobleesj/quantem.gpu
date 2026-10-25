@@ -40,14 +40,31 @@ with one app instance on the built-in display.
 ## Native SSB fit (`MetalSSBKernels`)
 
 The primary (low-order) fit's trust-region Newton climbs on the exact gradient and Hessian of the agreement
-in C10, C12 (two Cartesian components), the sample tilt and the depth spread. One evaluation is two passes
-over every (band frequency, bright-field pixel): the objective's sums, then, with each band frequency's
-model sum known, the 51 k-sums its first and second derivatives need (`ssb_low_order.metal`). It replaces
-the finite-difference stencil of 13 or 28 objective evaluations per Newton iteration.
+in C10, C12 (two Cartesian components), the sample tilt and the depth spread (`ssb_low_order_derivatives.metal`,
+`SSBLowOrderDerivatives`). It replaces the finite-difference stencil of 13 or 28 objective evaluations per
+Newton iteration. v0.2 evaluates in stages: a value pass (the objective's sums; the same 256-pixel partials and
+expressions as v0.1's pass 1, with the soft-aperture shortcut, fast `sincos`, Markstein quotients and real
+anchor branches of `ssb-joint-agreement` v0.2), then, where the Newton uses them, the derivatives. Their pass
+forms 29 k-sums instead of v0.1's 51 by two exact reductions: the depth-sinc weights depend on the tilt only
+through q·θ (so the tilt row and column derivatives are qx and qy times one derivative), and the C10/C12 phase
+slopes are linear in k (each sum over them is two k-moments, each product of two is three). The combine expands
+them to v0.1's 51 per band frequency. For Newton centers whose derivatives it will use (every iteration but the
+pruned second one), a fused pass forms the value sums (bitwise those of the value pass) and the 43 derivative
+sums that need no model sum N, projected on conj N in the combine. No derivatives are formed at a rejected step
+or for the starts that the second iteration's pruning stops.
 
-| Kernel | Status | Source digest | Serves | Validated | One evaluation, film 512² (GPU) | Parity |
-|---|---|---|---|---|---|---|
-| `ssb-low-order-derivatives` v0.1 | **active** | `40da0bd64def` | primary-fit Newton (value, gradient, Hessian) | 2026-10-25 | pass 1 ≈ 16 ms + pass 2 ≈ 50 ms (≈ 7 objective evaluations; the stencil it replaces is 13–28) | `SSBModelReconstructionTests.testLowOrderDerivativesMatchFiniteDifferences` (gradient and Hessian against Richardson differences, ≤ 4e-4 relative; value against the agreement objective ≤ 1e-6) |
+GPU ms per center (median of seven calls, command-buffer GPU time; `metal-ssb-fit-benchmark --objective-bench`
+on the kept low-order fit of each app-matched case and three seeded random centers near it), Apple M5 Max,
+2026-10-25. The v0.2 numbers were taken with heavier background GPU load than v0.1's: the unchanged
+`ssb-joint-agreement` v0.2 single candidate measured 8.5 / 9.1 / 17.4 ms with v0.1 and 9.8 / 11.7 / 19.7 ms with
+v0.2. Fits (median of three, interleaved with the v0.1 build): Newton 0.91 → 0.34 s (film), 1.47 → 0.57 s
+(second acquisition), 1.83 → 0.74 s (third); same centers per start, same kept branch, low-order parameters
+within 2e-6 nm / 3.2e-5° / 1e-6 mrad.
+
+| Kernel | Status | Source digest | Serves | Validated | film (8,807 BF, 44,247 q) | Second (9,298 BF, 44,255 q) | Third (8,930 BF, 77,842 q) | Parity | Replaced by | Retired |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `ssb-low-order-derivatives` v0.2 | **active** | `6178f0ed1613` | primary-fit Newton (value, gradient, Hessian) | 2026-10-25 | fused 29.4 (one center) / 27.6 (three); value pass 11.2 + derivative pass 24.4 | fused 27.5 / 26.2; value 12.0 + derivatives 25.9 | fused 49.8 / 45.1; value 19.5 + derivatives 44.0 | `SSBModelReconstructionTests.testLowOrderDerivativesMatchFiniteDifferences` (Richardson differences: gradient ≤ 3.8e-5, Hessian ≤ 3.5e-4 relative; value against the agreement objective ≤ 9e-7; fused and two-stage value bitwise equal, derivatives ≤ 7e-6; v0.1 value ≤ 2.2e-7, derivatives ≤ 1.3e-5), `SSBAgreementSearchTests.testStagedExactNewtonMatchesOneStage`; measured on the three acquisitions: value within 5.3e-10 of v0.1 | — | — |
+| `ssb-low-order-derivatives` v0.1 (`ssb_low_order`) | **retired** (test reference) | `40da0bd64def` | primary-fit Newton before 2026-10-25 | 2026-10-25 | 53.7 / 53.8 (pass 1 ≈ 16 + pass 2 ≈ 38) | 57.2 / 58.5 | 101.6 / 104.3 | reference for v0.2 | `ssb-low-order-derivatives` v0.2 | 2026-10-25 |
 
 ## Native SSB fifth-order gradient (`MetalSSBKernels`)
 
