@@ -40,17 +40,23 @@ joint models; `retarget` moves a model to another rotation without gathering its
 | Tilt | `sampleTiltMrad` (row, column) in mrad, scan frame |
 | Depth spread | Nonnegative Angstrom; a model depth spread, not a measured thickness |
 | Objective | `agreements`: per band frequency `|sum_k G conj(gamma)|^2 / sum_k |gamma|^2`, 0.2 < q < 0.9 1/A, half-plane weights; float32 per term as the MPS kernel, double band sum |
-| Search | `SSBAgreementSearch`: the resident multivariate TPE (MT19937, 200 trials, seed 42) and trust-region Newton of `ssb._resident_search`, in double precision; a joint fit is polished once more from the phi12-mirrored best trial and the best trial in another (phi12, tilt, depth) cluster, kept only when its agreement is higher by more than 1e-6 relative |
+| Search | `SSBAgreementSearch`: the resident multivariate TPE (MT19937, 200 trials, seed 42) of `ssb._resident_search`, then a trust-region Newton on the exact gradient and Hessian of the agreement (`ssb-low-order-derivatives`), in double precision; a joint fit is polished once more from the phi12-mirrored best trial and the best trial in another (phi12, tilt, depth) cluster, kept only when its agreement is higher by more than 1e-6 relative. Only the given rotation is searched: the opposite 180-degree branch gets the exact image of the fit (even-degree chi terms and tilt negated, odd-degree terms and depth kept), which has the same agreement |
+| Fifth order | `SSBFifthOrderGradientSearch` (`higherOrderSearch: .exactGradientCoarseToFine`, the default): exact gradients of the 28-coordinate agreement (`ssb-fifth-gradient`), a trust-region dense BFGS scaled by and started from a Hessian of every 64th BF pixel, the active set held at the ±2 box bounds, first on every 8th BF pixel and then converged on all of them; accept/reject and the stop compare Double-summed agreements. `.finiteDifferenceNewton` (`SSBFifthOrderSearch`, Python `fifth_order_fit`) stays as the explicit trajectory reference. `refineToFifthOrder` refines a shown low-order fit without its search |
 | Final phase | `phase_of_mean` (corrected waves summed, one phase; scan-mean replicas zero). At 1x-4x the interactive redraw kernel (`ssb_redraw.metal`) serves every term through C56, tilt and depth for cached and streamed spectra: the anti-Hermitian half is evaluated and mirrored, each source frequency visits its output aliases per batch of 32 BF pixels, chi is a per-row Horner polynomial, and SIMD groups skip BF pixels with closed sidebands. It agrees with the earlier per-term kernel within 1e-5 rad (observed about 5e-8 on the synthetic test scene, 4e-6 on the full-size synthetic benchmark). 8x keeps the per-term kernel; `meanPhase` on request |
 | Complex wave | `complexWave`: the same coherent sum as a complex object, inverse FFT of the summed spectrum divided by the BF count; returns `amplitude` beside the phase, as Python's `phase_estimator="complex_wave"` (1x, C10/C12, no tilt or depth spread). Python MPS parity: 2.5e-8 rad, amplitude 3e-7 of its mean |
 | Output sampling | Fourier-alias reconstruction at 1, 2, 3, 4 or 8x; not interpolation. `SSBOutputSampling.auto` (`ssbUpsamplingFactor`) picks the smallest of 1-4x covering nominal support and caps at 4x, as Python; `ssbUpsamplingRequirement` gives the uncapped requirement. `SSBOutputSampling.choices` lists Auto and explicit 1-4x for a viewer; 8x stays an explicit factor |
 | Rotation | Double precision; the angle is converted in double, the BF coordinates rotated in float32 as MPS |
 | Wavelength | Python's table at 80-400 kV, else the same formula |
 
-The search port is checked trial by trial: on a synthetic float32 objective that both sides evaluate from the same
-float32 trial rows, all 573 tilt-fit rows (the second polish from other basins included) and 244 standard-fit rows equal Python's (`SSBAgreementSearchTests`, which
-`scripts/ssb_agreement_gate.py` also feeds with the current Python records). Python keeps its Newton state in
-a three-float expansion, so fitted points agree to about 1e-8 there. Measured parity
+The TPE port is checked trial by trial: on a synthetic float32 objective that both sides evaluate from the same
+float32 trial rows, the 200 search trials equal Python's (`SSBAgreementSearchTests`, which
+`scripts/ssb_agreement_gate.py` also feeds with the current Python records). The finite-difference Newton
+reference path (no derivatives passed) still reproduces all 573 tilt-fit and 244 standard-fit rows; the
+production exact-derivative Newton ends about 1e-3 nm from Python's stencil Newton at an equal or higher
+agreement. The exact-gradient fifth-order search reaches a higher Double-summed agreement than the
+finite-difference Newton on three measured 512 x 512 acquisitions (+1.2e-7 to +3.8e-7 relative) in about 1 s
+instead of 65-111 s; its parameters differ from the reference along the C10-C30-C50 direction, which the
+agreement resolves only to about 1e-3 to 1e-2 nm at float32. Measured parity
 (`MetalSSBMeasuredParityTests`, given an exported acquisition in `SSB_PARITY_FIXTURE`) covers the BF disk and
 fitted detector sampling, the agreement at fixed parameters (1e-7 relative), the default and `tilt=False` fits
 (1e-5 nm, 1e-4 degrees, 1e-4 mrad), the curl rotation, the branch decision and the fixed-parameter phases

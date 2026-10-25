@@ -8,6 +8,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- Native (Metal) SSB fifth-order fit: an exact-gradient trust-region quasi-Newton search (`ssb-fifth-gradient`
+  v0.1, `SSBFitOptions.higherOrderSearch = .exactGradientCoarseToFine`) replaces the finite-difference Newton by
+  default, which remains available as `.finiteDifferenceNewton`. On an Apple M5 Max the fifth-order stage takes
+  0.7-1.3 s instead of 65-111 s, and the whole fit through fifth order 3.4-6.5 s instead of 74-166 s, with a
+  higher Double-summed agreement on three 512 x 512 acquisitions. `SSBModelFit.refineToFifthOrder` refines a
+  low-order fit without repeating its search.
 - Native (Metal) SSB fit, low-order stage: one 180-degree branch is searched and the other gets its exact image
   (C10 and C12 negated as even-degree terms, tilt negated, depth spread kept: the same agreement, the phase with
   opposite contrast for the branch test), and the trust-region Newton climbs on the exact gradient and Hessian of
