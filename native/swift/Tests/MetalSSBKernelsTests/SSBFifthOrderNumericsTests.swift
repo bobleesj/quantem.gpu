@@ -62,7 +62,7 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
       try model.fifthOrderAgreements([higher]), try fresh.fifthOrderAgreements([higher]))
   }
 
-  /// ssb-fifth-agreement v0.2 against its parity reference, the retired per-term kernel `fifth_agreement`, at fixed
+  /// ssb-fifth-agreement v0.3 against its parity reference, the retired per-term kernel `fifth_agreement`, at fixed
   /// candidates: shared and distinct depth/tilt (the shared depth-sinc path), zero depth, every remainder of the
   /// four-candidate groups, and batch invariance.
   func testRowsKernelMatchesPerTermReference() throws {
@@ -91,11 +91,11 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
     let exact = try Self.doubleAgreements(model: model, points: points)
     let all = try model.fifthOrderAgreements(points)
     // Both are float32 objectives about 1e-6 from the float64 one on this 40-pixel scene (on the measured
-    // acquisitions v0.2 and the per-term kernel agree within 3e-7); v0.2 must be no less accurate.
+    // acquisitions v0.3 and the per-term kernel agree within 3e-7); v0.3 must be no less accurate.
     var squares = (new: 0.0, old: 0.0)
     for i in points.indices {
       let new = abs(all[i] / exact[i] - 1), old = abs(reference[i] / exact[i] - 1)
-      print(String(format: "candidate %2d: v0.2 %.3e, per-term %.3e from float64; v0.2 vs per-term %.3e",
+      print(String(format: "candidate %2d: v0.3 %.3e, per-term %.3e from float64; v0.3 vs per-term %.3e",
         i, new, old, abs(all[i] / reference[i] - 1)))
       XCTAssertLessThan(new, 2e-6)
       squares.new += new * new

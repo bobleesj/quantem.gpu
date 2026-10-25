@@ -51,11 +51,12 @@ enum SSBKernelRegistry {
     name: "ssb-per-term", version: "0.1", files: ["ssb_model", "ssb_fifth_order", "ssb_separable"],
     registeredSourceSHA256: "1c390cc7b833c1cd83ec77cdd63670edc78a33a42426e2ad1512950677983fa5")
   /// The fifth-order agreement objective of the fit (`fifth_agreement_rows` with the `fifth_probe`, `fifth_power`
-  /// and `fifth_score` passes): the only production objective kernel there. v0.1 was `fifth_agreement` in
-  /// `ssb_fifth_order` (ssb-per-term), now the parity reference of the tests.
+  /// and `fifth_score` passes) on all BF pixels or every n-th: the only production objective kernel there, also the
+  /// value pass of `fifthGradient`. v0.3 added the BF stride to v0.2 (same per-pair terms). v0.1 was
+  /// `fifth_agreement` in `ssb_fifth_order` (ssb-per-term), now the parity reference of the tests.
   static let fifthAgreement = Entry(
-    name: "ssb-fifth-agreement", version: "0.2", files: ["ssb_fifth_order", "ssb_fifth_agreement"],
-    registeredSourceSHA256: "f2f700147e47edaac7f91e41e32e955ca016df4de4236b4b6b314e0f0a23bfad")
+    name: "ssb-fifth-agreement", version: "0.3", files: ["ssb_fifth_order", "ssb_fifth_agreement"],
+    registeredSourceSHA256: "2d385e96d9c44dfaba4b5e67c1180bbc3830009d529b1aebac68e969c299c152")
   /// The low-order agreement objective with angle-sum phases (`joint_agreement_angle_sums`), used by the primary
   /// fit's search trials: the only production `.angleSums` kernel. v0.1 was `joint_objective_angle_sums` in
   /// `ssb_joint`, now the parity reference of the tests.
@@ -79,10 +80,13 @@ enum SSBKernelRegistry {
     name: "ssb-low-order-derivatives", version: "0.1", files: ["ssb_low_order"],
     registeredSourceSHA256: "40da0bd64def2fcb21831f57777020331306e755495047031a40c41ef727b48b")
 
-  /// The exact fifth-order agreement gradient and its BF / band-subsample objective (fitting, not reconstruction).
+  /// The exact fifth-order agreement gradient on all BF pixels or every n-th (`fifth_gradient_scale`,
+  /// `fifth_gradient_rows`) after the `fifthAgreement` value pass (fitting, not reconstruction). v0.1
+  /// (`fifth_gradient` with its strided copy of the per-term objective) is retired.
   static let fifthGradient = Entry(
-    name: "ssb-fifth-gradient", version: "0.1", files: ["ssb_fifth_order_gradient"],
-    registeredSourceSHA256: "dc8d80c38d16c05d6d43fba517620f772475995581d1dda42ca65d4c792d52e5")
+    name: "ssb-fifth-gradient", version: "0.2",
+    files: ["ssb_fifth_order", "ssb_fifth_agreement", "ssb_fifth_order_gradient"],
+    registeredSourceSHA256: "9a751b5a12baee7e35949fa73fddc266e1b59c3d0614cefe09e064bbff04f8d8")
 
   /// SHA-256 of an entry's shipped source files, concatenated in order.
   static func sourceSHA256(_ entry: Entry) throws -> String {

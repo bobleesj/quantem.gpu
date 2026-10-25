@@ -89,15 +89,15 @@ final class SSBFifthOrderGradientTests: XCTestCase {
       return c
     }
 
-    /// The agreement over every `qStride`-th band frequency and every `kStride`-th BF pixel.
-    func agreement(_ z: [Double], qStride: Int = 1, kStride: Int = 1) -> Double {
+    /// The agreement over every `kStride`-th BF pixel.
+    func agreement(_ z: [Double], kStride: Int = 1) -> Double {
       let c = packed(z)
       let t = z[5] * 100
       let thr = z[3] * 5e-3
       let thc = z[4] * 5e-3
       let chiK = k.map { chi(Double($0.x), Double($0.y), c) }
       var total = 0.0
-      for (qi, qv) in q.enumerated() where qi % qStride == 0 {
+      for (qi, qv) in q.enumerated() {
         let qx = Double(qv.x)
         let qy = Double(qv.y)
         let shift = 2 * Double.pi * (qx * thr + qy * thc)
@@ -146,15 +146,14 @@ final class SSBFifthOrderGradientTests: XCTestCase {
     let z = Self.z
     let exact = try model.fifthOrderAgreementsAndGradients(
       [coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0]
-    // The value pass is the per-term objective (ssb-fifth-agreement v0.1) bit for bit; the production v0.2
-    // reassociates chi and agrees to float32 rounding.
+    // The value pass is the production objective (ssb-fifth-agreement v0.3) bit for bit; the retired per-term
+    // kernel (v0.1) evaluates chi without the row collapse and agrees to float32 rounding.
     XCTAssertEqual(
       exact.agreement,
-      try model.fifthOrderAgreementsReference(
-        [coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0])
-    let production = try model.fifthOrderAgreements(
+      try model.fifthOrderAgreements([coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0])
+    let perTerm = try model.fifthOrderAgreementsReference(
       [coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0]
-    XCTAssertEqual(production, exact.agreement, accuracy: 2e-6 * exact.agreement)
+    XCTAssertEqual(perTerm, exact.agreement, accuracy: 2e-6 * exact.agreement)
     let value = reference.agreement(z)
     XCTAssertEqual(exact.agreement, value, accuracy: 1e-5 * value)
     XCTAssertEqual(exact.agreement64, value, accuracy: 1e-5 * value)
@@ -187,37 +186,33 @@ final class SSBFifthOrderGradientTests: XCTestCase {
     let retained = try model.fifthOrderRetainedGradients(points, packedCoefficients: packed)[0]
     XCTAssertEqual(retained.agreement, exact.agreement)
     XCTAssertEqual(retained.gradient, exact.gradient)
-    // A band subsample (steering only): the gradient of the agreement over every 4th band frequency, at the
-    // full band weight.
-    let subsample = try model.fifthOrderAgreementsAndGradients(
-      points, packedCoefficients: packed, qStride: 4)[0]
-    let w = reference.weights.map(Double.init)
-    let ratio =
-      w.reduce(0, +) / Swift.stride(from: 0, to: w.count, by: 4).reduce(0.0) { $0 + w[$1] }
-    let subValue = ratio * reference.agreement(z, qStride: 4)
-    XCTAssertEqual(subsample.agreement, subValue, accuracy: 1e-5 * subValue)
-    let sub = coordinates.gradient(row: subsample.gradient)
-    // A BF subsample (steering only): every 3rd BF pixel, unscaled.
+    // A BF subsample (steering only): every 3rd BF pixel, unscaled; its value and gradient pass, value-only with the
+    // retained gradient pass, and the joint call agree.
     let bf = try model.fifthOrderAgreementsAndGradients(
       points, packedCoefficients: packed, kStride: 3)[0]
     let bfValue = reference.agreement(z, kStride: 3)
     XCTAssertEqual(bf.agreement, bfValue, accuracy: 1e-5 * bfValue)
+    XCTAssertEqual(bf.agreement64, bfValue, accuracy: 1e-5 * bfValue)
+    let bfValueOnly = try model.fifthOrderAgreementsAndGradients(
+      points, packedCoefficients: packed, kStride: 3, gradients: false)[0]
+    XCTAssertEqual(bfValueOnly.agreement, bf.agreement)
+    let bfRetained = try model.fifthOrderRetainedGradients(
+      points, packedCoefficients: packed, kStride: 3)[0]
+    XCTAssertEqual(bfRetained.gradient, bf.gradient)
     let bfGradient = coordinates.gradient(row: bf.gradient)
-    for i in [0, 3, 5, 9, 27] {
+    var worstBF = 0.0
+    for i in 0..<28 {
       let h = 1e-5
       var plus = z
       var minus = z
       plus[i] += h
       minus[i] -= h
       let expected =
-        ratio * (reference.agreement(plus, qStride: 4) - reference.agreement(minus, qStride: 4))
-        / (2 * h)
-      XCTAssertEqual(sub[i], expected, accuracy: 1e-4 * scale, "band-subsampled coordinate \(i)")
-      let expectedBF =
         (reference.agreement(plus, kStride: 3) - reference.agreement(minus, kStride: 3)) / (2 * h)
-      XCTAssertEqual(
-        bfGradient[i], expectedBF, accuracy: 1e-4 * scale, "BF-subsampled coordinate \(i)")
+      worstBF = max(worstBF, abs(bfGradient[i] - expected) / scale)
+      XCTAssertEqual(bfGradient[i], expected, accuracy: 1e-4 * scale, "BF-subsampled coordinate \(i)")
     }
+    print("fifth-order gradient, every 3rd BF pixel: worst |exact - central| / max|central| = \(worstBF)")
   }
 
   static func model(_ device: MTLDevice) throws -> MetalSSBJointModel {

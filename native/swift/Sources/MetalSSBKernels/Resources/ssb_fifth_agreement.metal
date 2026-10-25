@@ -1,9 +1,10 @@
 #include <metal_stdlib>
 using namespace metal;
-// The fifth-order agreement objective (ssb-fifth-agreement v0.2): per band frequency q and candidate,
+// The fifth-order agreement objective (ssb-fifth-agreement v0.3): per band frequency q and candidate,
 // N = sum_k G conj(gamma), D = sum_k |gamma|^2 over the BF pixels k in chunks of 256, written as the chunk partials
-// that fifth_power and fifth_score (ssb_fifth_order.metal) reduce. Each per-pair term is the one of the reference
-// kernel fifth_agreement (ssb_fifth_order.metal), reorganized:
+// that fifth_power and fifth_score (ssb_fifth_order.metal) reduce. kStride > 1 restricts the sums to every
+// kStride-th BF pixel (the coarse steering objective of the exact-gradient search); chunks then count used pixels.
+// Each per-pair term is the one of the reference kernel fifth_agreement (ssb_fifth_order.metal), reorganized:
 //
 // 1. A threadgroup owns up to 128 consecutive band frequencies spanning at most two band rows. For one BF pixel and
 //    one band row, chi(k -/+ q) is a degree <= 6 polynomial in the column of q whose coefficients the threadgroup
@@ -26,6 +27,7 @@ constexpr constant uint FIFTH_S = 16u;            // BF pixels per shared batch
 
 struct FifthRowsGrid {
     uint count, bandCount, chunks, batch, first;  // first: candidate offset of this dispatch within the batch
+    uint kStride;                                 // BF pixel k_j = k[j * kStride]; count is the full BF count
     float wl, semiangle, angularRow, angularColumn, factor;
     float inner2, outer2;  // squared radii where the soft aperture is exactly 1 / exactly 0
 };
@@ -83,7 +85,8 @@ kernel void fifth_agreement_rows(device const float2* g [[buffer(0)]], device co
             same[b] = row[0] == previous[0] && row[1] == previous[1] && row[2] == previous[2];
         }
     }
-    uint k0 = chunk * 256u, k1 = metal::min(p.count, k0 + 256u);
+    uint used = (p.count + p.kStride - 1u) / p.kStride;
+    uint k0 = chunk * 256u, k1 = metal::min(used, k0 + 256u);
     for (uint start = k0; start < k1; start += S) {
         uint n = metal::min(S, k1 - start);
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -92,7 +95,7 @@ kernel void fifth_agreement_rows(device const float2* g [[buffer(0)]], device co
             uint row_slot = index / (n * B * 2u), rest = index % (n * B * 2u);
             uint pix = rest / (2u * B), r = rest % (2u * B), b = r >> 1, side = r & 1u;
             float qrow = row_slot == 0u ? qrow0 : qrow1;
-            float x = k[start + pix].x + (side == 0u ? -qrow : qrow);
+            float x = k[(start + pix) * p.kStride].x + (side == 0u ? -qrow : qrow);
             threadgroup const float* c7 = polys + b * 49u;
             float c[7];
             for (uint j = 0; j < 7; ++j) {
@@ -107,7 +110,7 @@ kernel void fifth_agreement_rows(device const float2* g [[buffer(0)]], device co
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (!valid) continue;
         for (uint pix = 0; pix < n; ++pix) {
-            uint kk = start + pix;
+            uint kk = (start + pix) * p.kStride;
             float kxv = k[kk].x, kyv = k[kk].y;
             float4 gk = geometry[kk];
             float mx = qx - kxv, my = qy - kyv, px = qx + kxv, py = qy + kyv;

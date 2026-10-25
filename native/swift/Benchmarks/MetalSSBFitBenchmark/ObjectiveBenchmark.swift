@@ -9,7 +9,8 @@ import MetalSSBKernels
 //
 // Candidates come from RUN.json (a `metal-ssb-fit-benchmark --output` result): the kept branch's low-order fit
 // (`initial`), the fifth-order start built from it, the final fifth-order coordinates, a 57-point axis stencil
-// around the final point (the Newton diagonal design) and 64 seeded random points within +-0.1 of it.
+// around the final point (the Newton diagonal design) and 64 seeded random points within +-0.1 of it. Then the
+// exact-gradient search's value and gradient calls at the start and final points (`search_kernels`).
 
 /// SSBFifthOrderCoordinates.pack: dimensionless coordinates to the 28 Cartesian float32 coefficients.
 private func pack(_ z: [Double], wavelength: Double, semiangle: Double) -> [Float] {
@@ -43,7 +44,7 @@ private func lowOrder(_ z: [Double]) -> SSBModelPoint {
 
 func objectiveBenchmark(
   run: URL, device: MTLDevice, geometry: MetalSSBGeometry, counts: MTLBuffer,
-  countType: MetalSSBCountType, repeats: Int, output: URL?
+  countType: MetalSSBCountType, repeats: Int, searchKernelsOnly: Bool = false, output: URL?
 ) throws {
   guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: run)) as? [String: Any],
     let result = (json["results"] as? [[String: Any]])?.first,
@@ -130,14 +131,14 @@ func objectiveBenchmark(
       "wall_ms_per_candidate": wallMedian, "gpu_s": gpu, "wall_s": wall, "agreements": values,
     ])
   }
-  for (name, zs) in fifthSets {
+  for (name, zs) in searchKernelsOnly ? [] : fifthSets {
     let points = zs.map(lowOrder)
     let packed = zs.map { pack($0, wavelength: wl, semiangle: semi) }
     try measure(name, count: zs.count) {
       try model.fifthOrderAgreements(points, packedCoefficients: packed)
     }
   }
-  for (name, points) in lowSets {
+  for (name, points) in searchKernelsOnly ? [] : lowSets {
     try measure(name, count: points.count) { try model.agreements(points) }
   }
   // The exact low-order value, gradient and Hessian (the primary Newton's centers) in Newton z.
@@ -154,7 +155,7 @@ func objectiveBenchmark(
     ("two-stage initial", [newtonZ(start)], true),
     ("two-stage random3", lowRandom.prefix(3).map(newtonZ), true),
   ]
-  for (name, rows, twoStage) in derivativeSets {
+  for (name, rows, twoStage) in searchKernelsOnly ? [] : derivativeSets {
     _ = try model.lowOrderAgreementDerivatives(rows, twoStage: twoStage)
     var gpu: [Double] = []
     var valueGPU: [Double] = []
@@ -183,11 +184,27 @@ func objectiveBenchmark(
       "hessians": results.map(\.hessian),
     ])
   }
+  // The exact-gradient search's calls (value, gradient after it, both; all and every 8th BF pixel; the
+  // Hessian batch on every 64th) at its start and at the final point.
+  var searchKernels: [[String: Any]] = []
+  for (label, z) in [("start", zStart), ("final", zFinal)] {
+    for entry in try SSBModelFit.fifthOrderKernelTimings(model: model, z: z, repeats: max(3, repeats)) {
+      var entry = entry
+      entry["point"] = label
+      log(
+        String(
+          format: "  %-6@ %-28@ %3d candidates  GPU %8.3f ms  wall %8.3f ms  first %.9e",
+          label as NSString, entry["name"] as! NSString, entry["candidates"] as! Int,
+          entry["gpu_ms"] as! Double, entry["wall_ms"] as! Double,
+          (entry["agreements64"] as! [Double])[0]))
+      searchKernels.append(entry)
+    }
+  }
   let summary: [String: Any] = [
     "schema": "quantem-gpu-ssb-objective-benchmark/v1", "device": device.name, "run": run.path,
     "rotation_deg": rotation, "band_count": model.bandCount, "repeats": repeats,
     "timing_boundary": "gpu: command-buffer gpuStartTime..gpuEndTime of one agreements call; wall: the call",
-    "sets": sets,
+    "sets": sets, "search_kernels": searchKernels,
   ]
   let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
   if let output { try data.write(to: output) } else { FileHandle.standardOutput.write(data) }
