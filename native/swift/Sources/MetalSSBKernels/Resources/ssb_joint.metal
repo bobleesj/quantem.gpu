@@ -239,39 +239,3 @@ kernel void joint_power_batch(device const float4* partial [[buffer(0)]],device 
     }
     sums[(size_t)tid.y*p.bandCount+tid.x]=float4(nr,ni,dd,0);
 }
-kernel void joint_correct(device const float2* g [[buffer(0)]],device const float2* k [[buffer(1)]],
-    device float2* corrected [[buffer(2)]],constant JointGrid& p [[buffer(3)]],
-    constant float* t [[buffer(4)]],uint2 tid [[thread_position_in_grid]]) {
-    uint plane=p.outputN*p.outputN;
-    if(tid.x>=plane||tid.y>=p.count)return;
-    uint row=tid.x/p.outputN,col=tid.x%p.outputN;
-    int qr=row<p.outputN/2?int(row):int(row)-int(p.outputN);
-    int qc=col<p.outputN/2?int(col):int(col)-int(p.outputN);
-    float2 q=float2(qr*p.dqRow,qc*p.dqColumn);
-    uint r=uint((qr%int(p.n)+int(p.n))%int(p.n));
-    uint c=uint((qc%int(p.n)+int(p.n))%int(p.n));
-    float2 pixel=k[p.bfOffset+tid.y];
-    float4 gk=joint_geometry(pixel,p),gm=joint_geometry(q-pixel,p),gp=joint_geometry(q+pixel,p);
-    float2 result=0;
-    // The scan mean is background: its replicas at nonzero output frequencies stay zero.
-    bool replica=r==0u && c==0u;
-    if(!replica && (gm.w*gk.w!=0 || gp.w*gk.w!=0)) {
-        float2 value=joint_read(g,r,c,tid.y,p);
-        float2 gamma=joint_gamma_geometry(q,gk,gm,gp,p,t);
-        result=float2(dot(value,gamma),value.y*gamma.x-value.x*gamma.y)/max(length(gamma),1e-8f);
-    }
-    if(tid.x==0)result=float2(p.dcReal,p.dcImag);
-    corrected[(size_t)tid.y*plane+tid.x]=result;
-}
-kernel void joint_phase_add(device const float2* object [[buffer(0)]],device float* phase [[buffer(1)]],
-    constant JointGrid& p [[buffer(2)]],uint i [[thread_position_in_grid]]) {
-    uint plane=p.outputN*p.outputN;if(i>=plane)return;
-    for(uint start=0;start<p.count;start+=8) {
-        float sum=0;for(uint k=start;k<min(start+8,p.count);k++){float2 v=object[(size_t)k*plane+i];sum+=atan2(v.y,v.x);}
-        phase[i]+=sum;
-    }
-}
-kernel void joint_phase_normalize(device float* phase [[buffer(0)]],constant uint& count [[buffer(1)]],
-    constant float& divisor [[buffer(2)]],uint i [[thread_position_in_grid]]) {
-    if(i<count)phase[i]/=divisor;
-}

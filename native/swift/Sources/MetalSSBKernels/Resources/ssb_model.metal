@@ -157,9 +157,3 @@ kernel void model_wave_phase(device const float2* wave [[buffer(0)]], device flo
     constant uint& count [[buffer(2)]], uint i [[thread_position_in_grid]]) {
     if (i < count) phase[i] = metal::precise::atan2(wave[i].y, wave[i].x);
 }
-
-// complex_wave: the object wave's amplitude, |inverse FFT of the summed spectrum| / scale (the BF count).
-kernel void model_wave_amplitude(device const float2* wave [[buffer(0)]], device float* amplitude [[buffer(1)]],
-    constant uint& count [[buffer(2)]], constant float& scale [[buffer(3)]], uint i [[thread_position_in_grid]]) {
-    if (i < count) amplitude[i] = metal::precise::sqrt(wave[i].x * wave[i].x + wave[i].y * wave[i].y) / scale;
-}

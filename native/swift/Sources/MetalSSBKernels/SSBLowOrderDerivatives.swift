@@ -2,7 +2,7 @@ import Foundation
 import Metal
 
 /// The low-order agreement with its exact gradient and Hessian (`ssb_low_order_derivatives.metal`,
-/// ssb-low-order-derivatives v0.2), for the trust-region Newton of the primary fit. Coordinates are the Newton's z:
+/// ssb-low-order-derivatives v0.3), for the trust-region Newton of the primary fit. Coordinates are the Newton's z:
 /// C10, C12 cos 2 phi12, C12 sin 2 phi12 (Angstrom), tilt row and column (mrad) and depth spread (Angstrom; the
 /// objective is even in it, so a negative z uses its magnitude and the depth derivatives change sign).
 ///
@@ -40,7 +40,7 @@ final class SSBLowOrderDerivatives {
   static let referenceFields = 51
 
   /// Tests only: true evaluates with `ssb_low_order.metal` (ssb-low-order-derivatives v0.1), the parity reference
-  /// of v0.2. There is no runtime fallback.
+  /// of v0.3. There is no runtime fallback.
   var reference = false
   /// GPU time of the latest `values`, `derivatives(at:)` or `evaluate` (command-buffer GPU start to end, summed).
   private(set) var lastGPUSeconds = 0.0

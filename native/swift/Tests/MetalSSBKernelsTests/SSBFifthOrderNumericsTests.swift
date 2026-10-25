@@ -51,7 +51,6 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
     }
     var higher = primary
     higher.higherOrder = [.init(order: 2, symmetry: 1, magnitudeAngstroms: 1200, angleRadians: 0.2)]
-    XCTAssertThrowsError(try model.reconstruct(higher, estimator: .meanPhase))
     let all = try model.fifthOrderAgreements([primary, higher])
     XCTAssertTrue(all.allSatisfy(\.isFinite))
     XCTAssertNotEqual(all[0], all[1])

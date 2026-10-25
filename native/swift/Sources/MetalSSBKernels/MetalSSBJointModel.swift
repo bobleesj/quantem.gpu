@@ -1,7 +1,5 @@
 import Foundation
 import Metal
-import MetalPerformanceShaders
-import MetalPerformanceShadersGraph
 
 /// The depth-averaged SSB transfer model. C10 is at the specimen midplane;
 /// defocus f = -C10. Tilt components are in the scan (row, column) frame.
@@ -41,8 +39,8 @@ public struct SSBJointParameters: Codable, Equatable, Sendable {
   }
 }
 
-/// GPU phase in radians, using the selected SSB phase estimator.
-/// Upsampling unfolds the measured Fourier aliases; it is not image interpolation.
+/// GPU phase in radians of one of the three reconstructions (`method`): SSB (`phase_of_mean`) or the regularized
+/// direct `phase` / `complex` solves. Upsampling unfolds the measured Fourier aliases; it is not image interpolation.
 public struct MetalSSBJointPhase: @unchecked Sendable {
   public let phase: MTLBuffer
   public let rows: Int
@@ -54,18 +52,15 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public let provenance: MetalSSBProvenance
   /// Exact Double point used for this phase, independently of the Float UI bridge.
   public var point: SSBModelPoint? = nil
-  /// `complexWave`: the object wave's amplitude (float32, rows x columns), |inverse FFT of the summed corrected
-  /// spectrum| / BF count, as Python's `object_wave`. Method `.complex`: the relative amplitude exp(eta) of the
-  /// regularized solve. Nil for the phase estimators and method `.phase`.
+  /// Method `.complex` only: the relative amplitude |exp(eta + i phi)| = exp(eta) of the regularized solve (float32,
+  /// rows x columns), as the CUDA result's `amplitude`. Nil for `.ssb` and `.phase`.
   public var amplitude: MTLBuffer? = nil
-  /// The estimator that produced this result.
-  public var estimator: SSBPhaseEstimator = .phaseOfMean
   /// How the output factor was chosen: `.auto` (from the calibration, at most 4x) or an explicit
   /// `.factor(n)` override. Nil when the caller passed a bare `upsamplingFactor`.
   public var outputSampling: SSBOutputSampling? = nil
   /// The registered GPU kernel (name, version, source fingerprint, variant) that produced this result.
   public var kernel: MetalKernelIdentity? = nil
-  /// The reconstruction method: `.ssb` for every estimator path, `.phase` / `.complex` for the direct solves.
+  /// The reconstruction method: `.ssb` (`phase_of_mean`), or the direct `.phase` / `.complex` solves.
   public var method: SSBReconstructionMethod = .ssb
   /// The regularization of a `.phase` or `.complex` result; nil for `.ssb`.
   public var regularization: SSBDirectRegularization? = nil
@@ -105,10 +100,7 @@ public final class MetalSSBJointModel {
   private var kBuffer: MTLBuffer
   private let activeIndices: [Int]
   private let library: MTLLibrary
-  private let gather, correct, addPhase, normalize: MTLComputePipelineState
-  private let fusedColumn, fusedRow: MTLComputePipelineState
-  private let fusedTwiddle: MTLBuffer
-  private(set) var supportsFused1536: Bool
+  private let gather: MTLComputePipelineState
   private let objectiveBatch, reduceBatch, objectiveAngleSums: MTLComputePipelineState
   /// Whether reconstructions use the separable kernels (default) or the per-term reference kernel.
   var separableReconstruction: Bool {
@@ -124,7 +116,7 @@ public final class MetalSSBJointModel {
   /// The objective's phase evaluation; both give the same agreement to about 1e-6 relative.
   public var agreementKernel: SSBAgreementKernel = .angleSums
   /// Tests only: true evaluates `.angleSums` with `joint_objective_angle_sums` (ssb-joint-agreement v0.1), the
-  /// parity reference of the production `joint_agreement_angle_sums` (v0.2). There is no runtime fallback.
+  /// parity reference of the production `joint_agreement_angle_sums` (v0.3). There is no runtime fallback.
   var referenceAngleSums = false
   private var angleSumPipelines: [Int: MTLComputePipelineState] = [:]
   private var neighbourBuffer: MTLBuffer
@@ -186,7 +178,7 @@ public final class MetalSSBJointModel {
     options.fastMathEnabled = false
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
-        "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
+        "ssb_fft", "ssb_joint", "ssb_model", "ssb_separable", "ssb_fifth_order",
         "ssb_redraw", "ssb_low_order", "ssb_fifth_agreement", "ssb_fifth_order_gradient",
         "ssb_joint_agreement", "ssb_low_order_derivatives", "ssb_direct",
       ]),
@@ -204,19 +196,6 @@ public final class MetalSSBJointModel {
     objectiveAngleSums = try pipeline("joint_objective_angle_sums")
     makeProbeGeometry = try pipeline("joint_probe_geometry")
     trialProbe = try pipeline("joint_trial_probe")
-    fusedColumn = try pipeline("joint_ifft1536_half_columns")
-    fusedRow = try pipeline("joint_ifft1536_half_rows_phase")
-    let twiddles = (0..<2048).map { i -> SIMD2<Float> in
-      let angle =
-        i < 512
-        ? -2 * Double.pi * Double(i) / 512
-        : 2 * Double.pi * Double(i - 512) / 1536
-      return SIMD2(Float(cos(angle)), Float(sin(angle)))
-    }
-    fusedTwiddle = try Self.buffer(device, twiddles)
-    correct = try pipeline("joint_correct")
-    addPhase = try pipeline("joint_phase_add")
-    normalize = try pipeline("joint_phase_normalize")
     let n = geometry.qxByRow.count
     var indices: [SIMD2<UInt32>] = []
     var qs: [SIMD2<Float>] = []
@@ -240,7 +219,6 @@ public final class MetalSSBJointModel {
     }
     bandCount = indices.count
     let ks = Self.rotated(geometry: geometry, activeIndices: activeIndices, rotation: rotation)
-    supportsFused1536 = Self.fused1536(geometry: geometry, k: ks)
     kBuffer = try Self.buffer(device, ks)
     let steps = Self.rowSteps(ks)
     neighbourBuffer = try Self.buffer(device, steps.neighbour)
@@ -298,21 +276,6 @@ public final class MetalSSBJointModel {
     }
   }
 
-  /// The real-field 1536 path needs no Nyquist correction when the calibrated aperture support ends
-  /// strictly before both unfolded-grid boundaries; a margin covers float32 coordinate roundoff.
-  static func fused1536(geometry: MetalSSBGeometry, k ks: [SIMD2<Float>]) -> Bool {
-    let radius =
-      (geometry.semiangleRadians
-        + 0.5 * max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
-      / geometry.wavelengthAngstroms
-    let rowSupport = ((ks.map { abs($0.x) }.max() ?? 0) + radius) * 1.00001
-    let columnSupport = ((ks.map { abs($0.y) }.max() ?? 0) + radius) * 1.00001
-    return geometry.qxByRow.count == 512
-      && 768 * abs(geometry.qxByRow[1]) > rowSupport
-      && 768 * abs(geometry.qyByColumn[1]) > columnSupport
-      && geometry.dcValue.x > 0
-  }
-
   /// 1 for a stored BF pixel whose predecessor is its left neighbour in the detector row, and the row step
   /// (Python MPS `resident_fit._row_steps`, from the rotated float32 coordinates in double precision).
   static func rowSteps(_ k: [SIMD2<Float>]) -> (neighbour: [Float], step: SIMD2<Float>) {
@@ -368,7 +331,6 @@ public final class MetalSSBJointModel {
     let steps = Self.rowSteps(ks)
     neighbourBuffer = try Self.buffer(device, steps.neighbour)
     rowStep = steps.step
-    supportsFused1536 = Self.fused1536(geometry: geometry, k: ks)
     coherent = try SSBCoherentReconstruction(
       device: device, queue: queue, library: library, geometry: geometry, kBuffer: kBuffer, k: ks)
     try encodeProbeGeometry()
@@ -763,40 +725,29 @@ public final class MetalSSBJointModel {
     dispatch(compute, width: Int(p.totalBF))
   }
 
-  /// Reconstruct with all BF pixels. Cancellation is checked between GPU batches.
-  ///
-  /// `phaseOfMean` (the default) sums the corrected waves before one phase, as Python's `SSB.reconstruct`
-  /// and `SSB.preview`; `meanPhase` averages the per-pixel phases; `complexWave` returns the summed wave's
-  /// phase and amplitude (1x, C10/C12, no tilt or depth spread).
+  /// SSB (`phase_of_mean`) with all BF pixels: the corrected waves of every bright-field pixel summed before one
+  /// phase, as Python's `SSB.reconstruct` and `SSB.preview`. Cancellation is checked between GPU batches.
   public func reconstruct(
-    _ parameters: SSBJointParameters, upsamplingFactor: Int = 1,
-    estimator: SSBPhaseEstimator = .phaseOfMean,
-    isCancelled: () -> Bool = { false }
+    _ parameters: SSBJointParameters, upsamplingFactor: Int = 1, isCancelled: () -> Bool = { false }
   ) throws -> MetalSSBJointPhase {
-    try reconstruct(
-      SSBModelPoint(parameters), upsamplingFactor: upsamplingFactor, estimator: estimator,
-      isCancelled: isCancelled)
+    try reconstruct(SSBModelPoint(parameters), upsamplingFactor: upsamplingFactor, isCancelled: isCancelled)
   }
 
-  /// Reconstruct with Auto or an explicit output sampling, recorded in the result's `outputSampling` so a
-  /// manual 8x is never mistaken for an automatic choice.
+  /// SSB with Auto or an explicit output sampling, recorded in the result's `outputSampling` so a manual 8x is
+  /// never mistaken for an automatic choice.
   public func reconstruct(
     _ point: SSBModelPoint, outputSampling: SSBOutputSampling, calibration: MetalSSBCalibration,
-    estimator: SSBPhaseEstimator = .phaseOfMean,
     isCancelled: () -> Bool = { false }
   ) throws -> MetalSSBJointPhase {
     var result = try reconstruct(
-      point, upsamplingFactor: outputSampling.resolve(calibration), estimator: estimator,
-      isCancelled: isCancelled)
+      point, upsamplingFactor: outputSampling.resolve(calibration), isCancelled: isCancelled)
     result.outputSampling = outputSampling
     return result
   }
 
-  /// Reconstruct a double-precision model point (a fit's result) with all BF pixels.
+  /// SSB of a double-precision model point (a fit's result) with all BF pixels.
   public func reconstruct(
-    _ point: SSBModelPoint, upsamplingFactor: Int = 1,
-    estimator: SSBPhaseEstimator = .phaseOfMean,
-    isCancelled: () -> Bool = { false }
+    _ point: SSBModelPoint, upsamplingFactor: Int = 1, isCancelled: () -> Bool = { false }
   ) throws -> MetalSSBJointPhase {
     try validatePreparation()
     try point.validate()
@@ -806,52 +757,14 @@ public final class MetalSSBJointModel {
       throw MetalSSBError.invalidGeometry("Use an SSB sampling factor of 1, 2, 3, 4 or 8.")
     }
     if isCancelled() { throw CancellationError() }
-    if estimator == .complexWave {
-      guard !point.hasHigherOrder else {
-        throw MetalSSBError.invalidGeometry(
-          "Higher-order reconstruction supports phase_of_mean or mean_phase; choose either phase estimator.")
-      }
-      guard upsamplingFactor == 1, point.depthSpreadAngstroms == 0,
-        point.sampleTiltMrad.allSatisfy({ $0 == 0 })
-      else {
-        throw MetalSSBError.invalidGeometry(
-          "complex_wave requires upsampling_factor=1 and no sample tilt/depth; choose a phase estimator instead.")
-      }
-    }
-    if estimator == .phaseOfMean || estimator == .complexWave {
-      let started = Date()
-      let (phase, n, amplitude) = try coherent.reconstruct(
-        point, factor: upsamplingFactor, amplitude: estimator == .complexWave, visit: visit,
-        isCancelled: isCancelled)
-      return MetalSSBJointPhase(
-        phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
-        wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
-        scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
-        point: point, amplitude: amplitude, estimator: estimator, kernel: coherent.lastKernel)
-    }
-    guard !point.hasHigherOrder else {
-      throw MetalSSBError.invalidGeometry(
-        "Higher-order joint SSB uses phaseOfMean; choose that estimator to retain every fitted term."
-      )
-    }
-    let meanPhaseKernel = MetalKernelIdentity(
-      name: SSBKernelRegistry.meanPhase.name, version: SSBKernelRegistry.meanPhase.version,
-      sourceSHA256: try SSBKernelRegistry.sourceSHA256(SSBKernelRegistry.meanPhase),
-      variant: upsamplingFactor == 3 && supportsFused1536 ? "factor=3 fused1536" : "factor=\(upsamplingFactor) general")
-    if upsamplingFactor == 3 && supportsFused1536 {
-      var result = try reconstructFused1536(parameters, isCancelled: isCancelled)
-      result.point = point
-      result.estimator = .meanPhase
-      result.kernel = meanPhaseKernel
-      return result
-    }
-    var result = try reconstructGeneral(
-      parameters, upsamplingFactor: upsamplingFactor,
-      isCancelled: isCancelled)
-    result.point = point
-    result.estimator = .meanPhase
-    result.kernel = meanPhaseKernel
-    return result
+    let started = Date()
+    let (phase, n) = try coherent.reconstruct(
+      point, factor: upsamplingFactor, visit: visit, isCancelled: isCancelled)
+    return MetalSSBJointPhase(
+      phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
+      wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
+      scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
+      point: point, kernel: coherent.lastKernel)
   }
 
   /// `.phase` / `.complex` of `reconstruct(_:upsamplingFactor:method:regularization:isCancelled:)`.
@@ -873,7 +786,7 @@ public final class MetalSSBJointModel {
       phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
       wallSeconds: Date().timeIntervalSince(started), parameters: point.jointParameters,
       scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
-      point: point, amplitude: amplitude, estimator: .phaseOfMean,
+      point: point, amplitude: amplitude,
       kernel: MetalKernelIdentity(
         name: SSBKernelRegistry.direct.name, version: SSBKernelRegistry.direct.version,
         sourceSHA256: solver.sourceSHA256,
@@ -885,154 +798,6 @@ public final class MetalSSBJointModel {
 
   /// Stage times of the latest `.phase` / `.complex` reconstruction (benchmarks).
   @_spi(SSBBenchmark) public var lastDirectTiming: SSBDirectTiming? { directSolver?.lastTiming }
-
-  // General complex FFT path retained for other sizes and nonzero boundary
-  // support. It is also the independent GPU control for the specialized path.
-  func reconstructGeneral(
-    _ parameters: SSBJointParameters, upsamplingFactor: Int,
-    isCancelled: () -> Bool = { false }
-  ) throws -> MetalSSBJointPhase {
-    let started = Date()
-    let n = Int(grid.n) * upsamplingFactor
-    let plane = n * n
-    let phase = try Self.allocate(device, plane * 4, shared: true)
-    let batchSize = 8
-    let corrected = try Self.allocate(device, batchSize * plane * 8)
-    let object = try Self.allocate(device, batchSize * plane * 8)
-    let clear = try command()
-    guard let blit = clear.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
-    blit.fill(buffer: phase, range: 0..<phase.length, value: 0)
-    blit.endEncoding()
-    try finish(clear)
-    let t = parameters.packed
-    var plans: [Int: (MPSGraph, MPSGraphTensor, MPSGraphTensor)] = [:]
-    let execution = MPSGraphExecutionDescriptor()
-    execution.waitUntilCompleted = false
-    try withoutActuallyEscaping(isCancelled) { cancelled in
-      try visit(batchSize) { [self] source, offset, half, bfOffset, count in
-        if cancelled() { throw CancellationError() }
-        var p = grid
-        p.outputN = UInt32(n)
-        p.sourceHalf = half ? 1 : 0
-        p.count = UInt32(count)
-        p.bfOffset = UInt32(bfOffset)
-        let commands = try command()
-        let encoder = try self.encoder(commands, correct)
-        encoder.setBuffer(source, offset: offset, index: 0)
-        encoder.setBuffer(kBuffer, offset: 0, index: 1)
-        encoder.setBuffer(corrected, offset: 0, index: 2)
-        encoder.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
-        encoder.setBytes(t, length: t.count * 4, index: 4)
-        dispatch(encoder, width: plane, height: count)
-        let scheduled = MPSCommandBuffer(commandBuffer: commands)
-        let shape: [NSNumber] = [NSNumber(value: count), NSNumber(value: n), NSNumber(value: n)]
-        if plans[count] == nil {
-          let graph = MPSGraph()
-          graph.options = .none
-          let input = graph.placeholder(shape: shape, dataType: .complexFloat32, name: "corrected")
-          let descriptor = MPSGraphFFTDescriptor()
-          descriptor.inverse = true
-          descriptor.scalingMode = .size
-          let output = graph.fastFourierTransform(
-            input, axes: [1, 2], descriptor: descriptor, name: "ifft2")
-          plans[count] = (graph, input, output)
-        }
-        let (graph, input, output) = plans[count]!
-        graph.encode(
-          to: scheduled,
-          feeds: [input: MPSGraphTensorData(corrected, shape: shape, dataType: .complexFloat32)],
-          targetOperations: nil,
-          resultsDictionary: [
-            output: MPSGraphTensorData(object, shape: shape, dataType: .complexFloat32)
-          ], executionDescriptor: execution)
-        let sum = try self.encoder(scheduled, addPhase)
-        sum.setBuffer(object, offset: 0, index: 0)
-        sum.setBuffer(phase, offset: 0, index: 1)
-        sum.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 2)
-        dispatch(sum, width: plane)
-        try finish(scheduled)
-      }
-    }
-    let final = try command()
-    let encoder = try self.encoder(final, normalize)
-    var count = UInt32(plane)
-    var divisor = Float(geometry.logicalBrightfieldCount)
-    encoder.setBuffer(phase, offset: 0, index: 0)
-    encoder.setBytes(&count, length: 4, index: 1)
-    encoder.setBytes(&divisor, length: 4, index: 2)
-    dispatch(encoder, width: plane)
-    try finish(final)
-    return MetalSSBJointPhase(
-      phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
-      wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
-      scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance)
-  }
-
-  private func reconstructFused1536(
-    _ parameters: SSBJointParameters, isCancelled: () -> Bool
-  ) throws -> MetalSSBJointPhase {
-    let started = Date()
-    let n = 1536
-    let plane = 1536 * 1536
-    let batchSize = 16
-    let phase = try Self.allocate(device, plane * 4, shared: true)
-    let intermediate = try Self.allocate(device, batchSize * n * (n / 2 + 1) * 8)
-    let clear = try command()
-    guard let blit = clear.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
-    blit.fill(buffer: phase, range: 0..<phase.length, value: 0)
-    blit.endEncoding()
-    try finish(clear)
-    let t = parameters.packed
-    try withoutActuallyEscaping(isCancelled) { cancelled in
-      try visit(batchSize) { [self] source, offset, half, bfOffset, count in
-        if cancelled() { throw CancellationError() }
-        var p = grid
-        p.outputN = UInt32(n)
-        p.sourceHalf = half ? 1 : 0
-        p.count = UInt32(count)
-        p.bfOffset = UInt32(bfOffset)
-        let commands = try command()
-        let column = try encoder(commands, fusedColumn)
-        column.setBuffer(source, offset: offset, index: 0)
-        column.setBuffer(kBuffer, offset: 0, index: 1)
-        column.setBuffer(intermediate, offset: 0, index: 2)
-        column.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
-        column.setBytes(t, length: t.count * 4, index: 4)
-        column.setBuffer(fusedTwiddle, offset: 0, index: 5)
-        column.setBuffer(probeGeometry, offset: 0, index: 6)
-        column.dispatchThreadgroups(
-          MTLSize(width: n / 2 + 1, height: count, depth: 1),
-          threadsPerThreadgroup: MTLSize(width: 192, height: 1, depth: 1))
-        column.endEncoding()
-        let row = try encoder(commands, fusedRow)
-        row.setBuffer(intermediate, offset: 0, index: 0)
-        row.setBuffer(phase, offset: 0, index: 1)
-        row.setBuffer(fusedTwiddle, offset: 0, index: 2)
-        row.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
-        row.setBuffer(kBuffer, offset: 0, index: 4)
-        row.dispatchThreadgroups(
-          MTLSize(width: n, height: 1, depth: 1),
-          threadsPerThreadgroup: MTLSize(width: 192, height: 1, depth: 1))
-        row.endEncoding()
-        // This also protects the engine's reusable streamed-spectrum buffer.
-        // The completed phase stays owned by this result across later calls.
-        try finish(commands)
-      }
-    }
-    let final = try command()
-    let norm = try encoder(final, normalize)
-    var count = UInt32(plane)
-    var divisor = Float(geometry.logicalBrightfieldCount)
-    norm.setBuffer(phase, offset: 0, index: 0)
-    norm.setBytes(&count, length: 4, index: 1)
-    norm.setBytes(&divisor, length: 4, index: 2)
-    dispatch(norm, width: plane)
-    try finish(final)
-    return MetalSSBJointPhase(
-      phase: phase, rows: n, columns: n, upsamplingFactor: 3,
-      wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
-      scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance)
-  }
 
   private func command() throws -> MTLCommandBuffer {
     guard let command = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }

@@ -6,6 +6,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+### Removed
+
+- Native (Metal) SSB: the `mean_phase` and `complex_wave` estimators are retired. `SSBPhaseEstimator`, the
+  `estimator:` argument of `MetalSSBJointModel.reconstruct`, the mean-phase general and fused 1536-point kernels
+  (`ssb-mean-phase`) and the complex-wave amplitude path are removed; the native reconstruction choices are
+  ShowPtycho's three, `SSBReconstructionMethod` `.ssb`, `.phase` and `.complex`. Python's estimators are unchanged.
+
 ### Changed
 
 - Native (Metal) SSB fifth-order fit: an exact-gradient trust-region quasi-Newton search (`ssb-fifth-gradient`

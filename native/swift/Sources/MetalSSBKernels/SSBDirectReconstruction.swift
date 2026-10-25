@@ -107,10 +107,7 @@ extension MetalSSBJointModel {
   ) throws -> MetalSSBJointPhase {
     switch method {
     case .ssb:
-      var result = try reconstruct(
-        point, upsamplingFactor: upsamplingFactor, estimator: .phaseOfMean, isCancelled: isCancelled)
-      result.method = .ssb
-      return result
+      return try reconstruct(point, upsamplingFactor: upsamplingFactor, isCancelled: isCancelled)
     case .phase, .complex:
       try regularization.validate(for: method)
       guard (1...4).contains(upsamplingFactor) else {

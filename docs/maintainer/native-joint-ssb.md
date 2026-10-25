@@ -42,8 +42,8 @@ joint models; `retarget` moves a model to another rotation without gathering its
 | Objective | `agreements`: per band frequency `|sum_k G conj(gamma)|^2 / sum_k |gamma|^2`, 0.2 < q < 0.9 1/A, half-plane weights; float32 per term as the MPS kernel, double band sum |
 | Search | `SSBAgreementSearch`: the resident multivariate TPE (MT19937, 200 trials, seed 42) of `ssb._resident_search`, then a trust-region Newton on the exact gradient and Hessian of the agreement (`ssb-low-order-derivatives`), in double precision; a joint fit is polished once more from the phi12-mirrored best trial and the best trial in another (phi12, tilt, depth) cluster, kept only when its agreement is higher by more than 1e-6 relative. Only the given rotation is searched: the opposite 180-degree branch gets the exact image of the fit (even-degree chi terms and tilt negated, odd-degree terms and depth kept), which has the same agreement |
 | Fifth order | `SSBFifthOrderGradientSearch` (`higherOrderSearch: .exactGradientCoarseToFine`, the default): exact gradients of the 28-coordinate agreement (`ssb-fifth-gradient`), a trust-region dense BFGS scaled by and started from a Hessian of every 64th BF pixel, the active set held at the ±2 box bounds, first on every 8th BF pixel and then converged on all of them (a subsample keeps at least 32 pixels, so a small bright field uses all of them); accept/reject and the stop compare Double-summed agreements. `.finiteDifferenceNewton` (`SSBFifthOrderSearch`, Python `fifth_order_fit`) stays as the explicit trajectory reference. `refineToFifthOrder` refines a shown low-order fit without its search |
-| Final phase | `phase_of_mean` (corrected waves summed, one phase; scan-mean replicas zero). At 1x-4x the interactive redraw kernel (`ssb_redraw.metal`) serves every term through C56, tilt and depth for cached and streamed spectra: the anti-Hermitian half is evaluated and mirrored, each source frequency visits its output aliases per batch of 32 BF pixels, chi is a per-row Horner polynomial, and SIMD groups skip BF pixels with closed sidebands. It agrees with the earlier per-term kernel within 1e-5 rad (observed about 5e-8 on the synthetic test scene, 4e-6 on the full-size synthetic benchmark). 8x keeps the per-term kernel; `meanPhase` on request |
-| Complex wave | `complexWave`: the same coherent sum as a complex object, inverse FFT of the summed spectrum divided by the BF count; returns `amplitude` beside the phase, as Python's `phase_estimator="complex_wave"` (1x, C10/C12, no tilt or depth spread). Python MPS parity: 2.5e-8 rad, amplitude 3e-7 of its mean |
+| Final phase | `phase_of_mean` (corrected waves summed, one phase; scan-mean replicas zero). At 1x-4x the interactive redraw kernel (`ssb_redraw.metal`) serves every term through C56, tilt and depth for cached and streamed spectra: the anti-Hermitian half is evaluated and mirrored, each source frequency visits its output aliases per batch of 32 BF pixels, chi is a per-row Horner polynomial, and SIMD groups skip BF pixels with closed sidebands. It agrees with the earlier per-term kernel within 1e-5 rad (observed about 5e-8 on the synthetic test scene, 4e-6 on the full-size synthetic benchmark). 8x keeps the per-term kernel |
+| Reconstruction methods | `SSBReconstructionMethod`, ShowPtycho's three: `.ssb` (the final phase above), `.phase` and `.complex` (regularized direct solves, below). The `mean_phase` and `complex_wave` estimators are retired (2026-10-25): their kernels and API are removed; the app opens results saved with them as saved and reconstructs edits with one of the three |
 | Output sampling | Fourier-alias reconstruction at 1, 2, 3, 4 or 8x; not interpolation. `SSBOutputSampling.auto` (`ssbUpsamplingFactor`) picks the smallest of 1-4x covering nominal support and caps at 4x, as Python; `ssbUpsamplingRequirement` gives the uncapped requirement. `SSBOutputSampling.choices` lists Auto and explicit 1-4x for a viewer; 8x stays an explicit factor |
 | Rotation | Double precision; the angle is converted in double, the BF coordinates rotated in float32 as MPS |
 | Wavelength | Python's table at 80-400 kV, else the same formula |
@@ -88,34 +88,14 @@ SSB_PARITY_FIXTURE=... SSB_PARITY_REFERENCE=... swift test -c release -Xswiftc -
   --filter MetalSSBMeasuredParityTests                     # a measured acquisition, kept outside this repository
 ```
 
-The mean-phase fixtures (`SSB_JOINT_REFERENCE`, `SSB_JOINT_CALIBRATED_REFERENCE`) keep their gates: loss
-relative error < 5e-5, phase relative L2 < 2e-4 and maximum phase difference < 2e-4 rad. Missing external
-fixtures are reported as skips, never passes. Keep acquisitions, screenshots and raw logs outside this
+The joint fixtures (`SSB_JOINT_REFERENCE`, `SSB_JOINT_CALIBRATED_REFERENCE`) gate the objective (loss relative
+error < 5e-5); their phase images are of the retired `mean_phase` estimator and are no longer compared. Missing
+external fixtures are reported as skips, never passes. Keep acquisitions, screenshots and raw logs outside this
 repository.
 
-## Full-resolution phase reconstruction
+## Retired estimators
 
-For a 512×512 scan with calibrated 3× output, the native renderer uses a fused
-1536-point Metal FFT when the complete aperture support ends before both
-Nyquist boundaries. The transfer function satisfies
-`Gamma(-q, k) = -conj(Gamma(q, k))`. After removing DC and rotating by `-i`,
-the corrected spectrum is Hermitian. The implementation transforms its unique
-half, restores DC, evaluates each BF phase, and then averages the phases.
-It does not replace `mean_phase` with `phase_of_mean`.
-
-Each 1536-point transform combines three of the shared 512-point radix-8
-transforms with a radix-3 stage. Correction is fused with the first transform;
-the second transform accumulates phases directly. This path serves the
-explicit `meanPhase` estimator. Calibrated BF geometry is
-reused from the joint model. Eight-BF reduction groups,
-logical BF normalization, native source counts, and float32/complex64
-arithmetic are retained. FFT roundoff is checked against the general GPU
-implementation; the specialized FFT is not advertised as bit-identical.
-
-The intermediate workspace is bounded to 16 BF planes in Hermitian layout,
-including partial cache and streamed tails. Cancellation occurs between GPU
-batches, and result buffers remain independently owned. Other scan sizes,
-sampling factors, and geometries with nonzero Nyquist support use the general
-complex FFT path. Its correction, FFT and phase reduction share a command
-buffer to avoid intermediate host waits. No source crop, BF sampling, or
-resolution reduction is selected for speed.
+`mean_phase` (the per-BF-pixel phase average, with its general and fused 1536-point kernels, `ssb-mean-phase`)
+and `complex_wave` (the coherent sum's amplitude at 1x, C10/C12 only) were removed on 2026-10-25 in favour of the
+regularized `phase` and `complex` reconstructions. `docs/performance/kernels.md` keeps their last registry rows.
+Python's estimators are unchanged.

@@ -2,20 +2,6 @@ import Foundation
 import Metal
 import MetalPerformanceShadersGraph
 
-/// How the corrected bright-field waves become one phase image.
-///
-/// `phaseOfMean` (the default, as in Python `SSB.reconstruct` and `SSB.preview`) sums the corrected complex
-/// waves of every bright-field pixel and takes one phase. `meanPhase` averages the per-pixel phases, the
-/// historical estimator the phase-variance loss is defined on. `complexWave` keeps the same coherent sum as a
-/// complex object, the inverse FFT of the summed spectrum divided by the BF count, and returns its amplitude
-/// beside the phase, as Python's `phase_estimator="complex_wave"`. Like Python it is defined for native (1x)
-/// sampling, C10/C12 and no sample tilt or depth spread.
-public enum SSBPhaseEstimator: String, Codable, Sendable {
-  case phaseOfMean = "phase_of_mean"
-  case meanPhase = "mean_phase"
-  case complexWave = "complex_wave"
-}
-
 /// The transfer-model point in the Python engine's units and double precision: C10, C12 and the depth spread
 /// in Angstrom, phi12 in radians, the sample tilt in mrad (row, column; scan frame).
 public struct SSBModelPoint: Codable, Equatable, Sendable {
@@ -147,7 +133,7 @@ final class SSBCoherentReconstruction {
   private let bounds: MTLBuffer
   private let probe: MTLBuffer
   private let probePipeline, coherentPipeline, mirrorPipeline, originPipeline,
-    phasePipeline, amplitudePipeline: MTLComputePipelineState
+    phasePipeline: MTLComputePipelineState
   private let higherProbePipeline, higherCoherentPipeline: MTLComputePipelineState
   private var plans: [Int: Plan] = [:]
   private var fft: [Int: (MPSGraph, MPSGraphTensor, MPSGraphTensor)] = [:]
@@ -200,7 +186,6 @@ final class SSBCoherentReconstruction {
     mirrorPipeline = try pipeline("model_mirror")
     originPipeline = try pipeline("model_set_origin")
     phasePipeline = try pipeline("model_wave_phase")
-    amplitudePipeline = try pipeline("model_wave_amplitude")
     redrawMirrorPipeline = try pipeline("redraw_mirror")
     // Group bounds (row min, row max, column min, column max, radius^2), as _alias_group_bounds_kernel.
     let radius = Self.supportRadius(geometry)
@@ -311,14 +296,12 @@ final class SSBCoherentReconstruction {
     return plan
   }
 
-  /// The coherent phase, and with `amplitude` also the complex-wave amplitude.
+  /// The coherent (`phase_of_mean`) phase.
   func reconstruct(
-    _ point: SSBModelPoint, factor: Int, amplitude: Bool = false,
+    _ point: SSBModelPoint, factor: Int,
     visit: (Int, @escaping MetalSSBJointModel.SpectrumVisitor) throws -> Void,
     isCancelled: () -> Bool
-  ) throws -> (phase: MTLBuffer, rows: Int, amplitude: MTLBuffer?) {
-    wantAmplitude = amplitude
-    defer { wantAmplitude = false }
+  ) throws -> (phase: MTLBuffer, rows: Int) {
     // 1x-4x: the interactive redraw kernel, the only production path. 8x (an explicit manual override above the
     // automatic 4x cap) is the one case on the earlier separable / per-term kernels.
     if factor <= 4 && !referenceKernels {
@@ -437,7 +420,7 @@ final class SSBCoherentReconstruction {
     _ point: SSBModelPoint, factor: Int,
     visit: (Int, @escaping MetalSSBJointModel.SpectrumVisitor) throws -> Void,
     isCancelled: () -> Bool
-  ) throws -> (phase: MTLBuffer, rows: Int, amplitude: MTLBuffer?) {
+  ) throws -> (phase: MTLBuffer, rows: Int) {
     let higher = point.hasHigherOrder
     let plan = try plan(factor: factor, higher: true)
     var params = Self.parameters(geometry, point)
@@ -526,15 +509,11 @@ final class SSBCoherentReconstruction {
   static let redrawBatch = 32
   static let redrawWidth = 128
 
-  /// Whether the current reconstruction also returns the complex-wave amplitude.
-  private var wantAmplitude = false
-
-  /// Mirror (per-term half spectra), set the common origin, inverse-transform and take the phase (and, for
-  /// complex_wave, the amplitude).
+  /// Mirror (per-term half spectra), set the common origin, inverse-transform and take the phase.
   private func finishPhase(
     total: MTLBuffer, n: Int, commands final: MTLCommandBuffer, mirror half: Bool
   ) throws
-    -> (phase: MTLBuffer, rows: Int, amplitude: MTLBuffer?)
+    -> (phase: MTLBuffer, rows: Int)
   {
     if half {
       var size = UInt32(n)
@@ -586,20 +565,8 @@ final class SSBCoherentReconstruction {
     phaseEncoder.setBuffer(phase, offset: 0, index: 1)
     phaseEncoder.setBytes(&planeCount, length: 4, index: 2)
     dispatch(phaseEncoder, width: n * n)
-    var amplitude: MTLBuffer?
-    if wantAmplitude {
-      let buffer = try Self.allocate(device, n * n * 4, shared: true)
-      var scale = Float(geometry.logicalBrightfieldCount)
-      let amplitudeEncoder = try encoder(scheduled, amplitudePipeline)
-      amplitudeEncoder.setBuffer(wave, offset: 0, index: 0)
-      amplitudeEncoder.setBuffer(buffer, offset: 0, index: 1)
-      amplitudeEncoder.setBytes(&planeCount, length: 4, index: 2)
-      amplitudeEncoder.setBytes(&scale, length: 4, index: 3)
-      dispatch(amplitudeEncoder, width: n * n)
-      amplitude = buffer
-    }
     try finish(scheduled)
-    return (phase, n, amplitude)
+    return (phase, n)
   }
 
   private func command() throws -> MTLCommandBuffer {

@@ -11,7 +11,10 @@ import MetalSSBKernels
 // phase); preparation and warmup are excluded.
 //
 //   swift run -c release metal-ssb-redraw-benchmark [--scans 256,512] [--factors 1,2,3,4] [--orders low,fifth] [--runs 20]
-//     [--warmup 3] [--dump <folder>] [--json <file>]
+//     [--warmup 3] [--method ssb|phase|complex] [--dump <folder>] [--json <file>]
+//
+// `--method phase|complex` times the regularized direct reconstructions (default regularization), which prepare their
+// normal equations again at every C10 change.
 //
 // `--dump` writes the phase of the first (unchanged-C10) observation per order and factor as raw float32 for
 // before/after parity checks.
@@ -24,7 +27,7 @@ struct Options {
   var warmup = 3
   var dump: URL?
   var json: URL?
-  var estimator = SSBPhaseEstimator.phaseOfMean
+  var method = SSBReconstructionMethod.ssb
 
   init(_ arguments: [String]) {
     var iterator = arguments.dropFirst().makeIterator()
@@ -38,7 +41,7 @@ struct Options {
       case "--warmup": warmup = Int(value) ?? warmup
       case "--dump": dump = URL(fileURLWithPath: value)
       case "--json": json = URL(fileURLWithPath: value)
-      case "--estimator": estimator = SSBPhaseEstimator(rawValue: value) ?? estimator
+      case "--method": method = SSBReconstructionMethod(rawValue: value) ?? method
       default: fatalError("Unknown option \(argument)")
       }
     }
@@ -122,7 +125,7 @@ for scan in options.scans {
         let c10 = -80.0 + 1.5 * Double(run)
         started = Date()
         let result = try model.reconstruct(
-          point(order, c10: c10), upsamplingFactor: factor, estimator: options.estimator)
+          point(order, c10: c10), upsamplingFactor: factor, method: options.method)
         let elapsed = Date().timeIntervalSince(started) * 1000
         if run == 0, let folder = options.dump {
           try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -148,7 +151,7 @@ for scan in options.scans {
 }
 if let json = options.json {
   let payload: [String: Any] = [
-    "device": device.name, "estimator": options.estimator.rawValue,
+    "device": device.name, "method": options.method.rawValue,
     "records": records,
   ]
   try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])

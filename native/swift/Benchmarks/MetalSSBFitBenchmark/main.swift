@@ -68,7 +68,6 @@ struct Options {
   var phaseOut: URL?
   var phaseLabel = "run"
   var limitSweep: URL?
-  var estimators: URL?
   var limits: [Double] = [2, 3, 4, 6, 10]
   /// `--objective-bench` times only the exact-gradient search's calls.
   var searchKernelsOnly = false
@@ -140,7 +139,6 @@ struct Options {
       case "--phase-out": phaseOut = URL(fileURLWithPath: try value(flag))
       case "--phase-label": phaseLabel = try value(flag)
       case "--limit-sweep": limitSweep = URL(fileURLWithPath: try value(flag))
-      case "--estimators": estimators = URL(fileURLWithPath: try value(flag))
       case "--limits": limits = try value(flag).split(separator: ",").compactMap { Double($0) }
       case "--search-kernels-only": searchKernelsOnly = true
       case "--direct-parity": directParity = URL(fileURLWithPath: try value(flag))
@@ -613,13 +611,6 @@ if let sweep = options.directParity {
     output: options.output, phaseOut: options.phaseOut, device: device, calibration: caseRecord.calibration,
     geometry: setup.geometry, counts: counts, countType: countType,
     rotationEstimate: caseRecord.rotationEstimateDegrees, factors: options.directFactors)
-  exit(0)
-}
-if let sweep = options.estimators, let directory = options.phaseOut {
-  try estimatorExport(
-    sweep: sweep, limits: options.limits, label: options.phaseLabel, directory: directory, device: device,
-    calibration: caseRecord.calibration, geometry: setup.geometry, counts: counts,
-    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees)
   exit(0)
 }
 if let run = options.limitSweep, let directory = options.phaseOut {

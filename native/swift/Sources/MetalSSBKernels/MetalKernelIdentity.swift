@@ -42,14 +42,16 @@ enum SSBKernelRegistry {
     let registeredSourceSHA256: String
   }
 
-  /// `phase_of_mean` and `complex_wave` at 1x-4x: the only production path there.
+  /// SSB (`phase_of_mean`) at 1x-4x: the only production path there.
   static let redraw = Entry(
     name: "ssb-redraw", version: "0.2", files: ["ssb_redraw"],
     registeredSourceSHA256: "b20d7914811d0fb2941d59907ba6e15607829f0988b08498f262d9942a3a5e34")
   /// The earlier per-term / separable coherent kernels: explicit 8x only, and the 1x-4x parity reference in tests.
+  /// v0.2 is v0.1 without the retired `complex_wave` amplitude kernel (`model_wave_amplitude`); the per-term
+  /// kernels are unchanged.
   static let perTerm = Entry(
-    name: "ssb-per-term", version: "0.1", files: ["ssb_model", "ssb_fifth_order", "ssb_separable"],
-    registeredSourceSHA256: "1c390cc7b833c1cd83ec77cdd63670edc78a33a42426e2ad1512950677983fa5")
+    name: "ssb-per-term", version: "0.2", files: ["ssb_model", "ssb_fifth_order", "ssb_separable"],
+    registeredSourceSHA256: "05177e0c2cde4620094e8f2a7aeaa816daadeaaaed1384a20bdd5103dc68114c")
   /// The fifth-order agreement objective of the fit (`fifth_agreement_rows` with the `fifth_probe`, `fifth_power`
   /// and `fifth_score` passes) on all BF pixels or every n-th: the only production objective kernel there, also the
   /// value pass of `fifthGradient`. v0.3 added the BF stride to v0.2 (same per-pair terms). v0.1 was
@@ -59,23 +61,21 @@ enum SSBKernelRegistry {
     registeredSourceSHA256: "2d385e96d9c44dfaba4b5e67c1180bbc3830009d529b1aebac68e969c299c152")
   /// The low-order agreement objective with angle-sum phases (`joint_agreement_angle_sums`), used by the primary
   /// fit's search trials: the only production `.angleSums` kernel. v0.1 was `joint_objective_angle_sums` in
-  /// `ssb_joint`, now the parity reference of the tests.
+  /// `ssb_joint`, now the parity reference of the tests. v0.3 is v0.2 with the retired `mean_phase` kernels removed
+  /// from `ssb_joint`; the agreement kernels are unchanged.
   static let jointAgreement = Entry(
-    name: "ssb-joint-agreement", version: "0.2", files: ["ssb_joint", "ssb_joint_agreement"],
-    registeredSourceSHA256: "d698aa9cb17a9d964e5399869b65ebce2a7427dbe935c5e339b2f8ce7ea031bd")
-  /// `mean_phase` (C10/C12 only).
-  static let meanPhase = Entry(
-    name: "ssb-mean-phase", version: "0.1", files: ["ssb_joint", "ssb_joint_fft", "ssb_fft"],
-    registeredSourceSHA256: "4aa7c1da63913a45e8075c41a36497be32fbe527e5aaceaddb70eb340b9f7e53")
+    name: "ssb-joint-agreement", version: "0.3", files: ["ssb_joint", "ssb_joint_agreement"],
+    registeredSourceSHA256: "6283577c146ab5a92b5643b5b696d10c3985585a590ff7ed67569d46d7035aa1")
 
   /// The primary fit's exact low-order value, gradient and Hessian (trust-region Newton), `SSBLowOrderDerivatives`:
   /// the value pass, the derivative pass and the fused pass of `ssb_low_order_derivatives` (with the aperture and
-  /// quotient helpers of `ssb_joint_agreement`). v0.1 is `lowOrderDerivativesReference`.
+  /// quotient helpers of `ssb_joint_agreement`). v0.1 is `lowOrderDerivativesReference`. v0.3 is v0.2 with the
+  /// retired `mean_phase` kernels removed from `ssb_joint`; the derivative kernels are unchanged.
   static let lowOrderDerivatives = Entry(
-    name: "ssb-low-order-derivatives", version: "0.2",
+    name: "ssb-low-order-derivatives", version: "0.3",
     files: ["ssb_joint", "ssb_joint_agreement", "ssb_low_order_derivatives"],
-    registeredSourceSHA256: "6178f0ed161301c32b6c0d59dda6c0fd7bf00baa9a324d375a281513a0802d76")
-  /// v0.1 (`ssb_low_order`): retired, the parity reference of v0.2 in the tests.
+    registeredSourceSHA256: "0158114dc4138747c7faed27019542d6ffec91c4f2b101109bfa6f015887f215")
+  /// v0.1 (`ssb_low_order`): retired, the parity reference of v0.2 / v0.3 in the tests.
   static let lowOrderDerivativesReference = Entry(
     name: "ssb-low-order-derivatives", version: "0.1", files: ["ssb_low_order"],
     registeredSourceSHA256: "40da0bd64def2fcb21831f57777020331306e755495047031a40c41ef727b48b")

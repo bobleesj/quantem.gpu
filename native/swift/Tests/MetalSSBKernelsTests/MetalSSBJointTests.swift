@@ -18,7 +18,7 @@ final class MetalSSBJointTests: XCTestCase {
 
   /// Exercises native calibration and nonzero rotation as well as the kernel.
   /// Fixture counts are independently selected from the original acquisition.
-  func testCalibratedReferencePhaseAndObjective() throws {
+  func testCalibratedReferenceObjective() throws {
     guard let directory = ProcessInfo.processInfo.environment["SSB_JOINT_CALIBRATED_REFERENCE"]
     else {
       throw XCTSkip("Set SSB_JOINT_CALIBRATED_REFERENCE to an independent calibrated fixture.")
@@ -52,26 +52,11 @@ final class MetalSSBJointTests: XCTestCase {
     try engine.prepare(brightfield: input, countType: .uint32)
     let model = try engine.jointModel(scanDetectorRotationDegrees: Double(fixture.rotationDegrees))
     let loss = try model.loss(fixture.parameters)
-    let result = try model.reconstruct(
-      fixture.parameters, upsamplingFactor: fixture.upsamplingFactor, estimator: .meanPhase)
-    let expected = try Data(contentsOf: root.appendingPathComponent("reference.f32"))
-      .withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
-    let actual = result.phase.contents().assumingMemoryBound(to: Float.self)
-    var error = 0.0
-    var norm = 0.0
-    var maximum: Float = 0
-    for i in expected.indices {
-      let delta = actual[i] - expected[i]
-      error += Double(delta) * Double(delta)
-      norm += Double(expected[i]) * Double(expected[i])
-      maximum = max(maximum, abs(delta))
-    }
-    let relative = sqrt(error / norm)
     let lossError = abs(loss - fixture.loss) / abs(fixture.loss)
-    print("CALIBRATED_JOINT_PARITY loss=\(lossError) phaseL2=\(relative) phaseMax=\(maximum)")
+    print("CALIBRATED_JOINT_PARITY loss=\(lossError)")
     XCTAssertLessThan(lossError, 5e-5)
-    XCTAssertLessThan(relative, 2e-4)
-    XCTAssertLessThan(maximum, 2e-4)
+    // The fixture's mean_phase reference image belongs to the retired mean_phase estimator; only the objective
+    // is compared.
   }
   struct FixtureCase: Decodable {
     let name: String
@@ -81,7 +66,7 @@ final class MetalSSBJointTests: XCTestCase {
 
   /// Generated from the independent Python MPS joint implementation, outside
   /// the repository. No identifying input or output is embedded in this test.
-  func testPythonReferencePhaseAndObjective() throws {
+  func testPythonReferenceObjective() throws {
     guard let directory = ProcessInfo.processInfo.environment["SSB_JOINT_REFERENCE"] else {
       throw XCTSkip("Set SSB_JOINT_REFERENCE to a generated reference fixture folder.")
     }
@@ -125,45 +110,14 @@ final class MetalSSBJointTests: XCTestCase {
         let measured = try model.loss(fixture.parameters)
         let relative = abs(measured - fixture.loss) / max(abs(fixture.loss), 1)
         XCTAssertLessThan(relative, 5e-5, "\(fixture.name) objective relative error \(relative)")
-        let phase = try model.reconstruct(fixture.parameters, estimator: .meanPhase)
-        let reference = try Data(contentsOf: root.appendingPathComponent("\(fixture.name).f32"))
-        let expected = reference.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
-        let actual = phase.phase.contents().assumingMemoryBound(to: Float.self)
-        var maxError: Float = 0
-        var error = 0.0
-        var norm = 0.0
-        for i in expected.indices {
-          let delta = Double(actual[i] - expected[i])
-          error += delta * delta
-          norm += Double(expected[i]) * Double(expected[i])
-          maxError = max(maxError, abs(Float(delta)))
-        }
-        print(
-          "JOINT_PARITY \(fixture.name) cache=\(cacheBudget) objective=\(relative) phaseL2=\(sqrt(error / max(norm, 1e-30))) phaseMax=\(maxError)"
-        )
-        XCTAssertLessThan(maxError, 2e-4)
-        XCTAssertLessThan(sqrt(error / max(norm, 1e-30)), 2e-4)
+        print("JOINT_PARITY \(fixture.name) cache=\(cacheBudget) objective=\(relative)")
       }
       if cacheBudget > 0 {
         let tilted = cases.first { $0.name == "tilted" }!
         for factor in [2, 3, 4] {
-          let result = try model.reconstruct(
-            tilted.parameters, upsamplingFactor: factor, estimator: .meanPhase)
-          let bytes = try Data(contentsOf: root.appendingPathComponent("tilted-\(factor)x.f32"))
-          let expected = bytes.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
-          let actual = result.phase.contents().assumingMemoryBound(to: Float.self)
-          var maxError: Float = 0
-          var error = 0.0
-          var norm = 0.0
-          for i in expected.indices {
-            let delta = Double(actual[i] - expected[i])
-            error += delta * delta
-            norm += Double(expected[i]) * Double(expected[i])
-            maxError = max(maxError, abs(Float(delta)))
-          }
-          print("JOINT_UPSAMPLE factor=\(factor) L2=\(sqrt(error / norm)) max=\(maxError)")
-          XCTAssertLessThan(maxError, 2e-4)
-          XCTAssertLessThan(sqrt(error / norm), 2e-4)
+          // The fixture's tilted-<factor>x images are of the retired mean_phase estimator; the SSB result is
+          // saved and restored here.
+          let result = try model.reconstruct(tilted.parameters, upsamplingFactor: factor)
           XCTAssertEqual(result.rows, 128 * factor)
           let calibration = MetalSSBCalibration(
             voltageKV: 300, semiangleMrad: 30,
