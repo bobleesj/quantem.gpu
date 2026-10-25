@@ -23,6 +23,8 @@ import Native4DSTEMIO
 // decision taken with the searched fit instead. --check-maximum evaluates the kept low-order fit's neighbours
 // one stencil-Newton tolerance away along each Newton coordinate (C10, C12 x/y, tilt row/column, depth), and
 // with --baseline RESULT.json the same for that run's kept low-order fit.
+//   metal-ssb-fit-benchmark --cache DIR --objective-bench RUN.json [--repeats 3] [--output BENCH.json]
+//     times the agreement objectives at fixed candidates instead of fitting (ObjectiveBenchmark.swift).
 
 struct Options {
   var input: URL?
@@ -54,6 +56,7 @@ struct Options {
   var verifyBranches = false
   var checkMaximum = false
   var baseline: URL?
+  var objectiveBench: URL?
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -111,6 +114,7 @@ struct Options {
       case "--verify-branches": verifyBranches = true
       case "--check-maximum": checkMaximum = true
       case "--baseline": baseline = URL(fileURLWithPath: try value(flag))
+      case "--objective-bench": objectiveBench = URL(fileURLWithPath: try value(flag))
       default: throw failure("Unknown argument \(flag)")
       }
     }
@@ -561,6 +565,12 @@ guard setup.pixels == caseRecord.pixels else { throw failure("BF selection diffe
 let counts = try mapped(options.cache.appendingPathComponent("counts.bin"), device: device)
 guard let countType = MetalSSBCountType(rawValue: caseRecord.countType) else {
   throw failure("Unknown count type")
+}
+if let run = options.objectiveBench {
+  try objectiveBenchmark(
+    run: run, device: device, geometry: setup.geometry, counts: counts, countType: countType,
+    repeats: options.repeats, output: options.output)
+  exit(0)
 }
 var results: [[String: Any]] = []
 if let baselineURL = options.fifthOnly {

@@ -118,6 +118,10 @@ public final class MetalSSBJointModel {
   }
   /// The objective's phase evaluation; both give the same agreement to about 1e-6 relative.
   public var agreementKernel: SSBAgreementKernel = .angleSums
+  /// Tests only: true evaluates `.angleSums` with `joint_objective_angle_sums` (ssb-joint-agreement v0.1), the
+  /// parity reference of the production `joint_agreement_angle_sums` (v0.2). There is no runtime fallback.
+  var referenceAngleSums = false
+  private var angleSumPipelines: [Int: MTLComputePipelineState] = [:]
   private var neighbourBuffer: MTLBuffer
   private var rowStep = SIMD2<Float>(0, 0)
   private let makeProbeGeometry, trialProbe: MTLComputePipelineState
@@ -126,6 +130,9 @@ public final class MetalSSBJointModel {
   private var batchPower: MTLBuffer?
   private var coherent: SSBCoherentReconstruction
   private var fifthOrder: SSBFifthOrderAgreement?
+  /// GPU execution time (command-buffer GPU start to end) of the latest `agreements` or
+  /// `fifthOrderAgreements` call, for benchmarks; excludes host encoding and the host band reduction.
+  public private(set) var lastAgreementGPUSeconds = 0.0
   private var lowOrder: SSBLowOrderDerivatives?
   private var fifthOrderGradient: SSBFifthOrderGradient?
 
@@ -161,7 +168,8 @@ public final class MetalSSBJointModel {
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
-        "ssb_fifth_order_gradient", "ssb_redraw", "ssb_low_order",
+        "ssb_fifth_order_gradient", "ssb_redraw", "ssb_low_order", "ssb_fifth_agreement",
+        "ssb_joint_agreement",
       ]),
       options: options)
     self.library = library
@@ -395,19 +403,42 @@ public final class MetalSSBJointModel {
     }
     if isCancelled() { throw CancellationError() }
     if points.isEmpty { return [] }
+    let rows = try fifthOrderRows(points, coefficients)
+    let scores = try fifthOrder!.evaluate(
+      rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
+      probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
+      isCancelled: isCancelled)
+    lastAgreementGPUSeconds = fifthOrder!.lastGPUSeconds
+    return scores
+  }
+
+  /// The kernel rows of `fifthOrderAgreements`: depth, tilt row and column (rad), the 28 packed coefficients.
+  private func fifthOrderRows(_ points: [SSBModelPoint], _ coefficients: [[Float]]) throws -> [[Float]] {
     if fifthOrder == nil {
-      fifthOrder = try SSBFifthOrderAgreement(device: device, queue: queue, library: library)
+      let q = Array(
+        UnsafeBufferPointer(
+          start: qBuffer.contents().assumingMemoryBound(to: SIMD2<Float>.self), count: bandCount))
+      fifthOrder = try SSBFifthOrderAgreement(device: device, queue: queue, library: library, q: q)
     }
-    let rows = zip(points, coefficients).map { point, packed in
+    return zip(points, coefficients).map { point, packed in
       [
         Float(point.depthSpreadAngstroms), Float(point.sampleTiltMrad[0] * 1e-3),
         Float(point.sampleTiltMrad[1] * 1e-3),
       ] + packed
     }
-    return try fifthOrder!.evaluate(
+  }
+
+  /// Tests only: `fifthOrderAgreements` through the retired per-term kernel `fifth_agreement`, the parity reference
+  /// of ssb-fifth-agreement v0.2.
+  func fifthOrderAgreementsReference(_ points: [SSBModelPoint], packedCoefficients: [[Float]]? = nil)
+    throws -> [Double]
+  {
+    try validatePreparation()
+    let coefficients = packedCoefficients ?? points.map(\.reconstructionCoefficients)
+    let rows = try fifthOrderRows(points, coefficients)
+    return try fifthOrder!.evaluateReference(
       rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
-      probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
-      isCancelled: isCancelled)
+      probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount)
   }
 
   /// The fifth-order agreement of each candidate (bit-identical to `fifthOrderAgreements`) and its exact gradient
@@ -565,7 +596,31 @@ public final class MetalSSBJointModel {
       let packed = candidates.flatMap { $0 }
       var p = grid
       var batch = UInt32(candidates.count)
-      if agreementKernel == .angleSums {
+      if agreementKernel == .angleSums && !referenceAngleSums {
+        // Four candidates per thread, then one dispatch for the remaining one to three.
+        let trials = try Self.buffer(device, packed)
+        let full = candidates.count / 4 * 4
+        for (perThread, offset, groups) in [(4, 0, full / 4), (candidates.count - full, full, 1)]
+        where perThread > 0 && groups > 0 {
+          var step = rowStep
+          var extra = angleSumExtra(first: offset)
+          let compute = try encoder(commands, try angleSumPipeline(perThread))
+          for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
+            compute.setBuffer(buffer, offset: 0, index: index)
+          }
+          compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
+          compute.setBuffer(trials, offset: 0, index: 5)
+          compute.setBytes(&batch, length: 4, index: 6)
+          compute.setBuffer(probeGeometry, offset: 0, index: 7)
+          compute.setBuffer(neighbourBuffer, offset: 0, index: 8)
+          compute.setBytes(&step, length: 8, index: 9)
+          compute.setBytes(&extra, length: MemoryLayout<AngleSumExtra>.stride, index: 10)
+          compute.dispatchThreads(
+            MTLSize(width: bandCount, height: Int(p.chunks), depth: groups),
+            threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+          compute.endEncoding()
+        }
+      } else if agreementKernel == .angleSums {
         let trials = try Self.buffer(device, packed)
         var step = rowStep
         let compute = try encoder(commands, objectiveAngleSums)
@@ -603,6 +658,7 @@ public final class MetalSSBJointModel {
       dispatch(reduction, width: bandCount, height: Int(batch))
     }
     try finish(commands)
+    lastAgreementGPUSeconds = commands.gpuEndTime - commands.gpuStartTime
     // The band power in double precision from the float32 BF sums, as the MPS band reduction.
     let sums = batchPower.contents().assumingMemoryBound(to: SIMD4<Float>.self)
     let weight = weights.contents().assumingMemoryBound(to: Float.self)
@@ -623,6 +679,34 @@ public final class MetalSSBJointModel {
       result.append(total)
     }
     return result
+  }
+
+  private struct AngleSumExtra {
+    var inner2, outer2: Float
+    var first: UInt32
+  }
+
+  /// The radii where the soft aperture of `joint_geometry_xy` is exactly 1 / 0 (worst-case anisotropic sampling),
+  /// moved inward / outward by 1e-4 in r^2, far beyond the float32 rounding of the edge expression.
+  private func angleSumExtra(first: Int) -> AngleSumExtra {
+    let wl = Double(geometry.wavelengthAngstroms), semi = Double(geometry.semiangleRadians)
+    let angular = Double(max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
+    let inner = (semi - 0.5 * angular) / wl, outer = (semi + 0.5 * angular) / wl
+    return AngleSumExtra(
+      inner2: inner > 0 ? Float(inner * inner * (1 - 1e-4)) : -1,
+      outer2: Float(outer * outer * (1 + 1e-4)), first: UInt32(first))
+  }
+
+  private func angleSumPipeline(_ perThread: Int) throws -> MTLComputePipelineState {
+    if let existing = angleSumPipelines[perThread] { return existing }
+    let constants = MTLFunctionConstantValues()
+    var value = UInt32(perThread)
+    constants.setConstantValue(&value, type: .uint, index: 50)
+    let function = try library.makeFunction(
+      name: "joint_agreement_angle_sums", constantValues: constants)
+    let pipeline = try device.makeComputePipelineState(function: function)
+    angleSumPipelines[perThread] = pipeline
+    return pipeline
   }
 
   private func encodeProbe(_ commands: MTLCommandBuffer, parameters: [Float], batch: UInt32) throws

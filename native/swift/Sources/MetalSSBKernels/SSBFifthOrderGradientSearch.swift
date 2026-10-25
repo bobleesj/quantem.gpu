@@ -440,7 +440,8 @@ extension SSBModelFit {
       return (value.agreement, value.agreement64)
     }
     let initial = try values(start)
-    // Bit-identical to `fifthOrderAgreements`.
+    // Bit-identical to the per-term objective (ssb-fifth-agreement v0.1, `fifth_agreement`); the production
+    // `fifthOrderAgreements` (v0.2) agrees with it to float32 rounding (within 3e-7 on measured acquisitions).
     let normalization = initial.agreement
     guard normalization.isFinite, normalization > 0 else {
       throw MetalSSBError.invalidGeometry(
