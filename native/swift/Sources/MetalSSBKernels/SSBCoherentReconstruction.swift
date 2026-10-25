@@ -123,6 +123,7 @@ final class SSBCoherentReconstruction {
   struct RedrawGrid {
     var sourceN, outputN, gCols, count, bfOffset, sourceHalf, rowLimit, colLimit: UInt32
     var support2: Float
+    var pixels: UInt32
   }
 
   private let device: MTLDevice
@@ -151,7 +152,7 @@ final class SSBCoherentReconstruction {
   /// Reconstruction never falls back to them; 1x-4x always uses `ssb_redraw.metal`.
   var referenceKernels = false
   private let library: MTLLibrary
-  private let redrawMirrorPipeline: MTLComputePipelineState
+  private let redrawMirrorPipeline, redrawTaylorPipeline: MTLComputePipelineState
   private var redrawPipelines: [String: MTLComputePipelineState] = [:]
   /// The largest BF pixel frequency magnitude.
   private let maximumK: Float
@@ -187,6 +188,7 @@ final class SSBCoherentReconstruction {
     originPipeline = try pipeline("model_set_origin")
     phasePipeline = try pipeline("model_wave_phase")
     redrawMirrorPipeline = try pipeline("redraw_mirror")
+    redrawTaylorPipeline = try pipeline("redraw_taylor")
     // Group bounds (row min, row max, column min, column max, radius^2), as _alias_group_bounds_kernel.
     let radius = Self.supportRadius(geometry)
     var values: [Float] = []
@@ -428,7 +430,6 @@ final class SSBCoherentReconstruction {
     var polynomial =
       packed.map { SSBRedrawPolynomial.full(coefficients: $0, wavelength: params[0]) }
       ?? SSBRedrawPolynomial.primary(params)
-    let coefficients = try packed.map { try Self.buffer(device, $0) }
     let pipeline = try redrawPipeline(
       factor: factor, degree: higher ? 6 : 2, depth: point.depthSpreadAngstroms != 0)
     lastKernel = MetalKernelIdentity(
@@ -443,13 +444,17 @@ final class SSBCoherentReconstruction {
     blit.fill(buffer: total, range: 0..<(n * n * 8), value: 0)
     blit.endEncoding()
     var count = UInt32(kHost.count)
-    let probeEncoder = try encoder(commands, higher ? higherProbePipeline : probePipeline)
-    probeEncoder.setBuffer(kBuffer, offset: 0, index: 0)
-    probeEncoder.setBytes(&params, length: params.count * 4, index: 1)
-    probeEncoder.setBuffer(probe, offset: 0, index: 2)
-    probeEncoder.setBytes(&count, length: 4, index: 3)
-    if let coefficients { probeEncoder.setBuffer(coefficients, offset: 0, index: 4) }
-    dispatch(probeEncoder, width: kHost.count)
+    // The probe geometry of every BF pixel and chi expanded about it (7 x 7 Taylor coefficients each), read by
+    // every batch below.
+    let taylor = try workspace("taylor", kHost.count * 49 * 4)
+    let taylorEncoder = try encoder(commands, redrawTaylorPipeline)
+    taylorEncoder.setBuffer(kBuffer, offset: 0, index: 0)
+    taylorEncoder.setBytes(&params, length: params.count * 4, index: 1)
+    taylorEncoder.setBytes(&polynomial, length: polynomial.count * 4, index: 2)
+    taylorEncoder.setBuffer(probe, offset: 0, index: 3)
+    taylorEncoder.setBuffer(taylor, offset: 0, index: 4)
+    taylorEncoder.setBytes(&count, length: 4, index: 5)
+    dispatch(taylorEncoder, width: kHost.count)
     // Source rows above N/2 are mirrored, except the output Nyquist column, which has no partner on the grid:
     // those rows run only when that column has support.
     let nyquist = abs(n / 2 < (n - 1) / 2 + 1 ? n / 2 : n / 2 - n) <= plan.colLimit
@@ -464,13 +469,14 @@ final class SSBCoherentReconstruction {
           sourceN: UInt32(source), outputN: UInt32(n),
           gCols: UInt32(half ? source / 2 + 1 : source), count: UInt32(batch),
           bfOffset: UInt32(bfOffset), sourceHalf: half ? 1 : 0, rowLimit: UInt32(plan.rowLimit),
-          colLimit: UInt32(plan.colLimit), support2: Float(radius * radius * (1 + 1e-5)))
+          colLimit: UInt32(plan.colLimit), support2: Float(radius * radius * (1 + 1e-5)),
+          pixels: UInt32(kHost.count))
         let compute = try encoder(commands, pipeline)
         compute.setBuffer(spectra, offset: offset, index: 0)
         compute.setBuffer(kBuffer, offset: 0, index: 1)
         compute.setBytes(&params, length: params.count * 4, index: 2)
         compute.setBuffer(probe, offset: 0, index: 3)
-        compute.setBytes(&polynomial, length: polynomial.count * 4, index: 4)
+        compute.setBuffer(taylor, offset: 0, index: 4)
         compute.setBuffer(total, offset: 0, index: 5)
         compute.setBytes(&grid, length: MemoryLayout<RedrawGrid>.stride, index: 6)
         compute.setBuffer(plan.qRow, offset: 0, index: 7)

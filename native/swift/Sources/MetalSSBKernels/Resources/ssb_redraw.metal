@@ -9,15 +9,21 @@ using namespace metal;
 //    The output Nyquist column of the other half has no partner on the grid and is evaluated directly.
 // 2. One thread owns one source frequency q0 and visits its output aliases q0 + m * (scan frequency period)
 //    within each batch of 32 BF pixels, so the aliases reread that batch's G(q0, k) from cache.
-// 3. chi is evaluated as a polynomial in the output column: for one BF pixel and one output row, chi(row, col)
-//    is a degree <= 6 polynomial in col whose coefficients the threadgroup computes once and shares, so each
-//    pair costs one Horner evaluation. The bivariate coefficients are prepared on the host in double precision
-//    from the same packed float32 terms (`SSBRedrawPolynomial`).
+// 3. The phase differences chi(k + q) - chi(k) and chi(k - q) - chi(k) are evaluated as polynomials in q expanded
+//    about each BF pixel k (redraw_taylor, once per redraw): for one BF pixel and one output row they are
+//    degree <= 6 polynomials in the output column frequency whose coefficients the threadgroup computes once and
+//    shares, so each pair costs one Horner evaluation. Expanding about k keeps the rounding proportional to the
+//    difference, not to chi itself: at the lowest frequencies the two sidebands nearly cancel and the sign of
+//    their second difference chi(k + q) + chi(k - q) - 2 chi(k) decides the correction, which differences of
+//    separately rounded chi values of tens of radians cannot resolve. The absolute bivariate coefficients are
+//    prepared on the host in double precision from the same packed float32 terms (`SSBRedrawPolynomial`).
 // 4. Each SIMD group skips BF pixels whose sidebands are closed for all its outputs (a conservative distance
-//    test), and pixels with one possible sideband use conj(gamma) / |gamma| = +-exp(i delta chi).
+//    test), and pixels with one possible sideband use conj(gamma) / |gamma| = +-exp(i delta chi). Pixels with both
+//    sidebands possible form gamma from the half sum and half difference of the two phase differences, so the
+//    rounding of sin and cos is not amplified where the sidebands nearly cancel.
 //
-// Rounding differs from the per-term kernel (chi evaluation order, mirrored half, fast trigonometry); the redraw
-// parity tests state the tolerance.
+// Rounding differs from the per-term kernel (chi differences expanded about k, mirrored half, fast trigonometry);
+// the redraw parity tests state the tolerance.
 
 constant uint REDRAW_F [[function_constant(0)]];       // output factor: aliases per axis (1 ... 4)
 constant uint REDRAW_DEGREE [[function_constant(1)]];  // chi polynomial degree: 2 (C10/C12) or 6 (fifth order)
@@ -29,10 +35,12 @@ struct RedrawGrid {
     uint sourceN, outputN, gCols, count, bfOffset, sourceHalf;
     uint rowLimit, colLimit;  // largest |output frequency index| with support, per axis
     float support2;           // squared outward-rounded support radius (max |k| + aperture)
+    uint pixels;              // all BF pixels: the stride of one Taylor coefficient in `taylor`
 };
 
 // One BF pixel at one alias row, REDRAW_ROW floats: the plus (q + k) and minus (k - q) row coordinates and their
-// squares, then chi(row, y) = sum_j c[j] y^j for the plus and the minus sideband, each padded to whole float4s.
+// squares, then chi(k +- q) - chi(k) = sum_j c[j] (+-q_col)^j for the plus and the minus sideband, each padded to
+// whole float4s.
 constant uint REDRAW_SET = REDRAW_DEGREE > 3u ? 8u : 4u;
 constant uint REDRAW_ROW = 4u + 2u * REDRAW_SET;
 
@@ -44,14 +52,51 @@ inline float redraw_horner(threadgroup const float* c, float y) {
     return metal::fma(metal::fma(metal::fma(metal::fma(value, y, a.w), y, a.z), y, a.y), y, a.x);
 }
 
-// sum_i poly[i][j] x^i for each column power j: the row-collapsed coefficients, zero-padded.
-inline void redraw_collapse(constant float* poly, float x, threadgroup float* c) {
+// sum_i d[i][j] (+-x)^i for each column power j: the row-collapsed coefficients of one pixel's expansion for the
+// plus (+x) and the minus (-x) sideband, zero-padded. d[i][j] is at d[(i * 7 + j) * stride].
+inline void redraw_collapse(device const float* d, uint stride, float x, threadgroup float* plus,
+    threadgroup float* minus) {
     for (uint j = 0; j < REDRAW_SET; ++j) {
-        float value = 0.0f;
+        float p = 0.0f, m = 0.0f;
         if (j <= REDRAW_DEGREE) {
-            for (int i = int(REDRAW_DEGREE - j); i >= 0; --i) value = metal::fma(value, x, poly[i * 7 + j]);
+            for (int i = int(REDRAW_DEGREE - j); i >= 0; --i) {
+                float v = d[(uint(i) * 7u + j) * stride];
+                p = metal::fma(p, x, v);
+                m = metal::fma(m, -x, v);
+            }
         }
-        c[j] = value;
+        plus[j] = p;
+        minus[j] = m;
+    }
+}
+
+// chi(k + s) - chi(k) = sum_{i + j >= 1} d[i][j] s_row^i s_col^j for each BF pixel k: the Taylor coefficients
+// d[i][j] = sum_{a >= i, b >= j} C(a, i) C(b, j) poly[a][b] k_row^(a - i) k_col^(b - j) of the absolute chi
+// polynomial, coefficient-major (d[i][j] of pixel k at (i * 7 + j) * count + k) with d[0][0] = 0. One thread per
+// BF pixel, before every redraw; it also writes the pixel's probe geometry (model_geometry: alpha^2, cos 2 phi,
+// sin 2 phi, aperture) to probe[k * 5 ... k * 5 + 3]. The redraw does not read chi(k) (probe[k * 5 + 4]).
+kernel void redraw_taylor(device const float2* kk [[buffer(0)]], constant float* params [[buffer(1)]],
+    constant float* poly [[buffer(2)]], device float* probe [[buffer(3)]], device float* taylor [[buffer(4)]],
+    constant uint& count [[buffer(5)]], uint k [[thread_position_in_grid]]) {
+    if (k >= count) return;
+    float kr = kk[k].x, kc = kk[k].y;
+    float4 gk = model_geometry(kr, kc, params[0], params[1], params[2], params[3]);
+    for (uint j = 0; j < 4; ++j) probe[k * 5 + j] = gk[j];
+    float d[7][7];
+    // Shift the row variable by kr, then the column variable by kc (repeated synthetic division, Taylor shift).
+    for (uint b = 0; b < 7; ++b) {
+        float c[7];
+        for (uint a = 0; a < 7; ++a) c[a] = poly[a * 7 + b];
+        for (uint i = 0; i < 7; ++i)
+            for (int a = 5; a >= int(i); --a) c[a] = metal::fma(c[a + 1], kr, c[a]);
+        for (uint a = 0; a < 7; ++a) d[a][b] = c[a];
+    }
+    for (uint a = 0; a < 7; ++a) {
+        float c[7];
+        for (uint b = 0; b < 7; ++b) c[b] = d[a][b];
+        for (uint j = 0; j < 7; ++j)
+            for (int b = 5; b >= int(j); --b) c[b] = metal::fma(c[b + 1], kc, c[b]);
+        for (uint b = 0; a + b < 7; ++b) taylor[(a * 7 + b) * count + k] = (a + b == 0u) ? 0.0f : c[b];
     }
 }
 
@@ -93,6 +138,7 @@ template <bool MINUS>
 inline float2 redraw_side(uint mask, threadgroup const float4* pixels, threadgroup const float* rows,
     device const float2* source, uint plane, bool mirror, float qc, float depth_q, float depth_k, float outer2,
     float inner2, float wl, float semi, float ay, float ax) {
+    float h = MINUS ? -qc : qc;
     float2 acc = float2(0.0f);
     while (mask != 0u) {
         uint local = metal::ctz(mask);
@@ -106,7 +152,7 @@ inline float2 redraw_side(uint mask, threadgroup const float4* pixels, threadgro
         float scale = redraw_scale(x, w);
         float2 value = source[local * plane];
         float vr = value.x, vi = mirror ? -value.y : value.y;
-        float c, s = metal::fast::sincos(redraw_horner(row + (MINUS ? 4u + REDRAW_SET : 4u), y) - pixel.y, c);
+        float c, s = metal::fast::sincos(redraw_horner(row + (MINUS ? 4u + REDRAW_SET : 4u), h), c);
         acc += MINUS ? scale * float2(vr * c - vi * s, vi * c + vr * s)
                      : -scale * float2(vr * c + vi * s, vi * c - vr * s);
     }
@@ -114,12 +160,12 @@ inline float2 redraw_side(uint mask, threadgroup const float4* pixels, threadgro
 }
 
 // params: the 12 floats of ssb_model.metal (wavelength, semiangle, angular row, angular column, C10, C12,
-// cos 2 phi12, sin 2 phi12, pi / wavelength, depth spread, tilt row, tilt column). poly: the 7 x 7 chi
-// polynomial. A threadgroup owns one source row and REDRAW_WIDTH source columns; rows above N/2 evaluate only
-// the output Nyquist column. One dispatch per stored batch of BF spectra adds onto `total`.
+// cos 2 phi12, sin 2 phi12, pi / wavelength, depth spread, tilt row, tilt column). taylor: redraw_taylor's
+// expansion of chi about every BF pixel. A threadgroup owns one source row and REDRAW_WIDTH source columns; rows
+// above N/2 evaluate only the output Nyquist column. One dispatch per stored batch of BF spectra adds onto `total`.
 kernel void redraw_coherent(device const float2* g [[buffer(0)]], device const float2* kk [[buffer(1)]],
     constant float* params [[buffer(2)]], device const float* probe [[buffer(3)]],
-    constant float* poly [[buffer(4)]], device float2* total [[buffer(5)]],
+    device const float* taylor [[buffer(4)]], device float2* total [[buffer(5)]],
     constant RedrawGrid& p [[buffer(6)]], device const float* q_row [[buffer(7)]],
     device const float* q_col [[buffer(8)]],
     threadgroup float4* pixels [[threadgroup(0)]], threadgroup float* rows [[threadgroup(1)]],
@@ -195,11 +241,9 @@ kernel void redraw_coherent(device const float2* g [[buffer(0)]], device const f
             float q = q_row[sr + row_alias * p.sourceN];
             float pr = q + kv.x, mr = kv.x - q;
             row[0] = pr; row[1] = pr * pr; row[2] = mr; row[3] = mr * mr;
-            redraw_collapse(poly, pr, row + 4);
-            redraw_collapse(poly, mr, row + 4 + REDRAW_SET);
-            // column coordinate, chi(k), probe aperture, the pixel's depth-sinc term
-            if (row_alias == 0u)
-                pixels[local] = float4(kv.y, probe[k * 5 + 4], probe[k * 5 + 3], half_t * factor * probe[k * 5]);
+            redraw_collapse(taylor + k, p.pixels, q, row + 4, row + 4 + REDRAW_SET);
+            // column coordinate, (unused), probe aperture, the pixel's depth-sinc term
+            if (row_alias == 0u) pixels[local] = float4(kv.y, 0.0f, probe[k * 5 + 3], half_t * factor * probe[k * 5]);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         device const float2* source = g + (size_t)base * plane + offset;
@@ -222,8 +266,11 @@ kernel void redraw_coherent(device const float2* g [[buffer(0)]], device const f
             if ((minus | plus) == 0u || ((active >> a) & 1u) == 0u) continue;
             float depth_q = -half_t * 6.283185307179586f * (qr * params[10] + qc * params[11]);
             float2 acc = float2(0.0f);
-            // Both sidebands possible for this SIMD group: the general formula, one sideband at a time
-            // (gamma = a exp(-i delta_m) - b exp(+i delta_p)).
+            // Both sidebands possible for this SIMD group: the general formula. With delta_m = chi(k - q) - chi(k),
+            // delta_p = chi(k + q) - chi(k), mu = (delta_p - delta_m) / 2 and nu = -(delta_m + delta_p) / 2,
+            // gamma = a exp(-i delta_m) - b exp(+i delta_p) = exp(i mu) ((a - b) cos nu + i (a + b) sin nu): no
+            // difference of two nearly equal unit vectors where the sidebands nearly cancel (|nu| << 1), so the
+            // rounding of sin and cos is not amplified by 1 / |gamma|.
             uint mask = minus & plus;
             while (mask != 0u) {
                 uint local = metal::ctz(mask);
@@ -234,7 +281,7 @@ kernel void redraw_coherent(device const float2* g [[buffer(0)]], device const f
                 float r2p = row[1] + pc * pc, r2m = row[3] + mc * mc;
                 float2 value = source[local * plane];
                 float vr = value.x, vi = mirror ? -value.y : value.y;
-                float re = 0.0f, im = 0.0f;
+                float wm = 0.0f, wp = 0.0f, dm = 0.0f, dp = 0.0f;
                 #pragma clang loop unroll(disable)
                 for (uint side = 0; side < 2u; ++side) {
                     bool use_m = side == 0u;
@@ -244,12 +291,17 @@ kernel void redraw_coherent(device const float2* g [[buffer(0)]], device const f
                     float x = use_m ? metal::fma(-depth_k, r2, pixel.w + depth_q)
                                     : metal::fma(depth_k, r2, depth_q - pixel.w);
                     float weight = REDRAW_DEPTH ? redraw_sinc(x) * w : w;
-                    float c, s = metal::fast::sincos(
-                        redraw_horner(row + (use_m ? 4u + REDRAW_SET : 4u), y) - pixel.y, c);
-                    re += use_m ? weight * c : -weight * c;
-                    im -= weight * s;
+                    float delta = redraw_horner(row + (use_m ? 4u + REDRAW_SET : 4u), use_m ? -qc : qc);
+                    wm = use_m ? weight : wm;
+                    dm = use_m ? delta : dm;
+                    wp = use_m ? wp : weight;
+                    dp = use_m ? dp : delta;
                 }
-                float inv = metal::fast::divide(1.0f, metal::max(metal::fast::sqrt(re * re + im * im), 1e-8f));
+                float cm, sm = metal::fast::sincos(0.5f * (dp - dm), cm);
+                float cn, sn = metal::fast::sincos(-0.5f * (dm + dp), cn);
+                float zr = (wm - wp) * cn, zi = (wm + wp) * sn;
+                float re = cm * zr - sm * zi, im = sm * zr + cm * zi;
+                float inv = metal::fast::divide(1.0f, metal::max(metal::fast::sqrt(zr * zr + zi * zi), 1e-8f));
                 acc += float2((vr * re + vi * im) * inv, (vi * re - vr * im) * inv);
             }
             // One possible sideband for the whole SIMD group: minus (chi(k - q)), then plus (chi(q + k)).
