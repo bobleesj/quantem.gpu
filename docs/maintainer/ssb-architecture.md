@@ -63,15 +63,14 @@ artifact boundary and never changes GPU computation.
 
 The same call does not return the same phase image on CUDA and MPS:
 
-- the default phase estimator is `phase_of_mean` on CUDA and `mean_phase` on
-  MPS;
-- `reconstruct(..., upsampling_factor=...)` above 1 is CUDA only;
+- both reconstruct the phase of the mean wave (`phase_of_mean`), but the
+  wave sums run different kernels in different orders;
 - the bright-field disk is selected by the same rule with different rounding
   (CUDA device float32, MPS host float32), so edge pixels can differ; and
 - the Nelder-Mead tolerances of the phase-variance search and the loss
   reduction order differ.
 
-Each result records its backend, estimator and output factor
+Each result records its backend, `phase_of_mean` and output factor
 (`result.phase_estimator`, `result.upsampling_factor`).
 
 ## Ownership boundaries

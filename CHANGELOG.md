@@ -38,7 +38,20 @@ new `rcN` heading when that rc is published to TestPyPI.
 - Native (Metal) SSB: the `mean_phase` and `complex_wave` estimators are retired. `SSBPhaseEstimator`, the
   `estimator:` argument of `MetalSSBJointModel.reconstruct`, the mean-phase general and fused 1536-point kernels
   (`ssb-mean-phase`) and the complex-wave amplitude path are removed; the native reconstruction choices are
-  ShowPtycho's three, `SSBReconstructionMethod` `.ssb`, `.phase` and `.complex`. Python's estimators are unchanged.
+  ShowPtycho's three, `SSBReconstructionMethod` `.ssb`, `.phase` and `.complex`.
+- Python SSB (CUDA and MPS): the `mean_phase` and `complex_wave` estimators are retired; `DirectPtycho.run` has
+  ShowPtycho's three methods, `ssb` (the phase of the mean wave), `phase` and `complex`. `run`, `reconstruct` and
+  `preview` raise for `phase_estimator="mean_phase"` (naming `method="phase"`) and `"complex_wave"` (naming
+  `method="complex"`); `phase_estimator` accepts only `"phase_of_mean"`. Results and screening records saved with a
+  retired estimator still load as saved, with a one-line notice. Removed: the backends' `reconstruct_result`,
+  `preview` and `preview_sample` (and from `SSBProtocol`), the CUDA engine's mean-phase image and complex-object
+  paths (`reconstruct`, `reconstruct_object`, `reconstruct_full`, `reconstruct_full_with_loss`, the sum-only
+  chunked core) with their kernels (`mean_phase_kernel`, `pk_kernel_full`, the full-aberration fused row IFFTs of
+  the 256/512/1024 FFT modules, `ifft1024_cols_accumulate_sum_split512_t64`, `ssb{N}_corrected_fourier_sum_t256`),
+  the MPS no-loss mean-phase methods and the mean-phase upsampled paths. The phase-variance loss and
+  `objective="phase_variance"` are unchanged: `ThickSample.phase_variance` and the MPS backend's `phase_variance`,
+  `sample_phase_variance` and `phase_variance_higher_order` evaluate it. CUDA fits without tilt now hold their SSB
+  phase directly instead of a complex object reconstructed and then replaced.
 
 ### Changed
 
