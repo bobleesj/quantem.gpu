@@ -58,6 +58,9 @@ struct Options {
   var checkMaximum = false
   var baseline: URL?
   var objectiveBench: URL?
+  var phaseFrom: URL?
+  var phaseOut: URL?
+  var phaseLabel = "run"
   /// `--objective-bench` times only the exact-gradient search's calls.
   var searchKernelsOnly = false
 
@@ -118,6 +121,9 @@ struct Options {
       case "--check-maximum": checkMaximum = true
       case "--baseline": baseline = URL(fileURLWithPath: try value(flag))
       case "--objective-bench": objectiveBench = URL(fileURLWithPath: try value(flag))
+      case "--phase-from": phaseFrom = URL(fileURLWithPath: try value(flag))
+      case "--phase-out": phaseOut = URL(fileURLWithPath: try value(flag))
+      case "--phase-label": phaseLabel = try value(flag)
       case "--search-kernels-only": searchKernelsOnly = true
       default: throw failure("Unknown argument \(flag)")
       }
@@ -569,6 +575,13 @@ guard setup.pixels == caseRecord.pixels else { throw failure("BF selection diffe
 let counts = try mapped(options.cache.appendingPathComponent("counts.bin"), device: device)
 guard let countType = MetalSSBCountType(rawValue: caseRecord.countType) else {
   throw failure("Unknown count type")
+}
+if let run = options.phaseFrom, let directory = options.phaseOut {
+  try exportPhases(
+    run: run, label: options.phaseLabel, directory: directory, device: device,
+    calibration: caseRecord.calibration, geometry: setup.geometry, counts: counts,
+    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees)
+  exit(0)
 }
 if let run = options.objectiveBench {
   try objectiveBenchmark(
