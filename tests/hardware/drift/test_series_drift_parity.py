@@ -1,6 +1,7 @@
 """quantem.gpu.drift reproduces myptycho's translation drift exactly on real data: MoS2 bilayer frames 151-191
 streamed through SSB, against myptycho's outputs on the same phases (time/tests/drift_baseline.py). Skipped where that
-frozen baseline folder is absent."""
+frozen baseline folder is absent (every host but the one that holds it) and marked slow, so run it with -m slow: it is the only parity
+check where consistent rejects pairs (10 of 114), the synthetic series keeping all of its pairs."""
 
 import os
 from pathlib import Path
@@ -33,6 +34,8 @@ def test_series_drift_matches_myptycho(series):
 
 
 def test_series_running_matches_myptycho(series):
+    """running correlates by quantem.gpu.parallax's cross_correlation_shift_batch_cp, as the baseline did at quantem.gpu
+    a26c62fa: a failure here after a change there is that change, not drift's."""
     images, sampling_A, baseline = series
     np.testing.assert_array_equal(running(images, sampling_A=sampling_A).displacement_A, baseline["series_running_displacement"])
 
