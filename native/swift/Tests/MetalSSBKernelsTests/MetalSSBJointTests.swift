@@ -234,5 +234,33 @@ final class MetalSSBJointTests: XCTestCase {
     XCTAssertEqual(try cal.ssbUpsamplingFactor(), 4)
     cal.scanSamplingRowAngstroms = 0
     XCTAssertThrowsError(try cal.ssbUpsamplingFactor())
+    XCTAssertThrowsError(try SSBOutputSampling.auto.resolve(cal))
+  }
+
+  /// Python `test_ssb_auto_sampling`: Auto covers nominal support up to the 4x limit and is capped there.
+  func testAutoSamplingIsCappedAtFourTimes() throws {
+    let wavelength = MetalSSBCalibration.wavelengthAngstroms(voltageKV: 300)
+    let spacing = wavelength / (4 * 20e-3)
+    for (required, expected) in [(0.5, 1), (1, 1), (1.1, 2), (2.1, 3), (3.1, 4), (4.1, 4), (8, 4), (12, 4)] {
+      let cal = MetalSSBCalibration(
+        voltageKV: 300, semiangleMrad: 20,
+        scanSamplingRowAngstroms: 0.5 * spacing, scanSamplingColumnAngstroms: required * spacing,
+        detectorSamplingRowMrad: 1, detectorSamplingColumnMrad: 1,
+        brightfieldCenterRowPixels: 6, brightfieldCenterColumnPixels: 6)
+      XCTAssertEqual(try cal.ssbUpsamplingFactor(), expected, "requirement \(required)")
+      XCTAssertEqual(try cal.ssbUpsamplingRequirement(), required, accuracy: 1e-9)
+      XCTAssertEqual(try SSBOutputSampling.auto.resolve(cal), expected)
+    }
+    let thick = MetalSSBCalibration(
+      voltageKV: 300, semiangleMrad: 30, scanSamplingRowAngstroms: 0.373, scanSamplingColumnAngstroms: 0.373,
+      detectorSamplingRowMrad: 0.57, detectorSamplingColumnMrad: 0.57,
+      brightfieldCenterRowPixels: 96, brightfieldCenterColumnPixels: 96)
+    XCTAssertEqual(try thick.ssbUpsamplingFactor(), 3)
+    for value in 1...4 { XCTAssertEqual(try SSBOutputSampling.factor(value).resolve(thick), value) }
+    XCTAssertEqual(try SSBOutputSampling.factor(8).resolve(thick), 8)
+    XCTAssertThrowsError(try SSBOutputSampling.factor(5).resolve(thick))
+    XCTAssertEqual(SSBOutputSampling.choices.map(\.label), ["Auto", "1×", "2×", "3×", "4×"])
+    let coded = try JSONEncoder().encode(SSBOutputSampling.choices)
+    XCTAssertEqual(try JSONDecoder().decode([SSBOutputSampling].self, from: coded), SSBOutputSampling.choices)
   }
 }

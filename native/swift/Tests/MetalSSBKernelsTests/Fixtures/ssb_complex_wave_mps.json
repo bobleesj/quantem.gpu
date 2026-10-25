@@ -1,0 +1,19 @@
+{
+  "schema": "quantem.gpu/ssb-complex-wave-fixture/1",
+  "scene": "SSBModelReconstructionTests.scene()",
+  "backend": "mps",
+  "phase_estimator": "complex_wave",
+  "shape": [
+    128,
+    128
+  ],
+  "layout": "row-major complex64 as interleaved little-endian float32 (real, imag)",
+  "bright_field_pixels": 39,
+  "scan_detector_rotation_deg": 17.25,
+  "aberrations": {
+    "C10_nm": 6.1,
+    "C12_nm": 1.4,
+    "phi12_deg": 40.1
+  },
+  "python_revision": "19bd4e22d268"
+}

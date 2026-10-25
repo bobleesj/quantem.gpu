@@ -266,7 +266,8 @@ let package = Package(
     .testTarget(
       name: "MetalSSBKernelsTests",
       dependencies: ["MetalSSBKernels"],
-      path: "native/swift/Tests/MetalSSBKernelsTests"
+      path: "native/swift/Tests/MetalSSBKernelsTests",
+      resources: [.copy("Fixtures")]
     ),
     .testTarget(
       name: "MetalScientificNumericsTests",

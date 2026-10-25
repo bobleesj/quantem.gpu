@@ -54,6 +54,11 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public let provenance: MetalSSBProvenance
   /// Exact Double point used for this phase, independently of the Float UI bridge.
   public var point: SSBModelPoint? = nil
+  /// `complexWave` only: the object wave's amplitude (float32, rows x columns), |inverse FFT of the summed
+  /// corrected spectrum| / BF count, as Python's `object_wave`. Nil for the phase estimators.
+  public var amplitude: MTLBuffer? = nil
+  /// The estimator that produced this result.
+  public var estimator: SSBPhaseEstimator = .phaseOfMean
 }
 
 /// How the agreement objective evaluates its phases.
@@ -493,7 +498,8 @@ public final class MetalSSBJointModel {
   /// Reconstruct with all BF pixels. Cancellation is checked between GPU batches.
   ///
   /// `phaseOfMean` (the default) sums the corrected waves before one phase, as Python's `SSB.reconstruct`
-  /// and `SSB.preview`; `meanPhase` averages the per-pixel phases.
+  /// and `SSB.preview`; `meanPhase` averages the per-pixel phases; `complexWave` returns the summed wave's
+  /// phase and amplitude (1x, C10/C12, no tilt or depth spread).
   public func reconstruct(
     _ parameters: SSBJointParameters, upsamplingFactor: Int = 1,
     estimator: SSBPhaseEstimator = .phaseOfMean,
@@ -518,15 +524,28 @@ public final class MetalSSBJointModel {
       throw MetalSSBError.invalidGeometry("Use an SSB sampling factor of 1, 2, 3, 4 or 8.")
     }
     if isCancelled() { throw CancellationError() }
-    if estimator == .phaseOfMean {
+    if estimator == .complexWave {
+      guard !point.hasHigherOrder else {
+        throw MetalSSBError.invalidGeometry(
+          "Higher-order reconstruction supports phase_of_mean or mean_phase; choose either phase estimator.")
+      }
+      guard upsamplingFactor == 1, point.depthSpreadAngstroms == 0,
+        point.sampleTiltMrad.allSatisfy({ $0 == 0 })
+      else {
+        throw MetalSSBError.invalidGeometry(
+          "complex_wave requires upsampling_factor=1 and no sample tilt/depth; choose a phase estimator instead.")
+      }
+    }
+    if estimator == .phaseOfMean || estimator == .complexWave {
       let started = Date()
-      let (phase, n) = try coherent.reconstruct(
-        point, factor: upsamplingFactor, visit: visit, isCancelled: isCancelled)
+      let (phase, n, amplitude) = try coherent.reconstruct(
+        point, factor: upsamplingFactor, amplitude: estimator == .complexWave, visit: visit,
+        isCancelled: isCancelled)
       return MetalSSBJointPhase(
         phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
         wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
         scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
-        point: point)
+        point: point, amplitude: amplitude, estimator: estimator)
     }
     guard !point.hasHigherOrder else {
       throw MetalSSBError.invalidGeometry(
