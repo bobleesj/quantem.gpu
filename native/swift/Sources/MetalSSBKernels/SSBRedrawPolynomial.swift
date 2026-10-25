@@ -19,6 +19,13 @@ enum SSBRedrawPolynomial {
   /// The 14-term Cartesian chi of `ssb_chi_full` (packed coefficients include 1/(n+1)):
   /// (2 pi / wl) * sum radial^p * (Re z^m a + Im z^m b), z = (row + i col) * wl.
   static func full(coefficients: [Float], wavelength: Float) -> [Float] {
+    fullDouble(coefficients: coefficients.map(Double.init), wavelength: Double(wavelength)).map {
+      Float($0)
+    }
+  }
+
+  /// `full` in double precision (row-major 7 x 7).
+  static func fullDouble(coefficients: [Double], wavelength: Double) -> [Double] {
     precondition(coefficients.count == 28)
     let azimuth = [0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, 2, 4, 6]
     let power = [1, 0, 1, 0, 2, 1, 0, 2, 1, 0, 3, 2, 1, 0]
@@ -56,16 +63,16 @@ enum SSBRedrawPolynomial {
     for p in 1...3 { radial.append(multiply(radial[p - 1], r2)) }
     var chi = Poly(repeating: 0, count: 49)
     for term in 0..<14 {
-      let a = Double(coefficients[2 * term]), b = Double(coefficients[2 * term + 1])
+      let a = coefficients[2 * term], b = coefficients[2 * term + 1]
       let angular = zip(re[azimuth[term]], im[azimuth[term]]).map { $0 * a + $1 * b }
       for (index, value) in multiply(radial[power[term]], angular).enumerated() {
         chi[index] += value
       }
     }
-    let wl = Double(wavelength)
+    let wl = wavelength
     return chi.indices.map { index in
       let degree = index / 7 + index % 7
-      return Float(chi[index] * (2 * Double.pi / wl) * pow(wl, Double(degree)))
+      return chi[index] * (2 * Double.pi / wl) * pow(wl, Double(degree))
     }
   }
 }

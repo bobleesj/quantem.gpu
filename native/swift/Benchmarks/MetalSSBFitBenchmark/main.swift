@@ -24,6 +24,7 @@ import Native4DSTEMIO
 // one stencil-Newton tolerance away along each Newton coordinate (C10, C12 x/y, tilt row/column, depth), and
 // with --baseline RESULT.json the same for that run's kept low-order fit.
 //   metal-ssb-fit-benchmark --cache DIR --objective-bench RUN.json [--repeats 3] [--output BENCH.json]
+//     [--search-kernels-only]
 //     times the agreement objectives at fixed candidates instead of fitting (ObjectiveBenchmark.swift).
 
 struct Options {
@@ -57,6 +58,8 @@ struct Options {
   var checkMaximum = false
   var baseline: URL?
   var objectiveBench: URL?
+  /// `--objective-bench` times only the exact-gradient search's calls.
+  var searchKernelsOnly = false
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -115,6 +118,7 @@ struct Options {
       case "--check-maximum": checkMaximum = true
       case "--baseline": baseline = URL(fileURLWithPath: try value(flag))
       case "--objective-bench": objectiveBench = URL(fileURLWithPath: try value(flag))
+      case "--search-kernels-only": searchKernelsOnly = true
       default: throw failure("Unknown argument \(flag)")
       }
     }
@@ -569,7 +573,7 @@ guard let countType = MetalSSBCountType(rawValue: caseRecord.countType) else {
 if let run = options.objectiveBench {
   try objectiveBenchmark(
     run: run, device: device, geometry: setup.geometry, counts: counts, countType: countType,
-    repeats: options.repeats, output: options.output)
+    repeats: options.repeats, searchKernelsOnly: options.searchKernelsOnly, output: options.output)
   exit(0)
 }
 var results: [[String: Any]] = []

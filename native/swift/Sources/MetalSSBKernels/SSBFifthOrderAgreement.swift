@@ -4,16 +4,17 @@ import Metal
 /// Batched all-BF fifth-order agreement with persistent, bounded GPU partials and GPU score reduction.
 /// The model supplies its already gathered native-grid evidence and reusable probe geometry.
 ///
-/// Production evaluation is `fifth_agreement_rows` (ssb-fifth-agreement v0.2, `ssb_fifth_agreement.metal`). The
-/// earlier `fifth_agreement` (`ssb_fifth_order.metal`) is kept only as the parity reference of the tests
-/// (`evaluateReference`); there is no runtime fallback.
+/// Production evaluation is `fifth_agreement_rows` (ssb-fifth-agreement v0.3, `ssb_fifth_agreement.metal`), also the
+/// value pass of `SSBFifthOrderGradient` on all or every n-th BF pixel. The earlier `fifth_agreement`
+/// (`ssb_fifth_order.metal`) is kept only as the parity reference of the tests (`evaluateReference`); there is no
+/// runtime fallback.
 final class SSBFifthOrderAgreement {
   private struct Grid {
     var count, bandCount, chunks, batch: UInt32
     var wl, semiangle, angularRow, angularColumn, factor: Float
   }
   private struct RowsGrid {
-    var count, bandCount, chunks, batch, first: UInt32
+    var count, bandCount, chunks, batch, first, kStride: UInt32
     var wl, semiangle, angularRow, angularColumn, factor, inner2, outer2: Float
   }
   /// Band frequencies per threadgroup and BF pixels per shared batch (`FIFTH_S` in the kernel).
@@ -25,8 +26,9 @@ final class SSBFifthOrderAgreement {
   private let library: MTLLibrary
   private let probe, agreement, power, score: MTLComputePipelineState
   private var rowsPipelines: [Int: MTLComputePipelineState] = [:]
-  private let tiles: MTLBuffer
-  private let tileCount: Int
+  /// The band tiles of `fifth_agreement_rows`, shared with the gradient pass.
+  let tiles: MTLBuffer
+  let tileCount: Int
   private var workspaces: [String: MTLBuffer] = [:]
   /// GPU time of the latest `evaluate` command buffer.
   private(set) var lastGPUSeconds = 0.0
@@ -99,6 +101,20 @@ final class SSBFifthOrderAgreement {
     return min(candidates, max(4, ((64 << 20) / perCandidate / 4) * 4))
   }
 
+  /// The 256-pixel chunks of the partial sums over every `kStride`-th of `count` BF pixels.
+  static func chunks(count: Int, kStride: Int) -> Int {
+    ((count + kStride - 1) / kStride + 255) / 256
+  }
+
+  /// Squared radii inside which the soft aperture is exactly 1 and outside which it is exactly 0 (worst-case
+  /// anisotropic sampling); they move inward/outward by 1e-4, far beyond the float32 rounding of the edge expression.
+  static func apertureRadii(_ geometry: MetalSSBGeometry) -> (inner2: Float, outer2: Float) {
+    let wl = Double(geometry.wavelengthAngstroms), semi = Double(geometry.semiangleRadians)
+    let angular = Double(max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
+    let inner = (semi - 0.5 * angular) / wl, outer = (semi + 0.5 * angular) / wl
+    return (inner > 0 ? Float(inner * inner * (1 - 1e-4)) : -1, Float(outer * outer * (1 + 1e-4)))
+  }
+
   private func grid(
     geometry: MetalSSBGeometry, count: Int, bandCount: Int, batch: Int
   ) -> Grid {
@@ -140,19 +156,19 @@ final class SSBFifthOrderAgreement {
   /// Chunk and weighted-band reduction to one float32 score per candidate (`fifth_power`, `fifth_score`).
   private func encodeReduction(
     _ commands: MTLCommandBuffer, grid: inout Grid, partial: MTLBuffer, weights: MTLBuffer,
-    powers: MTLBuffer, scores: MTLBuffer, first: Int
+    powers: MTLBuffer, powersOffset: Int = 0, scores: MTLBuffer, first: Int
   ) throws {
     try encode(commands, power) { encoder in
-      for (index, buffer) in [partial, weights, powers].enumerated() {
-        encoder.setBuffer(buffer, offset: 0, index: index)
-      }
+      encoder.setBuffer(partial, offset: 0, index: 0)
+      encoder.setBuffer(weights, offset: 0, index: 1)
+      encoder.setBuffer(powers, offset: powersOffset, index: 2)
       encoder.setBytes(&grid, length: MemoryLayout<Grid>.stride, index: 3)
       encoder.dispatchThreads(
         MTLSize(width: Int(grid.bandCount), height: Int(grid.batch), depth: 1),
         threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
     }
     try encode(commands, score) { encoder in
-      encoder.setBuffer(powers, offset: 0, index: 0)
+      encoder.setBuffer(powers, offset: powersOffset, index: 0)
       encoder.setBuffer(scores, offset: first * 4, index: 1)
       encoder.setBytes(&grid, length: MemoryLayout<Grid>.stride, index: 2)
       encoder.dispatchThreadgroups(
@@ -170,6 +186,67 @@ final class SSBFifthOrderAgreement {
     lastGPUSeconds = commands.gpuEndTime - commands.gpuStartTime
   }
 
+  /// The GPU inputs of one batch of rows: the rows themselves and their collapsed chi polynomials.
+  struct Batch {
+    let trials: MTLBuffer
+    let polynomials: MTLBuffer
+    let count: Int
+  }
+
+  func batch(_ rows: ArraySlice<[Float]>, geometry: MetalSSBGeometry) throws -> Batch {
+    let polynomials = rows.flatMap {
+      SSBRedrawPolynomial.full(
+        coefficients: Array($0[3..<31]), wavelength: geometry.wavelengthAngstroms)
+    }
+    return Batch(
+      trials: try SSBCoherentReconstruction.buffer(device, rows.flatMap { $0 }),
+      polynomials: try SSBCoherentReconstruction.buffer(device, polynomials), count: rows.count)
+  }
+
+  /// Encodes the agreement of one batch on every `kStride`-th BF pixel: chi(k) of each row (`fifth_probe`, all
+  /// pixels), the row-collapsed chunk partials (`fifth_agreement_rows`, four candidates per thread, then one dispatch
+  /// for the remaining one to three), the float32 per-frequency powers at `powersOffset` and the scores at `first`.
+  /// The chunk partials and chi stay in `partial` and `chi` for a gradient pass.
+  func encodeBatch(
+    _ commands: MTLCommandBuffer, _ batch: Batch, kStride: Int, geometry: MetalSSBGeometry,
+    k: MTLBuffer, q: MTLBuffer, band: MTLBuffer, weights: MTLBuffer, probeGeometry: MTLBuffer,
+    count: Int, bandCount: Int, chi: MTLBuffer, partial: MTLBuffer, powers: MTLBuffer,
+    powersOffset: Int, scores: MTLBuffer, first: Int
+  ) throws {
+    let chunks = Self.chunks(count: count, kStride: kStride)
+    var grid = grid(geometry: geometry, count: count, bandCount: bandCount, batch: batch.count)
+    try encodeProbe(commands, grid: &grid, k: k, trials: batch.trials, chi: chi)
+    let radii = Self.apertureRadii(geometry)
+    var rowsGrid = RowsGrid(
+      count: UInt32(count), bandCount: UInt32(bandCount), chunks: UInt32(chunks),
+      batch: UInt32(batch.count), first: 0, kStride: UInt32(kStride), wl: grid.wl,
+      semiangle: grid.semiangle, angularRow: grid.angularRow, angularColumn: grid.angularColumn,
+      factor: grid.factor, inner2: radii.inner2, outer2: radii.outer2)
+    let full = batch.count / 4 * 4
+    for (perThread, offset, groups) in [(4, 0, full / 4), (batch.count - full, full, 1)]
+    where perThread > 0 && groups > 0 {
+      rowsGrid.first = UInt32(offset)
+      try encode(commands, try rowsPipeline(perThread)) { encoder in
+        for (index, buffer) in [band, k, q, partial].enumerated() {
+          encoder.setBuffer(buffer, offset: 0, index: index)
+        }
+        encoder.setBytes(&rowsGrid, length: MemoryLayout<RowsGrid>.stride, index: 4)
+        for (index, buffer) in [batch.trials, probeGeometry, batch.polynomials, tiles, chi].enumerated() {
+          encoder.setBuffer(buffer, offset: 0, index: 5 + index)
+        }
+        encoder.setThreadgroupMemoryLength(2 * Self.pixelBatch * perThread * 64, index: 0)
+        encoder.setThreadgroupMemoryLength(perThread * 49 * 4, index: 1)
+        encoder.dispatchThreadgroups(
+          MTLSize(width: tileCount, height: chunks, depth: groups),
+          threadsPerThreadgroup: MTLSize(width: Self.tileWidth, height: 1, depth: 1))
+      }
+    }
+    grid.chunks = UInt32(chunks)
+    try encodeReduction(
+      commands, grid: &grid, partial: partial, weights: weights, powers: powers,
+      powersOffset: powersOffset, scores: scores, first: first)
+  }
+
   /// One score per row (depth, tilt row, tilt column, then the 28 packed coefficients), in the order given.
   func evaluate(
     rows input: [[Float]], geometry: MetalSSBGeometry, k: MTLBuffer, q: MTLBuffer,
@@ -183,62 +260,21 @@ final class SSBFifthOrderAgreement {
       return (a[0], a[1], a[2], $0) < (b[0], b[1], b[2], $1)
     }
     let sorted = order.map { input[$0] }
-    let polynomials = sorted.map {
-      SSBRedrawPolynomial.full(
-        coefficients: Array($0[3..<31]), wavelength: geometry.wavelengthAngstroms)
-    }
-    let chunks = (count + 255) / 256
+    let chunks = Self.chunks(count: count, kStride: 1)
     let batchSize = Self.batchSize(count: count, bandCount: bandCount, candidates: sorted.count)
     let chi = try workspace("chi", bytes: count * batchSize * 4)
     let partial = try workspace("partial", bytes: chunks * bandCount * batchSize * 16)
     let powers = try workspace("power", bytes: bandCount * batchSize * 4)
     let scores = try workspace("scores", bytes: sorted.count * 4, shared: true)
-    // The soft aperture is exactly 1 inside `inner` and 0 outside `outer` (worst-case anisotropic sampling);
-    // the squared radii move inward/outward by 1e-4, far beyond the float32 rounding of the edge expression.
-    let wl = Double(geometry.wavelengthAngstroms), semi = Double(geometry.semiangleRadians)
-    let angular = Double(max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
-    let inner = (semi - 0.5 * angular) / wl, outer = (semi + 0.5 * angular) / wl
-    let base = grid(geometry: geometry, count: count, bandCount: bandCount, batch: 0)
-    var rowsGrid = RowsGrid(
-      count: UInt32(count), bandCount: UInt32(bandCount), chunks: UInt32(chunks), batch: 0, first: 0,
-      wl: base.wl, semiangle: base.semiangle, angularRow: base.angularRow,
-      angularColumn: base.angularColumn, factor: base.factor,
-      inner2: inner > 0 ? Float(inner * inner * (1 - 1e-4)) : -1,
-      outer2: Float(outer * outer * (1 + 1e-4)))
     guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
     for first in stride(from: 0, to: sorted.count, by: batchSize) {
       if isCancelled() { throw CancellationError() }
-      let batch = min(batchSize, sorted.count - first)
-      var grid = grid(geometry: geometry, count: count, bandCount: bandCount, batch: batch)
-      rowsGrid.batch = UInt32(batch)
-      let trials = try SSBCoherentReconstruction.buffer(
-        device, sorted[first..<(first + batch)].flatMap { $0 })
-      let poly = try SSBCoherentReconstruction.buffer(
-        device, polynomials[first..<(first + batch)].flatMap { $0 })
-      try encodeProbe(commands, grid: &grid, k: k, trials: trials, chi: chi)
-      // Four candidates per thread, then one dispatch for the remaining one to three.
-      let full = batch / 4 * 4
-      for (perThread, offset, groups) in [(4, 0, full / 4), (batch - full, full, 1)]
-      where perThread > 0 && groups > 0 {
-        rowsGrid.first = UInt32(offset)
-        try encode(commands, try rowsPipeline(perThread)) { encoder in
-          for (index, buffer) in [band, k, q, partial].enumerated() {
-            encoder.setBuffer(buffer, offset: 0, index: index)
-          }
-          encoder.setBytes(&rowsGrid, length: MemoryLayout<RowsGrid>.stride, index: 4)
-          for (index, buffer) in [trials, probeGeometry, poly, tiles, chi].enumerated() {
-            encoder.setBuffer(buffer, offset: 0, index: 5 + index)
-          }
-          encoder.setThreadgroupMemoryLength(2 * Self.pixelBatch * perThread * 64, index: 0)
-          encoder.setThreadgroupMemoryLength(perThread * 49 * 4, index: 1)
-          encoder.dispatchThreadgroups(
-            MTLSize(width: tileCount, height: chunks, depth: groups),
-            threadsPerThreadgroup: MTLSize(width: Self.tileWidth, height: 1, depth: 1))
-        }
-      }
-      try encodeReduction(
-        commands, grid: &grid, partial: partial, weights: weights, powers: powers, scores: scores,
-        first: first)
+      let rows = sorted[first..<min(first + batchSize, sorted.count)]
+      try encodeBatch(
+        commands, try batch(rows, geometry: geometry), kStride: 1, geometry: geometry, k: k, q: q,
+        band: band, weights: weights, probeGeometry: probeGeometry, count: count,
+        bandCount: bandCount, chi: chi, partial: partial, powers: powers, powersOffset: 0,
+        scores: scores, first: first)
     }
     try finish(commands)
     if isCancelled() { throw CancellationError() }
@@ -249,7 +285,7 @@ final class SSBFifthOrderAgreement {
     return result
   }
 
-  /// Tests only: the retired per-term kernel `fifth_agreement` (ssb-per-term v0.1), the parity reference of v0.2.
+  /// Tests only: the retired per-term kernel `fifth_agreement` (ssb-per-term v0.1), the parity reference of v0.3.
   func evaluateReference(
     rows: [[Float]], geometry: MetalSSBGeometry, k: MTLBuffer, q: MTLBuffer,
     band: MTLBuffer, weights: MTLBuffer, probeGeometry: MTLBuffer,

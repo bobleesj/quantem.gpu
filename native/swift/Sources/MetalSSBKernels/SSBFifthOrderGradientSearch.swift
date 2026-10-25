@@ -440,8 +440,7 @@ extension SSBModelFit {
       return (value.agreement, value.agreement64)
     }
     let initial = try values(start)
-    // Bit-identical to the per-term objective (ssb-fifth-agreement v0.1, `fifth_agreement`); the production
-    // `fifthOrderAgreements` (v0.2) agrees with it to float32 rounding (within 3e-7 on measured acquisitions).
+    // Bit-identical to the production objective `fifthOrderAgreements` (ssb-fifth-agreement v0.3).
     let normalization = initial.agreement
     guard normalization.isFinite, normalization > 0 else {
       throw MetalSSBError.invalidGeometry(
@@ -465,6 +464,11 @@ extension SSBModelFit {
       if search == .exactGradientCoarseToFine && settings.coarseBFStride == 1 {
         settings.coarseBFStride = 8
       }
+      // A BF subsample steers only while its agreement depends on the coordinates (that of a single pixel is
+      // constant): keep at least 32 pixels, so a small bright field uses all of them.
+      let usable = max(1, model.brightFieldPixelCount / 32)
+      settings.hessianBFStride = min(settings.hessianBFStride, usable)
+      settings.coarseBFStride = min(settings.coarseBFStride, usable)
       result = try SSBFifthOrderGradientSearch.refine(
         { rows, request in
           let points = rows.map(coordinates.point)
@@ -622,5 +626,73 @@ extension SSBModelFit {
     let value = try model.fifthOrderAgreementsAndGradients(
       [coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0]
     return coordinates.gradient(row: value.gradient)
+  }
+}
+
+extension SSBModelFit {
+  /// Benchmark diagnostics: GPU (command buffer) and wall time per call of the exact-gradient search's fifth-order
+  /// evaluations at `z`, median of `repeats`: the value pass alone, the gradient pass after it, and both together,
+  /// on all BF pixels and on every `coarseStride`-th; then the start Hessian batch (`z` and its 28 forward offsets)
+  /// on every `hessianStride`-th BF pixel. Each entry records its agreements and the first candidate's d agreement
+  /// / dz, so kernels can be compared at equal coordinates.
+  public static func fifthOrderKernelTimings(
+    model: MetalSSBJointModel, z: [Double], coarseStride: Int = 8, hessianStride: Int = 64,
+    repeats: Int = 5
+  ) throws -> [[String: Any]] {
+    let coordinates = SSBFifthOrderCoordinates(
+      wavelengthAngstroms: model.wavelengthAngstroms,
+      semiangleRadians: model.semiangleRadians)
+    typealias Values = [(agreement: Double, agreement64: Double, gradient: [Double])]
+    var entries: [[String: Any]] = []
+    func measure(
+      _ name: String, _ zs: [[Double]], prepare: ([SSBModelPoint], [[Float]]) throws -> Void = { _, _ in },
+      _ call: ([SSBModelPoint], [[Float]]) throws -> Values
+    ) throws {
+      let points = zs.map(coordinates.point)
+      let packed = zs.map(coordinates.pack)
+      try prepare(points, packed)
+      var values = try call(points, packed)
+      var gpu: [Double] = []
+      var wall: [Double] = []
+      for _ in 0..<max(1, repeats) {
+        try prepare(points, packed)
+        let started = Date()
+        values = try call(points, packed)
+        wall.append(Date().timeIntervalSince(started))
+        gpu.append(model.lastAgreementGPUSeconds)
+      }
+      entries.append([
+        "name": name, "candidates": zs.count, "gpu_ms": gpu.sorted()[gpu.count / 2] * 1e3,
+        "wall_ms": wall.sorted()[wall.count / 2] * 1e3, "gpu_s": gpu, "wall_s": wall,
+        "agreements": values.map(\.agreement), "agreements64": values.map(\.agreement64),
+        "gradient": values[0].gradient.isEmpty ? [] : coordinates.gradient(row: values[0].gradient),
+      ])
+    }
+    for stride in [1, coarseStride] {
+      try measure("value stride \(stride)", [z]) {
+        try model.fifthOrderAgreementsAndGradients($0, packedCoefficients: $1, kStride: stride, gradients: false)
+      }
+      try measure(
+        "gradient stride \(stride)", [z],
+        prepare: {
+          _ = try model.fifthOrderAgreementsAndGradients(
+            $0, packedCoefficients: $1, kStride: stride, gradients: false)
+        }
+      ) { try model.fifthOrderRetainedGradients($0, packedCoefficients: $1, kStride: stride) }
+      try measure("value+gradient stride \(stride)", [z]) {
+        try model.fifthOrderAgreementsAndGradients($0, packedCoefficients: $1, kStride: stride)
+      }
+    }
+    let h = [0.01, 0.01, 0.01, 0.025, 0.025, 0.025] + Array(repeating: 0.01, count: 22)
+    let bounds = SSBFifthOrderSearch.bounds
+    let design = (0..<28).map { i -> [Double] in
+      var p = z
+      p[i] += p[i] + h[i] <= bounds[i].upperBound ? h[i] : -h[i]
+      return p
+    }
+    try measure("hessian batch stride \(hessianStride)", [z] + design) {
+      try model.fifthOrderAgreementsAndGradients($0, packedCoefficients: $1, kStride: hessianStride)
+    }
+    return entries
   }
 }
