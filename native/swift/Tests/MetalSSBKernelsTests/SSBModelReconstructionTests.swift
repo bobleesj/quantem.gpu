@@ -478,6 +478,42 @@ final class SSBModelReconstructionTests: XCTestCase {
           worstHessian))
       XCTAssertLessThan(worstGradient, 2e-3)
       XCTAssertLessThan(worstHessian, 2e-3)
+      // The fused pass (above), the value pass followed by the derivative pass, and v0.1 at the same rows: the
+      // same value (bitwise for the two v0.2 paths), the derivatives to float32 summation order.
+      let twoStage = try model.lowOrderDerivatives(rows, twoStage: true)
+      model.referenceLowOrderDerivatives = true
+      let reference = try model.lowOrderDerivatives(rows)
+      model.referenceLowOrderDerivatives = false
+      func worst(_ a: [SSBLowOrderDerivatives.Result], _ b: [SSBLowOrderDerivatives.Result]) -> (
+        value: Double, derivatives: Double
+      ) {
+        var value = 0.0
+        var derivatives = 0.0
+        for (x, y) in zip(a, b) {
+          value = max(value, abs(x.value - y.value) / x.value)
+          let gradientScale = (0..<6).map { abs(x.gradient[$0]) * steps[$0] }.max()! + 1e-6 * x.value
+          for d in 0..<6 {
+            derivatives = max(derivatives, abs(x.gradient[d] - y.gradient[d]) * steps[d] / gradientScale)
+            let hessianScale =
+              (0..<6).map { abs(x.hessian[d][$0]) * steps[$0] * steps[d] }.max()! + 1e-6 * gradientScale
+            for e in 0..<6 {
+              derivatives = max(
+                derivatives, abs(x.hessian[d][e] - y.hessian[d][e]) * steps[d] * steps[e] / hessianScale)
+            }
+          }
+        }
+        return (value, derivatives)
+      }
+      let stages = worst(results, twoStage)
+      let parity = worst(results, reference)
+      print(
+        String(
+          format: "LOW_ORDER_DERIVATIVES depth %.0f two-stage value %.1e derivatives %.1e; v0.1 value %.1e derivatives %.1e",
+          point.depthSpreadAngstroms, stages.value, stages.derivatives, parity.value, parity.derivatives))
+      XCTAssertEqual(stages.value, 0)
+      XCTAssertLessThan(stages.derivatives, 1e-4)
+      XCTAssertLessThan(parity.value, 1e-6)
+      XCTAssertLessThan(parity.derivatives, 1e-4)
     }
   }
 

@@ -14,6 +14,13 @@ new `rcN` heading when that rc is published to TestPyPI.
   0.7-1.3 s instead of 65-111 s, and the whole fit through fifth order 3.4-6.5 s instead of 74-166 s, with a
   higher Double-summed agreement on three 512 x 512 acquisitions. `SSBModelFit.refineToFifthOrder` refines a
   low-order fit without repeating its search.
+- Native (Metal) SSB fit, low-order Newton (`ssb-low-order-derivatives` v0.2): the value and the derivatives are
+  separate passes, so no derivatives are formed at a rejected step or for the starts the second iteration's
+  pruning stops; elsewhere one fused pass forms both. The derivative sums drop from 51 to 29 by exact algebra
+  (tilt enters the weights only through q.theta; the C10/C12 phase slopes are linear in k), with the aperture,
+  sincos and quotient shortcuts of `ssb-joint-agreement` v0.2. On an Apple M5 Max one Newton center takes
+  26-50 ms instead of 54-104 ms and the Newton 0.34-0.74 s instead of 0.91-1.83 s on three 512 x 512
+  acquisitions, with the same centers, kept branch and low-order fit (within 2e-6 nm).
 - Native (Metal) SSB fit, low-order stage: one 180-degree branch is searched and the other gets its exact image
   (C10 and C12 negated as even-degree terms, tilt negated, depth spread kept: the same agreement, the phase with
   opposite contrast for the branch test), and the trust-region Newton climbs on the exact gradient and Hessian of
