@@ -3454,6 +3454,8 @@ class DirectPtycho:
         """
 
         self._prepared_direct = None
+        # drag windows hold their backend and up to a few GB of statistics each
+        self._direct_windows = {}
         self._data = None
         self._streamed = None
         if self._owned_dataset is not None:

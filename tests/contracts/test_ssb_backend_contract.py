@@ -189,6 +189,25 @@ def test_mps_rotation_geometry_keeps_exact_source_fft_identity() -> None:
     np.testing.assert_allclose(prepared.ky_np, [1.0], atol=1e-7)
 
 
+def test_mps_bright_field_frequencies_round_once() -> None:
+    """k is the float64 offset, scaling and rotation rounded once to float32, never from a float32-rounded centre."""
+    from quantem.gpu.ssb.mps.prepared import bright_field_frequencies
+
+    rows, cols = (index.ravel().astype(np.int32) for index in np.indices((24, 24)))
+    center = (99.68301, 95.12007)
+    selection = SimpleNamespace(rows=rows + 88, cols=cols + 84, bright_field_center_px=center)
+    reciprocal, angle = 0.75e-3 / 0.0196875, -math.radians(174.0)
+    row = (selection.rows.astype(np.float64) - center[0]) * reciprocal
+    col = (selection.cols.astype(np.float64) - center[1]) * reciprocal
+    expected = (row * math.cos(angle) + col * math.sin(angle), -row * math.sin(angle) + col * math.cos(angle))
+
+    actual = bright_field_frequencies(selection, 0.75e-3, 0.75e-3, 0.0196875, 174.0)
+
+    for value, reference in zip(actual, expected):
+        assert value.dtype == np.float32
+        np.testing.assert_array_equal(value, reference.astype(np.float32))
+
+
 def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
     monkeypatch,
 ) -> None:

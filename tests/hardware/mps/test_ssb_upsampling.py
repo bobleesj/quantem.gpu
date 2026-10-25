@@ -140,10 +140,12 @@ def test_alias_sampling_preserves_gpu_model_and_native_loss(factor, depth_nm):
         assert restored_loss == native_loss
 
 
+# The fused kernel and the MLX reference differ by float32 reduction order. The largest pixel difference moves with
+# the float32 rounding of k: 4.2e-8 to 6.8e-8 at 512 over seven roundings of the same k, so the bound is 1e-7.
 # The unchanged 1024 kernel has a 1.4e-6 rad difference on this fixture;
 # retain the existing thick-model 5e-6 float32 bound for that path.
 @pytest.mark.parametrize(
-    "n,atol", [(128, 5e-8), (256, 5e-8), (512, 5e-8), (1024, 5e-6)]
+    "n,atol", [(128, 1e-7), (256, 1e-7), (512, 1e-7), (1024, 5e-6)]
 )
 def test_fused_depth_model_at_all_native_sizes(n, atol):
     _require_mps()

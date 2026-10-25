@@ -92,11 +92,15 @@ def _chi(pr, pc, wavelength, aberrations):
     return 2 * np.pi / wavelength * chi
 
 
-def _reference_prepare(data, point, factor, weighting, radius=RADIUS):
-    """Gram, right side and layout of every solved frequency (MATH: dose, weights, damping scale, aliases)."""
+def _reference_prepare(data, point, factor, weighting, radius=RADIUS, aberrations=None):
+    """Gram, right side and layout of every solved frequency (MATH: dose, weights, damping scale, aliases).
+
+    ``aberrations`` replaces the point's coefficients, its tilt and depth kept.
+    """
     from quantem.gpu.optics.physics import wavelength_A_from_kV
 
-    aberrations, tilt, depth = POINTS[point]
+    point_aberrations, tilt, depth = POINTS[point]
+    aberrations = point_aberrations if aberrations is None else aberrations
     wavelength = float(wavelength_A_from_kV(300.0))
     alpha, dtheta = SEMIANGLE_MRAD * 1e-3, SAMPLING_MRAD * 1e-3
     rows, cols = np.indices((DETECTOR, DETECTOR))

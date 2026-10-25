@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 
 from quantem.gpu.optics.physics import wavelength_A_from_kV
-from quantem.gpu.ssb.mps.direct import _alias_groups, _detector_weights, _solve_group
+from quantem.gpu.ssb import chebyshev
+from quantem.gpu.ssb.mps.direct import _alias_groups, _detector_weights, _Series, _solve_group, wave_phase
 
 
 def _scene_groups(factor, smoothness=1.0):
@@ -133,3 +134,60 @@ def test_solve_reports_indefinite_systems():
     failed = _solve_group(sums, 3, 2, 2, False, np.ones((1, 2)), 0.0, 1e-3, 1.0, np.array([[1, 2]]), 4, 4,
                           np.float32(1), spectrum, False, np.zeros(0))
     assert failed == 1 and not spectrum.any()
+
+
+def test_window_statistics_solve_as_the_gpu_layout():
+    """float64 (re, im) statistics solve as their float-float form, and a complex triangle's phase block as phase."""
+    rng = np.random.default_rng(5)
+    size, count, side = 30, 3, 24
+    dim = 2 * count
+    basis = rng.normal(size=(size, dim, 2 * dim)) + 1j * rng.normal(size=(size, dim, 2 * dim))
+    gram = basis @ basis.conj().transpose(0, 2, 1)
+    rhs = rng.normal(size=(size, dim)) + 1j * rng.normal(size=(size, dim))
+    prior = 1 + rng.random((size, count))
+    positions = rng.choice(np.arange(side, side * (side // 2)), size=(size, count), replace=False)
+    packed = _packed(gram, rhs)
+    window = packed[..., :2].astype(np.float64) + packed[..., 2:]
+    # the phase block (rows and columns count .. dim - 1) with its right side, packed on its own
+    phase = _packed(gram[:, count:, count:], rhs[:, count:])
+
+    def solved(sums, width, dim, complex_object, offset=0):
+        spectrum = np.zeros((side * side, 2), np.float32)
+        failed = _solve_group(sums, width, count, dim, complex_object, prior, 0.2, 0.03, 2.5, positions, side, side,
+                              np.float32(9), spectrum, False, np.zeros(0), offset)
+        assert failed == 0
+        return spectrum
+
+    np.testing.assert_array_equal(solved(window, dim + 1, dim, True), solved(packed, dim + 1, dim, True))
+    np.testing.assert_array_equal(solved(window, dim + 1, count, False, count), solved(phase, count + 1, count, False))
+    np.testing.assert_array_equal(solved(packed, dim + 1, count, False, count), solved(phase, count + 1, count, False))
+
+
+def test_series_reproduces_an_entire_function_of_the_control():
+    """Entries sum_k f_k exp(i (c - c0) u_k), |(c - c0) u_k| <= z, from their N + 1 nodes, anywhere in the window."""
+    rng = np.random.default_rng(11)
+    order = chebyshev.order("C10_nm")
+    center, half_width = 4.2, 6.8
+    u = rng.uniform(-1, 1, 500) * chebyshev.REACH["C"] / half_width
+    f = rng.normal(size=(4, 500)) + 1j * rng.normal(size=(4, 500))
+
+    def values(c):
+        entries = f @ np.exp(1j * (c - center) * u)
+        return np.stack((entries.real, entries.imag), axis=-1).ravel()
+
+    series = _Series(center, half_width, order)
+    while not series.ready:
+        series.add(values(series.nodes[series.added]))
+    for c in (series.nodes[3], center - half_width, center - 0.43 * half_width, center + 0.71 * half_width,
+              center + half_width):
+        assert np.abs(series.evaluate(c) - values(c)).max() <= 1e-10 * np.abs(f).sum(axis=1).max()
+
+
+def test_wave_phase_is_numpy_angle():
+    """The threaded phase of a wave is np.angle's, bit for bit, on even and uneven row counts."""
+    rng = np.random.default_rng(2)
+    for shape in ((96, 80), (37, 5)):
+        wave = (rng.normal(size=shape) + 1j * rng.normal(size=shape)).astype(np.complex64)
+        phase = wave_phase(wave)
+        assert phase.dtype == np.float32
+        np.testing.assert_array_equal(phase, np.angle(wave))

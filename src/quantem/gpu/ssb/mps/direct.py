@@ -18,6 +18,7 @@ from functools import lru_cache
 import numpy as np
 from numba import njit
 
+from quantem.gpu.ssb import chebyshev
 from quantem.gpu.ssb.higher_order import CHI_SOURCE, pack_coefficients
 from quantem.gpu.ssb.mps.hardware import require_mlx
 from quantem.gpu.ssb.units import higher_order_arrays
@@ -532,21 +533,10 @@ def _layout(backend, factor: int, smoothness_inv_A: float, detector_weighting: s
 
 
 def _bright_field_frequencies(backend) -> np.ndarray:
-    """(k row, k column) in 1/A of every stored BF pixel after the scan rotation, float32 rounded once from float64.
-
-    The detector offsets from the disk centre, their scaling and the passive rotation by -rotation are formed in
-    float64, so k carries no float32 rounding of the centre (a common shift of every k, which tilts the whole transfer).
-    """
-    prepared, selection = backend._prepared, backend._selection
-    center_row, center_col = selection.bright_field_center_px
-    k_row = (selection.rows.astype(np.float64) - center_row) * (prepared.ang_y_rad / prepared.wavelength)
-    k_col = (selection.cols.astype(np.float64) - center_col) * (prepared.ang_x_rad / prepared.wavelength)
-    angle = -math.radians(backend._scan_detector_rotation_deg)
-    k = np.stack((k_row * math.cos(angle) + k_col * math.sin(angle),
-                  -k_row * math.sin(angle) + k_col * math.cos(angle)), axis=1)
-    if prepared.bf_storage_indices_np is not None:
-        k = k[prepared.bf_storage_indices_np]
-    return np.ascontiguousarray(k, np.float32)
+    """(k row, k column) in 1/A of every stored BF pixel after the scan rotation: the prepared SSB state's k, formed
+    in float64 and rounded once (``prepared.bright_field_frequencies``)."""
+    prepared = backend._prepared
+    return np.ascontiguousarray(np.stack((prepared.kx_np, prepared.ky_np), axis=1), np.float32)
 
 
 def _coefficients(aberrations: dict[str, float]) -> np.ndarray:
@@ -662,6 +652,141 @@ class PreparedDirect:
         return wave, diagnostics
 
 
+# ---
+
+
+class DragWindow:
+    """Prepared statistics along one aberration control, for redrawing while it is dragged, as ``ssb.cuda.direct``.
+
+    Serves: ShowPtycho drags of C10, C12 or phi12 on Apple GPUs at 3x on the full 512 x 512 scan, where an exact frame
+    prepares the normal equations again (about 0.3 s). Along one control with everything else fixed, every Gram entry
+    and right side is an entire function of the control (`ssb.chebyshev`), so ``step`` adds one exact preparation at
+    a Chebyshev node (one `PreparedDirect.prepare`, 29 of them for a magnitude) and ``solve`` evaluates any value in
+    the window from the series in float64 on the CPU, then solves as `PreparedDirect.solve` does. A complex window
+    also holds the phase statistics as its lower-right block, so one build serves both regularized methods.
+    """
+
+    def __init__(self, backend, optics, control: str, factor: int, *, complex_object: bool, smoothness_inv_A: float,
+                 detector_weighting: str):
+        prepared = backend._prepared
+        self.backend, self.optics, self.control, self.factor = backend, optics, control, factor
+        self.complex_object = complex_object
+        self.options = dict(complex_object=complex_object, smoothness_inv_A=smoothness_inv_A,
+                            detector_weighting=detector_weighting)
+        aberrations = optics["aberrations"]
+        outer = prepared.semiangle_rad + 0.5 * max(prepared.ang_y_rad, prepared.ang_x_rad)
+        self.series = _Series(float(aberrations.get(control, 0.0)),
+                              chebyshev.half_width(control, aberrations, prepared.wavelength, outer),
+                              chebyshev.order(control))
+        # the first node's layout (shape, groups, scale, dose) without its statistics, which the series holds
+        self.template = None
+
+    def step(self) -> bool:
+        """Add the next node's exact statistics; True once the window is complete."""
+        if self.series.ready:
+            return True
+        aberrations = {**self.optics["aberrations"], self.control: self.series.nodes[self.series.added]}
+        prepared = PreparedDirect.prepare(self.backend, {**self.optics, "aberrations": aberrations}, self.factor,
+                                          **self.options)
+        # float-float (hi re, hi im, lo re, lo im) to float64 (re, im), as `_entry` reads it
+        self.series.add(np.concatenate([(group.sums[..., :2].astype(np.float64) + group.sums[..., 2:]).ravel()
+                                        for group in prepared.groups]))
+        if self.template is None:
+            groups = [_Group(group.count, None, group.positions, group.prior) for group in prepared.groups]
+            self.template = PreparedDirect(prepared.shape, prepared.factor, groups, prepared.complex_object,
+                                           prepared.scale, prepared.signal_power, prepared.incident_scale)
+        return self.series.ready
+
+    def solve(self, value: float, phase_regularization: float, amplitude_regularization: float | None,
+              *, complex_object: bool):
+        """The wave at control ``value`` (inside the window), as `PreparedDirect.solve` without the loss."""
+        if complex_object and not self.complex_object:
+            raise ValueError("A phase window cannot serve the complex method; build a complex window.")
+        values = self.series.evaluate(value)
+        template = self.template
+        rows, cols = template.shape
+        spectrum = np.zeros((rows * cols, 2), np.float32)
+        at, failed = 0, 0
+        for group in template.groups:
+            count = group.count
+            width = (2 * count if self.complex_object else count) + 1
+            size = group.positions.shape[0]
+            sums = values[at:at + size * width * (width + 1)].reshape(size, width * (width + 1) // 2, 2)
+            at += sums.size
+            failed += _solve_group(
+                sums, width, count, 2 * count if complex_object else count, complex_object, group.prior,
+                float(amplitude_regularization or 0.0) * template.scale, float(phase_regularization) * template.scale,
+                template.incident_scale, group.positions, cols, rows, np.float32(self.factor**2), spectrum, False,
+                np.zeros(0), count if self.complex_object and not complex_object else 0,
+            )
+        if failed:
+            raise ValueError('Direct inversion diverged; increase regularization or use method="phase".')
+        return _wave(spectrum.view(np.complex64).reshape(rows, cols), complex_object, template.incident_scale)
+
+
+class _Series:
+    """`ssb.chebyshev` coefficients of a float64 vector F(c) on the CPU, as ``ssb.cuda.chebyshev.Series`` on the GPU.
+
+    The coefficients are (values, N + 1) float64, each value's N + 1 coefficients adjacent, so folding a node in and
+    evaluating each stream them once, in ranges of values on the solver threads.
+    """
+
+    def __init__(self, center: float, half_width: float, order: int):
+        self.center, self.half_width, self.order = center, half_width, order
+        self.nodes, weights = chebyshev.nodes_and_weights(center, half_width, order)
+        self.weights = np.ascontiguousarray(weights.T)
+        self.coefficients = None
+        self.added = 0
+
+    @property
+    def ready(self) -> bool:
+        return self.added == self.order + 1
+
+    def covers(self, value: float) -> bool:
+        return abs(value - self.center) <= self.half_width
+
+    def add(self, values: np.ndarray):
+        """Fold F at the next node (a flat float64 array) into the coefficients."""
+        if self.coefficients is None:
+            self.coefficients = np.zeros((values.size, self.order + 1))
+        _in_ranges(_fold_node, values.size, self.coefficients, self.weights[self.added], values)
+        self.added += 1
+
+    def evaluate(self, value: float) -> np.ndarray:
+        """F(value), flat float64."""
+        basis = chebyshev.basis(self.center, self.half_width, self.order, value)
+        out = np.empty(self.coefficients.shape[0])
+        _in_ranges(_evaluate_series, out.size, self.coefficients, basis, out)
+        return out
+
+
+def _in_ranges(function, size: int, *arrays):
+    """``function(first, last, *arrays)`` over ranges of ``size`` values on the solver threads."""
+    step = max(1 << 16, -(-size // (4 * _threads())))
+    tasks = [_solver_pool().submit(function, first, min(first + step, size), *arrays) for first in range(0, size, step)]
+    for task in tasks:
+        task.result()
+
+
+@njit(cache=True, nogil=True)
+def _fold_node(first, last, coefficients, weight, values):
+    """coefficients[m, n] += weight[n] values[m]: one node's values into every coefficient."""
+    for m in range(first, last):
+        value = values[m]
+        for n in range(weight.size):
+            coefficients[m, n] += weight[n] * value
+
+
+@njit(cache=True, nogil=True)
+def _evaluate_series(first, last, coefficients, basis, out):
+    """out[m] = sum_n basis[n] coefficients[m, n]."""
+    for m in range(first, last):
+        total = 0.0
+        for n in range(basis.size):
+            total += basis[n] * coefficients[m, n]
+        out[m] = total
+
+
 def _normal_equations(mx, g, group, pixel, coefficients, params, plane, gcols, nbf, complex_object):
     """One alias group's float-float augmented upper triangles, (frequencies, entries, 4) float32, unevaluated parts."""
     count = group.count
@@ -689,8 +814,14 @@ def _normal_equations(mx, g, group, pixel, coefficients, params, plane, gcols, n
 
 @njit(cache=True, inline="always")
 def _entry(sums, f, width, a, b):
-    """Row a, column b (a <= b) of a stored augmented upper triangle, float-float to float64 (re, im)."""
+    """Row a, column b (a <= b) of a stored augmented upper triangle as float64 (re, im).
+
+    ``sums[f, entry]`` is float-float (hi re, hi im, lo re, lo im) as the GPU accumulates it, or (re, im) as a
+    `DragWindow` evaluates it.
+    """
     index = a * width - a * (a - 1) // 2 + (b - a)
+    if sums.shape[2] == 2:
+        return np.float64(sums[f, index, 0]), np.float64(sums[f, index, 1])
     return (np.float64(sums[f, index, 0]) + np.float64(sums[f, index, 2]),
             np.float64(sums[f, index, 1]) + np.float64(sums[f, index, 3]))
 
@@ -707,18 +838,20 @@ def _solver_pool() -> ThreadPoolExecutor:
 
 
 def _solve_group(sums, width, count, dim, complex_object, prior, amplitude_strength, phase_strength, dose,
-                 positions, columns, rows, gain, spectrum, compute_loss, losses):
+                 positions, columns, rows, gain, spectrum, compute_loss, losses, offset=0):
     """Solve (Gram + diag(strength * prior)) x = rhs / dose per frequency in float64 by Cholesky, and place x.
 
     Log-amplitude coefficients come first for the complex model. Each coefficient is rounded to complex64, times
     ``gain`` (factor^2), and written with its Hermitian mirror into the packed spectrum eta + i phi (float32 pairs).
     ``losses`` receives x^H Gram x - 2 Re(x^H rhs) per frequency when ``compute_loss``. Returns the number of
     frequencies whose system was not positive definite or whose solution was not finite. Ranges of frequencies run
-    on CPU threads; each writes only its own frequencies' spectrum entries, which never coincide.
+    on CPU threads; each writes only its own frequencies' spectrum entries, which never coincide. The system is rows
+    and columns ``offset .. offset + dim - 1`` of the stored triangle (of size ``width``, right side last): ``offset``
+    is ``count`` to solve the phase block of complex statistics.
     """
     size = sums.shape[0]
     arguments = (sums, width, count, dim, complex_object, prior, amplitude_strength, phase_strength, dose, positions,
-                 columns, rows, gain, spectrum, compute_loss, losses)
+                 columns, rows, gain, spectrum, compute_loss, losses, offset)
     starts = range(0, size, _SOLVE_CHUNK)
     if len(starts) <= 1:
         return int(_solve_range(0, size, *arguments))
@@ -729,7 +862,7 @@ def _solve_group(sums, width, count, dim, complex_object, prior, amplitude_stren
 
 @njit(cache=True, nogil=True)
 def _solve_range(first, last, sums, width, count, dim, complex_object, prior, amplitude_strength, phase_strength,
-                 dose, positions, columns, rows, gain, spectrum, compute_loss, losses):
+                 dose, positions, columns, rows, gain, spectrum, compute_loss, losses, offset):
     """`_solve_group` for frequencies ``first .. last - 1``; returns their failures."""
     failures = 0
     lower = np.empty((dim, dim), np.complex128)
@@ -740,11 +873,11 @@ def _solve_range(first, last, sums, width, count, dim, complex_object, prior, am
         # lower triangle of A = Gram + diag(penalty): A[i][j] = conj(M[j][i]) for i > j
         for j in range(dim):
             for i in range(j, dim):
-                re, im = _entry(sums, f, width, j, i)
+                re, im = _entry(sums, f, width, offset + j, offset + i)
                 lower[i, j] = complex(re, 0.0 if i == j else -im)
             strength = amplitude_strength if complex_object and j < count else phase_strength
             lower[j, j] += strength * prior[f, j % count]
-            re, im = _entry(sums, f, width, j, width - 1)
+            re, im = _entry(sums, f, width, offset + j, width - 1)
             rhs[j] = complex(re / dose, im / dose)
         ok = True
         for j in range(dim):
@@ -780,10 +913,10 @@ def _solve_range(first, last, sums, width, count, dim, complex_object, prior, am
         if compute_loss:
             total = 0.0
             for a in range(dim):
-                re, im = _entry(sums, f, width, a, a)
+                re, im = _entry(sums, f, width, offset + a, offset + a)
                 total += re * (x[a].real * x[a].real + x[a].imag * x[a].imag)
                 for b in range(a + 1, dim):
-                    re, im = _entry(sums, f, width, a, b)
+                    re, im = _entry(sums, f, width, offset + a, offset + b)
                     total += 2.0 * (x[a].conjugate() * complex(re, im) * x[b]).real
                 total -= 2.0 * (x[a].conjugate() * rhs[a]).real
             losses[f] = total
@@ -807,6 +940,21 @@ def _solve_range(first, last, sums, width, count, dim, complex_object, prior, am
             spectrum[mirror, 0] = eta_re + phi_im
             spectrum[mirror, 1] = phi_re - eta_im
     return failures
+
+
+def wave_phase(wave: np.ndarray) -> np.ndarray:
+    """``np.angle(wave)`` (float32 for a complex64 wave, bit for bit) in row blocks on the solver threads.
+
+    Serves every MPS drag and preview frame: one thread takes about 11 ms for a 1536 x 1536 wave.
+    """
+    out = np.empty(wave.shape, wave.real.dtype)
+    step = -(-wave.shape[0] // 8)
+
+    def fill(rows):
+        np.arctan2(wave.imag[rows], wave.real[rows], out=out[rows])
+
+    list(_solver_pool().map(fill, [slice(start, start + step) for start in range(0, wave.shape[0], step)]))
+    return out
 
 
 def _inverse_fft(spectrum: np.ndarray) -> np.ndarray:
