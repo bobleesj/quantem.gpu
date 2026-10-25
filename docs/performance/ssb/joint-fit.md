@@ -88,6 +88,30 @@ Use a reference from the same backend, acquisition and calibration. A mismatch
 fails the run; the reference is never overwritten. Repeated self-consistency
 alone does not establish parity with a previous implementation.
 
+## Redraws across output sampling
+
+For a calibrated session that is already open in a notebook, measure live
+defocus changes separately from fitting:
+
+```python
+from quantem.gpu.benchmark import run_ssb_preview
+
+report = run_ssb_preview(ssb, upsampling=(1, 2, 3, 4, 8), runs=11)
+```
+
+This keeps all active aberrations, tilt, depth and BF pixels. Each observation
+changes C10 by 0.1 nm; the original session and saved calibration remain
+unchanged. Results separate the first observation from warm samples and record
+the full settings and output hashes. CUDA reconstruction and download are
+separate; MPS preview already includes delivery to a host array. The
+`phase_delivery` distribution is the comparable combined boundary.
+
+These are reconstruction timings, **not notebook FPS**. Measure delivery to
+the notebook and new scientific canvas frames separately. Changing the output
+factor changes the evaluated frequency range; comparing 1x with 8x is a
+workload comparison, not a quality-preserving speedup. Hashes do not replace
+comparison with frozen arrays from the previous implementation.
+
 ## Release qualification
 
 Run the command in a new environment installed from the candidate wheel:

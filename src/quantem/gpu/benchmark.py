@@ -1,5 +1,7 @@
 """Reproducible SSB workflow timings using the installed compute backend."""
 
+from __future__ import annotations
+
 import contextlib
 import hashlib
 import importlib.metadata
@@ -11,8 +13,12 @@ import time
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from quantem.gpu import SSB
 
 
 def _synchronize(backend: str) -> None:
@@ -50,8 +56,9 @@ def _timed(call: Callable, backend: str) -> tuple[object, float]:
 
 def _environment(backend: str) -> dict:
     """Record hardware and imported code without home paths or host names."""
-    import quantem.gpu
     import torch
+
+    import quantem.gpu
 
     if backend == "cuda":
         hardware = torch.cuda.get_device_name()
@@ -142,6 +149,140 @@ def _regions(shape: tuple[int, int], sizes: tuple[int, ...]) -> list[tuple[str, 
     result.append((f"move_{size}", (row, row + size, col, col + size)))
     result.append((f"resize_{size - 1}x{size}", (row, row + size - 1, col, col + size)))
     return result
+
+
+def run_ssb_preview(
+    ssb: SSB,
+    *,
+    upsampling: tuple[int, ...] = (1, 2, 3, 4, 8),
+    runs: int = 6,
+    defocus_step_nm: float = 0.1,
+    progress: Callable[[str], None] | None = None,
+) -> dict:
+    """Measure changed-defocus redraws of an existing full-field SSB session.
+
+    Retain the session's aberrations, rotation, tilt, depth and complete
+    bright-field support. Only C10 changes along a deterministic trajectory;
+    the session itself is not modified. No fitting or loss diagnostic runs.
+    Each output grid is measured separately, because changing upsampling
+    changes the reconstructed frequency coverage.
+
+    Parameters
+    ----------
+    ssb : quantem.gpu.SSB
+        Calibrated session, normally restored from a reviewed joint fit.
+    upsampling : tuple of int
+        Output factors to measure. Supported factors are 1, 2, 3, 4 and 8.
+    runs : int
+        First observation plus warm observations, at least two.
+    defocus_step_nm : float
+        Nonzero C10 increment between successive observations. Each factor
+        uses the same trajectory, starting at the session's current C10.
+    progress : callable, optional
+        Receives one completion message per output factor.
+
+    Returns
+    -------
+    dict
+        Hardware/source identity, unchanged scientific settings, preparation
+        time, synchronized reconstruction and host-delivery distributions,
+        and full-array hashes. Browser transfer and paint are excluded.
+        MPS preview already returns a host array, so its reconstruction time
+        includes host delivery; CUDA download time is measured separately.
+        Hashes identify outputs, but do not by themselves establish parity
+        against an independent reference.
+
+    Examples
+    --------
+    >>> from quantem.gpu.benchmark import run_ssb_preview
+    >>> report = run_ssb_preview(ssb, upsampling=(1, 4), runs=11)  # doctest: +SKIP
+    """
+    if runs < 2:
+        raise ValueError("Use runs >= 2 for a first observation and warm timings.")
+    if not upsampling or any(
+        type(value) is not int or value not in (1, 2, 3, 4, 8) for value in upsampling
+    ):
+        raise ValueError("Choose upsampling factors from (1, 2, 3, 4, 8).")
+    if not np.isfinite(defocus_step_nm) or defocus_step_nm == 0:
+        raise ValueError("Use a finite, nonzero defocus_step_nm to measure new images.")
+    backend = ssb.backend
+    if backend not in ("mps", "cuda"):
+        raise ValueError("Open the SSB session on MPS or CUDA before benchmarking.")
+    if ssb.aberrations is None:
+        raise ValueError("Restore or fit the SSB calibration before measuring redraws.")
+    optics = dict(ssb.aberrations)
+    sample = {
+        "sample_tilt_mrad": tuple(ssb.sample_tilt_mrad or (0.0, 0.0)),
+        "depth_spread_nm": float(ssb.depth_spread_nm or 0.0),
+    }
+    bright_field_pixels, preparation_s = _timed(
+        lambda: ssb.num_bright_field_pixels, backend
+    )
+    report = {
+        "schema": "quantem.gpu.ssb-preview-benchmark/1",
+        "environment": _environment(backend),
+        "scan_shape": list(ssb.scan_shape),
+        "bright_field_pixels": bright_field_pixels,
+        "aberrations": optics,
+        "sample": sample,
+        "rotation_deg": float(ssb.scan_detector_rotation_deg),
+        "calibration": {
+            "voltage_kV": ssb.voltage_kV,
+            "semiangle_mrad": ssb.semiangle_mrad,
+            "scan_sampling_A": list(ssb.scan_sampling_A),
+            "detector_sampling_mrad": list(ssb.detector_sampling_mrad),
+            "scan_detector_rotation_flipped": ssb.scan_detector_rotation_flipped,
+        },
+        "phase_estimator": "phase_of_mean",
+        "preparation_s": preparation_s,
+        "reconstruction_includes_host_delivery": backend == "mps",
+        "browser_paint_measured": False,
+        "measurements": {},
+    }
+    for factor in upsampling:
+        compute_times, download_times, delivery_times, samples = [], [], [], []
+        for index in range(runs):
+            values = {**optics, "C10_nm": optics["C10_nm"] + index * defocus_step_nm}
+            (phase, _), compute_s = _timed(
+                partial(
+                    ssb.preview,
+                    values,
+                    compute_loss=False,
+                    upsampling_factor=factor,
+                    phase_estimator="phase_of_mean",
+                    output="native" if backend == "cuda" else "numpy",
+                    **sample,
+                ),
+                backend,
+            )
+            started = time.perf_counter()
+            phase = _host_phase(phase, backend)
+            download_s = time.perf_counter() - started
+            if not np.isfinite(phase).all():
+                raise RuntimeError(
+                    f"Nonfinite phase at upsampling={factor}; inspect calibration."
+                )
+            compute_times.append(compute_s)
+            download_times.append(download_s)
+            delivery_times.append(compute_s + download_s)
+            samples.append(
+                {
+                    "C10_nm": values["C10_nm"],
+                    "phase_sha256": hashlib.sha256(phase.tobytes()).hexdigest(),
+                }
+            )
+        report["measurements"][str(factor)] = {
+            "output_shape": list(phase.shape),
+            "reconstruction": _summary(compute_times),
+            "host_download": _summary(download_times) if backend == "cuda" else None,
+            "phase_delivery": _summary(delivery_times),
+            "samples": samples,
+        }
+        if progress is not None:
+            progress(
+                f"{factor}x: {statistics.median(delivery_times[1:]) * 1000:.2f} ms warm phase delivery"
+            )
+    return report
 
 
 def run_ssb(
