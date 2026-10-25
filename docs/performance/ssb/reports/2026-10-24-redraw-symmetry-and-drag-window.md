@@ -16,7 +16,7 @@
 - GPU 0 only (RTX PRO 6000 Blackwell Workstation, 600 W), confirmed by name; GPU 1 (Max-Q) is never compared with it.
 - Timing: device-synchronized wall clock; SSB 8 calls with C10 changed each call, first two dropped; drag window 5 calls after one warm-up, median.
 - Strengths 0.03 / 0.03, smoothness 1 1/A, uniform weights.
-- Source: quantem.gpu `oct-24-direct-iterative-api` at `f1cbe8aa` before; commits `953f9370` (regularized drag window), `c5b17d86` (SSB pairing), `bc438e85` (SSB drag window), `9fdd3c4d` (triple-overlap list).
+- Source: quantem.gpu `oct-24-direct-iterative-api` at `f1cbe8aa` before; commits `953f9370` (regularized drag window), `c5b17d86` (SSB pairing), `bc438e85` (SSB drag window), `9fdd3c4d` (triple-overlap list), `d0e6ad84` (windows per control, idle prepare).
 
 ## 1. SSB: the q, -q symmetry
 
@@ -89,7 +89,7 @@ Cost:
 
 A complex window holds the phase statistics as its lower-right block (phase from it: 2.1 ms per update, within 3.6e-7 of an exact phase preparation), so one build serves both methods.
 
-How it is used (`ssb/direct_workflow.py`): `drag(session, control, ...)` serves a frame from the prepared system when the optics are those already prepared (a strength drag), from the window when it is complete and covers the value, and otherwise exactly. It starts a new window, centred on the current value, when the dragged control changes, a held input changes, or the value leaves the window. `advance(session)` adds one node and is meant to run between frames, so a drag shows exact frames for its first 13 steps and window frames after. `run()`, the public `preview()` and committed frames never use the window; saved results remain the exact model. Tests: `tests/hardware/cuda/test_direct_drag_window.py` (nodes at 1e-6, between nodes at 2e-6 of the largest phase, phase from a complex window, and the drag/rebuild sequence).
+How it is used (`ssb/direct_workflow.py`): `drag(session, control, ...)` serves a frame from the prepared system when the optics are those already prepared (a strength drag), from the window when it is complete and covers the value, and otherwise exactly. It starts a new window, centred on the current value, when the dragged control changes, a held input changes, or the value leaves the window. `advance(session)` adds one node and is meant to run between frames, so a drag shows exact frames for its first 13 steps and window frames after. The session keeps one window per control, valid while every other input is unchanged; `prepare(session, controls, ...)` asks for windows (C10, C12, phi12 typically) after a release, and `advance` builds them while the sliders are idle, the dragged control first, so the next grab starts on window frames (`test_prepared_windows_serve_the_first_frame_of_a_grab`). Moving one control drops the windows of the others, whose held inputs include it. `run()`, the public `preview()` and committed frames never use the window; saved results remain the exact model. Tests: `tests/hardware/cuda/test_direct_drag_window.py` (nodes at 1e-6, between nodes at 2e-6 of the largest phase, phase from a complex window, and the drag/rebuild sequence).
 
 ## 3. SSB drags: interpolate the single-sideband terms, sum the triple overlap
 
