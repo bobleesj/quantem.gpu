@@ -97,6 +97,37 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(measured, (0..<frames).flatMap { moments(frame(expected, $0)) })
   }
 
+  func testCachedPlanWidthTooNarrowForACountIsAnError() throws {
+    // A packing plan's tile widths come from an earlier load. One 32-scan tile
+    // of two pixels: pixel 0 holds counts up to 8 (four bits), pixel 1 zeros.
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let packing = try OriginalHDF5Packing(device: device)
+    let planes = try XCTUnwrap(packing.standardPlaneSummary)
+    var counts = [UInt16](repeating: 0, count: 64)
+    for scan in 0..<32 { counts[scan * 2] = UInt16(scan % 9) }
+    let dense = try XCTUnwrap(
+      device.makeBuffer(bytes: counts, length: counts.count * 2, options: .storageModeShared))
+    func errors(width: UInt32) throws -> UInt32 {
+      // Per pixel: its payload offset, then one width nibble per tile.
+      let headers: [UInt32] = [0, width, width, 0]
+      let headerBuffer = try XCTUnwrap(
+        device.makeBuffer(bytes: headers, length: 16, options: .storageModeShared))
+      let payload = try packing.buffer(64)
+      let errorBuffer = try packing.buffer(4)
+      let partials = try packing.buffer(8)
+      memset(errorBuffer.contents(), 0, 4)
+      var shape = OriginalHDF5Packing.Shape(scans: 32, pixels: 2, columns: 2, sourceBytes: 2)
+      let command = try packing.commandBuffer()
+      try packing.encode(
+        command, pipeline: planes, buffers: [dense, headerBuffer, payload, errorBuffer],
+        shape: &shape, count: 2, afterShape: partials)
+      try packing.finish(command)
+      return errorBuffer.contents().load(as: UInt32.self)
+    }
+    XCTAssertEqual(try errors(width: 4), 0)
+    XCTAssertGreaterThan(try errors(width: 3), 0)
+  }
+
   func testBenchmarkSourcePageControlKeepsRawStateAligned() {
     let unspecified = Native4DSTEMBenchmarkSourcePageControl(
       uncachedSourceReads: false

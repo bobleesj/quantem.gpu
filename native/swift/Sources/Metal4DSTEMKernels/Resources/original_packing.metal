@@ -174,12 +174,13 @@ inline uint originalPackCountsAsPlanes(
         uint bits = (headers[pixel * stride + checkpoints + tile / 8u] >> ((tile % 8u) * 4u)) & 15u;
         if (bits >= 15u) bits = s.sourceBytes == 4u ? 32u : 16u;
         uint originals[32];
-        uint packed = 0u, occupied = 0u, outputWord = 0u;
+        uint packed = 0u, occupied = 0u, outputWord = 0u, seen = 0u;
         for (uint sample = 0u; sample < 32u; ++sample) {
             uint value = original_count<fixedSourceBytes>(
                 source, tile * 32u + sample, pixel, s);
             originals[sample] = value;
             sum += value;
+            seen |= value;
             if (bits) {
                 packed |= value << occupied;
                 occupied += bits;
@@ -192,10 +193,12 @@ inline uint originalPackCountsAsPlanes(
                 }
             }
         }
-        // Header widths come from the same exact source tile, so the packed
-        // fields cannot overflow their word partition. The write itself is
-        // checked once per word above; the prior per-sample reread duplicated
-        // those checks 32 times without adding output protection.
+        // A cached packing plan supplies widths measured on an earlier load. A
+        // count wider than its tile's width would spill into the next field, so
+        // it is an error; the loader then rebuilds the plan from these counts.
+        // The write itself is checked once per word above.
+        if (bits < 32u && (seen >> bits) != 0u)
+            atomic_fetch_add_explicit(errors, 1u, memory_order_relaxed);
         if (bits > 1u) {
             if (useWidth56PairLUT && (bits == 5u || bits == 6u)) {
                 uint packedWords[6] = {0u, 0u, 0u, 0u, 0u, 0u};

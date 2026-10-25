@@ -29,6 +29,22 @@ the filled values to that window's moments. Every frame's moments are those of
 the corrected counts, in fused and unfused windows alike; `.preserve` loads are
 unchanged.
 
+## Cached packing plans
+
+A packing plan stores each tile's bit width from the load that wrote it, and
+its binding does not include the hot-pixel fill. A plan written with the
+floored fill sized one bright-field pixel's tiles one bit too narrow for the
+new fill. The default plan-path packer (`originalPackCountsAsPlanes`) assumed
+widths always came from the same tile and checked only its word writes, so a
+count of 8 in a 3-bit field packed as 0 and spilled one bit into the next count.
+Totals and moments, which come from the decoded window, stayed correct while
+the resident's counts at that pixel were wrong in 1.7 % of the scan positions.
+
+The packer now flags any count wider than its tile's width. On a cached plan
+that error is a plan mismatch: the loader rebuilds the plan from the current
+counts once and stores it. The `.preserve` plan path (`packBitshufflePlan`)
+already verified its widths.
+
 ## Not changed
 
 - `native_median3x3` (encoded source and corrected resident view) keeps the
@@ -44,4 +60,8 @@ uint32) and compares a release-built `.median` load with `fill_flagged`: the
 flagged pixels' counts in every frame, per-pixel totals and every frame's exact
 moments. A `.preserve` load keeps the stored markers in all three. With either
 fix removed, the test fails. `Native4DSTEMIOTests` pins the rounding of the CPU
-correction and checks the Metal fill and moment correction against it.
+correction, checks the Metal fill and moment correction against it, and checks
+that the plane packer refuses a count wider than its cached tile width (that
+test fails without the check). On the real acquisition, a plan written
+before this change now falls back once and every count, total and moment
+matches the Python fill.
