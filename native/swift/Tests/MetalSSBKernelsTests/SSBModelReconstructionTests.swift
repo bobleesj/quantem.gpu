@@ -260,6 +260,105 @@ final class SSBModelReconstructionTests: XCTestCase {
     XCTAssertEqual(try fresh.agreements(points), try points.flatMap { try fresh.agreements([$0]) })
   }
 
+  /// The 180-degree map: a point and its opposite-branch image have the same agreement, for the low-order
+  /// model with tilt and depth and for the fifth-order model, the image of the image is the point, and the
+  /// branched fit gives the opposite branch the mapped fit of the first.
+  func testOppositeBranchPointHasTheSameAgreement() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try Self.scene()
+    let input = try XCTUnwrap(
+      s.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let rotation = 17.25
+    let opposite = SSBRotationBranches.opposite(rotation)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
+    let higher = [
+      SSBModelHigherOrder(order: 2, symmetry: 1, magnitudeAngstroms: 900, angleRadians: 0.4),
+      SSBModelHigherOrder(order: 2, symmetry: 3, magnitudeAngstroms: 600, angleRadians: -0.9),
+      SSBModelHigherOrder(order: 3, symmetry: 0, magnitudeAngstroms: -30_000),
+      SSBModelHigherOrder(order: 3, symmetry: 2, magnitudeAngstroms: 20_000, angleRadians: 1.2),
+      SSBModelHigherOrder(order: 3, symmetry: 4, magnitudeAngstroms: 9_000, angleRadians: -0.3),
+      SSBModelHigherOrder(order: 4, symmetry: 3, magnitudeAngstroms: 400_000, angleRadians: 0.2),
+      SSBModelHigherOrder(order: 5, symmetry: 0, magnitudeAngstroms: 2e6),
+      SSBModelHigherOrder(order: 5, symmetry: 6, magnitudeAngstroms: 5e6, angleRadians: 0.45),
+    ]
+    let points = [
+      SSBModelPoint(c10Angstroms: 61, c12Angstroms: 14, phi12Radians: 0.7),
+      SSBModelPoint(
+        c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -1.4, sampleTiltMrad: [2.5, -4],
+        depthSpreadAngstroms: 140),
+      SSBModelPoint(
+        c10Angstroms: 45, c12Angstroms: 12, phi12Radians: 0.3, sampleTiltMrad: [-1.5, 3],
+        depthSpreadAngstroms: 90, higherOrder: higher),
+    ]
+    for point in points {
+      let image = SSBRotationBranches.oppositeBranch(point)
+      XCTAssertEqual(image.c10Angstroms, -point.c10Angstroms)
+      XCTAssertEqual(image.c12Angstroms, point.c12Angstroms)
+      XCTAssertEqual(image.sampleTiltMrad, point.sampleTiltMrad.map { -$0 })
+      XCTAssertEqual(image.depthSpreadAngstroms, point.depthSpreadAngstroms)
+      XCTAssertLessThan(image.phi12Radians, Double.pi / 2)
+      XCTAssertGreaterThanOrEqual(image.phi12Radians, -Double.pi / 2)
+      let back = SSBRotationBranches.oppositeBranch(image)
+      XCTAssertEqual(back.c10Angstroms, point.c10Angstroms)
+      XCTAssertEqual(back.phi12Radians, point.phi12Radians, accuracy: 1e-14)
+      for (a, b) in zip(back.higherOrder, point.higherOrder) {
+        XCTAssertEqual(a.magnitudeAngstroms, b.magnitudeAngstroms)
+        XCTAssertEqual(a.angleRadians, b.angleRadians, accuracy: 1e-14)
+      }
+      try model.retarget(scanDetectorRotationDegrees: rotation)
+      let here = try model.agreements([point])[0]
+      let phase = try model.reconstruct(point)
+      let forward = Array(
+        UnsafeBufferPointer(
+          start: phase.phase.contents().assumingMemoryBound(to: Float.self),
+          count: phase.rows * phase.columns))
+      try model.retarget(scanDetectorRotationDegrees: opposite)
+      let there = try model.agreements([image])[0]
+      // On the other branch the same point is not an image: the symmetry is a property of the pair.
+      let unmapped = try model.agreements([point])[0]
+      print(
+        String(
+          format: "OPPOSITE_BRANCH higher %d agreement %.9e image %.9e (rel %.2e) unmapped %.9e",
+          point.hasHigherOrder ? 1 : 0, here, there, (there - here) / here, unmapped))
+      XCTAssertEqual(there, here, accuracy: 1e-6 * here)
+      XCTAssertGreaterThan(abs(unmapped - here), 1e-3 * here)
+      // The image's phase has the opposite contrast, which is what the branch test reads.
+      let mirrored = try model.reconstruct(image)
+      let backward = Array(
+        UnsafeBufferPointer(
+          start: mirrored.phase.contents().assumingMemoryBound(to: Float.self),
+          count: mirrored.rows * mirrored.columns))
+      func centred(_ values: [Float]) -> [Double] {
+        let mean = values.reduce(0.0) { $0 + Double($1) } / Double(values.count)
+        return values.map { Double($0) - mean }
+      }
+      let a = centred(forward)
+      let b = centred(backward)
+      let correlation =
+        zip(a, b).reduce(0.0) { $0 + $1.0 * $1.1 }
+        / sqrt(a.reduce(0.0) { $0 + $1 * $1 } * b.reduce(0.0) { $0 + $1 * $1 })
+      print(String(format: "OPPOSITE_BRANCH phase correlation %.6f", correlation))
+      XCTAssertLessThan(correlation, -0.99)
+    }
+    // The branched fit searches the first branch only and maps it.
+    let fitted = try SSBModelFit.findAberrations(
+      model: model, engine: engine, rotationDegrees: rotation, darkField: nil,
+      scanSampling: (0.4, 0.4),
+      options: SSBFitOptions(trials: 40, compareStandard: false, maximumOrder: 1))
+    XCTAssertNil(fitted.fits[0].mappedFromBranch)
+    XCTAssertEqual(fitted.fits[1].mappedFromBranch, 0)
+    XCTAssertEqual(fitted.fits[1].scanDetectorRotationDegrees, opposite)
+    XCTAssertEqual(fitted.fits[1].point, SSBRotationBranches.oppositeBranch(fitted.fits[0].point))
+    let first = try XCTUnwrap(fitted.fits[0].sampleAgreement)
+    XCTAssertEqual(try XCTUnwrap(fitted.fits[1].sampleAgreement), first, accuracy: 1e-6 * first)
+    XCTAssertEqual(
+      model.scanDetectorRotationDegrees, fitted.fits[fitted.kept].scanDetectorRotationDegrees)
+  }
+
   func testCurlRotationRecoversAKnownAngle() {
     let (rows, columns) = (64, 80)
     func potential(_ r: Int, _ c: Int) -> Double {
