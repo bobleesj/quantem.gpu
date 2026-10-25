@@ -242,7 +242,7 @@ final class OriginalHDF5Packing {
   let scalarDecodeThreads: Int
   let bitshufflePackingThreads: Int
   let standardPackingThreads: Int
-  let hotPixelMedian: MTLComputePipelineState
+  let hotPixelMedian, hotPixelDPC: MTLComputePipelineState
 
   init(device: MTLDevice, cachePlans: Bool = false) throws {
     self.device = device
@@ -305,6 +305,7 @@ final class OriginalHDF5Packing {
         && OriginalPackingDiagnostics.enabled("FUSED_DECODE_FRAME_COOP", byDefault: false)
       ? try pipeline(decode, Metal4DSTEMKernels.decodeU16FrameCooperativeFunction) : nil
     hotPixelMedian = try pipeline(decode, "h5hot_pixel_median_qh5idx")
+    hotPixelDPC = try pipeline(decode, "h5hot_pixel_dpc_qh5idx")
     alignedRepeatFill = OriginalPackingDiagnostics.enabled("ALIGNED_FILL", byDefault: true)
     alignedHistoryCopy = OriginalPackingDiagnostics.enabled("ALIGNED_COPY", byDefault: false)
     let fastDecode =
@@ -1144,6 +1145,8 @@ final class OriginalHDF5Packing {
         }
         if hasHotPixels {
           let correctionCommand = try commandBuffer()
+          // Fused windows took their moments before the fill; the others measure
+          // the filled window below. Both then hold the corrected counts' moments.
           try encodeHotPixelMedian(
             correctionCommand,
             dense: dense,
@@ -1152,7 +1155,8 @@ final class OriginalHDF5Packing {
             frames: frames,
             detectorRows: dataset.detectorRows,
             detectorColumns: dataset.detectorCols,
-            sourceBytes: source.sourceBytesPerValue
+            sourceBytes: source.sourceBytesPerValue,
+            fusedMoments: fuseDPC ? moments : nil
           )
           profile.productsGPU += try finish(correctionCommand)
         }
@@ -2156,7 +2160,8 @@ final class OriginalHDF5Packing {
     frames: Int,
     detectorRows: Int,
     detectorColumns: Int,
-    sourceBytes: Int
+    sourceBytes: Int,
+    fusedMoments: MTLBuffer? = nil
   ) throws {
     guard !indices.isEmpty, sourceBytes == 1 || sourceBytes == 2 || sourceBytes == 4,
       let indexBuffer = device.makeBuffer(
@@ -2183,6 +2188,21 @@ final class OriginalHDF5Packing {
       threadsPerThreadgroup: MTLSize(
         width: min(128, hotPixelMedian.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
     encoder.endEncoding()
+    // The fused moments saw 0 at every marked pixel; add the filled values.
+    guard let fusedMoments else { return }
+    guard let dpc = command.makeComputeCommandEncoder() else {
+      throw Self.invalid("Cannot encode hot-pixel DPC correction")
+    }
+    dpc.setComputePipelineState(hotPixelDPC)
+    dpc.setBuffer(dense, offset: 0, index: 0)
+    dpc.setBuffer(fusedMoments, offset: 0, index: 1)
+    dpc.setBuffer(indexBuffer, offset: 0, index: 2)
+    dpc.setBytes(&parameters, length: parameters.count * MemoryLayout<UInt32>.stride, index: 3)
+    dpc.dispatchThreads(
+      MTLSize(width: frames, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(
+        width: min(128, hotPixelDPC.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+    dpc.endEncoding()
   }
   func copiedBuffer(_ bytes: UnsafeRawBufferPointer) throws -> MTLBuffer {
     guard !bytes.isEmpty, bytes.count <= device.maxBufferLength,

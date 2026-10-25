@@ -156,6 +156,8 @@ inline void h5_hot_write(device uchar *values, ulong index, uint bytes, uint val
 
 // Replace source-marked detector pixels in a decoded working window. Reads are
 // always from the unmodified neighbors, and marked neighbors never contribute.
+// The mean of an even neighborhood's two middle values rounds half to even, as
+// quantem.gpu.resident.hot_pixels.fill_flagged does.
 kernel void h5hot_pixel_median_qh5idx(
     device uchar *values [[buffer(0)]],
     device const uchar *marked [[buffer(1)]],
@@ -191,9 +193,34 @@ kernel void h5hot_pixel_median_qh5idx(
     uint median = 0;
     if (found & 1u) median = neighbors[found / 2u];
     else if (found > 0u) {
-        median = uint((ulong(neighbors[found / 2u - 1u]) + neighbors[found / 2u]) / 2u);
+        ulong total = ulong(neighbors[found / 2u - 1u]) + neighbors[found / 2u];
+        ulong lower = total >> 1;
+        median = uint(lower + (total & lower & 1ul));
     }
     h5_hot_write(values, ulong(frame) * pixels + pixel, bytes, median);
+}
+
+// The fused DPC unshuffles take each frame's moments while its marked pixels
+// still hold 0. After h5hot_pixel_median_qh5idx, add the filled values so those
+// moments describe the corrected counts, as a pass over the filled window does.
+// One thread per frame of the window; moments are indexed within the window.
+kernel void h5hot_pixel_dpc_qh5idx(
+    device const uchar *values [[buffer(0)]],
+    device ulong4 *moments [[buffer(1)]],
+    device const uint *indices [[buffer(2)]],
+    constant uint *p [[buffer(3)]],
+    uint frame [[thread_position_in_grid]]) {
+    uint frames = p[0], rows = p[1], columns = p[2], bytes = p[3], count = p[4];
+    if (frame >= frames || columns == 0u || (bytes != 1u && bytes != 2u && bytes != 4u)) return;
+    uint pixels = rows * columns;
+    ulong4 added(0ul);
+    for (uint slot = 0u; slot < count; ++slot) {
+        uint pixel = indices[slot];
+        if (pixel >= pixels) continue;
+        ulong value = h5_hot_read(values, ulong(frame) * pixels + pixel, bytes);
+        added += ulong4(value, value * (pixel / columns), value * (pixel % columns), 0ul);
+    }
+    moments[frame] += added;
 }
 
 // Ported from quantem.gpu.io.backends.mps.kernels/bslz4.msl. The native entry

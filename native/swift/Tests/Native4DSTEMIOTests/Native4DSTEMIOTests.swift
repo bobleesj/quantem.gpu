@@ -24,6 +24,110 @@ final class Native4DSTEMIOTests: XCTestCase {
     )
   }
 
+  func testEvenNeighborhoodMedianRoundsHalfToEven() {
+    // Middle neighbors 3 and 4 round up to 4; 4 and 5 round down to 4; 5 and 6 up to 6.
+    for (values, expected) in [
+      ([1, 2, 3, 3, 99, 4, 5, 6, 7], UInt32(4)),
+      ([1, 2, 3, 4, 99, 5, 6, 7, 8], UInt32(4)),
+      ([1, 2, 3, 5, 99, 6, 7, 8, 9], UInt32(6)),
+    ] as [([UInt32], UInt32)] {
+      XCTAssertEqual(
+        NativeHotPixelCorrection.median3x3(
+          values: values, detectorRows: 3, detectorColumns: 3, markedPixels: [4])[4],
+        expected)
+    }
+  }
+
+  func testOriginalLoadFillMatchesCPUMedianAndCompletesFusedMoments() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let packing = try OriginalHDF5Packing(device: device)
+    let rows = 6
+    let columns = 7
+    let frames = 64
+    let pixels = rows * columns
+    // Corner, edge, interior and an adjacent pair.
+    let marked = [0, 3, 17, 30, 31]
+    var generator: UInt32 = 20_261_025
+    var counts = [UInt16](repeating: 0, count: frames * pixels)
+    for index in counts.indices {
+      generator = generator &* 1_664_525 &+ 1_013_904_223
+      counts[index] = UInt16(generator >> 28)
+    }
+    // The fused DPC unshuffle stores 0 at marked pixels and takes moments then.
+    for frame in 0..<frames { for pixel in marked { counts[frame * pixels + pixel] = 0 } }
+    func moments(_ frame: ArraySlice<UInt16>) -> [UInt64] {
+      var result = [UInt64](repeating: 0, count: 4)
+      for (pixel, value) in frame.enumerated() {
+        result[0] += UInt64(value)
+        result[1] += UInt64(value) * UInt64(pixel / columns)
+        result[2] += UInt64(value) * UInt64(pixel % columns)
+      }
+      return result
+    }
+    func frame(_ values: [UInt16], _ index: Int) -> ArraySlice<UInt16> {
+      values[(index * pixels)..<((index + 1) * pixels)]
+    }
+    let dense = try XCTUnwrap(
+      device.makeBuffer(bytes: counts, length: counts.count * 2, options: .storageModeShared))
+    var mask = [UInt8](repeating: 0, count: pixels)
+    for pixel in marked { mask[pixel] = 1 }
+    let maskBuffer = try XCTUnwrap(
+      device.makeBuffer(bytes: mask, length: pixels, options: .storageModeShared))
+    let fused = (0..<frames).flatMap { moments(frame(counts, $0)) }
+    let momentBuffer = try XCTUnwrap(
+      device.makeBuffer(bytes: fused, length: fused.count * 8, options: .storageModeShared))
+    let command = try packing.commandBuffer()
+    try packing.encodeHotPixelMedian(
+      command, dense: dense, mask: maskBuffer, indices: marked, frames: frames,
+      detectorRows: rows, detectorColumns: columns, sourceBytes: 2, fusedMoments: momentBuffer)
+    try packing.finish(command)
+    let filled = Array(
+      UnsafeBufferPointer(
+        start: dense.contents().assumingMemoryBound(to: UInt16.self), count: counts.count))
+    let measured = Array(
+      UnsafeBufferPointer(
+        start: momentBuffer.contents().assumingMemoryBound(to: UInt64.self), count: fused.count))
+    let expected = (0..<frames).flatMap {
+      NativeHotPixelCorrection.median3x3(
+        values: frame(counts, $0).map(UInt32.init),
+        detectorRows: rows, detectorColumns: columns, markedPixels: marked
+      ).map { UInt16($0) }
+    }
+    XCTAssertEqual(filled, expected)
+    XCTAssertEqual(measured, (0..<frames).flatMap { moments(frame(expected, $0)) })
+  }
+
+  func testCachedPlanWidthTooNarrowForACountIsAnError() throws {
+    // A packing plan's tile widths come from an earlier load. One 32-scan tile
+    // of two pixels: pixel 0 holds counts up to 8 (four bits), pixel 1 zeros.
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let packing = try OriginalHDF5Packing(device: device)
+    let planes = try XCTUnwrap(packing.standardPlaneSummary)
+    var counts = [UInt16](repeating: 0, count: 64)
+    for scan in 0..<32 { counts[scan * 2] = UInt16(scan % 9) }
+    let dense = try XCTUnwrap(
+      device.makeBuffer(bytes: counts, length: counts.count * 2, options: .storageModeShared))
+    func errors(width: UInt32) throws -> UInt32 {
+      // Per pixel: its payload offset, then one width nibble per tile.
+      let headers: [UInt32] = [0, width, width, 0]
+      let headerBuffer = try XCTUnwrap(
+        device.makeBuffer(bytes: headers, length: 16, options: .storageModeShared))
+      let payload = try packing.buffer(64)
+      let errorBuffer = try packing.buffer(4)
+      let partials = try packing.buffer(8)
+      memset(errorBuffer.contents(), 0, 4)
+      var shape = OriginalHDF5Packing.Shape(scans: 32, pixels: 2, columns: 2, sourceBytes: 2)
+      let command = try packing.commandBuffer()
+      try packing.encode(
+        command, pipeline: planes, buffers: [dense, headerBuffer, payload, errorBuffer],
+        shape: &shape, count: 2, afterShape: partials)
+      try packing.finish(command)
+      return errorBuffer.contents().load(as: UInt32.self)
+    }
+    XCTAssertEqual(try errors(width: 4), 0)
+    XCTAssertGreaterThan(try errors(width: 3), 0)
+  }
+
   func testBenchmarkSourcePageControlKeepsRawStateAligned() {
     let unspecified = Native4DSTEMBenchmarkSourcePageControl(
       uncachedSourceReads: false

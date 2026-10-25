@@ -5,8 +5,9 @@ public enum NativeHotPixelCorrection {
   /// Replace each marked pixel with the integer median of its valid 3x3 neighbors.
   ///
   /// Other marked pixels are excluded from the neighborhood. At detector edges,
-  /// only in-bounds neighbors contribute. An even neighborhood uses the floored
-  /// mean of its two central values, matching the native Metal load policy.
+  /// only in-bounds neighbors contribute. An even neighborhood uses the mean of
+  /// its two central values rounded half to even, matching the original-HDF5
+  /// Metal load policy and Python `fill_flagged`.
   public static func median3x3(
     values: [UInt32],
     detectorRows: Int,
@@ -45,8 +46,9 @@ public enum NativeHotPixelCorrection {
       }
       if neighbors.count.isMultiple(of: 2) {
         let upper = neighbors.count / 2
-        corrected[pixel] = UInt32(
-          (UInt64(neighbors[upper - 1]) + UInt64(neighbors[upper])) / 2)
+        let total = UInt64(neighbors[upper - 1]) + UInt64(neighbors[upper])
+        let half = total >> 1
+        corrected[pixel] = UInt32(half + (total & half & 1))
       } else {
         corrected[pixel] = neighbors[neighbors.count / 2]
       }

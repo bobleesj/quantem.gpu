@@ -15,6 +15,12 @@ let package = Package(
       dependencies: [.product(name: "Native4DSTEMIO", package: "quantem.gpu"),
                      .product(name: "Metal4DSTEMStreamingIO", package: "quantem.gpu")],
       swiftSettings: [.swiftLanguageMode(.v5)]
-    )
+    ),
+    .executableTarget(
+      name: "OriginalHotPixelMedianParity",
+      dependencies: [.product(name: "Native4DSTEMIO", package: "quantem.gpu"),
+                     .product(name: "Metal4DSTEMStreamingIO", package: "quantem.gpu")],
+      swiftSettings: [.swiftLanguageMode(.v5)]
+    ),
   ]
 )
