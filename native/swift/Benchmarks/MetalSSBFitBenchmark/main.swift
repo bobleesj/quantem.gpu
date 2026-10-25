@@ -333,19 +333,21 @@ func export(options: Options, device: MTLDevice) throws {
   let inner = Float(
     SSBRotationBranches.darkFieldInnerRadius * calibration.semiangleMrad
       / min(calibration.detectorSamplingRowMrad, calibration.detectorSamplingColumnMrad))
-  let insidePixels = (0..<(rows * columns)).filter { pixel in
+  // Summed directly over the dark-field pixels (flagged ones as filled), independent of the DPC moments.
+  let unfilled = excluded.subtracting(flagged.pixels)
+  let darkPixels = (0..<(rows * columns)).filter { pixel in
     let dr = Float(pixel / columns) - Float(calibration.brightfieldCenterRowPixels)
     let dc = Float(pixel % columns) - Float(calibration.brightfieldCenterColumnPixels)
-    return (dr * dr + dc * dc).squareRoot() < inner
+    return (dr * dr + dc * dc).squareRoot() >= inner && !unfilled.contains(pixel)
   }
   let filledByPixel = Dictionary(uniqueKeysWithValues: zip(flagged.pixels, filled))
-  var dark = total.map(Double.init)
-  for first in stride(from: 0, to: insidePixels.count, by: 1024) {
-    let batch = Array(insidePixels[first..<min(first + 1024, insidePixels.count)])
+  var dark = [Double](repeating: 0, count: plane)
+  for first in stride(from: 0, to: darkPixels.count, by: 1024) {
+    let batch = Array(darkPixels[first..<min(first + 1024, darkPixels.count)])
     let read = try readColumns(batch, resident: resident, device: device, plane: plane)
     for (pixel, column) in zip(batch, read) {
       let values = filledByPixel[pixel] ?? column
-      for position in 0..<plane { dark[position] -= Double(values[position]) }
+      for position in 0..<plane { dark[position] += Double(values[position]) }
     }
   }
   // Exact BF columns (flagged pixels as filled), narrowed only when every count fits.
