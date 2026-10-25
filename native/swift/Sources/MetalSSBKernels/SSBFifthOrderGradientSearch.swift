@@ -421,6 +421,7 @@ extension SSBModelFit {
   public static func refineFifthOrder(
     _ primary: SSBModelPoint, model: MetalSSBJointModel, search: HigherOrderSearch,
     maxEvaluations: Int = 5000,
+    bounds: [ClosedRange<Double>] = SSBFifthOrderSearch.bounds,
     gradientSettings: SSBFifthOrderGradientSearch.Settings = .init(),
     log: ((String) -> Void)? = nil,
     progress: (_ completed: Int, _ total: Int) -> Void = { _, _ in },
@@ -456,7 +457,7 @@ extension SSBModelFit {
             rows.map(coordinates.point),
             packedCoefficients: rows.map(coordinates.pack), isCancelled: isCancelled
           ).map { $0 / normalization }
-        }, start: start, maxEvaluations: maxEvaluations, progress: progress,
+        }, start: start, bounds: bounds, maxEvaluations: maxEvaluations, progress: progress,
         isCancelled: isCancelled)
     case .exactGradient, .exactGradientCoarseToFine:
       var settings = gradientSettings
@@ -493,7 +494,8 @@ extension SSBModelFit {
                 ? [] : coordinates.gradient(row: $0.gradient).map { $0 / normalization }
             )
           }
-        }, start: start, startValue: initial.agreement64 / normalization, settings: settings,
+        }, start: start, startValue: initial.agreement64 / normalization, bounds: bounds,
+        settings: settings,
         progress: progress, log: log, isCancelled: isCancelled)
     }
     let final = try values(result.coordinates)
