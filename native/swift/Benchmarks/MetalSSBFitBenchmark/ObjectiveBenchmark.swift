@@ -140,6 +140,46 @@ func objectiveBenchmark(
   for (name, points) in lowSets {
     try measure(name, count: points.count) { try model.agreements(points) }
   }
+  // The exact low-order value, gradient and Hessian (the primary Newton's centers) in Newton z.
+  func newtonZ(_ p: SSBModelPoint) -> [Double] {
+    [
+      p.c10Angstroms, p.c12Angstroms * cos(2 * p.phi12Radians), p.c12Angstroms * sin(2 * p.phi12Radians),
+      p.sampleTiltMrad[0], p.sampleTiltMrad[1], p.depthSpreadAngstroms,
+    ]
+  }
+  let derivativeSets: [(String, [[Double]])] = [
+    ("derivatives initial", [newtonZ(start)]),
+    ("derivatives random3", lowRandom.prefix(3).map(newtonZ)),
+  ]
+  for (name, rows) in derivativeSets {
+    _ = try model.lowOrderAgreementDerivatives(rows)
+    var gpu: [Double] = []
+    var valueGPU: [Double] = []
+    var wall: [Double] = []
+    var results: [SSBAgreementSearch.Derivatives] = []
+    for _ in 0..<max(1, repeats) {
+      let started = Date()
+      results = try model.lowOrderAgreementDerivatives(rows)
+      wall.append(Date().timeIntervalSince(started))
+      gpu.append(model.lastLowOrderGPUSeconds)
+      valueGPU.append(model.lastLowOrderValueGPUSeconds)
+    }
+    let gpuMedian = gpu.sorted()[gpu.count / 2] / Double(rows.count) * 1e3
+    let valueMedian = valueGPU.sorted()[valueGPU.count / 2] / Double(rows.count) * 1e3
+    let wallMedian = wall.sorted()[wall.count / 2] / Double(rows.count) * 1e3
+    log(
+      String(
+        format:
+          "  %-20@ %3d centers  GPU %8.3f ms/center (value stage %.3f)  wall %8.3f ms/center  first %.9e",
+        name as NSString, rows.count, gpuMedian, valueMedian, wallMedian, results[0].value))
+    sets.append([
+      "name": name, "candidates": rows.count, "gpu_ms_per_candidate": gpuMedian,
+      "value_stage_gpu_ms_per_candidate": valueMedian,
+      "wall_ms_per_candidate": wallMedian, "gpu_s": gpu, "wall_s": wall, "rows": rows,
+      "agreements": results.map(\.value), "gradients": results.map(\.gradient),
+      "hessians": results.map(\.hessian),
+    ])
+  }
   let summary: [String: Any] = [
     "schema": "quantem-gpu-ssb-objective-benchmark/v1", "device": device.name, "run": run.path,
     "rotation_deg": rotation, "band_count": model.bandCount, "repeats": repeats,

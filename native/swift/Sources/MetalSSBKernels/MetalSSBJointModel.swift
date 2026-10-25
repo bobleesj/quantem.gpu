@@ -134,6 +134,14 @@ public final class MetalSSBJointModel {
   /// `fifthOrderAgreements` call, for benchmarks; excludes host encoding and the host band reduction.
   public private(set) var lastAgreementGPUSeconds = 0.0
   private var lowOrder: SSBLowOrderDerivatives?
+  /// Tests only: true evaluates `lowOrderDerivatives` with `ssb_low_order.metal` (ssb-low-order-derivatives
+  /// v0.1), the parity reference of the production v0.2. There is no runtime fallback.
+  var referenceLowOrderDerivatives = false
+  /// GPU execution time (command-buffer GPU start to end, summed over its command buffers) of the latest
+  /// `lowOrderDerivatives` call, for benchmarks.
+  public private(set) var lastLowOrderGPUSeconds = 0.0
+  /// The value stage's part of `lastLowOrderGPUSeconds` (zero when the call had no separate value stage).
+  public private(set) var lastLowOrderValueGPUSeconds = 0.0
   private var fifthOrderGradient: SSBFifthOrderGradient?
 
   public var wavelengthAngstroms: Double {
@@ -169,7 +177,7 @@ public final class MetalSSBJointModel {
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
         "ssb_fifth_order_gradient", "ssb_redraw", "ssb_low_order", "ssb_fifth_agreement",
-        "ssb_joint_agreement",
+        "ssb_joint_agreement", "ssb_low_order_derivatives",
       ]),
       options: options)
     self.library = library
@@ -522,17 +530,53 @@ public final class MetalSSBJointModel {
   func lowOrderDerivatives(_ rows: [[Double]], isCancelled: () -> Bool = { false }) throws
     -> [SSBLowOrderDerivatives.Result]
   {
+    let (evaluator, inputs) = try lowOrderEvaluator()
+    evaluator.reference = referenceLowOrderDerivatives
+    let results = try evaluator.evaluate(rows: rows, inputs: inputs, isCancelled: isCancelled)
+    lastLowOrderGPUSeconds = evaluator.lastGPUSeconds
+    lastLowOrderValueGPUSeconds = evaluator.lastValueGPUSeconds
+    return results
+  }
+
+  /// The first stage of `lowOrderDerivatives`: the agreement at each row of Newton coordinates, keeping the sums
+  /// that `lowOrderDerivatives(at:)` needs for any of those rows.
+  func lowOrderValues(_ rows: [[Double]], isCancelled: () -> Bool = { false }) throws -> [Double] {
+    let (evaluator, inputs) = try lowOrderEvaluator()
+    let values = try evaluator.values(rows: rows, inputs: inputs, isCancelled: isCancelled)
+    lastLowOrderGPUSeconds = evaluator.lastGPUSeconds
+    return values
+  }
+
+  /// The second stage: value, gradient and Hessian at the given rows of the latest `lowOrderValues` call.
+  func lowOrderDerivatives(at indices: [Int], isCancelled: () -> Bool = { false }) throws
+    -> [SSBLowOrderDerivatives.Result]
+  {
+    let (evaluator, _) = try lowOrderEvaluator()
+    let results = try evaluator.derivatives(at: indices, isCancelled: isCancelled)
+    lastLowOrderGPUSeconds = evaluator.lastGPUSeconds
+    return results
+  }
+
+  private func lowOrderEvaluator() throws -> (SSBLowOrderDerivatives, SSBLowOrderDerivatives.Inputs) {
     try validatePreparation()
     if lowOrder == nil {
       lowOrder = try SSBLowOrderDerivatives(device: device, queue: queue, library: library)
     }
     var p = grid
-    let bytes = withUnsafeBytes(of: &p) { Array($0) }
-    return try lowOrder!.evaluate(
-      rows: rows, grid: bytes, bandCount: bandCount, count: activeIndices.count,
-      chunks: Int(grid.chunks), band: bandG, k: kBuffer, q: qBuffer, weights: weights,
-      probeGeometry: probeGeometry, neighbour: neighbourBuffer, rowStep: rowStep,
-      isCancelled: isCancelled)
+    var extra = angleSumExtra(first: 0)
+    let inputs = SSBLowOrderDerivatives.Inputs(
+      grid: withUnsafeBytes(of: &p) { Array($0) }, extra: withUnsafeBytes(of: &extra) { Array($0) },
+      bandCount: bandCount, count: activeIndices.count, chunks: Int(grid.chunks), band: bandG,
+      k: kBuffer, q: qBuffer, weights: weights, probeGeometry: probeGeometry,
+      neighbour: neighbourBuffer, rowStep: rowStep)
+    return (lowOrder!, inputs)
+  }
+
+  /// Benchmarks: `lowOrderDerivatives` as the search's derivative type.
+  public func lowOrderAgreementDerivatives(_ rows: [[Double]]) throws -> [SSBAgreementSearch.Derivatives] {
+    try lowOrderDerivatives(rows).map {
+      SSBAgreementSearch.Derivatives(value: $0.value, gradient: $0.gradient, hessian: $0.hessian)
+    }
   }
 
   /// The exact float32 inputs of the agreement objective at the current rotation, for an independent

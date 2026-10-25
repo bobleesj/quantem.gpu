@@ -192,13 +192,18 @@ public enum SSBModelFit {
       progress(count <= total ? "Search trials" : "Newton refinement", min(count, total), total)
       return values
     }
-    // The Newton climbs on the exact gradient and Hessian of the same objective.
-    func derivatives(_ rows: [[Double]]) throws -> [SSBAgreementSearch.Derivatives] {
+    // The Newton climbs on the exact gradient and Hessian of the same objective, asking for the derivatives
+    // only at the centers whose step it uses.
+    func values(_ rows: [[Double]]) throws -> [Double] {
       if isCancelled() { throw CancellationError() }
-      let values = try model.lowOrderDerivatives(rows, isCancelled: isCancelled)
+      let values = try model.lowOrderValues(rows, isCancelled: isCancelled)
       count += rows.count
       progress("Newton refinement", total, total)
-      return values.map {
+      return values
+    }
+    func derivatives(_ indices: [Int]) throws -> [SSBAgreementSearch.Derivatives] {
+      if isCancelled() { throw CancellationError() }
+      return try model.lowOrderDerivatives(at: indices, isCancelled: isCancelled).map {
         SSBAgreementSearch.Derivatives(value: $0.value, gradient: $0.gradient, hessian: $0.hessian)
       }
     }
@@ -215,10 +220,14 @@ public enum SSBModelFit {
         count = 0
         searchObjectiveSeconds = 0
       }
-      let result = try withoutActuallyEscaping(derivatives) { exact in
-        try SSBAgreementSearch.fitTilt(
-          evaluate, trials: options.trials, seed: options.seed,
-          tiltLimitMrad: options.tiltLimitMrad, derivatives: exact, isCancelled: isCancelled)
+      let result = try withoutActuallyEscaping(values) { values in
+        try withoutActuallyEscaping(derivatives) { derivatives in
+          try SSBAgreementSearch.fitTilt(
+            evaluate, trials: options.trials, seed: options.seed,
+            tiltLimitMrad: options.tiltLimitMrad,
+            staged: SSBAgreementSearch.StagedDerivatives(values: values, derivatives: derivatives),
+            isCancelled: isCancelled)
+        }
       }
       timings["coarse_search_s"] = result.searchSeconds
       timings["coarse_search_objective_s"] = searchObjectiveSeconds
@@ -235,10 +244,13 @@ public enum SSBModelFit {
       fit.newtonStarts = result.newtonStarts
       return fit
     case (false, .agreement):
-      let result = try withoutActuallyEscaping(derivatives) { exact in
-        try SSBAgreementSearch.fitStandard(
-          evaluate, trials: options.trials, seed: options.seed, derivatives: exact,
-          isCancelled: isCancelled)
+      let result = try withoutActuallyEscaping(values) { values in
+        try withoutActuallyEscaping(derivatives) { derivatives in
+          try SSBAgreementSearch.fitStandard(
+            evaluate, trials: options.trials, seed: options.seed,
+            staged: SSBAgreementSearch.StagedDerivatives(values: values, derivatives: derivatives),
+            isCancelled: isCancelled)
+        }
       }
       timings["coarse_search_s"] = result.searchSeconds
       timings["coarse_search_objective_s"] = searchObjectiveSeconds
