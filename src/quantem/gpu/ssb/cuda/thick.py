@@ -201,10 +201,7 @@ class ThickSample:
         cache = engine._cache
         num_bright_field_pixels = int(cache["num_bright_field_pixels"])
         rows, cols = qrow.size, qcol.size
-        unique_cols = (
-            self._wave_columns(rows, cols)
-            if higher_order_magnitudes is None else cols
-        )
+        unique_cols = self._wave_columns(rows, cols)
         # Fine grids otherwise write and reduce a large partial plane for
         # every 32 BF pixels. Larger groups retain all float32 corrections
         # and float64 accumulation while reducing that intermediate traffic.
@@ -237,8 +234,10 @@ class ThickSample:
             )
             spectrum += partial[:active].sum(axis=0, dtype=cp.complex128)
         if unique_cols != cols:
-            # Even C10/C12 optics give F(-q) = -conj(F(q)), including the
-            # paired depth/tilt weights. The guard excludes Nyquist support.
+            # Every term obeys F(-q) = -conj(F(q)): G(-q, k) = conj G(q, k) for real
+            # counts, and t1(-q, k) = conj t2(q, k), t2(-q, k) = conj t1(q, k) with
+            # swapped depth weights for any chi, odd orders included, so the
+            # correction gamma / |gamma| changes to -conj. The guard excludes Nyquist support.
             negative = -cp.conj(spectrum[(-cp.arange(rows)) % rows, 1:cols // 2][:, ::-1])
             spectrum = cp.concatenate((spectrum, negative), axis=1)
         # the BF sum and the inverse FFT run in complex128; the phase is returned float32 like every other path
@@ -278,7 +277,7 @@ class ThickSample:
         """Use paired frequencies only beyond the full soft-aperture support.
 
         All BF contributions and their float64 reduction order are retained.
-        Native grids and higher-order probes use the complete Fourier plane.
+        Native grids use the complete Fourier plane.
         """
         cache = self.engine._cache
         if rows % 2 or cols % 2 or rows == cache["ny"] or cols == cache["nx"]:
