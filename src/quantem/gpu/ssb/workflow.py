@@ -2941,9 +2941,9 @@ class DirectPtycho:
         method
             ``"ssb"`` retains conventional SSB on CUDA and MPS. Experimental
             ``"phase"`` solves the linear weak-phase model; ``"complex"``
-            solves relative log-amplitude and phase together. The regularized
-            methods currently require CUDA. They are direct linear solves,
-            not iterative multislice reconstruction.
+            solves relative log-amplitude and phase together, on CUDA and MPS.
+            They are direct linear solves, not iterative multislice
+            reconstruction.
         phase_regularization, amplitude_regularization
             Positive dimensionless strengths, 0.03 when omitted for applicable
             methods. Amplitude regularization applies only to ``"complex"``.
@@ -3135,8 +3135,8 @@ class DirectPtycho:
             )
             if cancel is not None and cancel():
                 raise CancelledError()
-            phase = cp.angle(wave).astype(cp.float32)
-            return (phase if output == "native" else cp.asnumpy(phase), None)
+            phase = direct_workflow._phase(self, wave)
+            return (phase if output == "native" or self.backend != "cuda" else cp.asnumpy(phase), None)
         with cancellation_scope(cancel):
             phase, loss = self._phase(
                 aberrations, compute_loss=compute_loss,

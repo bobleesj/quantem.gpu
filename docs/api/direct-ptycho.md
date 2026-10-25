@@ -2,8 +2,9 @@
 
 `DirectPtycho` owns acquisition preparation, SSB-based optical fitting and
 three direct reconstruction methods. The default remains conventional SSB.
-Regularized phase and complex reconstruction are experimental CUDA methods;
-MPS continues to support conventional SSB. This API does not imply that a
+Regularized phase and complex reconstruction are experimental methods on CUDA
+and MPS (Apple GPUs); both backends solve the same model, and their images
+agree within twice CUDA's own float32 error. This API does not imply that a
 linear weak-object model is accurate for every specimen.
 
 This API is available in the development source candidate. See the
@@ -83,8 +84,9 @@ smoothness crossover 1 Å⁻¹, and uniform weighting. They are comparison choic
 not a selected winner. Use explicit `run` calls to tune or retain alternatives.
 Preparation happens once per model after fitting and is included in display
 time, not the optical-fit time. `show=False` skips it. MPS and streamed sessions
-continue to show conventional SSB because regularized methods require resident
-CUDA data. Subsequent phase-strength changes reuse the prepared phase equations.
+continue to show conventional SSB here (on MPS, call `run` with `method="phase"`
+or `"complex"`); streamed sessions have no regularized methods. Subsequent
+phase-strength changes reuse the prepared phase equations.
 
 To fit only a selected part of a loaded acquisition:
 

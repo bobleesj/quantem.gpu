@@ -1,6 +1,6 @@
 # Direct ptychography API
 
-Use `DirectPtycho` from Python on MPS or CUDA. The default `.run()` method is conventional SSB. See [regularized phase and complex reconstruction](direct-ptycho.md) for the experimental CUDA methods. Find aberrations once, inspect the search,
+Use `DirectPtycho` from Python on MPS or CUDA. The default `.run()` method is conventional SSB. See [regularized phase and complex reconstruction](direct-ptycho.md) for the experimental regularized methods (CUDA and MPS). Find aberrations once, inspect the search,
 and reuse those parameters for reconstruction. Start with the
 {ref}`Python workflow <reconstruct-phase>` for a short example.
 For actual images and saved outputs, run the {ref}`Gold notebook <gold-ssb-reconstruction>`.
