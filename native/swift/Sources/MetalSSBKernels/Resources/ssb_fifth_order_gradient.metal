@@ -10,16 +10,18 @@ using namespace metal;
 // Per-term arithmetic is float32 like the objective; one simdgroup of band frequencies reduces its sums and the
 // host reduces the simdgroup partials in double.
 
-// bandCount counts the used band frequencies q_i = band[i * qStride]; qStride 1 is the full objective.
-// chunks counts the 256-pixel objective partials, spans the `span`-pixel gradient partials.
+// bandCount counts the used band frequencies q_i = band[i * qStride], count / kStride (rounded up) the used BF
+// pixels k_j = k[j * kStride]; strides 1 are the full objective. count is the full BF count (the probe phases
+// cover every pixel). chunks counts the 256-pixel objective partials, spans the `span`-pixel gradient partials,
+// both over the used pixels.
 struct FifthGradientGrid {
     uint count, bandCount, chunks, batch;
     float wl, semiangle, angularRow, angularColumn, factor;
-    uint span, spans, qGroups, qStride, fullBandCount;
+    uint span, spans, qGroups, qStride, fullBandCount, kStride;
 };
 
-// `fifth_agreement` on every qStride-th band frequency (the Hessian of a band subsample steers the search; the
-// full objective and gradient define the optimum). Partials are indexed by the subsample.
+// `fifth_agreement` on every qStride-th band frequency and every kStride-th BF pixel (a subsample steers the
+// search; the full objective and gradient define the optimum). Partials are indexed by the subsample.
 kernel void fifth_strided_agreement(device const float2* g [[buffer(0)]], device const float2* k [[buffer(1)]],
     device const float2* q [[buffer(2)]], device float4* partial [[buffer(3)]],
     constant FifthGradientGrid& p [[buffer(4)]], device const float* trial [[buffer(5)]],
@@ -32,8 +34,10 @@ kernel void fifth_strided_agreement(device const float2* g [[buffer(0)]], device
     float qx = q[qf].x, qy = q[qf].y;
     float nr[B], ni[B], dd[B];
     for (int b = 0; b < B; ++b) { nr[b] = 0.0f; ni[b] = 0.0f; dd[b] = 0.0f; }
-    uint k1 = metal::min(p.count, chunk * 256u + 256u);
-    for (uint kk = chunk * 256u; kk < k1; ++kk) {
+    uint used = (p.count + p.kStride - 1u) / p.kStride;
+    uint k1 = metal::min(used, chunk * 256u + 256u);
+    for (uint ki = chunk * 256u; ki < k1; ++ki) {
+        uint kk = ki * p.kStride;
         float kxv = k[kk].x, kyv = k[kk].y;
         float4 gk = geometry[kk];
         float4 gm = joint_geometry_xy(qx-kxv, qy-kyv, p.wl, p.semiangle, p.angularRow, p.angularColumn);
@@ -71,6 +75,18 @@ kernel void fifth_strided_agreement(device const float2* g [[buffer(0)]], device
         if (base + b >= p.batch) break;
         partial[((size_t)chunk*p.batch+base+b)*p.bandCount+qi] = float4(nr[b], ni[b], dd[b], 0.0f);
     }
+}
+
+// `fifth_power` on the used band frequencies (weights of the full band index).
+kernel void fifth_strided_power(device const float4* partial [[buffer(0)]], device const float* weight [[buffer(1)]],
+    device float* power [[buffer(2)]], constant FifthGradientGrid& p [[buffer(3)]],
+    uint2 tid [[thread_position_in_grid]]) {
+    if (tid.x >= p.bandCount || tid.y >= p.batch) return;
+    float3 sum = float3(0.0f);
+    for (uint chunk = 0; chunk < p.chunks; ++chunk)
+        sum += partial[((size_t)chunk*p.batch+tid.y)*p.bandCount+tid.x].xyz;
+    power[(size_t)tid.y*p.bandCount+tid.x] = sum.z > 0.0f
+        ? weight[tid.x * p.qStride] * ((sum.x*sum.x+sum.y*sum.y)/sum.z) : 0.0f;
 }
 
 // Per used band frequency and candidate: a_q = N_q / D_q from the objective partials (in the chunk order of
@@ -152,8 +168,10 @@ kernel void fifth_gradient(device const float2* g [[buffer(0)]], device const fl
         float ar = s.x, ai = s.y, aa = s.z;
         bool thick = t != 0.0f;
         float shift = 6.283185307179586f * (qx * thr + qy * thc);
-        uint k0 = chunk * p.span, k1 = metal::min(p.count, k0 + p.span);
-        for (uint kk = k0; kk < k1; ++kk) {
+        uint used = (p.count + p.kStride - 1u) / p.kStride;
+        uint k0 = chunk * p.span, k1 = metal::min(used, k0 + p.span);
+        for (uint ki = k0; ki < k1; ++ki) {
+            uint kk = ki * p.kStride;
             float kxv = k[kk].x, kyv = k[kk].y;
             float4 gk = geometry[kk];
             float4 gm = joint_geometry_xy(qx-kxv, qy-kyv, p.wl, p.semiangle, p.angularRow, p.angularColumn);

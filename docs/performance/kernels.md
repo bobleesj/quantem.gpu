@@ -36,3 +36,13 @@ The first render after a fit costs about 100–130 ms in the app (pipeline
 variant compilation and warm-up); the steady drag rate above excludes it.
 In-app timings are `MetalSSBJointPhase.wallSeconds` on an otherwise idle GPU
 with one app instance on the built-in display.
+
+## Native SSB fitting (`MetalSSBKernels`)
+
+Timings: Apple M5 Max, the first acquisition kept branch (8,805 BF pixels, 44,247 band frequencies), wall time per
+call of one candidate, host to GPU to host. The fifth-order objective `fifth_agreement` (in `ssb_fifth_order`,
+registered with `ssb-per-term`) is 25.0 ms single / 22.0 ms each in a batch of 28.
+
+| Kernel | Status | Source digest | Serves | Validated | Value + gradient, one candidate | Parity | Replaced by | Retired |
+|---|---|---|---|---|---|---|---|---|
+| `ssb-fifth-gradient` v0.1 | **active** (`SSBModelFit.HigherOrderSearch.exactGradient*`) | `dc8d80c38d16` | exact gradient of the fifth-order agreement (28 z: coefficients, depth, tilt); BF- or band-subsampled agreement for steering | 2026-10-25 | 66.2 ms (objective pass + gradient pass ≈ 2.65 objectives); gradient pass alone ≈ 41 ms | `SSBFifthOrderGradientTests` (double-precision central differences, worst 3.6e-6 of max\|g\|; value pass bit-identical to `fifth_agreement`) | — | — |

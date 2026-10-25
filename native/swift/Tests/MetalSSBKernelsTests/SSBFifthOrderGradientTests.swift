@@ -89,8 +89,8 @@ final class SSBFifthOrderGradientTests: XCTestCase {
       return c
     }
 
-    /// The agreement over every `qStride`-th band frequency.
-    func agreement(_ z: [Double], qStride: Int = 1) -> Double {
+    /// The agreement over every `qStride`-th band frequency and every `kStride`-th BF pixel.
+    func agreement(_ z: [Double], qStride: Int = 1, kStride: Int = 1) -> Double {
       let c = packed(z)
       let t = z[5] * 100
       let thr = z[3] * 5e-3
@@ -104,7 +104,7 @@ final class SSBFifthOrderGradientTests: XCTestCase {
         var nr = 0.0
         var ni = 0.0
         var dd = 0.0
-        for (kk, kv) in k.enumerated() {
+        for (kk, kv) in k.enumerated() where kk % kStride == 0 {
           let kx = Double(kv.x)
           let ky = Double(kv.y)
           let gk = SIMD4<Double>(probe[kk])
@@ -153,6 +153,7 @@ final class SSBFifthOrderGradientTests: XCTestCase {
         [coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0])
     let value = reference.agreement(z)
     XCTAssertEqual(exact.agreement, value, accuracy: 1e-5 * value)
+    XCTAssertEqual(exact.agreement64, value, accuracy: 1e-5 * value)
     let gradient = coordinates.gradient(row: exact.gradient)
     var central = Array(repeating: 0.0, count: 28)
     for i in 0..<28 {
@@ -186,11 +187,18 @@ final class SSBFifthOrderGradientTests: XCTestCase {
     // full band weight.
     let subsample = try model.fifthOrderAgreementsAndGradients(
       points, packedCoefficients: packed, qStride: 4)[0]
-    XCTAssertTrue(subsample.agreement.isNaN)
     let w = reference.weights.map(Double.init)
     let ratio =
       w.reduce(0, +) / Swift.stride(from: 0, to: w.count, by: 4).reduce(0.0) { $0 + w[$1] }
+    let subValue = ratio * reference.agreement(z, qStride: 4)
+    XCTAssertEqual(subsample.agreement, subValue, accuracy: 1e-5 * subValue)
     let sub = coordinates.gradient(row: subsample.gradient)
+    // A BF subsample (steering only): every 3rd BF pixel, unscaled.
+    let bf = try model.fifthOrderAgreementsAndGradients(
+      points, packedCoefficients: packed, kStride: 3)[0]
+    let bfValue = reference.agreement(z, kStride: 3)
+    XCTAssertEqual(bf.agreement, bfValue, accuracy: 1e-5 * bfValue)
+    let bfGradient = coordinates.gradient(row: bf.gradient)
     for i in [0, 3, 5, 9, 27] {
       let h = 1e-5
       var plus = z
@@ -200,7 +208,11 @@ final class SSBFifthOrderGradientTests: XCTestCase {
       let expected =
         ratio * (reference.agreement(plus, qStride: 4) - reference.agreement(minus, qStride: 4))
         / (2 * h)
-      XCTAssertEqual(sub[i], expected, accuracy: 1e-4 * scale, "subsampled coordinate \(i)")
+      XCTAssertEqual(sub[i], expected, accuracy: 1e-4 * scale, "band-subsampled coordinate \(i)")
+      let expectedBF =
+        (reference.agreement(plus, kStride: 3) - reference.agreement(minus, kStride: 3)) / (2 * h)
+      XCTAssertEqual(
+        bfGradient[i], expectedBF, accuracy: 1e-4 * scale, "BF-subsampled coordinate \(i)")
     }
   }
 
@@ -222,16 +234,18 @@ final class SSBFifthOrderGradientTests: XCTestCase {
       sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140)
     let newton = try SSBModelFit.refineFifthOrder(
       primary, model: model, search: .finiteDifferenceNewton)
-    let gradient = try SSBModelFit.refineFifthOrder(primary, model: model, search: .exactGradient)
-    XCTAssertEqual(gradient.normalization, newton.normalization)
-    XCTAssertGreaterThanOrEqual(gradient.agreement, newton.agreement * (1 - 1e-6))
-    XCTAssertLessThan(gradient.result.evaluations, newton.result.executedObjectives)
-    XCTAssertTrue(["converged", "trust radius exhausted"].contains(gradient.result.stop))
-    for (bound, value) in zip(SSBFifthOrderSearch.bounds, gradient.result.coordinates) {
-      XCTAssertTrue(bound.contains(value))
+    for search in [SSBModelFit.HigherOrderSearch.exactGradient, .exactGradientCoarseToFine] {
+      let gradient = try SSBModelFit.refineFifthOrder(primary, model: model, search: search)
+      XCTAssertEqual(gradient.normalization, newton.normalization)
+      XCTAssertGreaterThanOrEqual(gradient.agreement64, newton.agreement64 * (1 - 1e-7))
+      XCTAssertLessThan(gradient.result.evaluations, newton.result.executedObjectives / 10)
+      XCTAssertTrue(["converged", "trust radius exhausted"].contains(gradient.result.stop))
+      for (bound, value) in zip(SSBFifthOrderSearch.bounds, gradient.result.coordinates) {
+        XCTAssertTrue(bound.contains(value))
+      }
+      print(
+        "fifth-order search \(search): Newton \(newton.agreement64) in \(newton.result.executedObjectives) objectives, gradient \(gradient.agreement64) in \(gradient.result.evaluations) objectives, \(gradient.result.gradientEvaluations ?? 0) gradients"
+      )
     }
-    print(
-      "fifth-order search: Newton \(newton.agreement) in \(newton.result.executedObjectives) objectives, gradient \(gradient.agreement) in \(gradient.result.evaluations) objectives and \(gradient.result.gradientEvaluations ?? 0) gradients"
-    )
   }
 }

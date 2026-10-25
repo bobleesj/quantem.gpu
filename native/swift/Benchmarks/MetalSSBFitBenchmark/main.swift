@@ -31,6 +31,7 @@ struct Options {
   var gradientCheck = false
   var gradientSettings = SSBFifthOrderGradientSearch.Settings()
   var verbose = false
+  var curvature = false
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -57,16 +58,23 @@ struct Options {
         switch try value(flag) {
         case "newton": search = .finiteDifferenceNewton
         case "gradient": search = .exactGradient
-        case let other: throw failure("Unknown search \(other); use newton or gradient")
+        case "gradient-coarse": search = .exactGradientCoarseToFine
+        case let other:
+          throw failure("Unknown search \(other); use newton, gradient or gradient-coarse")
         }
       case "--fifth-only": fifthOnly = URL(fileURLWithPath: try value(flag))
       case "--gradient-check": gradientCheck = true
-      case "--hessian-stride": gradientSettings.hessianStride = Int(try value(flag)) ?? 8
-      case "--initial-radius": gradientSettings.initialRadius = Double(try value(flag)) ?? 8
+      case "--hessian-stride": gradientSettings.hessianBFStride = Int(try value(flag)) ?? 64
+      case "--initial-radius": gradientSettings.initialRadius = Double(try value(flag)) ?? 1
       case "--max-radius": gradientSettings.maxRadius = Double(try value(flag)) ?? 64
-      case "--gain-tolerance": gradientSettings.gainTolerance = Double(try value(flag)) ?? 1e-9
-      case "--gradient-every-step": gradientSettings.valueFirst = false
+      case "--gain-tolerance": gradientSettings.gainTolerance = Double(try value(flag)) ?? 1e-8
+      case "--coarse-stride": gradientSettings.coarseBFStride = Int(try value(flag)) ?? 1
+      case "--coarse-tolerance": gradientSettings.coarseTolerance = Double(try value(flag)) ?? 1e-7
+      case "--fine-radius": gradientSettings.fineRadius = Double(try value(flag)) ?? 0.1
+      case "--update":
+        gradientSettings.update = SSBFifthOrderGradientSearch.Update(rawValue: try value(flag)) ?? .bfgs
       case "--verbose": verbose = true
+      case "--curvature": curvature = true
       default: throw failure("Unknown argument \(flag)")
       }
     }

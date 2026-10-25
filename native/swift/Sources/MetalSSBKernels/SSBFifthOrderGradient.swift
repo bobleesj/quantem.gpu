@@ -13,13 +13,16 @@ final class SSBFifthOrderGradient {
   private struct GradientGrid {
     var count, bandCount, chunks, batch: UInt32
     var wl, semiangle, angularRow, angularColumn, factor: Float
-    var span, spans, qGroups, qStride, fullBandCount: UInt32
+    var span, spans, qGroups, qStride, fullBandCount, kStride: UInt32
   }
 
   /// One candidate: the agreement and d agreement / d row, in the row layout of the objective:
   /// [depth (A), tilt row (rad), tilt column (rad), 28 packed Cartesian coefficients (A)].
   struct Value {
+    /// The float32 score of `fifth_score` (the objective).
     let agreement: Double
+    /// The same float32 per-frequency powers summed in Double on the host (finer than the float32 total).
+    let agreement64: Double
     let gradient: [Double]
   }
 
@@ -28,7 +31,8 @@ final class SSBFifthOrderGradient {
 
   private let device: MTLDevice
   private let queue: MTLCommandQueue
-  private let probe, agreement, power, score, strided, scale, gradient: MTLComputePipelineState
+  private let probe, agreement, power, score, strided, stridedPower, scale, gradient:
+    MTLComputePipelineState
   private var workspaces: [String: MTLBuffer] = [:]
 
   init(device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary) throws {
@@ -45,6 +49,7 @@ final class SSBFifthOrderGradient {
     power = try pipeline("fifth_power")
     score = try pipeline("fifth_score")
     strided = try pipeline("fifth_strided_agreement")
+    stridedPower = try pipeline("fifth_strided_power")
     scale = try pipeline("fifth_gradient_scale")
     gradient = try pipeline("fifth_gradient")
   }
@@ -59,30 +64,35 @@ final class SSBFifthOrderGradient {
   private struct Retained {
     let rows: [[Float]]
     let qStride: Int
+    let kStride: Int
     let trials: MTLBuffer
     let values: [Double]
+    let values64: [Double]
   }
   /// The last value-only evaluation, whose projections a_q and probe phases stay in the workspaces.
   private var retained: Retained?
 
   /// - Parameters:
-  ///   - qStride: 1 evaluates the objective and its gradient. A larger stride evaluates only the gradient of the
-  ///     agreement restricted to every qStride-th band frequency (for a steering Hessian); its `agreement` is NaN.
+  ///   - qStride: 1 evaluates the objective and its gradient. A larger stride evaluates the agreement restricted to
+  ///     every qStride-th band frequency and its gradient: a steering model, never the objective.
   ///   - gradients: false evaluates the agreements only (empty gradients) and retains their projections, so
   ///     `retainedGradients` can add the gradient pass for the same rows without repeating the objective.
   func evaluate(
     rows: [[Float]], geometry: MetalSSBGeometry, k: MTLBuffer, q: MTLBuffer,
     band: MTLBuffer, weights: MTLBuffer, probeGeometry: MTLBuffer,
-    count: Int, bandCount fullBandCount: Int, qStride: Int = 1, gradients withGradients: Bool = true,
-    isCancelled: () -> Bool
+    count: Int, bandCount fullBandCount: Int, qStride: Int = 1, kStride: Int = 1,
+    gradients withGradients: Bool = true, isCancelled: () -> Bool
   ) throws -> [Value] {
     guard !rows.isEmpty else { return [] }
-    precondition(qStride >= 1)
+    precondition(qStride >= 1 && kStride >= 1)
     retained = nil
-    let layout = Layout(count: count, fullBandCount: fullBandCount, qStride: qStride, rows: rows.count)
+    let layout = Layout(
+      count: count, fullBandCount: fullBandCount, qStride: qStride, kStride: kStride,
+      rows: rows.count)
+    let full = qStride == 1 && kStride == 1
     let chi = try workspace("chi", bytes: count * layout.batchSize * 4)
     let partial = try workspace("partial", bytes: layout.chunks * layout.bandCount * layout.batchSize * 16)
-    let powers = try workspace("power", bytes: layout.bandCount * layout.batchSize * 4)
+    let powers = try workspace("power", bytes: layout.bandCount * rows.count * 4, shared: true)
     let scales = try workspace("scale", bytes: layout.bandCount * layout.batchSize * 16)
     let scores = try workspace("scores", bytes: rows.count * 4, shared: true)
     let gradients = try workspace(
@@ -106,11 +116,11 @@ final class SSBFifthOrderGradient {
         MTLSize(width: count, height: batch, depth: 1),
         threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
       probeEncoder.endEncoding()
-      let fitEncoder = try encoder(commands, qStride == 1 ? agreement : strided)
+      let fitEncoder = try encoder(commands, full ? agreement : strided)
       for (index, buffer) in [band, k, q, partial].enumerated() {
         fitEncoder.setBuffer(buffer, offset: 0, index: index)
       }
-      if qStride == 1 {
+      if full {
         fitEncoder.setBytes(&grid, length: MemoryLayout<Grid>.stride, index: 4)
       } else {
         fitEncoder.setBytes(&gradientGrid, length: MemoryLayout<GradientGrid>.stride, index: 4)
@@ -122,18 +132,22 @@ final class SSBFifthOrderGradient {
         MTLSize(width: layout.bandCount, height: layout.chunks, depth: (batch + 3) / 4),
         threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
       fitEncoder.endEncoding()
-      if qStride == 1 {
-        let powerEncoder = try encoder(commands, power)
-        for (index, buffer) in [partial, weights, powers].enumerated() {
-          powerEncoder.setBuffer(buffer, offset: 0, index: index)
+      do {
+        let powerEncoder = try encoder(commands, full ? power : stridedPower)
+        powerEncoder.setBuffer(partial, offset: 0, index: 0)
+        powerEncoder.setBuffer(weights, offset: 0, index: 1)
+        powerEncoder.setBuffer(powers, offset: first * layout.bandCount * 4, index: 2)
+        if full {
+          powerEncoder.setBytes(&grid, length: MemoryLayout<Grid>.stride, index: 3)
+        } else {
+          powerEncoder.setBytes(&gradientGrid, length: MemoryLayout<GradientGrid>.stride, index: 3)
         }
-        powerEncoder.setBytes(&grid, length: MemoryLayout<Grid>.stride, index: 3)
         powerEncoder.dispatchThreads(
           MTLSize(width: layout.bandCount, height: batch, depth: 1),
           threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
         powerEncoder.endEncoding()
         let scoreEncoder = try encoder(commands, score)
-        scoreEncoder.setBuffer(powers, offset: 0, index: 0)
+        scoreEncoder.setBuffer(powers, offset: first * layout.bandCount * 4, index: 0)
         scoreEncoder.setBuffer(scores, offset: first * 4, index: 1)
         scoreEncoder.setBytes(&grid, length: MemoryLayout<Grid>.stride, index: 2)
         scoreEncoder.dispatchThreadgroups(
@@ -163,18 +177,25 @@ final class SSBFifthOrderGradient {
     }
     if isCancelled() { throw CancellationError() }
     let pointer = scores.contents().assumingMemoryBound(to: Float.self)
-    let values = rows.indices.map { qStride == 1 ? Double(pointer[$0]) : .nan }
-    guard qStride > 1 || values.allSatisfy(\.isFinite) else {
+    let values = rows.indices.map { Double(pointer[$0]) }
+    let power = powers.contents().assumingMemoryBound(to: Float.self)
+    let values64 = rows.indices.map { row in
+      (0..<layout.bandCount).reduce(0.0) { $0 + Double(power[row * layout.bandCount + $1]) }
+    }
+    guard values.allSatisfy(\.isFinite), values64.allSatisfy(\.isFinite) else {
       throw SSBOptimizationError.nonFiniteLoss
     }
     if !withGradients {
       // One batch keeps every row's projections in the workspaces.
       if rows.count <= layout.batchSize, let lastTrials {
-        retained = Retained(rows: rows, qStride: qStride, trials: lastTrials, values: values)
+        retained = Retained(
+          rows: rows, qStride: qStride, kStride: kStride, trials: lastTrials, values: values,
+          values64: values64)
       }
-      return values.map { Value(agreement: $0, gradient: []) }
+      return zip(values, values64).map { Value(agreement: $0, agreement64: $1, gradient: []) }
     }
-    return try reduce(values: values, gradients: gradients, layout: layout, geometry: geometry)
+    return try reduce(
+      values: values, values64: values64, gradients: gradients, layout: layout, geometry: geometry)
   }
 
   /// The gradients of the rows of the last value-only `evaluate`, by the gradient pass alone; other rows are
@@ -182,18 +203,20 @@ final class SSBFifthOrderGradient {
   func retainedGradients(
     rows: [[Float]], geometry: MetalSSBGeometry, k: MTLBuffer, q: MTLBuffer,
     band: MTLBuffer, weights: MTLBuffer, probeGeometry: MTLBuffer,
-    count: Int, bandCount fullBandCount: Int, isCancelled: () -> Bool
+    count: Int, bandCount fullBandCount: Int, qStride: Int, kStride: Int, isCancelled: () -> Bool
   ) throws -> [Value] {
-    guard let kept = retained, kept.rows == rows, kept.qStride == 1,
+    guard let kept = retained, kept.rows == rows, kept.qStride == qStride, kept.kStride == kStride,
       let chi = workspaces["chi"], let scales = workspaces["scale"]
     else {
       return try evaluate(
         rows: rows, geometry: geometry, k: k, q: q, band: band, weights: weights,
         probeGeometry: probeGeometry, count: count, bandCount: fullBandCount,
-        isCancelled: isCancelled)
+        qStride: qStride, kStride: kStride, isCancelled: isCancelled)
     }
     retained = nil
-    let layout = Layout(count: count, fullBandCount: fullBandCount, qStride: 1, rows: rows.count)
+    let layout = Layout(
+      count: count, fullBandCount: fullBandCount, qStride: qStride, kStride: kStride,
+      rows: rows.count)
     let gradients = try workspace(
       "gradients", bytes: rows.count * layout.perGradient * 4, shared: true)
     guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
@@ -207,18 +230,23 @@ final class SSBFifthOrderGradient {
       throw MetalSSBError.commandExecution(error.localizedDescription)
     }
     if isCancelled() { throw CancellationError() }
-    return try reduce(values: kept.values, gradients: gradients, layout: layout, geometry: geometry)
+    return try reduce(
+      values: kept.values, values64: kept.values64, gradients: gradients, layout: layout,
+      geometry: geometry)
   }
 
   private struct Layout {
-    let count, fullBandCount, qStride, bandCount, chunks, spans, qGroups, batchSize, perGradient: Int
-    init(count: Int, fullBandCount: Int, qStride: Int, rows: Int) {
+    let count, fullBandCount, qStride, kStride, bandCount, chunks, spans, qGroups, batchSize,
+      perGradient: Int
+    init(count: Int, fullBandCount: Int, qStride: Int, kStride: Int, rows: Int) {
       self.count = count
       self.fullBandCount = fullBandCount
       self.qStride = qStride
+      self.kStride = kStride
       bandCount = (fullBandCount + qStride - 1) / qStride
-      chunks = (count + 255) / 256
-      spans = (count + SSBFifthOrderGradient.span - 1) / SSBFifthOrderGradient.span
+      let used = (count + kStride - 1) / kStride
+      chunks = (used + 255) / 256
+      spans = (used + SSBFifthOrderGradient.span - 1) / SSBFifthOrderGradient.span
       qGroups = (bandCount + 63) / 64 * 2
       let perCandidate = (chunks + 1) * bandCount * 16 + count * 4 + bandCount * 16
       batchSize = min(rows, max(4, ((64 << 20) / perCandidate / 4) * 4))
@@ -239,7 +267,7 @@ final class SSBFifthOrderGradient {
         wl: g.wl, semiangle: g.semiangle, angularRow: g.angularRow,
         angularColumn: g.angularColumn, factor: g.factor,
         span: UInt32(SSBFifthOrderGradient.span), spans: UInt32(spans), qGroups: UInt32(qGroups),
-        qStride: UInt32(qStride), fullBandCount: UInt32(fullBandCount))
+        qStride: UInt32(qStride), fullBandCount: UInt32(fullBandCount), kStride: UInt32(kStride))
     }
   }
 
@@ -275,9 +303,10 @@ final class SSBFifthOrderGradient {
   }
 
   /// Simdgroup partials to Double sums; the coefficient entries take the basis factor 2 pi / wl.
-  private func reduce(values: [Double], gradients: MTLBuffer, layout: Layout, geometry: MetalSSBGeometry)
-    throws -> [Value]
-  {
+  private func reduce(
+    values: [Double], values64: [Double], gradients: MTLBuffer, layout: Layout,
+    geometry: MetalSSBGeometry
+  ) throws -> [Value] {
     let partials = gradients.contents().assumingMemoryBound(to: Float.self)
     let basis = 2 * Double.pi / Double(geometry.wavelengthAngstroms)
     var result: [Value] = []
@@ -289,7 +318,7 @@ final class SSBFifthOrderGradient {
         for j in 0..<31 { sums[j] += Double(entry[j]) }
       }
       for j in 3..<31 { sums[j] *= basis }
-      result.append(Value(agreement: values[row], gradient: sums))
+      result.append(Value(agreement: values[row], agreement64: values64[row], gradient: sums))
     }
     guard result.allSatisfy({ $0.gradient.allSatisfy(\.isFinite) }) else {
       throw SSBOptimizationError.nonFiniteLoss

@@ -79,6 +79,7 @@ func fifthOnly(
         let r = refined.result
         result["fifth_order_s"] = seconds
         result["agreement"] = refined.agreement
+        result["agreement64"] = refined.agreement64
         result["normalization"] = refined.normalization
         result["refinement"] = [
           "evaluations": r.evaluations, "executed_objectives": r.executedObjectives,
@@ -93,6 +94,32 @@ func fifthOnly(
           let agreement = fit["sample_agreement"] as? Double
         {
           let dz = zip(r.coordinates, z).map { abs($0 - $1) }
+          let base64 = try SSBModelFit.fifthOrderAgreement64(model: model, z: z)
+          result["baseline_agreement64"] = base64
+          if options.curvature {
+            // Curvature-weighted size of the difference: the quadratic-model loss of moving from the new point
+            // to the baseline, with the full-data Hessian at the new point (both normalized by S0).
+            let hessian = try SSBModelFit.fifthOrderHessian(model: model, z: r.coordinates)
+            let delta = zip(z, r.coordinates).map { $0 - $1 }
+            var quadratic = 0.0
+            for i in 0..<28 { for j in 0..<28 { quadratic += delta[i] * hessian[i][j] * delta[j] } }
+            let gradient = try SSBModelFit.fifthOrderGradient(model: model, z: r.coordinates)
+            let linear = zip(gradient, delta).reduce(0.0) { $0 + $1.0 * $1.1 }
+            result["curvature_weighted_difference"] = [
+              "half_dz_H_dz_normalized": 0.5 * quadratic / refined.normalization,
+              "g_dz_normalized": linear / refined.normalization,
+              "per_coordinate_half_H_ii_dz2_normalized": (0..<28).map {
+                0.5 * hessian[$0][$0] * delta[$0] * delta[$0] / refined.normalization
+              },
+              "hessian_diagonal_normalized": (0..<28).map { hessian[$0][$0] / refined.normalization },
+            ] as [String: Any]
+            log(
+              String(
+                format:
+                  "  curvature-weighted difference to the baseline: g.dz %+.3e, dz'H dz/2 %+.3e (normalized)",
+                linear / refined.normalization, 0.5 * quadratic / refined.normalization))
+          }
+          result["agreement64_relative_to_baseline"] = refined.agreement64 / base64 - 1
           result["baseline_agreement"] = agreement
           result["agreement_relative_to_baseline"] = refined.agreement / agreement - 1
           result["max_abs_dz"] = dz.max() ?? 0
@@ -100,9 +127,11 @@ func fifthOnly(
           log(
             String(
               format:
-                "repeat %d: fifth-order %.2f s, %d evaluations, %d iterations (%@), agreement %.9g (baseline %.9g, rel %+.3e), max |dz| %.3e",
-              repeatIndex, seconds, r.evaluations, r.iterations, r.stop, refined.agreement,
-              agreement, refined.agreement / agreement - 1, dz.max() ?? 0))
+                "repeat %d: fifth-order %.2f s, %d objectives, %d gradients, %d subsample evals, %d iterations (%@), agreement %.9g (baseline %.9g, rel %+.3e; float64 sums rel %+.3e), max |dz| %.3e",
+              repeatIndex, seconds, r.evaluations, r.gradientEvaluations ?? 0,
+              r.subsampledGradients ?? 0, r.iterations, r.stop, refined.agreement,
+              agreement, refined.agreement / agreement - 1, refined.agreement64 / base64 - 1,
+              dz.max() ?? 0))
         }
       }
       results.append(result)
