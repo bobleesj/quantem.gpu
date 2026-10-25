@@ -37,3 +37,24 @@ acceptance limits. They are evidence, not a statement of current release speed.
 - [MPS SSB sampling and search, 2026-10-15](2026-10-15-mps-ssb-upsampling.md)
 - [CUDA SSB refinement batching](2026-10-15-cuda-batched-refinement.md)
 - [Later SSB performance checkpoints](2026-09-11-ssb-performance-checkpoints.md)
+
+## CUDA fine-grid kernel experiments, 23-24 October 2026
+
+These records measured in-kernel q, -q pairing, compact support and
+closed-sideband skips on a separate branch. Main took a different design
+(half-plane spectrum with the -conj mirror, bounded BF groups and drag
+windows), so the kernels they describe are not in the current source. The
+numbers and rejected ideas remain as evidence.
+
+- [CUDA SSB: shared BF coordinates and inactive blocks](2026-10-24-ssb-shared-coordinates.md)
+- [CUDA SSB compact support and boundary dispatch](2026-10-24-ssb-compact-support.md)
+- [CUDA SSB closed-sideband correction and host transfer](2026-10-24-ssb-closed-sideband.md)
+- [Skip closed-aperture loads in fine-grid SSB](2026-10-23-ssb-zero-contributions.md)
+- [Full-field SSB redraws, 2026-10-23](2026-10-23-ssb-redraw.md)
+- [Native 512 SSB instruction-reduction experiments](2026-10-23-ssb-instruction-reduction.md)
+- [Native 512 SSB hardware-counter diagnosis](2026-10-23-ssb-hardware-counters.md)
+- [Native 512 SSB frequency pairing](2026-10-23-ssb-frequency-pairing.md)
+- [CUDA SSB fine-grid correction](2026-10-23-ssb-fine-grid-pairing.md)
+- [Classify fine-grid SSB mirror reuse once per frequency](2026-10-23-ssb-fine-grid-classification.md)
+- [Native 512 SSB: fixed-optics caching and launch layout](2026-10-23-ssb-c10-cache.md)
+- [Higher-order SSB: group alias-edge work on CUDA](2026-10-23-ssb-alias-layout.md)
