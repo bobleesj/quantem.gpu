@@ -146,7 +146,7 @@ class TorchAgreement:
         g_real = torch.empty((counts_shape[0], r.size), dtype=dtype, device=device)
         g_imag = torch.empty_like(g_real)
         for start in range(0, counts_shape[0], fft_chunk):
-            block = torch.as_tensor(np.asarray(counts[start:start + fft_chunk])).to(device=device, dtype=dtype)
+            block = torch.as_tensor(np.array(counts[start:start + fft_chunk])).to(device=device, dtype=dtype)
             spectra = torch.fft.rfft2(block)
             values = spectra[:, rows_t, cols_t]
             g_real[start:start + len(block)] = values.real
