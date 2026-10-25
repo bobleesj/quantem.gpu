@@ -3,6 +3,7 @@
 Dated records retain their original workload, backend, source revision and
 acceptance limits. They are evidence, not a statement of current release speed.
 
+- [Exact-derivative SSB fit in Python on CUDA and MPS](2026-10-25-ssb-exact-derivative-fit.md)
 - [Native Metal SSB redraw precision at the lowest scan frequencies](2026-10-25-ssb-redraw-precision.md)
 - [Redraw at slider speed: q, -q symmetry for SSB and a drag window for regularized methods](2026-10-24-redraw-symmetry-and-drag-window.md)
 - [Native Swift/Metal SSB redraw while dragging aberration controls](2026-10-24-native-metal-ssb-redraw.md)
