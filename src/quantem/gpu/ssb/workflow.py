@@ -3118,7 +3118,13 @@ class DirectPtycho:
             # the mean-phase path returns the engine's reused buffer, which the next preview overwrites
             return phase.copy(), loss
         if self.backend == "cuda":
-            phase = cp.asnumpy(phase)
+            # Own the pinned host buffer through NumPy's base reference. A
+            # reusable borrowed array would overwrite earlier preview results;
+            # pageable allocations can stall high-resolution slider updates.
+            owner = cp.cuda.alloc_pinned_memory(phase.nbytes)
+            host = np.frombuffer(owner, dtype=phase.dtype, count=phase.size).reshape(phase.shape)
+            phase.get(out=host)
+            phase = host
         return np.asarray(phase, dtype=np.float32), loss
 
     def _phase(
