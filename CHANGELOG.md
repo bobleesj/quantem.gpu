@@ -231,6 +231,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- Native (Metal) `phase` and `complex` with `inverse_mean` weighting no longer refuse BF pixels outside the calibrated
+  aperture: as Python, every selected BF pixel enters the median floor and the normalization (those outside have no
+  transfer). The k-only aperture term A(k) now uses CUDA's square-pixel probe geometry, as A(k +- q) does
+  (`ssb-direct` v0.4; about 1 ulp at the aperture edge).
 - Native (Metal) SSB redraw (`ssb-redraw` v0.3, replaces v0.2): the lowest scan frequencies, where the two
   sidebands nearly cancel, are resolved by evaluating chi(k +- q) - chi(k) as polynomials expanded about each BF
   pixel and forming gamma from their half sum and half difference. On five measured 512 x 512 acquisitions, 1x, 2x

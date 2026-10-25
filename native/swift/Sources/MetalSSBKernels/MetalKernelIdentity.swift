@@ -94,12 +94,13 @@ enum SSBKernelRegistry {
   /// scan frequency with its supported aliases (float32 per BF pixel, float-float across batches;
   /// `direct_normal_tiled`, one thread per frequency and alias, for complex systems of two or more aliases,
   /// `direct_normal_equations` otherwise), the drag windows' Chebyshev coefficients and their evaluation
-  /// (`direct_window_*`), and the wave of the solved spectrum; the systems are solved in float64 on the CPU. v0.1
-  /// (`direct_normal_equations` alone, no drag windows) is retired. v0.3 is v0.2 with the deleted agreement kernels
-  /// removed from the shared `ssb_joint` and `ssb_fifth_order` (2026-10-25); the direct kernels are unchanged.
+  /// (`direct_window_*`), and the wave of the solved spectrum; the systems are solved in float64 on the CPU. v0.4
+  /// takes the k-only aperture term from CUDA's square-pixel probe geometry, as the transfer does. Retired: v0.1
+  /// (`direct_normal_equations` alone, no drag windows), v0.2 and v0.3 (v0.2 with the deleted agreement kernels
+  /// removed from the shared `ssb_joint` and `ssb_fifth_order`; both take A(k) from the general aperture formula).
   static let direct = Entry(
-    name: "ssb-direct", version: "0.3", files: ["ssb_joint", "ssb_fifth_order", "ssb_direct"],
-    registeredSourceSHA256: "5ab966bbda82a13f5765b82c8d528089188671246ec3403a06bc7e88554a9681")
+    name: "ssb-direct", version: "0.4", files: ["ssb_joint", "ssb_fifth_order", "ssb_direct"],
+    registeredSourceSHA256: "817bc577037c14e05d5e3acc5f3df193116c1643d1d7fea16fad4447def25702")
 
   /// SHA-256 of an entry's shipped source files, concatenated in order.
   static func sourceSHA256(_ entry: Entry) throws -> String {

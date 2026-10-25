@@ -2,7 +2,7 @@
 using namespace metal;
 // Regularized direct reconstruction (methods "phase" and "complex"): the normal equations of every scan frequency
 // with all its supported output aliases, as Python's CUDA `ssb.cuda.direct` (`direct_normal_equations`).
-// Compiled after ssb_joint.metal (joint_geometry_xy, joint_sinc) and ssb_fifth_order.metal (ssb_chi_full).
+// Compiled after ssb_joint.metal and ssb_fifth_order.metal (ssb_chi_full).
 //
 // For T = exp(eta + i phi) ~ 1 + eta + i phi, the measured spectrum of BF pixel k at scan frequency Q is modelled as
 // sum over the supported aliases q of Q of (t1 + t2) eta_q + i (t1 - t2) phi_q with t1 = A(k-q) A(k) w1
@@ -40,6 +40,24 @@ struct DirectGrid {
     float outer2;      // r^2 beyond which the soft aperture is exactly zero, with a margin
 };
 
+// (alpha^2, soft aperture) of a frequency, CUDA's thick_probe_geometry: on square detector pixels the aperture edge's
+// width is the constant angular sampling (one fma), else thick_geometry's direction-dependent width; alpha^2 is
+// r^2 wl^2 either way. The pixel terms and both sides of the transfer use it, so A(k) and A(k +- q) round alike.
+inline float2 direct_probe(float dx, float dy, float wl, float semiangle, float angularRow, float angularColumn) {
+    const float r2 = dx * dx + dy * dy;
+    float edge;
+    if (angularRow == angularColumn) {
+        edge = r2 > 1e-30f ? metal::fma(semiangle - metal::sqrt(r2) * wl, 1.0f / angularColumn, 0.5f) : 1.0f;
+    } else {
+        const float r = metal::sqrt(r2);
+        const float inverse = r > 1e-15f ? 1.0f / r : 0.0f;
+        const float denominator =
+            metal::sqrt(dx * angularRow * dx * angularRow + dy * angularColumn * dy * angularColumn) * inverse;
+        edge = denominator > 1e-15f ? (semiangle - r * wl) / denominator + 0.5f : 1.0f;
+    }
+    return float2(r2 * wl * wl, metal::clamp(edge, 0.0f, 1.0f));
+}
+
 // The k-only terms of every active BF pixel, two float4 each: (kr, kc, chi(k), detector weight) and
 // (alpha^2(k), aperture(k), 0, 0).
 kernel void direct_pixel_terms(device const float2* k [[buffer(0)]], device const float* weights [[buffer(1)]],
@@ -47,9 +65,9 @@ kernel void direct_pixel_terms(device const float2* k [[buffer(0)]], device cons
     constant DirectGrid& p [[buffer(4)]], uint j [[thread_position_in_grid]]) {
     if (j >= p.count) return;
     const float2 kj = k[j];
-    const float4 g = joint_geometry_xy(kj.x, kj.y, p.wl, p.semiangle, p.angularRow, p.angularColumn);
+    const float2 g = direct_probe(kj.x, kj.y, p.wl, p.semiangle, p.angularRow, p.angularColumn);
     pixel[2 * j] = float4(kj.x, kj.y, ssb_chi_full(kj.x, kj.y, p.wl, coefficients), weights[j]);
-    pixel[2 * j + 1] = float4(g.x, g.w, 0.0f, 0.0f);
+    pixel[2 * j + 1] = float4(g.x, g.y, 0.0f, 0.0f);
 }
 
 // sin(x) / x (1 at |x| < 1e-6, as joint_sinc), the sine of x reduced to [-pi, pi] by fast::sin.
@@ -82,23 +100,14 @@ inline float direct_chi(float row, float col, float wl, constant float* coeffici
 }
 
 // One side of the transfer: amplitude * exp(sign * i (chi(k +- q) - chi(k))), zero where the aperture is closed.
-// The soft aperture is CUDA's thick_probe_geometry (square detector pixels: the edge width is the constant sampling).
 inline float2 direct_side(float dr, float dc, float sign, float shift, float4 gk, float ck, constant DirectGrid& p,
                           constant float* coefficients) {
-    const float r2 = dr * dr + dc * dc;
-    if (r2 >= p.outer2) return float2(0.0f);
-    float4 g;
-    if (p.angularRow == p.angularColumn) {
-        const float edge = r2 > 1e-30f ? metal::fma(p.semiangle - metal::sqrt(r2) * p.wl, 1.0f / p.angularColumn, 0.5f)
-                                       : 1.0f;
-        g = float4(r2 * p.wl * p.wl, 0.0f, 0.0f, metal::clamp(edge, 0.0f, 1.0f));
-    } else {
-        g = joint_geometry_xy(dr, dc, p.wl, p.semiangle, p.angularRow, p.angularColumn);
-    }
-    if (g.w * gk.y == 0.0f) return float2(0.0f);
+    if (dr * dr + dc * dc >= p.outer2) return float2(0.0f);
+    const float2 g = direct_probe(dr, dc, p.wl, p.semiangle, p.angularRow, p.angularColumn);
+    if (g.y * gk.y == 0.0f) return float2(0.0f);
     const float chi = direct_chi(dr, dc, p.wl, coefficients);
     const float w = p.depth != 0.0f ? direct_sinc(0.5f * p.depth * (sign * p.factor * (g.x - gk.x) - shift)) : 1.0f;
-    const float amplitude = g.w * gk.y * w;
+    const float amplitude = g.y * gk.y * w;
     // chi - ck reduced to [-pi, pi] (2 pi split in two floats, fused), then the fast sine and cosine.
     const float x = chi - ck;
     const float turns = metal::rint(x * 0.159154943f);
