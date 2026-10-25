@@ -2,10 +2,11 @@
 
 import json
 
-import cupy as cp
 import pytest
 
-from quantem.gpu import DirectPtycho
+cp = pytest.importorskip("cupy")
+
+from quantem.gpu import DirectPtycho  # noqa: E402
 
 pytestmark = pytest.mark.slow
 

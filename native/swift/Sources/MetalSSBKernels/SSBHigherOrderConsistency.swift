@@ -32,7 +32,8 @@ public struct SSBHigherOrderConsistency: Codable, Equatable, Sendable {
     public let seconds: Double
 
     private enum CodingKeys: String, CodingKey {
-      case ringParity = "ring_parity", frequencies, coordinates, point, evaluations, stop, seconds
+      case ringParity = "ring_parity"
+      case frequencies, coordinates, point, evaluations, stop, seconds
     }
   }
 
@@ -68,7 +69,8 @@ public struct SSBHigherOrderConsistency: Codable, Equatable, Sendable {
   }
 
   /// Ring parity of a band frequency q (1/A): floor(|q| / width) mod 2.
-  public static func ringParity(_ q: SIMD2<Float>, width: Double = ringWidthInverseAngstroms) -> Int {
+  public static func ringParity(_ q: SIMD2<Float>, width: Double = ringWidthInverseAngstroms) -> Int
+  {
     let ring = Int(floor(hypot(Double(q.x), Double(q.y)) / width))
     return ((ring % 2) + 2) % 2
   }
@@ -77,7 +79,8 @@ public struct SSBHigherOrderConsistency: Codable, Equatable, Sendable {
   /// (`SSBFifthOrderCoordinates`), rad: C10 and C12 as (2 pi / lambda) alpha^2 r^2 / 2 (C10 + C12 cos 2(phi - phi12)),
   /// each higher-order term as its edge phase times r^(n+1) (cos m phi, sin m phi).
   public static func apertureDisagreement(
-    _ a: [Double], _ b: [Double], wavelengthAngstroms: Double, semiangleRadians: Double, points: Int = 96
+    _ a: [Double], _ b: [Double], wavelengthAngstroms: Double, semiangleRadians: Double,
+    points: Int = 96
   ) -> Double {
     let d = zip(a, b).map { $0 - $1 }
     let k = 2 * Double.pi / wavelengthAngstroms * semiangleRadians * semiangleRadians / 2 * 100
@@ -98,7 +101,8 @@ public struct SSBHigherOrderConsistency: Codable, Equatable, Sendable {
             value += d[column] * radial
             column += 1
           } else {
-            value += radial * (d[column] * cos(Double(m) * phi) + d[column + 1] * sin(Double(m) * phi))
+            value +=
+              radial * (d[column] * cos(Double(m) * phi) + d[column + 1] * sin(Double(m) * phi))
             column += 2
           }
         }
@@ -131,7 +135,8 @@ extension SSBModelFit {
       let frequencies = mask.filter { $0 }.count
       guard frequencies > 0 else {
         throw MetalSSBError.invalidGeometry(
-          "The half-band check needs band frequencies in both ring halves. Check the scan sampling.")
+          "The half-band check needs band frequencies in both ring halves. Check the scan sampling."
+        )
       }
       let started = Date()
       let refined = try model.withBandMask(mask) {
@@ -154,8 +159,10 @@ extension SSBModelFit {
       wavelengthAngstroms: model.wavelengthAngstroms, semiangleRadians: model.semiangleRadians)
     return SSBHigherOrderConsistency(
       limit: limit, ringWidthInverseAngstroms: ringWidthInverseAngstroms, halves: halves,
-      halfBandRMSRadians: disagreement, maximumHalfBandRMSRadians: maximumHalfBandRMSRadians, trusted: trusted,
-      shownLimit: trusted ? limit : SSBFitOptions.standardHigherOrderLimit, checkedCoordinates: checked,
+      halfBandRMSRadians: disagreement, maximumHalfBandRMSRadians: maximumHalfBandRMSRadians,
+      trusted: trusted,
+      shownLimit: trusted ? limit : SSBFitOptions.standardHigherOrderLimit,
+      checkedCoordinates: checked,
       checkedPoint: coordinates.point(checked))
   }
 }

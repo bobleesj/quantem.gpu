@@ -12,7 +12,8 @@ public struct SSBBandPower: Codable, Equatable, Sendable {
   /// N, the BF pixels of the sums.
   public let brightFieldPixelCount: Int
 
-  public init(power: Double, bandWeight: Double, noiseVariance: Double, brightFieldPixelCount: Int) {
+  public init(power: Double, bandWeight: Double, noiseVariance: Double, brightFieldPixelCount: Int)
+  {
     self.power = power
     self.bandWeight = bandWeight
     self.noiseVariance = noiseVariance
@@ -89,9 +90,12 @@ public struct SSBHigherOrderGuard: Codable, Equatable, Sendable {
     for (n, m) in SSBFifthOrderCoordinates.orders where n >= 2 {
       let width = m == 0 ? 1 : 2
       // z of a higher-order coordinate is (2 pi / lambda) C alpha^(n+1) / (n+1): its error is the edge phase.
-      let edge = variances.map { v in (column..<(column + width)).reduce(0.0) { $0 + max(v[$1], 0) }.squareRoot() }
+      let edge = variances.map { v in
+        (column..<(column + width)).reduce(0.0) { $0 + max(v[$1], 0) }.squareRoot()
+      }
       let angstroms = edge.map {
-        $0 * Double(n + 1) * wavelengthAngstroms / (2 * Double.pi * pow(semiangleRadians, Double(n + 1)))
+        $0 * Double(n + 1) * wavelengthAngstroms
+          / (2 * Double.pi * pow(semiangleRadians, Double(n + 1)))
       }
       terms.append(
         Term(
@@ -110,17 +114,21 @@ public struct SSBHigherOrderGuard: Codable, Equatable, Sendable {
     // The first term with the largest error, as Python's max(edge, key=edge.get); undetermined is infinite.
     var worst: Term?
     for term in terms
-    where (term.edgePhaseErrorRadians ?? .infinity) > worst.map({ $0.edgePhaseErrorRadians ?? .infinity }) ?? -.infinity {
+    where (term.edgePhaseErrorRadians ?? .infinity) > worst.map({
+      $0.edgePhaseErrorRadians ?? .infinity
+    }) ?? -.infinity {
       worst = term
     }
     if let worst, (worst.edgePhaseErrorRadians ?? .infinity) > edgePhaseErrorMaximumRadians {
       reasons.append(
         String(
-          format: "%@ is uncertain by %.2f rad at the aperture edge (above %g): too little signal for its precision",
+          format:
+            "%@ is uncertain by %.2f rad at the aperture edge (above %g): too little signal for its precision",
           worst.name, worst.edgePhaseErrorRadians ?? .infinity, edgePhaseErrorMaximumRadians))
     }
     return SSBHigherOrderGuard(
-      coherence: coherence, terms: terms, trusted: reasons.isEmpty, reasons: reasons, noise: "poisson counts",
+      coherence: coherence, terms: terms, trusted: reasons.isEmpty, reasons: reasons,
+      noise: "poisson counts",
       agreement: agreement, band: band, coherenceMinimum: coherenceMinimum,
       edgePhaseErrorMaximumRadians: edgePhaseErrorMaximumRadians)
   }
@@ -128,7 +136,9 @@ public struct SSBHigherOrderGuard: Codable, Equatable, Sendable {
   /// The diagonal of 2 sigma^2 (-H)^-1; nil when -H is not positive definite (not at a maximum) or not finite.
   static func coordinateVariances(hessian: [[Double]], noiseVariance: Double) -> [Double]? {
     let n = hessian.count
-    guard n > 0, hessian.allSatisfy({ $0.count == n && $0.allSatisfy(\.isFinite) }) else { return nil }
+    guard n > 0, hessian.allSatisfy({ $0.count == n && $0.allSatisfy(\.isFinite) }) else {
+      return nil
+    }
     let negative = (0..<n).map { i in (0..<n).map { j in -0.5 * (hessian[i][j] + hessian[j][i]) } }
     let (values, vectors) = SSBFifthOrderGradientSearch.symmetricEigen(negative)
     guard let smallest = values.min(), smallest > 0 else { return nil }
@@ -166,11 +176,13 @@ extension SSBModelFit {
     let n = z.count
     let coordinates = SSBFifthOrderCoordinates(
       wavelengthAngstroms: model.wavelengthAngstroms, semiangleRadians: model.semiangleRadians)
-    let rows = [z] + (0..<n).map { i -> [Double] in
-      var p = z
-      p[i] += step
-      return p
-    }
+    let rows =
+      [z]
+      + (0..<n).map { i -> [Double] in
+        var p = z
+        p[i] += step
+        return p
+      }
     var g: [[Double]] = []
     progress(0, rows.count)
     for first in stride(from: 0, to: rows.count, by: 8) {

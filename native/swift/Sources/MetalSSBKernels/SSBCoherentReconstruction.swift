@@ -309,7 +309,8 @@ final class SSBCoherentReconstruction {
     if factor <= 4 && !referenceKernels {
       return try reconstructRedraw(point, factor: factor, visit: visit, isCancelled: isCancelled)
     }
-    precondition(factor == 8 || referenceKernels, "1x-4x reconstruction uses the redraw kernel only")
+    precondition(
+      factor == 8 || referenceKernels, "1x-4x reconstruction uses the redraw kernel only")
     let higher = point.hasHigherOrder
     let useSeparable = self.useSeparable && !higher
     lastKernel = MetalKernelIdentity(
@@ -403,11 +404,15 @@ final class SSBCoherentReconstruction {
     return try finishPhase(total: total, n: n, commands: pending ?? command(), mirror: plan.half)
   }
 
-  private func redrawPipeline(factor: Int, degree: Int, depth: Bool) throws -> MTLComputePipelineState {
+  private func redrawPipeline(factor: Int, degree: Int, depth: Bool) throws
+    -> MTLComputePipelineState
+  {
     let key = "\(factor)-\(degree)-\(depth)"
     if let pipeline = redrawPipelines[key] { return pipeline }
     let constants = MTLFunctionConstantValues()
-    var f = UInt32(factor), d = UInt32(degree), thick = depth
+    var f = UInt32(factor)
+    var d = UInt32(degree)
+    var thick = depth
     constants.setConstantValue(&f, type: .uint, index: 0)
     constants.setConstantValue(&d, type: .uint, index: 1)
     constants.setConstantValue(&thick, type: .bool, index: 2)
@@ -435,7 +440,9 @@ final class SSBCoherentReconstruction {
     lastKernel = MetalKernelIdentity(
       name: SSBKernelRegistry.redraw.name, version: SSBKernelRegistry.redraw.version,
       sourceSHA256: redrawSource,
-      variant: "factor=\(factor) degree=\(higher ? 6 : 2) depth=\(point.depthSpreadAngstroms != 0 ? "on" : "off")")
+      variant:
+        "factor=\(factor) degree=\(higher ? 6 : 2) depth=\(point.depthSpreadAngstroms != 0 ? "on" : "off")"
+    )
     let source = geometry.qxByRow.count
     let n = source * factor
     let total = try workspace("total", n * n * 8)

@@ -96,7 +96,9 @@ public enum SSBFifthOrderGradientSearch {
         bestPoint = point
       }
       trace.append(
-        .init(evaluation: objectives, agreement: best, elapsedSeconds: Date().timeIntervalSince(started)))
+        .init(
+          evaluation: objectives, agreement: best, elapsedSeconds: Date().timeIntervalSince(started)
+        ))
     }
     func track(_ points: [[Double]], _ request: Request) throws -> [(
       value: Double, gradient: [Double]
@@ -156,7 +158,8 @@ public enum SSBFifthOrderGradientSearch {
       p[i] += offsets[i]
       return p
     }
-    let columns = try track([center] + design, .valueAndGradient(bfStride: settings.hessianBFStride))
+    let columns = try track(
+      [center] + design, .valueAndGradient(bfStride: settings.hessianBFStride))
     var hessian = Array(repeating: Array(repeating: 0.0, count: n), count: n)
     for i in 0..<n {
       for j in 0..<n {
@@ -188,7 +191,9 @@ public enum SSBFifthOrderGradientSearch {
     var radius = settings.initialRadius
 
     /// One trust-region stage on one BF subsample from `center`, with its value and gradient there.
-    func stage(stride: Int, tolerance: Double, value startValue: Double, gradient startGradient: [Double])
+    func stage(
+      stride: Int, tolerance: Double, value startValue: Double, gradient startGradient: [Double]
+    )
       throws -> String
     {
       var value = startValue
@@ -207,7 +212,9 @@ public enum SSBFifthOrderGradientSearch {
         }
         let predicted = dot(gradient, d) + 0.5 * dot(d, times(hessian, d))
         if predicted < tolerance {
-          log?(String(format: "%3d stride %d predicted %+.3e: converged", iterations, stride, predicted))
+          log?(
+            String(
+              format: "%3d stride %d predicted %+.3e: converged", iterations, stride, predicted))
           return "converged"
         }
         let trial = try track([proposal], .value(bfStride: stride))[0]
@@ -518,7 +525,9 @@ extension SSBModelFit {
       try model.fifthOrderAgreements(
         rows.map(coordinates.point), packedCoefficients: rows.map(coordinates.pack))
     }
-    func exact(_ rows: [[Double]]) throws -> [(agreement: Double, agreement64: Double, gradient: [Double])] {
+    func exact(_ rows: [[Double]]) throws -> [(
+      agreement: Double, agreement64: Double, gradient: [Double]
+    )] {
       try model.fifthOrderAgreementsAndGradients(
         rows.map(coordinates.point), packedCoefficients: rows.map(coordinates.pack))
     }
@@ -577,7 +586,8 @@ extension SSBModelFit {
 extension SSBModelFit {
   /// Benchmark diagnostics: the fifth-order agreement at dimensionless coordinates `z` with the float32
   /// per-frequency powers summed in Double.
-  public static func fifthOrderAgreement64(model: MetalSSBJointModel, z: [Double]) throws -> Double {
+  public static func fifthOrderAgreement64(model: MetalSSBJointModel, z: [Double]) throws -> Double
+  {
     let coordinates = SSBFifthOrderCoordinates(
       wavelengthAngstroms: model.wavelengthAngstroms,
       semiangleRadians: model.semiangleRadians)
@@ -612,7 +622,8 @@ extension SSBModelFit {
       for j in 0..<28 {
         hessian[i][j] =
           0.5
-          * ((g[2 * j][i] - g[2 * j + 1][i]) / (2 * step) + (g[2 * i][j] - g[2 * i + 1][j]) / (2 * step))
+          * ((g[2 * j][i] - g[2 * j + 1][i]) / (2 * step) + (g[2 * i][j] - g[2 * i + 1][j])
+            / (2 * step))
       }
     }
     return hessian
@@ -647,7 +658,8 @@ extension SSBModelFit {
     typealias Values = [(agreement: Double, agreement64: Double, gradient: [Double])]
     var entries: [[String: Any]] = []
     func measure(
-      _ name: String, _ zs: [[Double]], prepare: ([SSBModelPoint], [[Float]]) throws -> Void = { _, _ in },
+      _ name: String, _ zs: [[Double]],
+      prepare: ([SSBModelPoint], [[Float]]) throws -> Void = { _, _ in },
       _ call: ([SSBModelPoint], [[Float]]) throws -> Values
     ) throws {
       let points = zs.map(coordinates.point)
@@ -672,15 +684,17 @@ extension SSBModelFit {
     }
     for stride in [1, coarseStride] {
       try measure("value stride \(stride)", [z]) {
-        try model.fifthOrderAgreementsAndGradients($0, packedCoefficients: $1, kStride: stride, gradients: false)
+        try model.fifthOrderAgreementsAndGradients(
+          $0, packedCoefficients: $1, kStride: stride, gradients: false)
       }
       try measure(
         "gradient stride \(stride)", [z],
         prepare: {
           _ = try model.fifthOrderAgreementsAndGradients(
             $0, packedCoefficients: $1, kStride: stride, gradients: false)
-        }
-      ) { try model.fifthOrderRetainedGradients($0, packedCoefficients: $1, kStride: stride) }
+        },
+        { try model.fifthOrderRetainedGradients($0, packedCoefficients: $1, kStride: stride) }
+      )
       try measure("value+gradient stride \(stride)", [z]) {
         try model.fifthOrderAgreementsAndGradients($0, packedCoefficients: $1, kStride: stride)
       }

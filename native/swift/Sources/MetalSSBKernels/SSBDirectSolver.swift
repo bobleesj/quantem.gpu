@@ -63,7 +63,10 @@ final class SSBDirectSolver {
     let positions: [Int32]
     /// The prior (1 + |q|^2 / q0^2)^2 per frequency and alias.
     let prior: [Double]
-    init(count: Int, size: Int, frequency: MTLBuffer, alias: MTLBuffer, positions: [Int32], prior: [Double]) {
+    init(
+      count: Int, size: Int, frequency: MTLBuffer, alias: MTLBuffer, positions: [Int32],
+      prior: [Double]
+    ) {
       self.count = count
       self.size = size
       self.frequency = frequency
@@ -81,7 +84,9 @@ final class SSBDirectSolver {
     let weights: MTLBuffer
     let scale: Double
     let dose: Double
-    init(key: LayoutKey, outputN: Int, groups: [Group], weights: MTLBuffer, scale: Double, dose: Double) {
+    init(
+      key: LayoutKey, outputN: Int, groups: [Group], weights: MTLBuffer, scale: Double, dose: Double
+    ) {
       self.key = key
       self.outputN = outputN
       self.groups = groups
@@ -102,7 +107,6 @@ final class SSBDirectSolver {
       self.sums = sums
     }
   }
-
 
   struct Grid {
     var frequencies, count, bfOffset, planeStride, gCols: UInt32
@@ -144,7 +148,9 @@ final class SSBDirectSolver {
     self.activeIndices = activeIndices
     n = geometry.qxByRow.count
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
-      guard let function = library.makeFunction(name: name) else { throw MetalSSBError.missingFunction(name) }
+      guard let function = library.makeFunction(name: name) else {
+        throw MetalSSBError.missingFunction(name)
+      }
       return try device.makeComputePipelineState(function: function)
     }
     pixelPipeline = try pipeline("direct_pixel_terms")
@@ -176,7 +182,11 @@ final class SSBDirectSolver {
 
   static func kernels(count: Int, complex: Bool) -> [Kernel] {
     if complex && count >= 2 {
-      return [Kernel(count: count, complex: true, range: 0..<parts(count: count, complex: true).outputs, tiled: true)]
+      return [
+        Kernel(
+          count: count, complex: true, range: 0..<parts(count: count, complex: true).outputs,
+          tiled: true)
+      ]
     }
     return parts(count: count, complex: complex).ranges.map {
       Kernel(count: count, complex: complex, range: $0, tiled: false)
@@ -192,8 +202,10 @@ final class SSBDirectSolver {
 
   private func makePipeline(_ kernel: Kernel) throws -> MTLComputePipelineState {
     let constants = MTLFunctionConstantValues()
-    var c = UInt32(kernel.count), x = kernel.complex
-    var first = UInt32(kernel.range.lowerBound), last = UInt32(kernel.range.upperBound)
+    var c = UInt32(kernel.count)
+    var x = kernel.complex
+    var first = UInt32(kernel.range.lowerBound)
+    var last = UInt32(kernel.range.upperBound)
     var tile = UInt32(Self.tile(count: kernel.count, complex: kernel.complex))
     var blocks = UInt32(Self.blocks(count: kernel.count))
     constants.setConstantValue(&c, type: .uint, index: 60)
@@ -209,7 +221,9 @@ final class SSBDirectSolver {
   /// A drag-window kernel (`direct_window_accumulate`, `_finalize`, `_evaluate`).
   func windowPipeline(_ name: String) throws -> MTLComputePipelineState {
     if let pipeline = windowPipelines[name] { return pipeline }
-    guard let function = library.makeFunction(name: name) else { throw MetalSSBError.missingFunction(name) }
+    guard let function = library.makeFunction(name: name) else {
+      throw MetalSSBError.missingFunction(name)
+    }
     let pipeline = try device.makeComputePipelineState(function: function)
     windowPipelines[name] = pipeline
     return pipeline
@@ -240,12 +254,17 @@ final class SSBDirectSolver {
   }
 
   /// Encode one alias group's normal equations for one batch of BF pixels (buffers and grid already bound).
-  private func encodeNormalEquations(_ compute: MTLComputeCommandEncoder, group: Group, complex: Bool) throws {
+  private func encodeNormalEquations(
+    _ compute: MTLComputeCommandEncoder, group: Group, complex: Bool
+  ) throws {
     for kernel in Self.kernels(count: group.count, complex: complex) {
-      guard let pipeline = pipelines[kernel] else { throw MetalSSBError.missingFunction(kernel.name) }
+      guard let pipeline = pipelines[kernel] else {
+        throw MetalSSBError.missingFunction(kernel.name)
+      }
       compute.setComputePipelineState(pipeline)
       if kernel.tiled {
-        let blocks = Self.blocks(count: group.count), tile = Self.tile(count: group.count, complex: complex)
+        let blocks = Self.blocks(count: group.count)
+        let tile = Self.tile(count: group.count, complex: complex)
         let columns = blocks * tile * group.count * 32 * (complex ? 2 : 1) * 8
         compute.setThreadgroupMemoryLength((columns + 15) / 16 * 16, index: 0)
         compute.setThreadgroupMemoryLength((blocks * tile * 32 * 8 + 15) / 16 * 16, index: 1)
@@ -273,7 +292,8 @@ final class SSBDirectSolver {
     let angular = Double(max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
     let cutoff = (2 * semiangle + angular) / wl
     let cutoff2 = Float(cutoff * cutoff)
-    let dqRow = geometry.qxByRow[1], dqColumn = geometry.qyByColumn[1]
+    let dqRow = geometry.qxByRow[1]
+    let dqColumn = geometry.qyByColumn[1]
     let half = n / 2 + 1
     let smoothness2 = Float(key.smoothness * key.smoothness)
     // Signed output frequency of every output row and column, as the CUDA layout: int -> float32, times the step.
@@ -301,10 +321,13 @@ final class SSBDirectSolver {
       }
     }
     var byCount: [Int: [Int]] = [:]
-    for (index, entry) in kept.enumerated() { byCount[entry.pattern.nonzeroBitCount, default: []].append(index) }
+    for (index, entry) in kept.enumerated() {
+      byCount[entry.pattern.nonzeroBitCount, default: []].append(index)
+    }
     guard let largest = byCount.keys.max(), largest <= Self.maximumAliases else {
       throw MetalSSBError.invalidGeometry(
-        "Direct inversion supports up to \(Self.maximumAliases) aliases per scan frequency; choose a lower sampling.")
+        "Direct inversion supports up to \(Self.maximumAliases) aliases per scan frequency; choose a lower sampling."
+      )
     }
     var groups: [Group] = []
     for count in byCount.keys.sorted() {
@@ -323,7 +346,8 @@ final class SSBDirectSolver {
         let (r, c, pattern) = kept[index]
         frequency.append(SIMD2(UInt32(r), UInt32(c)))
         for alias in 0..<(factor * factor) where pattern & (1 << alias) != 0 {
-          let outputRow = r + (alias / factor) * n, outputColumn = c + (alias % factor) * n
+          let outputRow = r + (alias / factor) * n
+          let outputColumn = c + (alias % factor) * n
           let value = SIMD2(qRow[outputRow], qColumn[outputColumn])
           q.append(value)
           positions.append(Int32(outputRow * outputN + outputColumn))
@@ -353,11 +377,14 @@ final class SSBDirectSolver {
     }
     let scale = zip(logicalWeights, aperture2).reduce(0.0) { $0 + Double($1.0 * ($1.1 * $1.1)) }
     let weights = try Self.buffer(device, activeIndices.map { logicalWeights[$0] })
-    return Layout(key: key, outputN: outputN, groups: groups, weights: weights, scale: scale, dose: dose)
+    return Layout(
+      key: key, outputN: outputN, groups: groups, weights: weights, scale: scale, dose: dose)
   }
 
   /// 1 / max(mean count, 5 % of the median mean), normalized to mean 1 over the BF pixels (Python `inverse_mean`).
-  private func inverseMeanWeights(visit: MetalSSBJointModel.VisitSpectra, isCancelled: () -> Bool) throws -> [Float] {
+  private func inverseMeanWeights(visit: MetalSSBJointModel.VisitSpectra, isCancelled: () -> Bool)
+    throws -> [Float]
+  {
     let logical = geometry.logicalBrightfieldCount
     guard activeIndices.count == logical else {
       throw MetalSSBError.invalidGeometry(
@@ -370,7 +397,8 @@ final class SSBDirectSolver {
       try visit(Self.batch) { [self] source, offset, half, bfOffset, count in
         if cancelled() { throw CancellationError() }
         let commands = try pending ?? command()
-        var p = SIMD3<UInt32>(UInt32(count), UInt32(half ? n * (n / 2 + 1) : n * n), UInt32(bfOffset))
+        var p = SIMD3<UInt32>(
+          UInt32(count), UInt32(half ? n * (n / 2 + 1) : n * n), UInt32(bfOffset))
         let encoder = try self.encoder(commands, dcPipeline)
         encoder.setBuffer(source, offset: offset, index: 0)
         encoder.setBuffer(dc, offset: 0, index: 1)
@@ -385,7 +413,8 @@ final class SSBDirectSolver {
       }
     }
     if let pending { try finish(pending) }
-    let values = UnsafeBufferPointer(start: dc.contents().assumingMemoryBound(to: Float.self), count: logical)
+    let values = UnsafeBufferPointer(
+      start: dc.contents().assumingMemoryBound(to: Float.self), count: logical)
     let positions = Float(n * n)
     let mean = values.map { max($0 / positions, 0) }
     let sorted = mean.sorted()
@@ -402,7 +431,8 @@ final class SSBDirectSolver {
   // MARK: - Prepared normal equations
 
   func prepare(
-    _ key: PreparedKey, complex: Bool, layout: Layout, k: MTLBuffer, visit: MetalSSBJointModel.VisitSpectra,
+    _ key: PreparedKey, complex: Bool, layout: Layout, k: MTLBuffer,
+    visit: MetalSSBJointModel.VisitSpectra,
     isCancelled: () -> Bool
   ) throws -> (Prepared, Double) {
     try warmPipelines(layout, complex: complex)
@@ -419,7 +449,8 @@ final class SSBDirectSolver {
       angularColumn: geometry.angularSamplingXRadians,
       factor: geometry.phaseFactor ?? Float(Double.pi / Double(wl)),
       depth: Float(point.depthSpreadAngstroms), tiltRow: Float(point.sampleTiltMrad[0] * 1e-3),
-      tiltColumn: Float(point.sampleTiltMrad[1] * 1e-3), outer2: Float(radius * radius * (1 + 1e-4)))
+      tiltColumn: Float(point.sampleTiltMrad[1] * 1e-3), outer2: Float(radius * radius * (1 + 1e-4))
+    )
     let pixel = try Self.allocate(device, activeIndices.count * 32)
     var sums: [MTLBuffer] = []
     let first = try command()
@@ -449,7 +480,9 @@ final class SSBDirectSolver {
         p.bfOffset = UInt32(bfOffset)
         p.planeStride = UInt32(half ? n * (n / 2 + 1) : n * n)
         p.gCols = UInt32(half ? n / 2 + 1 : n)
-        guard let compute = commands.makeComputeCommandEncoder() else { throw MetalSSBError.commandQueue }
+        guard let compute = commands.makeComputeCommandEncoder() else {
+          throw MetalSSBError.commandQueue
+        }
         compute.setBuffer(source, offset: offset, index: 0)
         compute.setBuffer(pixel, offset: 0, index: 3)
         compute.setBuffer(coefficients, offset: 0, index: 4)
@@ -515,7 +548,9 @@ final class SSBDirectSolver {
   }
 
   /// The layout of these settings, made again (and every prepared system and drag window dropped) when they change.
-  func currentLayout(_ key: LayoutKey, visit: MetalSSBJointModel.VisitSpectra, isCancelled: () -> Bool) throws
+  func currentLayout(
+    _ key: LayoutKey, visit: MetalSSBJointModel.VisitSpectra, isCancelled: () -> Bool
+  ) throws
     -> Layout
   {
     if let layout, layout.key == key { return layout }
@@ -571,9 +606,12 @@ final class SSBDirectSolver {
       let chunk = 256
       let chunks = (group.size + chunk - 1) / chunk
       DispatchQueue.concurrentPerform(iterations: chunks) { part in
-        withUnsafeTemporaryAllocation(of: Double.self, capacity: 4 * dim * dim + 4 * dim) { scratch in
-          let lr = scratch.baseAddress!, li = lr + dim * dim
-          let yr = li + dim * dim, yi = yr + dim
+        withUnsafeTemporaryAllocation(of: Double.self, capacity: 4 * dim * dim + 4 * dim) {
+          scratch in
+          let lr = scratch.baseAddress!
+          let li = lr + dim * dim
+          let yr = li + dim * dim
+          let yi = yr + dim
           for f in (part * chunk)..<min((part + 1) * chunk, group.size) {
             let base = f * stored
             // Lower triangle of A = Gram + diag(penalty): A[i][j] = conj(M[j][i]) for i > j.
@@ -594,7 +632,9 @@ final class SSBDirectSolver {
             var ok = true
             for j in 0..<dim {
               var d = lr[j * dim + j]
-              for k in 0..<j { d -= lr[j * dim + k] * lr[j * dim + k] + li[j * dim + k] * li[j * dim + k] }
+              for k in 0..<j {
+                d -= lr[j * dim + k] * lr[j * dim + k] + li[j * dim + k] * li[j * dim + k]
+              }
               guard d > 0, d.isFinite else {
                 ok = false
                 break
@@ -602,10 +642,14 @@ final class SSBDirectSolver {
               d = d.squareRoot()
               lr[j * dim + j] = d
               for i in (j + 1)..<dim {
-                var sr = lr[i * dim + j], si = li[i * dim + j]
+                var sr = lr[i * dim + j]
+                var si = li[i * dim + j]
                 for k in 0..<j {
                   // L[i][k] conj(L[j][k])
-                  let ar = lr[i * dim + k], ai = li[i * dim + k], br = lr[j * dim + k], bi = -li[j * dim + k]
+                  let ar = lr[i * dim + k]
+                  let ai = li[i * dim + k]
+                  let br = lr[j * dim + k]
+                  let bi = -li[j * dim + k]
                   sr -= ar * br - ai * bi
                   si -= ar * bi + ai * br
                 }
@@ -618,9 +662,11 @@ final class SSBDirectSolver {
               continue
             }
             for i in 0..<dim {
-              var sr = yr[i], si = yi[i]
+              var sr = yr[i]
+              var si = yi[i]
               for k in 0..<i {
-                let ar = lr[i * dim + k], ai = li[i * dim + k]
+                let ar = lr[i * dim + k]
+                let ai = li[i * dim + k]
                 sr -= ar * yr[k] - ai * yi[k]
                 si -= ar * yi[k] + ai * yr[k]
               }
@@ -628,10 +674,12 @@ final class SSBDirectSolver {
               yi[i] = si / lr[i * dim + i]
             }
             for i in stride(from: dim - 1, through: 0, by: -1) {
-              var sr = yr[i], si = yi[i]
+              var sr = yr[i]
+              var si = yi[i]
               for k in (i + 1)..<dim {
                 // conj(L[k][i]) x[k]
-                let ar = lr[k * dim + i], ai = -li[k * dim + i]
+                let ar = lr[k * dim + i]
+                let ai = -li[k * dim + i]
                 sr -= ar * yr[k] - ai * yi[k]
                 si -= ar * yi[k] + ai * yr[k]
               }
@@ -641,7 +689,8 @@ final class SSBDirectSolver {
             // Coefficients round to complex64, then scale by factor^2, as the CUDA scatter.
             for a in 0..<count {
               let p = Int(group.positions[f * count + a])
-              let row = p / outputN, column = p % outputN
+              let row = p / outputN
+              let column = p % outputN
               let mirror = ((outputN - row) % outputN) * outputN + (outputN - column) % outputN
               let phi = SIMD2<Float>(Float(yr[dim - count + a]), Float(yi[dim - count + a])) * gain
               let eta = complex ? SIMD2<Float>(Float(yr[a]), Float(yi[a])) * gain : .zero
@@ -670,7 +719,9 @@ final class SSBDirectSolver {
   }
 
   /// Inverse FFT of the packed spectrum, then the phase and (complex) amplitude of exp(eta + i phi).
-  func wave(spectrum: MTLBuffer, n: Int, amplitude: Bool) throws -> (phase: MTLBuffer, amplitude: MTLBuffer?) {
+  func wave(spectrum: MTLBuffer, n: Int, amplitude: Bool) throws -> (
+    phase: MTLBuffer, amplitude: MTLBuffer?
+  ) {
     let field = try Self.allocate(device, n * n * 8)
     let shape: [NSNumber] = [NSNumber(value: n), NSNumber(value: n)]
     if fft[n] == nil {
@@ -680,7 +731,8 @@ final class SSBDirectSolver {
       let descriptor = MPSGraphFFTDescriptor()
       descriptor.inverse = true
       descriptor.scalingMode = .size
-      let output = graph.fastFourierTransform(input, axes: [0, 1], descriptor: descriptor, name: "ifft2")
+      let output = graph.fastFourierTransform(
+        input, axes: [0, 1], descriptor: descriptor, name: "ifft2")
       fft[n] = (graph, input, output)
     }
     let (graph, input, output) = fft[n]!
@@ -692,7 +744,9 @@ final class SSBDirectSolver {
       to: scheduled,
       feeds: [input: MPSGraphTensorData(spectrum, shape: shape, dataType: .complexFloat32)],
       targetOperations: nil,
-      resultsDictionary: [output: MPSGraphTensorData(field, shape: shape, dataType: .complexFloat32)],
+      resultsDictionary: [
+        output: MPSGraphTensorData(field, shape: shape, dataType: .complexFloat32)
+      ],
       executionDescriptor: execution)
     let phase = try Self.allocate(device, n * n * 4, shared: true)
     let magnitude = amplitude ? try Self.allocate(device, n * n * 4, shared: true) : nil
@@ -720,21 +774,27 @@ final class SSBDirectSolver {
   func encoder(_ command: MTLCommandBuffer, _ pipeline: MTLComputePipelineState) throws
     -> MTLComputeCommandEncoder
   {
-    guard let encoder = command.makeComputeCommandEncoder() else { throw MetalSSBError.commandQueue }
+    guard let encoder = command.makeComputeCommandEncoder() else {
+      throw MetalSSBError.commandQueue
+    }
     encoder.setComputePipelineState(pipeline)
     return encoder
   }
   func dispatch(_ encoder: MTLComputeCommandEncoder, width: Int) {
     encoder.dispatchThreads(
-      MTLSize(width: width, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+      MTLSize(width: width, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
     encoder.endEncoding()
   }
   func finish(_ command: MTLCommandBuffer) throws {
     command.commit()
     command.waitUntilCompleted()
-    if let error = command.error { throw MetalSSBError.commandExecution(error.localizedDescription) }
+    if let error = command.error {
+      throw MetalSSBError.commandExecution(error.localizedDescription)
+    }
   }
-  static func allocate(_ device: MTLDevice, _ length: Int, shared: Bool = false) throws -> MTLBuffer {
+  static func allocate(_ device: MTLDevice, _ length: Int, shared: Bool = false) throws -> MTLBuffer
+  {
     guard
       let buffer = device.makeBuffer(
         length: max(4, length), options: shared ? .storageModeShared : .storageModePrivate)
@@ -748,7 +808,8 @@ final class SSBDirectSolver {
     if values.isEmpty { return try allocate(device, 4, shared: true) }
     guard
       let result = values.withUnsafeBytes({ bytes in
-        device.makeBuffer(bytes: bytes.baseAddress!, length: max(4, bytes.count), options: .storageModeShared)
+        device.makeBuffer(
+          bytes: bytes.baseAddress!, length: max(4, bytes.count), options: .storageModeShared)
       })
     else { throw MetalSSBError.allocation("direct reconstruction layout") }
     return result

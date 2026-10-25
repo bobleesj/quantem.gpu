@@ -31,11 +31,16 @@ final class SSBDirectDragWindowTests: XCTestCase {
   }
 
   /// (phase rms / exact std, phase max |difference|, amplitude rms / mean or 0).
-  private func agreement(_ preview: MetalSSBJointPhase, _ exact: MetalSSBJointPhase) -> (Double, Double, Double) {
+  private func agreement(_ preview: MetalSSBJointPhase, _ exact: MetalSSBJointPhase) -> (
+    Double, Double, Double
+  ) {
     let count = exact.rows * exact.columns
-    let a = values(preview.phase, count), b = values(exact.phase, count)
+    let a = values(preview.phase, count)
+    let b = values(exact.phase, count)
     let mean = b.reduce(0, +) / Double(count)
-    var squared = 0.0, maximum = 0.0, power = 0.0
+    var squared = 0.0
+    var maximum = 0.0
+    var power = 0.0
     for i in 0..<count {
       var d = a[i] - b[i]
       d -= 2 * .pi * (d / (2 * .pi)).rounded()
@@ -45,15 +50,19 @@ final class SSBDirectDragWindowTests: XCTestCase {
     }
     var amplitude = 0.0
     if let x = preview.amplitude, let y = exact.amplitude {
-      let p = values(x, count), q = values(y, count)
+      let p = values(x, count)
+      let q = values(y, count)
       let average = q.reduce(0, +) / Double(count)
-      amplitude = (zip(p, q).map { ($0 - $1) * ($0 - $1) }.reduce(0, +) / Double(count)).squareRoot() / average
+      amplitude =
+        (zip(p, q).map { ($0 - $1) * ($0 - $1) }.reduce(0, +) / Double(count)).squareRoot()
+        / average
     }
     return ((squared / power).squareRoot(), maximum, amplitude)
   }
 
   private static let thick = SSBModelPoint(
-    c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4, sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140,
+    c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4, sampleTiltMrad: [2.5, -4],
+    depthSpreadAngstroms: 140,
     higherOrder: [
       .init(order: 2, symmetry: 1, magnitudeAngstroms: 900, angleRadians: 0.3),
       .init(order: 3, symmetry: 0, magnitudeAngstroms: -4e4),
@@ -65,21 +74,25 @@ final class SSBDirectDragWindowTests: XCTestCase {
     let model = try model(s, device: device)
     let point = Self.thick
     let controls: [(SSBDragControl, SSBReconstructionMethod, Int)] = [
-      (.c10, .complex, 2), (.c12, .phase, 2), (.phi12, .complex, 1), (.magnitude(order: 2, symmetry: 1), .phase, 2),
+      (.c10, .complex, 2), (.c12, .phase, 2), (.phi12, .complex, 1),
+      (.magnitude(order: 2, symmetry: 1), .phase, 2),
       (.angle(order: 2, symmetry: 1), .complex, 2), (.tiltRow, .complex, 2), (.depth, .phase, 2),
     ]
     for (control, method, factor) in controls {
       let state = try model.buildDragWindow(
         along: control, at: point, upsamplingFactor: factor, method: method, nodes: 1000)
       XCTAssertTrue(state.ready, "\(control)")
-      XCTAssertEqual(state.total, [.phi12, .angle(order: 2, symmetry: 1)].contains(control) ? 50 : 29, "\(control)")
+      XCTAssertEqual(
+        state.total, [.phi12, .angle(order: 2, symmetry: 1)].contains(control) ? 50 : 29,
+        "\(control)")
       XCTAssertTrue(state.range.contains(control.value(of: point)))
       let half = (state.range.upperBound - state.range.lowerBound) / 2
       XCTAssertTrue(half.isFinite && half > 0)
       for fraction in [-0.83, 0.0, 0.31, 0.97] {
         let moved = control.setting(control.value(of: point) + fraction * half, in: point)
         let preview = try XCTUnwrap(
-          try model.dragPreview(moved, along: control, upsamplingFactor: factor, method: method), "\(control)")
+          try model.dragPreview(moved, along: control, upsamplingFactor: factor, method: method),
+          "\(control)")
         let exact = try model.reconstruct(moved, upsamplingFactor: factor, method: method)
         XCTAssertNil(exact.preview)
         XCTAssertEqual(preview.preview?.control, control)
@@ -89,7 +102,9 @@ final class SSBDirectDragWindowTests: XCTestCase {
         XCTAssertEqual(preview.amplitude == nil, method == .phase)
         XCTAssertTrue(preview.kernel?.variant.contains("drag-window") == true)
         let (rms, maximum, amplitude) = agreement(preview, exact)
-        print("DRAG \(control) \(method.rawValue) \(factor)x at \(fraction): rms/std \(rms) max \(maximum) amp \(amplitude)")
+        print(
+          "DRAG \(control) \(method.rawValue) \(factor)x at \(fraction): rms/std \(rms) max \(maximum) amp \(amplitude)"
+        )
         XCTAssertLessThan(rms, 3e-6, "\(control) at \(fraction)")
         XCTAssertLessThan(maximum, 1e-7, "\(control) at \(fraction)")
         XCTAssertLessThan(amplitude, 2e-7, "\(control) at \(fraction)")
@@ -103,25 +118,34 @@ final class SSBDirectDragWindowTests: XCTestCase {
     let s = try SSBModelReconstructionTests.scene()
     let model = try model(s, device: device)
     let point = Self.thick
-    func preview(_ p: SSBModelPoint, _ method: SSBReconstructionMethod = .complex,
-      _ regularization: SSBDirectRegularization = .init()) throws -> MetalSSBJointPhase? {
-      try model.dragPreview(p, along: .c10, upsamplingFactor: 2, method: method, regularization: regularization)
+    func preview(
+      _ p: SSBModelPoint, _ method: SSBReconstructionMethod = .complex,
+      _ regularization: SSBDirectRegularization = .init()
+    ) throws -> MetalSSBJointPhase? {
+      try model.dragPreview(
+        p, along: .c10, upsamplingFactor: 2, method: method, regularization: regularization)
     }
     XCTAssertNil(try preview(point))
-    XCTAssertNil(model.dragWindowState(along: .c10, at: point, upsamplingFactor: 2, method: .complex))
+    XCTAssertNil(
+      model.dragWindowState(along: .c10, at: point, upsamplingFactor: 2, method: .complex))
     // One node at a time; no preview before the last.
-    var state = try model.buildDragWindow(along: .c10, at: point, upsamplingFactor: 2, method: .complex, nodes: 3)
+    var state = try model.buildDragWindow(
+      along: .c10, at: point, upsamplingFactor: 2, method: .complex, nodes: 3)
     XCTAssertEqual(state.built, 3)
     XCTAssertFalse(state.ready)
     XCTAssertNil(try preview(point))
-    state = try model.buildDragWindow(along: .c10, at: point, upsamplingFactor: 2, method: .complex, nodes: 1000)
+    state = try model.buildDragWindow(
+      along: .c10, at: point, upsamplingFactor: 2, method: .complex, nodes: 1000)
     XCTAssertTrue(state.ready)
-    XCTAssertEqual(model.dragWindowState(along: .c10, at: point, upsamplingFactor: 2, method: .complex), state)
+    XCTAssertEqual(
+      model.dragWindowState(along: .c10, at: point, upsamplingFactor: 2, method: .complex), state)
     XCTAssertNotNil(try preview(point))
     // A complex window serves phase, with any damping, as the exact solve would.
     let damping = SSBDirectRegularization(phaseDamping: 0.2, amplitudeDamping: 0.05)
     let phase = try XCTUnwrap(try preview(point, .phase, damping))
-    let (rms, _, _) = agreement(phase, try model.reconstruct(point, upsamplingFactor: 2, method: .phase, regularization: damping))
+    let (rms, _, _) = agreement(
+      phase,
+      try model.reconstruct(point, upsamplingFactor: 2, method: .phase, regularization: damping))
     XCTAssertLessThan(rms, 3e-6)
     // Outside the window: none.
     var outside = point
@@ -131,22 +155,29 @@ final class SSBDirectDragWindowTests: XCTestCase {
     var held = point
     held.c12Angstroms += 1
     XCTAssertNil(try preview(held))
-    XCTAssertNil(model.dragWindowState(along: .c10, at: point, upsamplingFactor: 2, method: .complex))
+    XCTAssertNil(
+      model.dragWindowState(along: .c10, at: point, upsamplingFactor: 2, method: .complex))
     // A phase window does not serve complex; a new prior or rotation drops it.
-    _ = try model.buildDragWindow(along: .c10, at: point, upsamplingFactor: 2, method: .phase, nodes: 1000)
+    _ = try model.buildDragWindow(
+      along: .c10, at: point, upsamplingFactor: 2, method: .phase, nodes: 1000)
     XCTAssertNotNil(try preview(point, .phase))
     XCTAssertNil(try preview(point, .complex))
     XCTAssertNil(try preview(point, .phase, .init(smoothnessInverseAngstroms: 0.5)))
-    _ = try model.reconstruct(point, upsamplingFactor: 2, method: .phase, regularization: .init(smoothnessInverseAngstroms: 0.5))
+    _ = try model.reconstruct(
+      point, upsamplingFactor: 2, method: .phase,
+      regularization: .init(smoothnessInverseAngstroms: 0.5))
     XCTAssertNil(try preview(point, .phase))
-    _ = try model.buildDragWindow(along: .c10, at: point, upsamplingFactor: 2, method: .phase, nodes: 1000)
+    _ = try model.buildDragWindow(
+      along: .c10, at: point, upsamplingFactor: 2, method: .phase, nodes: 1000)
     try model.retarget(scanDetectorRotationDegrees: 18)
     XCTAssertNil(try preview(point, .phase))
     // SSB has its own redraw: no window.
     XCTAssertNil(try model.dragPreview(point, along: .c10, upsamplingFactor: 2, method: .ssb))
-    XCTAssertThrowsError(try model.buildDragWindow(along: .c10, at: point, upsamplingFactor: 2, method: .ssb))
     XCTAssertThrowsError(
-      try model.buildDragWindow(along: .c10, at: point, upsamplingFactor: 2, method: .phase, isCancelled: { true })
+      try model.buildDragWindow(along: .c10, at: point, upsamplingFactor: 2, method: .ssb))
+    XCTAssertThrowsError(
+      try model.buildDragWindow(
+        along: .c10, at: point, upsamplingFactor: 2, method: .phase, isCancelled: { true })
     ) { XCTAssertTrue($0 is CancellationError) }
   }
 
@@ -157,13 +188,16 @@ final class SSBDirectDragWindowTests: XCTestCase {
     // phi12 at C12 = 0 and the tilt without a depth spread do not change the model.
     let flat = SSBModelPoint(c10Angstroms: 61, c12Angstroms: 0, phi12Radians: 0.7)
     for control in [SSBDragControl.phi12, .tiltColumn] {
-      let state = try model.buildDragWindow(along: control, at: flat, upsamplingFactor: 2, method: .phase, nodes: 5)
+      let state = try model.buildDragWindow(
+        along: control, at: flat, upsamplingFactor: 2, method: .phase, nodes: 5)
       XCTAssertEqual(state.total, 1)
       XCTAssertTrue(state.ready)
       let moved = control.setting(control.value(of: flat) + 0.4, in: flat)
-      let preview = try XCTUnwrap(try model.dragPreview(moved, along: control, upsamplingFactor: 2, method: .phase))
+      let preview = try XCTUnwrap(
+        try model.dragPreview(moved, along: control, upsamplingFactor: 2, method: .phase))
       XCTAssertEqual(preview.preview?.halfWidth, .infinity)
-      let (rms, _, _) = agreement(preview, try model.reconstruct(moved, upsamplingFactor: 2, method: .phase))
+      let (rms, _, _) = agreement(
+        preview, try model.reconstruct(moved, upsamplingFactor: 2, method: .phase))
       XCTAssertLessThan(rms, 3e-6)
     }
   }
@@ -181,11 +215,14 @@ final class SSBDirectDragWindowTests: XCTestCase {
       XCTAssertEqual(control.value(of: moved), value + 0.5, "\(control)")
       // every other parameter is unchanged
       let back = control.setting(value, in: moved)
-      XCTAssertEqual(back.reconstructionCoefficients, point.reconstructionCoefficients, "\(control)")
+      XCTAssertEqual(
+        back.reconstructionCoefficients, point.reconstructionCoefficients, "\(control)")
       XCTAssertEqual(back.sampleTiltMrad, point.sampleTiltMrad, "\(control)")
       XCTAssertEqual(back.depthSpreadAngstroms, point.depthSpreadAngstroms, "\(control)")
     }
-    let preview = SSBDragPreview(control: .angle(order: 3, symmetry: 2), center: 1, halfWidth: 2, order: 49)
-    XCTAssertEqual(try JSONDecoder().decode(SSBDragPreview.self, from: JSONEncoder().encode(preview)), preview)
+    let preview = SSBDragPreview(
+      control: .angle(order: 3, symmetry: 2), center: 1, halfWidth: 2, order: 49)
+    XCTAssertEqual(
+      try JSONDecoder().decode(SSBDragPreview.self, from: JSONEncoder().encode(preview)), preview)
   }
 }

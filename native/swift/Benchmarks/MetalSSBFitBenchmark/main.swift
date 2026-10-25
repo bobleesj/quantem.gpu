@@ -132,7 +132,8 @@ struct Options {
       case "--coarse-tolerance": gradientSettings.coarseTolerance = Double(try value(flag)) ?? 1e-7
       case "--fine-radius": gradientSettings.fineRadius = Double(try value(flag)) ?? 0.1
       case "--update":
-        gradientSettings.update = SSBFifthOrderGradientSearch.Update(rawValue: try value(flag)) ?? .bfgs
+        gradientSettings.update =
+          SSBFifthOrderGradientSearch.Update(rawValue: try value(flag)) ?? .bfgs
       case "--verbose": verbose = true
       case "--curvature": curvature = true
       case "--score": score = URL(fileURLWithPath: try value(flag))
@@ -251,7 +252,9 @@ func readColumns(
   columns.reserveCapacity(pixels.count)
   for first in stride(from: 0, to: pixels.count, by: 32) {
     let batch = Array(pixels[first..<min(first + 32, pixels.count)])
-    guard let commands = queue.makeCommandBuffer() else { throw failure("Metal command unavailable") }
+    guard let commands = queue.makeCommandBuffer() else {
+      throw failure("Metal command unavailable")
+    }
     try resident.encodeDetectorColumns(pixels: batch, into: staging, commands: commands)
     commands.commit()
     commands.waitUntilCompleted()
@@ -277,7 +280,9 @@ func export(options: Options, device: MTLDevice) throws {
     options.index ?? options.cache.appendingPathComponent("index", isDirectory: true)
   try FileManager.default.createDirectory(at: index, withIntermediateDirectories: true)
   let catalog = try Native4DSTEMCatalogBuilder(cacheDirectory: index).prepare(input: input)
-  guard let dataset = catalog.datasets.first else { throw failure("No acquisition in \(input.path)") }
+  guard let dataset = catalog.datasets.first else {
+    throw failure("No acquisition in \(input.path)")
+  }
   let indexed = try Native4DSTEMIndexedSource.open(dataset: dataset)
   let resident = try MetalCompactH5Loader.load(source: indexed, device: device)
   defer { resident.releaseResidentStorage() }
@@ -285,11 +290,14 @@ func export(options: Options, device: MTLDevice) throws {
   let plane = metadata.scanCount
   let rows = metadata.detectorRows
   let columns = metadata.detectorColumns
-  log("loaded \(metadata.scanRows)x\(metadata.scanColumns) scan, \(rows)x\(columns) detector in \(String(format: "%.1f", Date().timeIntervalSince(started))) s")
+  log(
+    "loaded \(metadata.scanRows)x\(metadata.scanColumns) scan, \(rows)x\(columns) detector in \(String(format: "%.1f", Date().timeIntervalSince(started))) s"
+  )
   let raw = try resident.meanDiffractionPattern().detectorSum
   // Camera-flagged pixels hold the dtype's maximum in every frame.
   let markers: [UInt64] = [255, 65535, 4_294_967_295]
-  let validity = raw.map { total in markers.contains { $0 * UInt64(plane) == total } ? UInt8(0) : 1 }
+  let validity = raw.map { total in markers.contains { $0 * UInt64(plane) == total } ? UInt8(0) : 1
+  }
   let flagged = FlaggedPixels(validity: validity, rows: rows, columns: columns)
   let neighborPixels = Array(Set(flagged.neighbors.flatMap { $0 })).sorted()
   let neighborColumns = Dictionary(
@@ -311,7 +319,8 @@ func export(options: Options, device: MTLDevice) throws {
   let excluded = Set(metadata.excludedDetectorPixels)
   let disk = try MetalSSBBrightfieldEstimate.measure(
     device: device, detectorSum: detectorSum, rows: rows, columns: columns, excluded: excluded)
-  let sampling = try options.detectorSampling ?? disk.detectorSampling(semiangle: options.semiangleMrad)
+  let sampling =
+    try options.detectorSampling ?? disk.detectorSampling(semiangle: options.semiangleMrad)
   let calibration = MetalSSBCalibration(
     voltageKV: options.voltageKV, semiangleMrad: options.semiangleMrad,
     scanSamplingRowAngstroms: options.scanStep, scanSamplingColumnAngstroms: options.scanStep,
@@ -320,7 +329,8 @@ func export(options: Options, device: MTLDevice) throws {
     brightfieldCenterColumnPixels: options.center?.1 ?? disk.centerColumn,
     brightfieldRadiusPixels: options.radius ?? disk.selectionRadius)
   let setup = try calibration.geometry(
-    detectorRows: rows, detectorColumns: columns, detectorSum: detectorSum, excludedPixels: excluded,
+    detectorRows: rows, detectorColumns: columns, detectorSum: detectorSum,
+    excludedPixels: excluded,
     scanRows: metadata.scanRows, scanColumns: metadata.scanColumns)
   // Rotation from exact moments without the markers, with each flagged pixel's filled column
   // (Live4DSTEM `SSBMeasuredEvidence.rotation`).
@@ -373,7 +383,8 @@ func export(options: Options, device: MTLDevice) throws {
   for (pixel, column) in zip(setup.pixels, selected) { wide += filledByPixel[pixel] ?? column }
   let maximum = wide.max() ?? 0
   try FileManager.default.createDirectory(at: options.cache, withIntermediateDirectories: true)
-  let countType: MetalSSBCountType = maximum <= 255 ? .uint8 : (maximum <= 65535 ? .uint16 : .uint32)
+  let countType: MetalSSBCountType =
+    maximum <= 255 ? .uint8 : (maximum <= 65535 ? .uint16 : .uint32)
   let countsURL = options.cache.appendingPathComponent("counts.bin")
   switch countType {
   case .uint8: try Data(wide.map { UInt8($0) }.withUnsafeBytes { Data($0) }).write(to: countsURL)
@@ -402,11 +413,15 @@ func export(options: Options, device: MTLDevice) throws {
 /// The app's branch-test dark field (`SSBMeasuredEvidence.darkFieldMask`): exact counts of the valid detector
 /// pixels at or beyond 1.1 BF radii from the calibrated centre, per scan position, as float32.
 func exportDarkField(options: Options, record: CaseRecord, to url: URL, device: MTLDevice) throws {
-  guard let input = options.input else { throw failure("--export-dark-field needs --input MASTER.h5") }
+  guard let input = options.input else {
+    throw failure("--export-dark-field needs --input MASTER.h5")
+  }
   let started = Date()
   let index = options.index ?? options.cache.appendingPathComponent("index", isDirectory: true)
   let catalog = try Native4DSTEMCatalogBuilder(cacheDirectory: index).prepare(input: input)
-  guard let dataset = catalog.datasets.first else { throw failure("No acquisition in \(input.path)") }
+  guard let dataset = catalog.datasets.first else {
+    throw failure("No acquisition in \(input.path)")
+  }
   let resident = try MetalCompactH5Loader.load(
     source: try Native4DSTEMIndexedSource.open(dataset: dataset), device: device)
   defer { resident.releaseResidentStorage() }
@@ -422,7 +437,8 @@ func exportDarkField(options: Options, record: CaseRecord, to url: URL, device: 
   let excluded = Set(record.excludedPixels)
   let mask = (0..<(record.detectorRows * record.detectorColumns)).map { pixel -> UInt8 in
     let dr = Float(pixel / record.detectorColumns) - Float(calibration.brightfieldCenterRowPixels)
-    let dc = Float(pixel % record.detectorColumns) - Float(calibration.brightfieldCenterColumnPixels)
+    let dc =
+      Float(pixel % record.detectorColumns) - Float(calibration.brightfieldCenterColumnPixels)
     return (dr * dr + dc * dc).squareRoot() >= inner && !excluded.contains(pixel) ? 1 : 0
   }
   try resident.updateVirtualDetector(mask: mask)
@@ -478,12 +494,13 @@ func record(_ fit: SSBFit) -> [String: Any] {
     values["higher_order_normalization"] = normalization
   }
   if let refinement = fit.higherOrderRefinement {
-    values["refinement"] = [
-      "evaluations": refinement.evaluations, "executed_objectives": refinement.executedObjectives,
-      "iterations": refinement.iterations, "stop": refinement.stop,
-      "normalized_agreement": refinement.agreement,
-      "coordinates": refinement.coordinates,
-    ] as [String: Any]
+    values["refinement"] =
+      [
+        "evaluations": refinement.evaluations, "executed_objectives": refinement.executedObjectives,
+        "iterations": refinement.iterations, "stop": refinement.stop,
+        "normalized_agreement": refinement.agreement,
+        "coordinates": refinement.coordinates,
+      ] as [String: Any]
     values["higher_order_limit"] = fit.options.higherOrderLimit
   }
   if let check = fit.higherOrderGuard,
@@ -552,25 +569,29 @@ func verifyBranches(
     // The source point's agreement at its own rotation, against its image here.
     try model.retarget(scanDetectorRotationDegrees: fitted.fits[source].scanDetectorRotationDegrees)
     let sourceAgreement = try model.agreements([fitted.fits[source].point])[0]
-    report["branch_\(index)"] = [
-      "mapped_from": source, "mapped": record(fit), "searched": record(searched),
-      "searched_s": seconds, "mapped_agreement": agreements[0], "searched_agreement": agreements[1],
-      "source_agreement_at_source_rotation": sourceAgreement,
-      "mapped_minus_source_relative": (agreements[0] - sourceAgreement) / sourceAgreement,
-      "searched_minus_mapped_relative": (agreements[1] - agreements[0]) / agreements[0],
-      "max_abs_phase_difference_rad": Double(largest),
-    ] as [String: Any]
+    report["branch_\(index)"] =
+      [
+        "mapped_from": source, "mapped": record(fit), "searched": record(searched),
+        "searched_s": seconds, "mapped_agreement": agreements[0],
+        "searched_agreement": agreements[1],
+        "source_agreement_at_source_rotation": sourceAgreement,
+        "mapped_minus_source_relative": (agreements[0] - sourceAgreement) / sourceAgreement,
+        "searched_minus_mapped_relative": (agreements[1] - agreements[0]) / agreements[0],
+        "max_abs_phase_difference_rad": Double(largest),
+      ] as [String: Any]
   }
   let decision = SSBRotationBranches.compare(
     phases: phases, rotations: fitted.fits.map(\.scanDetectorRotationDegrees), rows: size,
     columns: size, darkField: darkField, scanSampling: sampling)
-  report["searched_decision"] = [
-    "kept": decision.kept, "chosen": decision.chosen, "decided_by": decision.decidedBy.rawValue,
-    "columns": decision.columns, "branch_tests": decision.branches.map(branchRecord),
-  ] as [String: Any]
+  report["searched_decision"] =
+    [
+      "kept": decision.kept, "chosen": decision.chosen, "decided_by": decision.decidedBy.rawValue,
+      "columns": decision.columns, "branch_tests": decision.branches.map(branchRecord),
+    ] as [String: Any]
   report["decision_unchanged"] =
     decision.kept == fitted.kept && decision.decidedBy == fitted.decidedBy
-  try model.retarget(scanDetectorRotationDegrees: fitted.fits[fitted.kept].scanDetectorRotationDegrees)
+  try model.retarget(
+    scanDetectorRotationDegrees: fitted.fits[fitted.kept].scanDetectorRotationDegrees)
   return report
 }
 
@@ -590,7 +611,8 @@ func dumpObjective(model: MetalSSBJointModel, fit: SSBBranchedFit, to directory:
   var summary: [String: Any] = ["constants": arrays.constants]
   summary["initial"] = record(fit.fits[fit.kept])
   summary["fit"] = record(fit.fit)
-  let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
+  let data = try JSONSerialization.data(
+    withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
   try data.write(to: directory.appendingPathComponent("objective.json"))
   log("dumped objective arrays to \(directory.path)")
 }
@@ -615,7 +637,8 @@ let darkFieldURL =
 let darkField: [Float]? = try darkFieldURL.map { url in
   let values = try Data(contentsOf: url).withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
   guard values.count == caseRecord.scanRows * caseRecord.scanColumns else {
-    throw failure("\(url.path) is not a \(caseRecord.scanRows)x\(caseRecord.scanColumns) float32 image")
+    throw failure(
+      "\(url.path) is not a \(caseRecord.scanRows)x\(caseRecord.scanColumns) float32 image")
   }
   return values
 }
@@ -625,16 +648,20 @@ let setup = try caseRecord.calibration.geometry(
   detectorRows: caseRecord.detectorRows, detectorColumns: caseRecord.detectorColumns,
   detectorSum: detectorSum, excludedPixels: Set(caseRecord.excludedPixels),
   scanRows: caseRecord.scanRows, scanColumns: caseRecord.scanColumns)
-guard setup.pixels == caseRecord.pixels else { throw failure("BF selection differs from the cache") }
+guard setup.pixels == caseRecord.pixels else {
+  throw failure("BF selection differs from the cache")
+}
 let counts = try mapped(options.cache.appendingPathComponent("counts.bin"), device: device)
 guard let countType = MetalSSBCountType(rawValue: caseRecord.countType) else {
   throw failure("Unknown count type")
 }
 if let fixture = options.fixtureParity {
   try fixtureParity(
-    directory: fixture, oracleDirectory: options.oracleDirectory, output: options.output, phaseOut: options.phaseOut,
+    directory: fixture, oracleDirectory: options.oracleDirectory, output: options.output,
+    phaseOut: options.phaseOut,
     device: device, calibration: caseRecord.calibration, geometry: setup.geometry, counts: counts,
-    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees, only: options.opticsName,
+    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees,
+    only: options.opticsName,
     methods: options.methods)
   exit(0)
 }
@@ -642,7 +669,8 @@ if let fixture = options.directDrag {
   try directDrag(
     directory: fixture, output: options.output, device: device, calibration: caseRecord.calibration,
     geometry: setup.geometry, counts: counts, countType: countType,
-    rotationEstimate: caseRecord.rotationEstimateDegrees, only: options.opticsName, factors: options.directFactors,
+    rotationEstimate: caseRecord.rotationEstimateDegrees, only: options.opticsName,
+    factors: options.directFactors,
     steps: options.dragSteps,
     windowControls: try options.windowControls.map { name in
       switch name {
@@ -660,17 +688,21 @@ if let fixture = options.directDrag {
 }
 if let sweep = options.directParity {
   try directParity(
-    sweep: sweep, limits: options.limits, cudaDirectory: options.cudaDirectory ?? sweep.deletingLastPathComponent(),
-    output: options.output, phaseOut: options.phaseOut, device: device, calibration: caseRecord.calibration,
+    sweep: sweep, limits: options.limits,
+    cudaDirectory: options.cudaDirectory ?? sweep.deletingLastPathComponent(),
+    output: options.output, phaseOut: options.phaseOut, device: device,
+    calibration: caseRecord.calibration,
     geometry: setup.geometry, counts: counts, countType: countType,
     rotationEstimate: caseRecord.rotationEstimateDegrees, factors: options.directFactors)
   exit(0)
 }
 if let run = options.limitSweep, let directory = options.phaseOut {
   try limitSweep(
-    run: run, limits: options.limits, label: options.phaseLabel, directory: directory, device: device,
+    run: run, limits: options.limits, label: options.phaseLabel, directory: directory,
+    device: device,
     calibration: caseRecord.calibration, geometry: setup.geometry, counts: counts,
-    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees, search: options.search)
+    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees,
+    search: options.search)
   exit(0)
 }
 if let run = options.phaseFrom, let directory = options.phaseOut {
@@ -773,7 +805,8 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
       result["maximum_check"] = try neighbours(
         kept.point, rotation: kept.scanDetectorRotationDegrees)
       if let baseline = options.baseline {
-        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: baseline)) as! [String: Any]
+        let json =
+          try JSONSerialization.jsonObject(with: Data(contentsOf: baseline)) as! [String: Any]
         let run = (json["results"] as! [[String: Any]])[0]
         let branch = (run["branches"] as! [[String: Any]])[run["kept"] as! Int]
         let point = SSBModelPoint(

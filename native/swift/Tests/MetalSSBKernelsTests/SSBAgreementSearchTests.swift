@@ -211,7 +211,8 @@ final class SSBAgreementSearchTests: XCTestCase {
     XCTAssertEqual(fit.agreement, reference.agreement)
     XCTAssertEqual(valueRows, centers)
     XCTAssertEqual(fit.newtonStarts.map(\.evaluations), reference.newtonStarts.map(\.evaluations))
-    print("STAGED_NEWTON centers \(centers) fused \(fusedRows) derivative-only \(derivativeOnlyRows)")
+    print(
+      "STAGED_NEWTON centers \(centers) fused \(fusedRows) derivative-only \(derivativeOnlyRows)")
     XCTAssertLessThan(fusedRows + derivativeOnlyRows, centers)
   }
 

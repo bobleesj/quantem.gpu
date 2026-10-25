@@ -16,7 +16,8 @@ func fifthOnly(
     let fit = first["fit"] as? [String: Any],
     let rotation = fit["rotation_deg"] as? Double,
     let c10 = initial["C10_nm"] as? Double, let c12 = initial["C12_nm"] as? Double,
-    let phi12 = initial["phi12_deg"] as? Double, let tilt = initial["sample_tilt_mrad"] as? [Double],
+    let phi12 = initial["phi12_deg"] as? Double,
+    let tilt = initial["sample_tilt_mrad"] as? [Double],
     let depth = initial["depth_spread_nm"] as? Double
   else { throw failure("\(baselineURL.path) has no kept initial fit") }
   let point = SSBModelPoint(
@@ -37,7 +38,8 @@ func fifthOnly(
       if let scoreURL = options.score {
         // Double-summed agreement of another run's fifth-order point and of the baseline's, at this rotation.
         guard
-          let other = try JSONSerialization.jsonObject(with: Data(contentsOf: scoreURL)) as? [String: Any],
+          let other = try JSONSerialization.jsonObject(with: Data(contentsOf: scoreURL))
+            as? [String: Any],
           let otherFit = (other["results"] as? [[String: Any]])?.first?["fit"] as? [String: Any],
           let otherRotation = otherFit["rotation_deg"] as? Double,
           let otherZ = (otherFit["refinement"] as? [String: Any])?["coordinates"] as? [Double],
@@ -50,8 +52,10 @@ func fifthOnly(
         result["baseline_agreement64"] = b
         result["relative"] = a / b - 1
         result["max_abs_dz"] = zip(otherZ, baseZ).map { abs($0 - $1) }.max() ?? 0
-        log(String(format: "%@: Double-summed agreement %.9e vs baseline %.9e, rel %+.3e, max |dz| %.3e",
-          scoreURL.lastPathComponent, a, b, a / b - 1, result["max_abs_dz"] as! Double))
+        log(
+          String(
+            format: "%@: Double-summed agreement %.9e vs baseline %.9e, rel %+.3e, max |dz| %.3e",
+            scoreURL.lastPathComponent, a, b, a / b - 1, result["max_abs_dz"] as! Double))
       } else if options.gradientCheck {
         let start =
           [
@@ -75,7 +79,8 @@ func fifthOnly(
           let differences = check["central_differences"] as! [[String: Any]]
           log(
             String(
-              format: "agreement %.9g: objective %.2f ms, value+gradient %.2f ms (x28: %.1f / %.1f ms)",
+              format:
+                "agreement %.9g: objective %.2f ms, value+gradient %.2f ms (x28: %.1f / %.1f ms)",
               check["agreement"] as! Double, 1e3 * (check["objective_s"] as! Double),
               1e3 * (check["value_and_gradient_s"] as! Double),
               1e3 * (check["objective_28_s"] as! Double),
@@ -99,14 +104,15 @@ func fifthOnly(
         result["agreement"] = refined.agreement
         result["agreement64"] = refined.agreement64
         result["normalization"] = refined.normalization
-        result["refinement"] = [
-          "evaluations": r.evaluations, "executed_objectives": r.executedObjectives,
-          "iterations": r.iterations, "stop": r.stop, "normalized_agreement": r.agreement,
-          "coordinates": r.coordinates, "subsampled_gradients": r.subsampledGradients ?? 0,
-          "gradient_evaluations": r.gradientEvaluations ?? 0,
-          "hessian_stride": r.hessianStride ?? 0,
-          "trace": r.trace.map { [$0.evaluation, $0.agreement, $0.elapsedSeconds] },
-        ] as [String: Any]
+        result["refinement"] =
+          [
+            "evaluations": r.evaluations, "executed_objectives": r.executedObjectives,
+            "iterations": r.iterations, "stop": r.stop, "normalized_agreement": r.agreement,
+            "coordinates": r.coordinates, "subsampled_gradients": r.subsampledGradients ?? 0,
+            "gradient_evaluations": r.gradientEvaluations ?? 0,
+            "hessian_stride": r.hessianStride ?? 0,
+            "trace": r.trace.map { [$0.evaluation, $0.agreement, $0.elapsedSeconds] },
+          ] as [String: Any]
         if let base = fit["refinement"] as? [String: Any],
           let z = base["coordinates"] as? [Double],
           let agreement = fit["sample_agreement"] as? Double
@@ -123,14 +129,17 @@ func fifthOnly(
             for i in 0..<28 { for j in 0..<28 { quadratic += delta[i] * hessian[i][j] * delta[j] } }
             let gradient = try SSBModelFit.fifthOrderGradient(model: model, z: r.coordinates)
             let linear = zip(gradient, delta).reduce(0.0) { $0 + $1.0 * $1.1 }
-            result["curvature_weighted_difference"] = [
-              "half_dz_H_dz_normalized": 0.5 * quadratic / refined.normalization,
-              "g_dz_normalized": linear / refined.normalization,
-              "per_coordinate_half_H_ii_dz2_normalized": (0..<28).map {
-                0.5 * hessian[$0][$0] * delta[$0] * delta[$0] / refined.normalization
-              },
-              "hessian_diagonal_normalized": (0..<28).map { hessian[$0][$0] / refined.normalization },
-            ] as [String: Any]
+            result["curvature_weighted_difference"] =
+              [
+                "half_dz_H_dz_normalized": 0.5 * quadratic / refined.normalization,
+                "g_dz_normalized": linear / refined.normalization,
+                "per_coordinate_half_H_ii_dz2_normalized": (0..<28).map {
+                  0.5 * hessian[$0][$0] * delta[$0] * delta[$0] / refined.normalization
+                },
+                "hessian_diagonal_normalized": (0..<28).map {
+                  hessian[$0][$0] / refined.normalization
+                },
+              ] as [String: Any]
             log(
               String(
                 format:

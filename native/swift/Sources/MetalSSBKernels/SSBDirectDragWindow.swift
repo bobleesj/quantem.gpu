@@ -19,7 +19,8 @@ public enum SSBDragControl: Hashable, Codable, Sendable {
     case .c12: point.c12Angstroms
     case .phi12: point.phi12Radians
     case .magnitude(let order, let symmetry):
-      point.higherOrder.first { $0.order == order && $0.symmetry == symmetry }?.magnitudeAngstroms ?? 0
+      point.higherOrder.first { $0.order == order && $0.symmetry == symmetry }?.magnitudeAngstroms
+        ?? 0
     case .angle(let order, let symmetry):
       point.higherOrder.first { $0.order == order && $0.symmetry == symmetry }?.angleRadians ?? 0
     case .tiltRow: point.sampleTiltMrad[0]
@@ -116,7 +117,8 @@ final class DragWindow {
   var evaluated: [MTLBuffer] = []
   var lastUse = 0
 
-  init(control: SSBDragControl, key: Key, complex: Bool, center: Double, halfWidth: Double, order: Int,
+  init(
+    control: SSBDragControl, key: Key, complex: Bool, center: Double, halfWidth: Double, order: Int,
     accumulators: [MTLBuffer]
   ) {
     self.control = control
@@ -131,17 +133,21 @@ final class DragWindow {
   var ready: Bool { coefficients != nil }
   var bytes: Int { (accumulators + (coefficients ?? []) + evaluated).reduce(0) { $0 + $1.length } }
   var range: ClosedRange<Double> {
-    halfWidth.isFinite ? (center - halfWidth)...(center + halfWidth) : -Double.infinity...Double.infinity
+    halfWidth.isFinite
+      ? (center - halfWidth)...(center + halfWidth) : -Double.infinity...Double.infinity
   }
   func covers(_ value: Double) -> Bool { !halfWidth.isFinite || abs(value - center) <= halfWidth }
   /// The control value of node j.
   func node(_ j: Int) -> Double {
-    halfWidth.isFinite ? center + halfWidth * cos(Double.pi * (Double(j) + 0.5) / Double(order + 1)) : center
+    halfWidth.isFinite
+      ? center + halfWidth * cos(Double.pi * (Double(j) + 0.5) / Double(order + 1)) : center
   }
   /// Weight of node j in coefficient n: (2 / (N + 1)) cos(n theta_j), halved for n = 0.
   func weights(node j: Int) -> [Float] {
     let theta = Double.pi * (Double(j) + 0.5) / Double(order + 1)
-    return (0...order).map { n in Float((n == 0 ? 1.0 : 2.0) / Double(order + 1) * cos(Double(n) * theta)) }
+    return (0...order).map { n in
+      Float((n == 0 ? 1.0 : 2.0) / Double(order + 1) * cos(Double(n) * theta))
+    }
   }
   /// T_n((value - center) / h) as float-float (hi, lo).
   func basis(at value: Double) -> [SIMD2<Float>] {
@@ -170,13 +176,19 @@ extension SSBDirectSolver {
   /// `half_width`): h = reach / max|u|, max|u| the spread of the transfer phase (or depth-sinc argument) per unit
   /// of the control over the aperture, reach 10 for a magnitude, tilt or depth and 20 for an azimuth, and the
   /// smallest order from 12 whose bound 2 (reach / 2)^(N + 1) / (N + 1)! is at most 1e-10 (1e-14 for an azimuth).
-  func windowShape(_ control: SSBDragControl, at point: SSBModelPoint) -> (halfWidth: Double, order: Int) {
+  func windowShape(_ control: SSBDragControl, at point: SSBModelPoint) -> (
+    halfWidth: Double, order: Int
+  ) {
     let wl = Double(geometry.wavelengthAngstroms)
-    let alpha = Double(geometry.semiangleRadians)
+    let alpha =
+      Double(geometry.semiangleRadians)
       + 0.5 * Double(max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
-    let cutoff = (2 * Double(geometry.semiangleRadians)
-      + Double(max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))) / wl
-    func perAngstrom(_ order: Int) -> Double { 2 * .pi / wl * pow(alpha, Double(order + 1)) / Double(order + 1) }
+    let cutoff =
+      (2 * Double(geometry.semiangleRadians)
+        + Double(max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))) / wl
+    func perAngstrom(_ order: Int) -> Double {
+      2 * .pi / wl * pow(alpha, Double(order + 1)) / Double(order + 1)
+    }
     let azimuth: Bool
     let spread: Double
     switch control {
@@ -196,20 +208,24 @@ extension SSBDirectSolver {
       (azimuth, spread) = (false, 2 * .pi * point.depthSpreadAngstroms * cutoff * 1e-3)
     case .depth:
       let tilt = point.sampleTiltMrad.map { abs($0) }.max() ?? 0
-      (azimuth, spread) = (false, Double.pi * wl * (alpha / wl) * (alpha / wl) + 2 * .pi * cutoff * tilt * 1e-3)
+      (azimuth, spread) = (
+        false, Double.pi * wl * (alpha / wl) * (alpha / wl) + 2 * .pi * cutoff * tilt * 1e-3
+      )
     }
     guard spread > 0, spread.isFinite else { return (.infinity, 0) }
     let reach = azimuth ? 20.0 : 10.0
     let truncation = azimuth ? 1e-14 : 1e-10
     var order = 12
-    while log(2) + Double(order + 1) * log(reach / 2) - lgamma(Double(order + 2)) > log(truncation) { order += 1 }
+    while log(2) + Double(order + 1) * log(reach / 2) - lgamma(Double(order + 2)) > log(truncation)
+    { order += 1 }
     return (reach / spread, order)
   }
 
   /// Drop every window whose held inputs differ from `point` (a complex window holds about 1.5 GB at 3x).
   func dropStaleWindows(point: SSBModelPoint, rotation: Double, layout: LayoutKey) {
     for (control, tiles) in windows {
-      let key = DragWindow.Key(layout: layout, held: control.setting(0, in: point), rotation: rotation)
+      let key = DragWindow.Key(
+        layout: layout, held: control.setting(0, in: point), rotation: rotation)
       let kept = tiles.filter { $0.key == key }
       windows[control] = kept.isEmpty ? nil : kept
     }
@@ -225,7 +241,8 @@ extension SSBDirectSolver {
     let layoutKey = LayoutKey(factor: factor, regularization: regularization)
     let layout = try currentLayout(layoutKey, visit: visit, isCancelled: isCancelled)
     dropStaleWindows(point: point, rotation: rotation, layout: layoutKey)
-    let key = DragWindow.Key(layout: layoutKey, held: control.setting(0, in: point), rotation: rotation)
+    let key = DragWindow.Key(
+      layout: layoutKey, held: control.setting(0, in: point), rotation: rotation)
     let value = control.value(of: point)
     var tiles = windows[control] ?? []
     // A complex window serves both methods; a phase window is replaced by a complex one when complex is needed.
@@ -242,7 +259,9 @@ extension SSBDirectSolver {
         center = anchor.center + width * ((value - anchor.center) / width).rounded()
       }
       let accumulators = try layout.groups.map { group in
-        let length = (shape.order + 1) * group.size * Self.parts(count: group.count, complex: complex).outputs * 16
+        let length =
+          (shape.order + 1) * group.size * Self.parts(count: group.count, complex: complex).outputs
+          * 16
         return try Self.allocate(device, length)
       }
       try clear(accumulators)
@@ -259,7 +278,8 @@ extension SSBDirectSolver {
       if isCancelled() { throw CancellationError() }
       let nodePoint = control.setting(window.node(window.added), in: point)
       let (node, _) = try prepare(
-        PreparedKey(layout: layoutKey, point: nodePoint, rotation: rotation), complex: window.complex,
+        PreparedKey(layout: layoutKey, point: nodePoint, rotation: rotation),
+        complex: window.complex,
         layout: layout, k: k, visit: visit, isCancelled: isCancelled)
       try accumulate(node, into: window, layout: layout)
       remaining -= 1
@@ -269,7 +289,8 @@ extension SSBDirectSolver {
 
   /// The ready window along `control` covering `point` with these held inputs, if any.
   func readyWindow(
-    along control: SSBDragControl, at point: SSBModelPoint, layout: LayoutKey, complex: Bool, rotation: Double
+    along control: SSBDragControl, at point: SSBModelPoint, layout: LayoutKey, complex: Bool,
+    rotation: Double
   ) -> DragWindow? {
     dropStaleWindows(point: point, rotation: rotation, layout: layout)
     let value = control.value(of: point)
@@ -295,7 +316,8 @@ extension SSBDirectSolver {
   ) throws -> (phase: MTLBuffer, amplitude: MTLBuffer?, n: Int, window: SSBDragPreview)? {
     let layoutKey = LayoutKey(factor: factor, regularization: regularization)
     guard let layout, layout.key == layoutKey,
-      let window = readyWindow(along: control, at: point, layout: layoutKey, complex: complex, rotation: rotation),
+      let window = readyWindow(
+        along: control, at: point, layout: layoutKey, complex: complex, rotation: rotation),
       let coefficients = window.coefficients
     else { return nil }
     useCounter += 1
@@ -305,14 +327,16 @@ extension SSBDirectSolver {
     if window.evaluated.isEmpty {
       window.evaluated = try layout.groups.map { group in
         try Self.allocate(
-          device, group.size * Self.parts(count: group.count, complex: window.complex).outputs * 16, shared: true)
+          device, group.size * Self.parts(count: group.count, complex: window.complex).outputs * 16,
+          shared: true)
       }
     }
     var basis = window.basis(at: control.value(of: point))
     let commands = try command()
     for (index, group) in layout.groups.enumerated() {
       var p = SIMD2<UInt32>(
-        UInt32(group.size * Self.parts(count: group.count, complex: window.complex).outputs), UInt32(window.order + 1))
+        UInt32(group.size * Self.parts(count: group.count, complex: window.complex).outputs),
+        UInt32(window.order + 1))
       let encoder = try self.encoder(commands, try windowPipeline("direct_window_evaluate"))
       encoder.setBuffer(coefficients[index], offset: 0, index: 0)
       encoder.setBuffer(window.evaluated[index], offset: 0, index: 1)
@@ -325,7 +349,8 @@ extension SSBDirectSolver {
     timing.prepareSeconds = Date().timeIntervalSince(started)
     timing.preparedFromCache = true
     let system = Prepared(
-      key: PreparedKey(layout: layoutKey, point: point, rotation: rotation), complex: window.complex,
+      key: PreparedKey(layout: layoutKey, point: point, rotation: rotation),
+      complex: window.complex,
       sums: window.evaluated)
     let result = try solveAndWave(
       system, layout: layout, complex: complex, regularization: regularization, timing: &timing)
@@ -344,7 +369,8 @@ extension SSBDirectSolver {
     let commands = try command()
     for (index, group) in layout.groups.enumerated() {
       var p = SIMD2<UInt32>(
-        UInt32(group.size * Self.parts(count: group.count, complex: window.complex).outputs), UInt32(window.order + 1))
+        UInt32(group.size * Self.parts(count: group.count, complex: window.complex).outputs),
+        UInt32(window.order + 1))
       let encoder = try self.encoder(commands, try windowPipeline("direct_window_accumulate"))
       encoder.setBuffer(node.sums[index], offset: 0, index: 0)
       encoder.setBuffer(window.accumulators[index], offset: 0, index: 1)

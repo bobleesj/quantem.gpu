@@ -18,14 +18,15 @@ where a complex64 wave quantizes it (4 x 2**-23).
 
 import time
 
-import cupy as cp
 import numpy as np
 import pytest
 
-from quantem.gpu import DirectPtycho
-from quantem.gpu.ssb.cuda.direct import PreparedDirect
-from quantem.gpu.ssb.cuda.weak_object import transfer_frequencies
-from quantem.gpu.ssb.units import higher_order_arrays
+cp = pytest.importorskip("cupy")
+
+from quantem.gpu import DirectPtycho  # noqa: E402
+from quantem.gpu.ssb.cuda.direct import PreparedDirect  # noqa: E402
+from quantem.gpu.ssb.cuda.weak_object import transfer_frequencies  # noqa: E402
+from quantem.gpu.ssb.units import higher_order_arrays  # noqa: E402
 
 pytestmark = pytest.mark.slow
 

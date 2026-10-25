@@ -101,7 +101,8 @@ enum MetalRuntimeANSBenchmark {
         "source_identity": resident.sourceIdentitySHA256,
         "load_seconds": resident.loadMetrics.totalSeconds,
         "physical_read_bytes": ioAfter.ri_diskio_bytesread - ioBefore.ri_diskio_bytesread,
-        "physical_read_bytes_including_preparation": ioAfter.ri_diskio_bytesread - ioBeforePreparation.ri_diskio_bytesread,
+        "physical_read_bytes_including_preparation": ioAfter.ri_diskio_bytesread
+          - ioBeforePreparation.ri_diskio_bytesread,
         "physical_footprint_bytes": ioAfter.ri_phys_footprint,
         "peak_physical_footprint_bytes": ioAfter.ri_lifetime_max_phys_footprint,
         "metal_allocated_bytes": device.currentAllocatedSize,

@@ -7,8 +7,10 @@ import MetalSSBKernels
 /// Writes `<label>-<stage>.f32` (rows x columns, float32 radians) and `<label>.json` (shape, factor, pixel size,
 /// fit parameters) into `directory`.
 func exportPhases(
-  run runURL: URL, label: String, directory: URL, device: MTLDevice, calibration: MetalSSBCalibration,
-  geometry: MetalSSBGeometry, counts: MTLBuffer, countType: MetalSSBCountType, rotationEstimate: Double
+  run runURL: URL, label: String, directory: URL, device: MTLDevice,
+  calibration: MetalSSBCalibration,
+  geometry: MetalSSBGeometry, counts: MTLBuffer, countType: MetalSSBCountType,
+  rotationEstimate: Double
 ) throws {
   guard
     let run = try JSONSerialization.jsonObject(with: Data(contentsOf: runURL)) as? [String: Any],
@@ -17,10 +19,12 @@ func exportPhases(
   else { throw failure("\(runURL.path) has no recorded fit") }
   func point(_ record: [String: Any]) throws -> SSBModelPoint {
     guard let c10 = record["C10_nm"] as? Double, let c12 = record["C12_nm"] as? Double,
-      let phi12 = record["phi12_deg"] as? Double, let tilt = record["sample_tilt_mrad"] as? [Double],
+      let phi12 = record["phi12_deg"] as? Double,
+      let tilt = record["sample_tilt_mrad"] as? [Double],
       let depth = record["depth_spread_nm"] as? Double
     else { throw failure("\(runURL.path) has an incomplete fit record") }
-    let terms = (record["higher_order"] as? [[String: Any]] ?? []).compactMap { term -> SSBModelHigherOrder? in
+    let terms = (record["higher_order"] as? [[String: Any]] ?? []).compactMap {
+      term -> SSBModelHigherOrder? in
       guard let order = term["order"] as? Int, let symmetry = term["symmetry"] as? Int,
         let magnitude = term["magnitude_A"] as? Double, let angle = term["angle_rad"] as? Double
       else { return nil }
@@ -47,13 +51,14 @@ func exportPhases(
         count: phase.rows * phase.columns))
     try values.withUnsafeBytes { Data($0) }.write(
       to: directory.appendingPathComponent("\(label)-\(stage).f32"))
-    stages[stage] = [
-      "rows": phase.rows, "columns": phase.columns, "C10_nm": record["C10_nm"] as Any,
-      "C12_nm": record["C12_nm"] as Any, "phi12_deg": record["phi12_deg"] as Any,
-      "sample_tilt_mrad": record["sample_tilt_mrad"] as Any,
-      "depth_spread_nm": record["depth_spread_nm"] as Any,
-      "sample_agreement": record["sample_agreement"] as Any,
-    ] as [String: Any]
+    stages[stage] =
+      [
+        "rows": phase.rows, "columns": phase.columns, "C10_nm": record["C10_nm"] as Any,
+        "C12_nm": record["C12_nm"] as Any, "phi12_deg": record["phi12_deg"] as Any,
+        "sample_tilt_mrad": record["sample_tilt_mrad"] as Any,
+        "depth_spread_nm": record["depth_spread_nm"] as Any,
+        "sample_agreement": record["sample_agreement"] as Any,
+      ] as [String: Any]
   }
   let summary: [String: Any] = [
     "run": runURL.path, "rotation_deg": rotation, "factor": factor,

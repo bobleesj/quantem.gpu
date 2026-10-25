@@ -6,8 +6,12 @@ import Foundation
 enum SSBRedrawPolynomial {
   /// C10/C12 only (`model_probe`): factor * alpha^2 * (C12 cos 2(phi - phi12) + C10), alpha = |p| * wavelength.
   static func primary(_ params: [Float]) -> [Float] {
-    let wl = Double(params[0]), c10 = Double(params[4]), c12 = Double(params[5])
-    let c2 = Double(params[6]), s2 = Double(params[7]), factor = Double(params[8])
+    let wl = Double(params[0])
+    let c10 = Double(params[4])
+    let c12 = Double(params[5])
+    let c2 = Double(params[6])
+    let s2 = Double(params[7])
+    let factor = Double(params[8])
     var c = [Double](repeating: 0, count: 49)
     let scale = factor * wl * wl
     c[2 * 7 + 0] = scale * (c10 + c12 * c2)
@@ -49,8 +53,10 @@ enum SSBRedrawPolynomial {
     r2[2 * 7] = 1
     r2[2] = 1
     // z^m = re + i im with z = x + i y.
-    var re = [one], im = [Poly(repeating: 0, count: 49)]
-    var x = Poly(repeating: 0, count: 49), y = Poly(repeating: 0, count: 49)
+    var re = [one]
+    var im = [Poly(repeating: 0, count: 49)]
+    var x = Poly(repeating: 0, count: 49)
+    var y = Poly(repeating: 0, count: 49)
     x[7] = 1
     y[1] = 1
     for m in 1...6 {
@@ -63,7 +69,8 @@ enum SSBRedrawPolynomial {
     for p in 1...3 { radial.append(multiply(radial[p - 1], r2)) }
     var chi = Poly(repeating: 0, count: 49)
     for term in 0..<14 {
-      let a = coefficients[2 * term], b = coefficients[2 * term + 1]
+      let a = coefficients[2 * term]
+      let b = coefficients[2 * term + 1]
       let angular = zip(re[azimuth[term]], im[azimuth[term]]).map { $0 * a + $1 * b }
       for (index, value) in multiply(radial[power[term]], angular).enumerated() {
         chi[index] += value

@@ -6,12 +6,15 @@ import Metal
 /// direct methods at a fixture's optics, as a C10 slider drag sees it. Each step moves C10 by 0.05 nm, so every
 /// step prepares the normal equations again; the stage times of every step are reported.
 func directDrag(
-  directory: URL, output: URL?, device: MTLDevice, calibration: MetalSSBCalibration, geometry: MetalSSBGeometry,
-  counts: MTLBuffer, countType: MetalSSBCountType, rotationEstimate: Double, only: String?, factors: [Int]?,
+  directory: URL, output: URL?, device: MTLDevice, calibration: MetalSSBCalibration,
+  geometry: MetalSSBGeometry,
+  counts: MTLBuffer, countType: MetalSSBCountType, rotationEstimate: Double, only: String?,
+  factors: [Int]?,
   steps: Int, windowControls: [SSBDragControl]
 ) throws {
   guard
-    let optics = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("optics.json")))
+    let optics = try JSONSerialization.jsonObject(
+      with: Data(contentsOf: directory.appendingPathComponent("optics.json")))
       as? [String: Any],
     let sets = optics["optics_sets"] as? [[String: Any]]
   else { throw failure("\(directory.path) is not a fixture (optics.json)") }
@@ -32,7 +35,8 @@ func directDrag(
     guard let t else { return [:] }
     return [
       "layout_ms": t.layoutSeconds * 1e3, "prepare_ms": t.prepareSeconds * 1e3,
-      "prepare_gpu_ms": t.prepareGPUSeconds * 1e3, "solve_ms": t.solveSeconds * 1e3, "wave_ms": t.waveSeconds * 1e3,
+      "prepare_gpu_ms": t.prepareGPUSeconds * 1e3, "solve_ms": t.solveSeconds * 1e3,
+      "wave_ms": t.waveSeconds * 1e3,
     ]
   }
   func median(_ values: [Double]) -> Double {
@@ -43,15 +47,22 @@ func directDrag(
   for factor in factors ?? [auto] {
     for method in [SSBReconstructionMethod.phase, .complex] {
       var started = Date()
-      do { _ = try model.reconstruct(point, upsamplingFactor: factor, method: method) } catch SSBDirectError.diverged {}
+      do {
+        _ = try model.reconstruct(point, upsamplingFactor: factor, method: method)
+      } catch SSBDirectError.diverged {}
       let first = Date().timeIntervalSince(started) * 1e3
-      var walls: [Double] = [], prepares: [Double] = [], gpus: [Double] = [], solves: [Double] = []
+      var walls: [Double] = []
+      var prepares: [Double] = []
+      var gpus: [Double] = []
+      var solves: [Double] = []
       var waves: [Double] = []
       for step in 1...steps {
         var moved = point
         moved.c10Angstroms += 0.5 * Double(step)
         started = Date()
-        do { _ = try model.reconstruct(moved, upsamplingFactor: factor, method: method) } catch SSBDirectError.diverged {}
+        do {
+          _ = try model.reconstruct(moved, upsamplingFactor: factor, method: method)
+        } catch SSBDirectError.diverged {}
         walls.append(Date().timeIntervalSince(started) * 1e3)
         let t = stages(model.lastDirectTiming)
         prepares.append(t["prepare_ms"] ?? .nan)
@@ -60,15 +71,19 @@ func directDrag(
         waves.append(t["wave_ms"] ?? .nan)
       }
       let row: [String: Any] = [
-        "optics": name, "method": method.rawValue, "factor": factor, "first_ms": first, "steps": steps,
+        "optics": name, "method": method.rawValue, "factor": factor, "first_ms": first,
+        "steps": steps,
         "median_wall_ms": median(walls), "median_prepare_ms": median(prepares),
-        "median_prepare_gpu_ms": median(gpus), "median_solve_ms": median(solves), "median_wave_ms": median(waves),
+        "median_prepare_gpu_ms": median(gpus), "median_solve_ms": median(solves),
+        "median_wave_ms": median(waves),
         "max_wall_ms": walls.max() ?? .nan,
       ]
       log(
         String(
-          format: "%@ %@ %dx: first %.1f ms; per C10 step wall %.1f (prepare %.1f, GPU %.1f, solve %.1f, wave %.1f) ms",
-          name, method.rawValue, factor, first, median(walls), median(prepares), median(gpus), median(solves),
+          format:
+            "%@ %@ %dx: first %.1f ms; per C10 step wall %.1f (prepare %.1f, GPU %.1f, solve %.1f, wave %.1f) ms",
+          name, method.rawValue, factor, first, median(walls), median(prepares), median(gpus),
+          median(solves),
           median(waves)))
       rows.append(row)
     }
@@ -84,36 +99,52 @@ func directDrag(
         let build = Date().timeIntervalSince(started) * 1e3
         let center = control.value(of: point)
         let span = state.range.upperBound.isFinite ? state.range.upperBound - center : 1
-        var frames: [Double] = [], stages: [Double] = [], rms: [Double] = [], maxima: [Double] = []
+        var frames: [Double] = []
+        var stages: [Double] = []
+        var rms: [Double] = []
+        var maxima: [Double] = []
         var amplitudeRMS: [Double] = []
         for step in 0..<steps {
           // values across 90 % of the window, not on the nodes
           let fraction = -0.9 + 1.8 * (Double(step) + 0.37) / Double(steps)
           let moved = control.setting(center + fraction * span, in: point)
           started = Date()
-          guard let preview = try model.dragPreview(moved, along: control, upsamplingFactor: factor, method: method)
+          guard
+            let preview = try model.dragPreview(
+              moved, along: control, upsamplingFactor: factor, method: method)
           else { throw failure("no preview at \(fraction)") }
           frames.append(Date().timeIntervalSince(started) * 1e3)
           stages.append((model.lastDirectTiming?.prepareSeconds ?? .nan) * 1e3)
           if step % max(1, steps / 4) == 0 {
             let exact = try model.reconstruct(moved, upsamplingFactor: factor, method: method)
             let count = exact.rows * exact.columns
-            let a = Array(UnsafeBufferPointer(start: preview.phase.contents().assumingMemoryBound(to: Float.self), count: count))
-            let b = Array(UnsafeBufferPointer(start: exact.phase.contents().assumingMemoryBound(to: Float.self), count: count))
+            let a = Array(
+              UnsafeBufferPointer(
+                start: preview.phase.contents().assumingMemoryBound(to: Float.self), count: count))
+            let b = Array(
+              UnsafeBufferPointer(
+                start: exact.phase.contents().assumingMemoryBound(to: Float.self), count: count))
             let agreement = parity(a, b.map(Double.init), wrap: true)
             rms.append(agreement["rms"]! / agreement["reference_std"]!)
             maxima.append(agreement["max_abs"]!)
             if let pa = preview.amplitude, let ea = exact.amplitude {
-              let x = Array(UnsafeBufferPointer(start: pa.contents().assumingMemoryBound(to: Float.self), count: count))
-              let y = Array(UnsafeBufferPointer(start: ea.contents().assumingMemoryBound(to: Float.self), count: count))
+              let x = Array(
+                UnsafeBufferPointer(
+                  start: pa.contents().assumingMemoryBound(to: Float.self), count: count))
+              let y = Array(
+                UnsafeBufferPointer(
+                  start: ea.contents().assumingMemoryBound(to: Float.self), count: count))
               let p = parity(x, y.map(Double.init), wrap: false)
               amplitudeRMS.append(p["rms"]! / p["reference_mean"]!)
             }
           }
         }
-        state = model.dragWindowState(along: control, at: point, upsamplingFactor: factor, method: method) ?? state
+        state =
+          model.dragWindowState(along: control, at: point, upsamplingFactor: factor, method: method)
+          ?? state
         let row: [String: Any] = [
-          "method": method.rawValue, "factor": factor, "control": "\(control)", "nodes": state.total,
+          "method": method.rawValue, "factor": factor, "control": "\(control)",
+          "nodes": state.total,
           "build_ms": build, "range": [state.range.lowerBound, state.range.upperBound],
           "median_frame_ms": median(frames), "max_frame_ms": frames.max() ?? .nan,
           "median_evaluate_ms": median(stages), "max_rms_over_std": rms.max() ?? .nan,
@@ -121,9 +152,12 @@ func directDrag(
         ]
         log(
           String(
-            format: "window %@ %@ %dx: %d nodes built in %.0f ms (range %.3f..%.3f); preview median %.1f ms (evaluate %.1f), max %.1f ms; vs exact rms/std %.2e, max %.2e rad, amp %.2e",
-            method.rawValue, "\(control)", factor, state.total, build, state.range.lowerBound, state.range.upperBound,
-            median(frames), median(stages), frames.max() ?? .nan, rms.max() ?? .nan, maxima.max() ?? .nan,
+            format:
+              "window %@ %@ %dx: %d nodes built in %.0f ms (range %.3f..%.3f); preview median %.1f ms (evaluate %.1f), max %.1f ms; vs exact rms/std %.2e, max %.2e rad, amp %.2e",
+            method.rawValue, "\(control)", factor, state.total, build, state.range.lowerBound,
+            state.range.upperBound,
+            median(frames), median(stages), frames.max() ?? .nan, rms.max() ?? .nan,
+            maxima.max() ?? .nan,
             amplitudeRMS.max() ?? .nan))
         rows.append(row)
       }
@@ -136,7 +170,10 @@ func directDrag(
     if let list = value as? [Any] { return list.map(clean) }
     return value
   }
-  let summary: [String: Any] = ["device": device.name, "fixture": directory.path, "rows": rows.map(clean)]
-  let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
+  let summary: [String: Any] = [
+    "device": device.name, "fixture": directory.path, "rows": rows.map(clean),
+  ]
+  let data = try JSONSerialization.data(
+    withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
   if let output { try data.write(to: output) } else { print(String(decoding: data, as: UTF8.self)) }
 }

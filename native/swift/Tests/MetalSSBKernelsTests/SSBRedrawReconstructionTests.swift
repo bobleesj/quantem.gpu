@@ -115,7 +115,8 @@ final class SSBRedrawReconstructionTests: XCTestCase {
             maximum = max(maximum, abs(d))
           }
           print(
-            "REDRAW DEFINITION scan \(scan) factor \(factor) depth \(point.depthSpreadAngstroms) max \(maximum)")
+            "REDRAW DEFINITION scan \(scan) factor \(factor) depth \(point.depthSpreadAngstroms) max \(maximum)"
+          )
           XCTAssertLessThan(maximum, 2e-4)
         }
       }
@@ -148,7 +149,8 @@ final class SSBRedrawReconstructionTests: XCTestCase {
       planes.append(plane)
     }
     let setup = try base.calibration.geometry(
-      detectorRows: detector, detectorColumns: detector, detectorSum: sums, scanRows: scan, scanColumns: scan)
+      detectorRows: detector, detectorColumns: detector, detectorSum: sums, scanRows: scan,
+      scanColumns: scan)
     return SSBModelReconstructionTests.Scene(
       calibration: base.calibration, scan: scan, counts: setup.pixels.flatMap { planes[$0] },
       pixels: setup.pixels, geometry: setup.geometry)
@@ -227,7 +229,8 @@ final class SSBRedrawReconstructionTests: XCTestCase {
       for term in 0..<14 {
         value +=
           pow(r2, Double(power[term]))
-          * (re[azimuth[term]] * coefficients[2 * term] + im[azimuth[term]] * coefficients[2 * term + 1])
+          * (re[azimuth[term]] * coefficients[2 * term] + im[azimuth[term]]
+            * coefficients[2 * term + 1])
       }
       return 2 * Double.pi / wavelength * value
     }

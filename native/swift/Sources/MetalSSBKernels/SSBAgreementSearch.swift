@@ -663,7 +663,8 @@ public enum SSBAgreementSearch {
           return
         } else if staged != nil {
           guard let at = exact[position] else {
-            preconditionFailure("The exact Newton fetches derivatives at every accepted, continuing start.")
+            preconditionFailure(
+              "The exact Newton fetches derivatives at every accepted, continuing start.")
           }
           for d in first..<last {
             g[d] = at.gradient[d] / scale
@@ -760,7 +761,9 @@ public enum SSBAgreementSearch {
           if best < 0 || state[k].keptValue > state[best].keptValue { best = k }
         }
         for k in state.indices where k != best { state[k].active = false }
-        assert(deferred.allSatisfy { !state[active[$0]].active } && (survivor < 0 || best == active[survivor]))
+        assert(
+          deferred.allSatisfy { !state[active[$0]].active }
+            && (survivor < 0 || best == active[survivor]))
       }
     }
     var best = 0
@@ -826,7 +829,8 @@ public enum SSBAgreementSearch {
     if derivatives != nil || staged != nil {
       let origins = first.starts.map(\.origin)
       alternates = alternates.filter { !origins.contains(encode($0)) }
-      if let polished = first.starts.filter(\.hasPrevious).max(by: { $0.keptValue < $1.keptValue }) {
+      if let polished = first.starts.filter(\.hasPrevious).max(by: { $0.keptValue < $1.keptValue })
+      {
         var marker = polished
         marker.heading = polished.keptCenter
         known = [marker]
@@ -942,7 +946,9 @@ public enum SSBAgreementSearch {
       if derivatives != nil || staged != nil {
         // Report the fitted point on the search's own objective.
         let values = try evaluate([point])
-        guard values.count == 1, values[0].isFinite else { throw SSBOptimizationError.nonFiniteLoss }
+        guard values.count == 1, values[0].isFinite else {
+          throw SSBOptimizationError.nonFiniteLoss
+        }
         agreement = values[0]
       }
       newtonStarts = fitted.starts.filter(\.hasPrevious).map {

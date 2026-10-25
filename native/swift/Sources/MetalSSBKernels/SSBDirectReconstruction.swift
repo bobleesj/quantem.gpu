@@ -117,7 +117,8 @@ extension MetalSSBJointModel {
       try point.jointParameters.validate()
       if isCancelled() { throw CancellationError() }
       return try reconstructDirect(
-        point, upsamplingFactor: upsamplingFactor, complex: method == .complex, regularization: regularization,
+        point, upsamplingFactor: upsamplingFactor, complex: method == .complex,
+        regularization: regularization,
         isCancelled: isCancelled)
     }
   }

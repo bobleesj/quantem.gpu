@@ -38,7 +38,8 @@ final class SSBFifthOrderGradient {
 
   /// `objective` evaluates the value pass and supplies its band tiles.
   init(
-    device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary, objective: SSBFifthOrderAgreement
+    device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary,
+    objective: SSBFifthOrderAgreement
   ) throws {
     self.device = device
     self.queue = queue
@@ -220,7 +221,9 @@ final class SSBFifthOrderGradient {
     _ commands: MTLCommandBuffer, _ pipeline: MTLComputePipelineState,
     _ body: (MTLComputeCommandEncoder) -> Void
   ) throws {
-    guard let encoder = commands.makeComputeCommandEncoder() else { throw MetalSSBError.commandQueue }
+    guard let encoder = commands.makeComputeCommandEncoder() else {
+      throw MetalSSBError.commandQueue
+    }
     encoder.setComputePipelineState(pipeline)
     body(encoder)
     encoder.endEncoding()
@@ -261,7 +264,8 @@ final class SSBFifthOrderGradient {
       encoder.setThreadgroupMemoryLength((52 + 4 * 28) * 4, index: 2)
       encoder.dispatchThreadgroups(
         MTLSize(width: layout.tiles, height: layout.spans, depth: batch.count),
-        threadsPerThreadgroup: MTLSize(width: SSBFifthOrderAgreement.tileWidth, height: 1, depth: 1))
+        threadsPerThreadgroup: MTLSize(width: SSBFifthOrderAgreement.tileWidth, height: 1, depth: 1)
+      )
     }
   }
 

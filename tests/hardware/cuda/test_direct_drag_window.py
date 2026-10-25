@@ -10,13 +10,14 @@ the 3e-7 that test_ssb_prepared_methods.py documents (tolerance 2e-6, as
 there). log|w| of a complex64 wave near |w| = 1 is quantized at 2**-23.
 """
 
-import cupy as cp
 import numpy as np
 import pytest
 
-from quantem.gpu import DirectPtycho
-from quantem.gpu.ssb import direct_workflow
-from quantem.gpu.ssb.cuda.direct import DragWindow, PreparedDirect
+cp = pytest.importorskip("cupy")
+
+from quantem.gpu import DirectPtycho  # noqa: E402
+from quantem.gpu.ssb import direct_workflow  # noqa: E402
+from quantem.gpu.ssb.cuda.direct import DragWindow, PreparedDirect  # noqa: E402
 
 pytestmark = pytest.mark.slow
 

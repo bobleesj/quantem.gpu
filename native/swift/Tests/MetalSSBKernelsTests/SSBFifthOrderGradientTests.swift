@@ -37,7 +37,8 @@ final class SSBFifthOrderGradientTests: XCTestCase {
       let alpha = r * wl
       let invR2 = r2 > 1e-30 ? 1 / r2 : 0
       let invR = r > 1e-15 ? 1 / r : 0
-      let denom = ((dx * angularRow) * (dx * angularRow) + (dy * angularColumn) * (dy * angularColumn))
+      let denom =
+        ((dx * angularRow) * (dx * angularRow) + (dy * angularColumn) * (dy * angularColumn))
         .squareRoot() * invR
       let edge = denom > 1e-15 ? (semiangle - alpha) / denom + 0.5 : 1
       return SIMD4(
@@ -77,7 +78,8 @@ final class SSBFifthOrderGradientTests: XCTestCase {
       c[3] = z[2] * 50
       var j = 6
       for (i, (n, m)) in SSBFifthOrderCoordinates.orders.enumerated() where n >= 2 {
-        let scale = coordinates.wavelengthAngstroms
+        let scale =
+          coordinates.wavelengthAngstroms
           / (2 * Double.pi * pow(coordinates.semiangleRadians, Double(n + 1)))
         c[2 * i] = z[j] * scale
         j += 1
@@ -149,7 +151,8 @@ final class SSBFifthOrderGradientTests: XCTestCase {
     // The value pass is the production objective (ssb-fifth-agreement) bit for bit.
     XCTAssertEqual(
       exact.agreement,
-      try model.fifthOrderAgreements([coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0])
+      try model.fifthOrderAgreements(
+        [coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0])
     let value = reference.agreement(z)
     XCTAssertEqual(exact.agreement, value, accuracy: 1e-5 * value)
     XCTAssertEqual(exact.agreement64, value, accuracy: 1e-5 * value)
@@ -206,9 +209,12 @@ final class SSBFifthOrderGradientTests: XCTestCase {
       let expected =
         (reference.agreement(plus, kStride: 3) - reference.agreement(minus, kStride: 3)) / (2 * h)
       worstBF = max(worstBF, abs(bfGradient[i] - expected) / scale)
-      XCTAssertEqual(bfGradient[i], expected, accuracy: 1e-4 * scale, "BF-subsampled coordinate \(i)")
+      XCTAssertEqual(
+        bfGradient[i], expected, accuracy: 1e-4 * scale, "BF-subsampled coordinate \(i)")
     }
-    print("fifth-order gradient, every 3rd BF pixel: worst |exact - central| / max|central| = \(worstBF)")
+    print(
+      "fifth-order gradient, every 3rd BF pixel: worst |exact - central| / max|central| = \(worstBF)"
+    )
   }
 
   static func model(_ device: MTLDevice) throws -> MetalSSBJointModel {

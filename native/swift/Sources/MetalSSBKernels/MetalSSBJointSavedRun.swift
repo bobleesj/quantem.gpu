@@ -95,7 +95,8 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
       columns / upsamplingFactor == (region?.size ?? sourceColumns),
       phase.count == rows * columns * 4, phaseSHA256 == SSBPhaseArtifact.digest(phase),
       rotationDegrees.isFinite,
-      outputSampling.map({ $0 == .auto ? upsamplingFactor <= 4 : $0 == .factor(upsamplingFactor) }) ?? true
+      outputSampling.map({ $0 == .auto ? upsamplingFactor <= 4 : $0 == .factor(upsamplingFactor) })
+        ?? true
     else {
       throw MetalSSBError.invalidGeometry(
         "This joint SSB result is incomplete, corrupted or belongs to another source.")

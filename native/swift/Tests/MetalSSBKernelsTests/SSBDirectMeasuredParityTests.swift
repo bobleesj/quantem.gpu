@@ -70,7 +70,9 @@ final class SSBDirectMeasuredParityTests: XCTestCase {
       case text(String)
       init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer()
-        if let number = try? value.decode(Double.self) { self = .number(number) } else {
+        if let number = try? value.decode(Double.self) {
+          self = .number(number)
+        } else {
           self = .text(try value.decode(String.self))
         }
       }
@@ -81,11 +83,13 @@ final class SSBDirectMeasuredParityTests: XCTestCase {
   func testThreeMethodsMatchCUDA() throws {
     let environment = ProcessInfo.processInfo.environment
     guard let folder = environment["SSB_DIRECT_FIXTURE"] else {
-      throw XCTSkip("Set SSB_DIRECT_FIXTURE to a measured fixture with CUDA ssb/phase/complex references.")
+      throw XCTSkip(
+        "Set SSB_DIRECT_FIXTURE to a measured fixture with CUDA ssb/phase/complex references.")
     }
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let root = URL(fileURLWithPath: folder)
-    let fixture = try JSONDecoder().decode(Case.self, from: Data(contentsOf: root.appendingPathComponent("case.json")))
+    let fixture = try JSONDecoder().decode(
+      Case.self, from: Data(contentsOf: root.appendingPathComponent("case.json")))
     let optics = try JSONDecoder().decode(
       Optics.self, from: Data(contentsOf: root.appendingPathComponent("optics.json")))
     let references = try JSONDecoder().decode(
@@ -93,17 +97,21 @@ final class SSBDirectMeasuredParityTests: XCTestCase {
     let sums = try Data(contentsOf: root.appendingPathComponent("detector_sum.u64"))
       .withUnsafeBytes { Array($0.bindMemory(to: UInt64.self)) }
     let setup = try fixture.calibration.geometry(
-      detectorRows: fixture.detectorRows, detectorColumns: fixture.detectorColumns, detectorSum: sums,
+      detectorRows: fixture.detectorRows, detectorColumns: fixture.detectorColumns,
+      detectorSum: sums,
       excludedPixels: Set(fixture.excludedPixels ?? []), scanRows: fixture.scanRows,
       scanColumns: fixture.scanColumns)
     XCTAssertEqual(setup.pixels, fixture.pixels, "native BF selection differs from the fixture's")
-    let counts = try MeasuredSSBFixture.mapBuffer(device: device, url: root.appendingPathComponent("counts.bin"))
+    let counts = try MeasuredSSBFixture.mapBuffer(
+      device: device, url: root.appendingPathComponent("counts.bin"))
     let engine = try MetalSSBEngine(device: device, geometry: setup.geometry)
-    try engine.prepare(brightfield: counts, countType: try XCTUnwrap(MetalSSBCountType(rawValue: fixture.countType)))
+    try engine.prepare(
+      brightfield: counts, countType: try XCTUnwrap(MetalSSBCountType(rawValue: fixture.countType)))
     let auto = try fixture.calibration.ssbUpsamplingFactor()
     let all = environment["SSB_DIRECT_ALL"] == "1"
     var checked = 0
-    for set in optics.optics_sets where environment["SSB_DIRECT_OPTICS"].map({ $0 == set.name }) ?? true {
+    for set in optics.optics_sets
+    where environment["SSB_DIRECT_OPTICS"].map({ $0 == set.name }) ?? true {
       let a = set.aberrations
       let point = SSBModelPoint(
         c10Nanometers: try XCTUnwrap(a["C10_nm"]), c12Nanometers: try XCTUnwrap(a["C12_nm"]),
@@ -111,13 +119,16 @@ final class SSBDirectMeasuredParityTests: XCTestCase {
         depthSpreadNanometers: set.depth_spread_nm,
         higherOrder: set.higher_order.map {
           SSBModelHigherOrder(
-            order: $0.order, symmetry: $0.symmetry, magnitudeAngstroms: $0.magnitude_A, angleRadians: $0.angle_rad)
+            order: $0.order, symmetry: $0.symmetry, magnitudeAngstroms: $0.magnitude_A,
+            angleRadians: $0.angle_rad)
         })
       let model = try engine.jointModel(scanDetectorRotationDegrees: set.rotation_deg)
       for entry in references.references where entry.optics == set.name {
         guard all || entry.setting == nil || entry.setting == "default" else { continue }
         let method = try XCTUnwrap(SSBReconstructionMethod(rawValue: entry.method))
-        if entry.factor == "auto" { XCTAssertEqual(entry.upsampling, auto, "Auto factor differs from CUDA's") }
+        if entry.factor == "auto" {
+          XCTAssertEqual(entry.upsampling, auto, "Auto factor differs from CUDA's")
+        }
         func number(_ key: String, _ fallback: Double) -> Double {
           if case .number(let value) = entry.requested?[key] { return value }
           return fallback
@@ -127,7 +138,8 @@ final class SSBDirectMeasuredParityTests: XCTestCase {
           weighting = try XCTUnwrap(SSBDetectorWeighting(rawValue: value))
         }
         let regularization = SSBDirectRegularization(
-          phaseDamping: number("phase_damping", 0.03), amplitudeDamping: number("amplitude_damping", 0.03),
+          phaseDamping: number("phase_damping", 0.03),
+          amplitudeDamping: number("amplitude_damping", 0.03),
           smoothnessInverseAngstroms: number("smoothness_inv_A", 1), detectorWeighting: weighting)
         let result = try model.reconstruct(
           point, upsamplingFactor: entry.upsampling, method: method, regularization: regularization)
@@ -136,7 +148,8 @@ final class SSBDirectMeasuredParityTests: XCTestCase {
         XCTAssertEqual(phase.count, count, entry.file)
         guard phase.count == count else { continue }
         let p = Self.compare(result.phase, phase, wrap: true)
-        var line = "DIRECT_PARITY \(set.name) \(entry.file): phase corr \(p.correlation) rms \(p.rms) (std \(p.std))"
+        var line =
+          "DIRECT_PARITY \(set.name) \(entry.file): phase corr \(p.correlation) rms \(p.rms) (std \(p.std))"
         XCTAssertGreaterThanOrEqual(p.correlation, 0.99999, entry.file)
         XCTAssertLessThanOrEqual(p.rms, 1e-4, entry.file)
         XCTAssertLessThanOrEqual(p.rms, 0.01 * p.std, entry.file)
@@ -162,16 +175,21 @@ final class SSBDirectMeasuredParityTests: XCTestCase {
   ) {
     let actual = buffer.contents().assumingMemoryBound(to: Float.self)
     let n = Double(reference.count)
-    var meanA = 0.0, meanB = 0.0
+    var meanA = 0.0
+    var meanB = 0.0
     for i in reference.indices {
       meanA += Double(actual[i])
       meanB += Double(reference[i])
     }
     meanA /= n
     meanB /= n
-    var ab = 0.0, aa = 0.0, bb = 0.0, dd = 0.0
+    var ab = 0.0
+    var aa = 0.0
+    var bb = 0.0
+    var dd = 0.0
     for i in reference.indices {
-      let a = Double(actual[i]) - meanA, b = Double(reference[i]) - meanB
+      let a = Double(actual[i]) - meanA
+      let b = Double(reference[i]) - meanB
       ab += a * b
       aa += a * a
       bb += b * b

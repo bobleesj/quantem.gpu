@@ -45,8 +45,8 @@ final class SSBLowOrderDerivatives {
 
   private let device: MTLDevice
   private let queue: MTLCommandQueue
-  private let valueSums, valueReduce, gradientSums, gradientCombine, fusedSums, fusedCombine:
-    MTLComputePipelineState
+  private let valueSums, valueReduce, gradientSums, gradientCombine, fusedSums,
+    fusedCombine: MTLComputePipelineState
   private var workspaces: [String: MTLBuffer] = [:]
   /// The rows, trial buffer and inputs of the latest `values` call, whose sums `derivatives(at:)` reads.
   private var staged: (rows: [[Double]], trial: MTLBuffer, inputs: Inputs)?
@@ -138,7 +138,9 @@ final class SSBLowOrderDerivatives {
       try inputs.grid.withUnsafeBytes { grid in
         try inputs.extra.withUnsafeBytes { extra in
           let first = try Self.encoder(commands, valueSums)
-          for (index, buffer) in [inputs.band, inputs.k, inputs.q, partialAB, partialSS].enumerated() {
+          for (index, buffer) in [inputs.band, inputs.k, inputs.q, partialAB, partialSS]
+            .enumerated()
+          {
             first.setBuffer(buffer, offset: 0, index: index)
           }
           first.setBytes(grid.baseAddress!, length: grid.count, index: 5)
@@ -197,7 +199,8 @@ final class SSBLowOrderDerivatives {
     let output = try workspace(
       "output", bytes: indices.count * (Self.outputs - 1) * n * 4, shared: true)
     let selected = try SSBCoherentReconstruction.buffer(device, indices.map { UInt32($0) })
-    guard let ab = workspaces["ab"], let ss = workspaces["ss"], let value = workspaces["value"] else {
+    guard let ab = workspaces["ab"], let ss = workspaces["ss"], let value = workspaces["value"]
+    else {
       throw MetalSSBError.commandQueue
     }
     var total = UInt32(indices.count)
@@ -257,7 +260,8 @@ final class SSBLowOrderDerivatives {
 
   /// Value, gradient and Hessian at every row: the fused pass, or with `twoStage` the value pass and then the
   /// derivative pass (the Newton's path for rows whose derivatives it may not use).
-  func evaluate(rows: [[Double]], inputs: Inputs, twoStage: Bool = false, isCancelled: () -> Bool) throws
+  func evaluate(rows: [[Double]], inputs: Inputs, twoStage: Bool = false, isCancelled: () -> Bool)
+    throws
     -> [Result]
   {
     lastValueGPUSeconds = 0

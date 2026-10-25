@@ -68,11 +68,14 @@ final class SSBDirectReconstructionTests: XCTestCase {
     let outputN = factor * n
     let k = try model.objectiveArrays().k.map { (Double($0.x), Double($0.y)) }
     precondition(k.count == s.pixels.count, "every BF pixel of the scene is inside the aperture")
-    let wl = Double(g.wavelengthAngstroms), semi = Double(g.semiangleRadians)
+    let wl = Double(g.wavelengthAngstroms)
+    let semi = Double(g.semiangleRadians)
     let angular = Double(g.angularSamplingXRadians)
     let factorPi = Double(g.phaseFactor!)
     let depth = Double(Float(point.depthSpreadAngstroms))
-    let tilt = (Double(Float(point.sampleTiltMrad[0] * 1e-3)), Double(Float(point.sampleTiltMrad[1] * 1e-3)))
+    let tilt = (
+      Double(Float(point.sampleTiltMrad[0] * 1e-3)), Double(Float(point.sampleTiltMrad[1] * 1e-3))
+    )
     let coefficients = point.reconstructionCoefficients.map(Double.init)
     func aperture(_ x: Double, _ y: Double) -> Double {
       let r2 = x * x + y * y
@@ -80,18 +83,23 @@ final class SSBDirectReconstructionTests: XCTestCase {
       return min(1, max(0, (semi - r2.squareRoot() * wl) / angular + 0.5))
     }
     func chi(_ row: Double, _ col: Double) -> Double {
-      let x = row * wl, y = col * wl
+      let x = row * wl
+      let y = col * wl
       let r2 = x * x + y * y
       let radial = [1, r2, r2 * r2, r2 * r2 * r2]
-      var re = [1.0], im = [0.0]
+      var re = [1.0]
+      var im = [0.0]
       for m in 1...6 {
         re.append(re[m - 1] * x - im[m - 1] * y)
         im.append(im[m - 1] * x + re[m - 1] * y)
       }
-      let azimuth = [0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, 2, 4, 6], power = [1, 0, 1, 0, 2, 1, 0, 2, 1, 0, 3, 2, 1, 0]
+      let azimuth = [0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, 2, 4, 6]
+      let power = [1, 0, 1, 0, 2, 1, 0, 2, 1, 0, 3, 2, 1, 0]
       var sum = 0.0
       for i in 0..<14 {
-        sum += radial[power[i]] * (re[azimuth[i]] * coefficients[2 * i] + im[azimuth[i]] * coefficients[2 * i + 1])
+        sum +=
+          radial[power[i]]
+          * (re[azimuth[i]] * coefficients[2 * i] + im[azimuth[i]] * coefficients[2 * i + 1])
       }
       return 2 * Double.pi / wl * sum
     }
@@ -106,14 +114,16 @@ final class SSBDirectReconstructionTests: XCTestCase {
       let mean = dc.map { max($0 / Double(n * n), 0) }
       let sorted = mean.sorted()
       let middle = sorted.count / 2
-      let median = sorted.count % 2 == 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+      let median =
+        sorted.count % 2 == 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
       weights = mean.map { 1 / max($0, 0.05 * median) }
       let average = weights.reduce(0, +) / Double(weights.count)
       weights = weights.map { $0 / average }
     }
     let scale = zip(weights, apertures).map { $0 * pow($1, 4) }.reduce(0, +)
     // The supported aliases, as the float32 layout decides them.
-    let cutoff = (2 * (g.modelSemiangleRadians ?? semi) + angular) / (g.modelWavelengthAngstroms ?? wl)
+    let cutoff =
+      (2 * (g.modelSemiangleRadians ?? semi) + angular) / (g.modelWavelengthAngstroms ?? wl)
     let cutoff2 = Float(cutoff * cutoff)
     func signed(_ index: Int) -> Int { index <= (outputN - 1) / 2 ? index : index - outputN }
     var eta = [Complex](repeating: Complex(), count: outputN * outputN)
@@ -126,14 +136,18 @@ final class SSBDirectReconstructionTests: XCTestCase {
         var aliases: [(q: (Double, Double), index: Int, prior: Double)] = []
         for ar in 0..<factor {
           for ac in 0..<factor {
-            let outputRow = row + ar * n, outputColumn = column + ac * n
-            let qr = Float(signed(outputRow)) * g.qxByRow[1], qc = Float(signed(outputColumn)) * g.qyByColumn[1]
+            let outputRow = row + ar * n
+            let outputColumn = column + ac * n
+            let qr = Float(signed(outputRow)) * g.qxByRow[1]
+            let qc = Float(signed(outputColumn)) * g.qyByColumn[1]
             guard qr * qr + qc * qc < cutoff2 else { continue }
             let q2 = Double(qr) * Double(qr) + Double(qc) * Double(qc)
             let s2 = r.smoothnessInverseAngstroms * r.smoothnessInverseAngstroms
             aliases.append(
-              ((Double(qr), Double(qc)), outputRow * outputN + outputColumn,
-               r.smoothnessInverseAngstroms == 0 ? 1 : pow(1 + q2 / s2, 2)))
+              (
+                (Double(qr), Double(qc)), outputRow * outputN + outputColumn,
+                r.smoothnessInverseAngstroms == 0 ? 1 : pow(1 + q2 / s2, 2)
+              ))
           }
         }
         let count = aliases.count
@@ -147,7 +161,10 @@ final class SSBDirectReconstructionTests: XCTestCase {
           for (alias, entry) in aliases.enumerated() {
             let (qr, qc) = entry.q
             let shift = 2 * Double.pi * (qr * tilt.0 + qc * tilt.1)
-            let mr = kr - qr, mc = kc - qc, pr = kr + qr, pc = kc + qc
+            let mr = kr - qr
+            let mc = kc - qc
+            let pr = kr + qr
+            let pc = kc + qc
             let t1 =
               aperture(mr, mc) * ak
               * sinc(0.5 * depth * (-factorPi * ((mr * mr + mc * mc) * wl * wl - alpha2k) - shift))
@@ -174,7 +191,8 @@ final class SSBDirectReconstructionTests: XCTestCase {
         let gain = Double(factor * factor)
         for (alias, entry) in aliases.enumerated() {
           let p = entry.index
-          let mirror = ((outputN - p / outputN) % outputN) * outputN + (outputN - p % outputN) % outputN
+          let mirror =
+            ((outputN - p / outputN) % outputN) * outputN + (outputN - p % outputN) % outputN
           phi[p] = gain * x[dim - count + alias]
           phi[mirror] = phi[p].conjugate
           if complex {
@@ -184,17 +202,23 @@ final class SSBDirectReconstructionTests: XCTestCase {
         }
       }
     }
-    let etaImage = inverseDFT(eta, outputN), phiImage = inverseDFT(phi, outputN)
+    let etaImage = inverseDFT(eta, outputN)
+    let phiImage = inverseDFT(phi, outputN)
     return (
-      zip(etaImage, phiImage).map { atan2(exp($0.0) * sin($0.1), exp($0.0) * cos($0.1)) }, etaImage.map(exp)
+      zip(etaImage, phiImage).map { atan2(exp($0.0) * sin($0.1), exp($0.0) * cos($0.1)) },
+      etaImage.map(exp)
     )
   }
 
   /// Gaussian elimination with partial pivoting (an independent solver; production uses Cholesky).
   private static func solve(_ matrix: [Complex], _ rhs: [Complex], _ n: Int) -> [Complex] {
-    var a = matrix, b = rhs
+    var a = matrix
+    var b = rhs
     for column in 0..<n {
-      let pivot = (column..<n).max { hypot(a[$0 * n + column].re, a[$0 * n + column].im) < hypot(a[$1 * n + column].re, a[$1 * n + column].im) }!
+      let pivot = (column..<n).max {
+        hypot(a[$0 * n + column].re, a[$0 * n + column].im)
+          < hypot(a[$1 * n + column].re, a[$1 * n + column].im)
+      }!
       if pivot != column {
         for j in 0..<n { a.swapAt(pivot * n + j, column * n + j) }
         b.swapAt(pivot, column)
@@ -241,7 +265,8 @@ final class SSBDirectReconstructionTests: XCTestCase {
     return out
   }
 
-  private func model(_ s: Scene, device: MTLDevice, cache: Int? = nil) throws -> MetalSSBJointModel {
+  private func model(_ s: Scene, device: MTLDevice, cache: Int? = nil) throws -> MetalSSBJointModel
+  {
     let input = try XCTUnwrap(
       s.counts.withUnsafeBytes {
         device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
@@ -262,7 +287,8 @@ final class SSBDirectReconstructionTests: XCTestCase {
     let spectra = Self.spectra(s)
     let low = SSBModelPoint(c10Angstroms: 61, c12Angstroms: 14, phi12Radians: 0.7)
     let thick = SSBModelPoint(
-      c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4, sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140,
+      c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4, sampleTiltMrad: [2.5, -4],
+      depthSpreadAngstroms: 140,
       higherOrder: [
         .init(order: 2, symmetry: 1, magnitudeAngstroms: 900, angleRadians: 0.3),
         .init(order: 3, symmetry: 0, magnitudeAngstroms: -4e4),
@@ -272,7 +298,10 @@ final class SSBDirectReconstructionTests: XCTestCase {
       (low, 1, .phase, .init(), 0),  // streamed (uncached) spectra
       (thick, 2, .phase, .init(phaseDamping: 0.1, smoothnessInverseAngstroms: 0), nil),
       (thick, 2, .complex, .init(), nil),
-      (low, 2, .complex, .init(phaseDamping: 0.01, amplitudeDamping: 0.1, detectorWeighting: .inverseMean), nil),
+      (
+        low, 2, .complex,
+        .init(phaseDamping: 0.01, amplitudeDamping: 0.1, detectorWeighting: .inverseMean), nil
+      ),
     ]
     for (point, factor, method, regularization, cache) in cases {
       let model = try model(s, device: device, cache: cache)
@@ -282,11 +311,14 @@ final class SSBDirectReconstructionTests: XCTestCase {
       XCTAssertEqual(result.method, method)
       XCTAssertEqual(result.regularization, regularization)
       let expected = try Self.reference(
-        s, spectra: spectra, model: model, point: point, factor: factor, complex: method == .complex,
+        s, spectra: spectra, model: model, point: point, factor: factor,
+        complex: method == .complex,
         regularization: regularization)
       let count = result.rows * result.columns
       let phase = values(result.phase, count)
-      var squared = 0.0, maximum = 0.0, power = 0.0
+      var squared = 0.0
+      var maximum = 0.0
+      var power = 0.0
       for i in 0..<count {
         var d = phase[i] - expected.phase[i]
         d -= 2 * .pi * (d / (2 * .pi)).rounded()
@@ -295,13 +327,16 @@ final class SSBDirectReconstructionTests: XCTestCase {
         power += expected.phase[i] * expected.phase[i]
       }
       let rms = (squared / Double(count)).squareRoot()
-      var line = "DIRECT \(method.rawValue) \(factor)x cache \(cache.map(String.init) ?? "full"): phase rms \(rms) max \(maximum) (std \((power / Double(count)).squareRoot()))"
+      var line =
+        "DIRECT \(method.rawValue) \(factor)x cache \(cache.map(String.init) ?? "full"): phase rms \(rms) max \(maximum) (std \((power / Double(count)).squareRoot()))"
       XCTAssertLessThan(rms, 5e-7)
       XCTAssertLessThan(maximum, 2e-6)
       if method == .complex {
         let amplitude = values(try XCTUnwrap(result.amplitude), count)
         let mean = expected.amplitude.reduce(0, +) / Double(count)
-        let error = (zip(amplitude, expected.amplitude).map { ($0 - $1) * ($0 - $1) }.reduce(0, +) / Double(count))
+        let error =
+          (zip(amplitude, expected.amplitude).map { ($0 - $1) * ($0 - $1) }.reduce(0, +)
+          / Double(count))
           .squareRoot() / mean
         line += " amplitude rms/mean \(error)"
         XCTAssertLessThan(error, 5e-7)
@@ -332,9 +367,12 @@ final class SSBDirectReconstructionTests: XCTestCase {
     XCTAssertEqual(phase.regularization, SSBDirectRegularization())
     XCTAssertEqual(phase.point, point)
     // Python's settings() checks, with its messages.
-    func message(_ regularization: SSBDirectRegularization, _ method: SSBReconstructionMethod) -> String? {
+    func message(_ regularization: SSBDirectRegularization, _ method: SSBReconstructionMethod)
+      -> String?
+    {
       do {
-        _ = try model.reconstruct(point, upsamplingFactor: 1, method: method, regularization: regularization)
+        _ = try model.reconstruct(
+          point, upsamplingFactor: 1, method: method, regularization: regularization)
         return nil
       } catch let error as SSBDirectError {
         return error.errorDescription
@@ -344,7 +382,8 @@ final class SSBDirectReconstructionTests: XCTestCase {
     }
     for value in [0, -0.1, .nan, .infinity] {
       XCTAssertEqual(
-        message(.init(phaseDamping: value), .phase), "phase_damping must be finite and positive; got \(value).")
+        message(.init(phaseDamping: value), .phase),
+        "phase_damping must be finite and positive; got \(value).")
       XCTAssertEqual(
         message(.init(amplitudeDamping: value), .complex),
         "amplitude_damping must be finite and positive; got \(value).")
@@ -356,7 +395,8 @@ final class SSBDirectReconstructionTests: XCTestCase {
       "smoothness_inv_A must be nonnegative and finite; use 0 for a flat prior, got -1.0.")
     XCTAssertNil(message(.init(smoothnessInverseAngstroms: 0), .phase))
     for factor in [0, 5, 8] {
-      XCTAssertThrowsError(try model.reconstruct(point, upsamplingFactor: factor, method: .complex)) {
+      XCTAssertThrowsError(try model.reconstruct(point, upsamplingFactor: factor, method: .complex))
+      {
         XCTAssertEqual($0 as? SSBDirectError, .unsupportedSampling(factor))
       }
     }
@@ -366,7 +406,8 @@ final class SSBDirectReconstructionTests: XCTestCase {
     XCTAssertEqual(SSBReconstructionMethod.allCases, [.ssb, .phase, .complex])
     XCTAssertEqual(SSBDetectorWeighting.inverseMean.rawValue, "inverse_mean")
     let decoded = try JSONDecoder().decode(
-      SSBDirectRegularization.self, from: JSONEncoder().encode(SSBDirectRegularization(phaseDamping: 0.1)))
+      SSBDirectRegularization.self,
+      from: JSONEncoder().encode(SSBDirectRegularization(phaseDamping: 0.1)))
     XCTAssertEqual(decoded, SSBDirectRegularization(phaseDamping: 0.1))
   }
 
@@ -375,7 +416,8 @@ final class SSBDirectReconstructionTests: XCTestCase {
     let s = try SSBModelReconstructionTests.scene()
     let model = try model(s, device: device)
     let point = SSBModelPoint(
-      c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4, sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140)
+      c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4, sampleTiltMrad: [2.5, -4],
+      depthSpreadAngstroms: 140)
     func image(_ result: MetalSSBJointPhase) -> Data {
       Data(bytes: result.phase.contents(), count: result.rows * result.columns * 4)
     }
@@ -386,7 +428,8 @@ final class SSBDirectReconstructionTests: XCTestCase {
       point, upsamplingFactor: 2, method: .phase, regularization: .init(phaseDamping: 0.3))
     XCTAssertEqual(model.lastDirectTiming?.preparedFromCache, true)
     XCTAssertNotEqual(image(phase), image(damped))
-    XCTAssertEqual(image(phase), image(try model.reconstruct(point, upsamplingFactor: 2, method: .phase)))
+    XCTAssertEqual(
+      image(phase), image(try model.reconstruct(point, upsamplingFactor: 2, method: .phase)))
     // A complex system serves the phase method with the same normal equations.
     _ = try model.reconstruct(point, upsamplingFactor: 2, method: .complex)
     XCTAssertEqual(model.lastDirectTiming?.preparedFromCache, false)
@@ -402,11 +445,13 @@ final class SSBDirectReconstructionTests: XCTestCase {
     _ = try model.reconstruct(moved, upsamplingFactor: 2, method: .phase)
     XCTAssertEqual(model.lastDirectTiming?.preparedFromCache, false)
     _ = try model.reconstruct(
-      moved, upsamplingFactor: 2, method: .phase, regularization: .init(smoothnessInverseAngstroms: 0.5))
+      moved, upsamplingFactor: 2, method: .phase,
+      regularization: .init(smoothnessInverseAngstroms: 0.5))
     XCTAssertEqual(model.lastDirectTiming?.preparedFromCache, false)
     try model.retarget(scanDetectorRotationDegrees: 197.25)
     _ = try model.reconstruct(
-      moved, upsamplingFactor: 2, method: .phase, regularization: .init(smoothnessInverseAngstroms: 0.5))
+      moved, upsamplingFactor: 2, method: .phase,
+      regularization: .init(smoothnessInverseAngstroms: 0.5))
     XCTAssertEqual(model.lastDirectTiming?.preparedFromCache, false)
   }
 }

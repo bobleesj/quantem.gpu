@@ -391,7 +391,9 @@ public final class MetalSSBJointModel {
   }
 
   /// The kernel rows of `fifthOrderAgreements`: depth, tilt row and column (rad), the 28 packed coefficients.
-  private func fifthOrderRows(_ points: [SSBModelPoint], _ coefficients: [[Float]]) throws -> [[Float]] {
+  private func fifthOrderRows(_ points: [SSBModelPoint], _ coefficients: [[Float]]) throws
+    -> [[Float]]
+  {
     if fifthOrder == nil {
       let q = Array(
         UnsafeBufferPointer(
@@ -497,7 +499,8 @@ public final class MetalSSBJointModel {
     return results
   }
 
-  private func lowOrderEvaluator() throws -> (SSBLowOrderDerivatives, SSBLowOrderDerivatives.Inputs) {
+  private func lowOrderEvaluator() throws -> (SSBLowOrderDerivatives, SSBLowOrderDerivatives.Inputs)
+  {
     try validatePreparation()
     if lowOrder == nil {
       lowOrder = try SSBLowOrderDerivatives(device: device, queue: queue, library: library)
@@ -622,7 +625,9 @@ public final class MetalSSBJointModel {
 
   /// The band frequencies q (1/A, row and column) of the agreement, in the order of its weights.
   var bandFrequencies: [SIMD2<Float>] {
-    Array(UnsafeBufferPointer(start: qBuffer.contents().assumingMemoryBound(to: SIMD2<Float>.self), count: bandCount))
+    Array(
+      UnsafeBufferPointer(
+        start: qBuffer.contents().assumingMemoryBound(to: SIMD2<Float>.self), count: bandCount))
   }
 
   /// Evaluate `body` with the per-frequency agreement weights multiplied by `mask` (0 or 1 per band frequency), as
@@ -720,9 +725,11 @@ public final class MetalSSBJointModel {
   /// The radii where the soft aperture of `joint_geometry_xy` is exactly 1 / 0 (worst-case anisotropic sampling),
   /// moved inward / outward by 1e-4 in r^2, far beyond the float32 rounding of the edge expression.
   private func angleSumExtra(first: Int) -> AngleSumExtra {
-    let wl = Double(geometry.wavelengthAngstroms), semi = Double(geometry.semiangleRadians)
+    let wl = Double(geometry.wavelengthAngstroms)
+    let semi = Double(geometry.semiangleRadians)
     let angular = Double(max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
-    let inner = (semi - 0.5 * angular) / wl, outer = (semi + 0.5 * angular) / wl
+    let inner = (semi - 0.5 * angular) / wl
+    let outer = (semi + 0.5 * angular) / wl
     return AngleSumExtra(
       inner2: inner > 0 ? Float(inner * inner * (1 - 1e-4)) : -1,
       outer2: Float(outer * outer * (1 + 1e-4)), first: UInt32(first))
@@ -745,7 +752,8 @@ public final class MetalSSBJointModel {
   public func reconstruct(
     _ parameters: SSBJointParameters, upsamplingFactor: Int = 1, isCancelled: () -> Bool = { false }
   ) throws -> MetalSSBJointPhase {
-    try reconstruct(SSBModelPoint(parameters), upsamplingFactor: upsamplingFactor, isCancelled: isCancelled)
+    try reconstruct(
+      SSBModelPoint(parameters), upsamplingFactor: upsamplingFactor, isCancelled: isCancelled)
   }
 
   /// SSB with Auto or an explicit output sampling, recorded in the result's `outputSampling` so a manual 8x is
@@ -784,14 +792,16 @@ public final class MetalSSBJointModel {
 
   /// `.phase` / `.complex` of `reconstruct(_:upsamplingFactor:method:regularization:isCancelled:)`.
   func reconstructDirect(
-    _ point: SSBModelPoint, upsamplingFactor: Int, complex: Bool, regularization: SSBDirectRegularization,
+    _ point: SSBModelPoint, upsamplingFactor: Int, complex: Bool,
+    regularization: SSBDirectRegularization,
     isCancelled: () -> Bool
   ) throws -> MetalSSBJointPhase {
     try validatePreparation()
     let started = Date()
     if directSolver == nil {
       directSolver = try SSBDirectSolver(
-        device: device, queue: queue, library: library, geometry: geometry, activeIndices: activeIndices)
+        device: device, queue: queue, library: library, geometry: geometry,
+        activeIndices: activeIndices)
     }
     let solver = directSolver!
     let (phase, amplitude, n) = try solver.reconstruct(
@@ -805,7 +815,9 @@ public final class MetalSSBJointModel {
       kernel: MetalKernelIdentity(
         name: SSBKernelRegistry.direct.name, version: SSBKernelRegistry.direct.version,
         sourceSHA256: solver.sourceSHA256,
-        variant: "\(complex ? "complex" : "phase") factor=\(upsamplingFactor) depth=\(point.depthSpreadAngstroms != 0 ? "on" : "off")"))
+        variant:
+          "\(complex ? "complex" : "phase") factor=\(upsamplingFactor) depth=\(point.depthSpreadAngstroms != 0 ? "on" : "off")"
+      ))
     result.method = complex ? .complex : .phase
     result.regularization = regularization
     return result
@@ -823,19 +835,24 @@ public final class MetalSSBJointModel {
   /// inputs no longer match `point` are dropped; at most three tiles per control and a quarter of the device's
   /// recommended working set are kept.
   public func buildDragWindow(
-    along control: SSBDragControl, at point: SSBModelPoint, upsamplingFactor: Int, method: SSBReconstructionMethod,
-    regularization: SSBDirectRegularization = .init(), nodes: Int = 1, isCancelled: () -> Bool = { false }
+    along control: SSBDragControl, at point: SSBModelPoint, upsamplingFactor: Int,
+    method: SSBReconstructionMethod,
+    regularization: SSBDirectRegularization = .init(), nodes: Int = 1,
+    isCancelled: () -> Bool = { false }
   ) throws -> SSBDragWindowState {
-    let solver = try directSolver(method: method, regularization: regularization, factor: upsamplingFactor, point)
+    let solver = try directSolver(
+      method: method, regularization: regularization, factor: upsamplingFactor, point)
     return try solver.buildWindow(
       along: control, at: point, factor: upsamplingFactor, complex: method == .complex,
-      regularization: regularization, rotation: scanDetectorRotationDegrees, k: kBuffer, nodes: nodes, visit: visit,
+      regularization: regularization, rotation: scanDetectorRotationDegrees, k: kBuffer,
+      nodes: nodes, visit: visit,
       isCancelled: isCancelled)
   }
 
   /// The state of the drag window along `control` covering `point`, or nil when there is none.
   public func dragWindowState(
-    along control: SSBDragControl, at point: SSBModelPoint, upsamplingFactor: Int, method: SSBReconstructionMethod,
+    along control: SSBDragControl, at point: SSBModelPoint, upsamplingFactor: Int,
+    method: SSBReconstructionMethod,
     regularization: SSBDirectRegularization = .init()
   ) -> SSBDragWindowState? {
     guard method != .ssb else { return nil }
@@ -851,7 +868,8 @@ public final class MetalSSBJointModel {
   /// truncated at 1e-10 of its terms' bound; coefficients are rounded to float32), but it is not the exact solve:
   /// the result's `preview` is set, and it must not be saved or exported. Settle on `reconstruct` when the drag ends.
   public func dragPreview(
-    _ point: SSBModelPoint, along control: SSBDragControl, upsamplingFactor: Int, method: SSBReconstructionMethod,
+    _ point: SSBModelPoint, along control: SSBDragControl, upsamplingFactor: Int,
+    method: SSBReconstructionMethod,
     regularization: SSBDirectRegularization = .init()
   ) throws -> MetalSSBJointPhase? {
     guard method != .ssb, let solver = directSolver else { return nil }
@@ -872,7 +890,9 @@ public final class MetalSSBJointModel {
       kernel: MetalKernelIdentity(
         name: SSBKernelRegistry.direct.name, version: SSBKernelRegistry.direct.version,
         sourceSHA256: solver.sourceSHA256,
-        variant: "\(method == .complex ? "complex" : "phase") factor=\(upsamplingFactor) drag-window order=\(window.order)"))
+        variant:
+          "\(method == .complex ? "complex" : "phase") factor=\(upsamplingFactor) drag-window order=\(window.order)"
+      ))
     result.method = method
     result.regularization = regularization
     result.preview = window
@@ -883,10 +903,12 @@ public final class MetalSSBJointModel {
   public func releaseDragWindows() { directSolver?.releaseWindows() }
 
   private func directSolver(
-    method: SSBReconstructionMethod, regularization: SSBDirectRegularization, factor: Int, _ point: SSBModelPoint
+    method: SSBReconstructionMethod, regularization: SSBDirectRegularization, factor: Int,
+    _ point: SSBModelPoint
   ) throws -> SSBDirectSolver {
     guard method != .ssb else {
-      throw MetalSSBError.invalidGeometry("Drag windows serve the regularized methods phase and complex.")
+      throw MetalSSBError.invalidGeometry(
+        "Drag windows serve the regularized methods phase and complex.")
     }
     try regularization.validate(for: method)
     guard (1...4).contains(factor) else { throw SSBDirectError.unsupportedSampling(factor) }
@@ -894,7 +916,8 @@ public final class MetalSSBJointModel {
     try validatePreparation()
     if directSolver == nil {
       directSolver = try SSBDirectSolver(
-        device: device, queue: queue, library: library, geometry: geometry, activeIndices: activeIndices)
+        device: device, queue: queue, library: library, geometry: geometry,
+        activeIndices: activeIndices)
     }
     return directSolver!
   }

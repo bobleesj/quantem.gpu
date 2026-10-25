@@ -8,12 +8,13 @@ corrections: a few ulps of the largest phase (tolerance 1e-6; 1.3e-7 measured
 on the 512 x 512 test field with its 14-term fit).
 """
 
-import cupy as cp
 import numpy as np
 import pytest
 
-from quantem.gpu import DirectPtycho
-from quantem.gpu.ssb.cuda.thick import ThickSample
+cp = pytest.importorskip("cupy")
+
+from quantem.gpu import DirectPtycho  # noqa: E402
+from quantem.gpu.ssb.cuda.thick import ThickSample  # noqa: E402
 
 pytestmark = pytest.mark.slow
 

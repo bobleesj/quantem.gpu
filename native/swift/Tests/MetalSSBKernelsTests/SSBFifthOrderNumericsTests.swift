@@ -95,7 +95,8 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
       XCTAssertLessThan(error, 2e-6)
     }
     for count in [1, 2, 3, 4, 5] {
-      XCTAssertEqual(Array(all.prefix(count)), try model.fifthOrderAgreements(Array(points.prefix(count))))
+      XCTAssertEqual(
+        Array(all.prefix(count)), try model.fifthOrderAgreements(Array(points.prefix(count))))
     }
     XCTAssertEqual(all, try points.map { try model.fifthOrderAgreements([$0])[0] })
     XCTAssertEqual(all, try model.fifthOrderAgreements(points.reversed()).reversed())
@@ -134,28 +135,37 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
 
   /// The fifth-order agreement objective with every term and sum in double precision, from the model's
   /// float32 inputs (k, q, weights, probe geometry, evidence) and the float32 packed coefficients.
-  static func doubleAgreements(model: MetalSSBJointModel, points: [SSBModelPoint]) throws -> [Double] {
+  static func doubleAgreements(model: MetalSSBJointModel, points: [SSBModelPoint]) throws
+    -> [Double]
+  {
     let arrays = try model.objectiveArrays()
-    let wl = arrays.constants["wavelength_A"]!, semi = arrays.constants["semiangle_rad"]!
-    let ay = arrays.constants["angular_row_rad"]!, ax = arrays.constants["angular_column_rad"]!
+    let wl = arrays.constants["wavelength_A"]!
+    let semi = arrays.constants["semiangle_rad"]!
+    let ay = arrays.constants["angular_row_rad"]!
+    let ax = arrays.constants["angular_column_rad"]!
     let factor = arrays.constants["factor"]!
     let azimuth = [0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, 2, 4, 6]
     let power = [1, 0, 1, 0, 2, 1, 0, 2, 1, 0, 3, 2, 1, 0]
     func chi(_ row: Double, _ col: Double, _ c: [Double]) -> Double {
-      let x = row * wl, y = col * wl, r2 = x * x + y * y
-      var re = [1.0], im = [0.0]
+      let x = row * wl
+      let y = col * wl
+      let r2 = x * x + y * y
+      var re = [1.0]
+      var im = [0.0]
       for m in 1...6 {
         re.append(re[m - 1] * x - im[m - 1] * y)
         im.append(im[m - 1] * x + re[m - 1] * y)
       }
       var total = 0.0
       for i in 0..<14 {
-        total += pow(r2, Double(power[i])) * (re[azimuth[i]] * c[2 * i] + im[azimuth[i]] * c[2 * i + 1])
+        total +=
+          pow(r2, Double(power[i])) * (re[azimuth[i]] * c[2 * i] + im[azimuth[i]] * c[2 * i + 1])
       }
       return 2 * Double.pi / wl * total
     }
     func geometry(_ dx: Double, _ dy: Double) -> (Double, Double) {
-      let r = (dx * dx + dy * dy).squareRoot(), alpha = r * wl
+      let r = (dx * dx + dy * dy).squareRoot()
+      let alpha = r * wl
       let denom = r > 1e-15 ? (dx * ay * dx * ay + dy * ax * dy * ax).squareRoot() / r : 0
       let edge = denom > 1e-15 ? (semi - alpha) / denom + 0.5 : 1
       return (alpha * alpha, min(max(edge, 0), 1))
@@ -164,19 +174,28 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
     return points.map { point in
       let c = point.reconstructionCoefficients.map(Double.init)
       let t = Double(Float(point.depthSpreadAngstroms))
-      let thr = Double(Float(point.sampleTiltMrad[0] * 1e-3)), thc = Double(Float(point.sampleTiltMrad[1] * 1e-3))
+      let thr = Double(Float(point.sampleTiltMrad[0] * 1e-3))
+      let thc = Double(Float(point.sampleTiltMrad[1] * 1e-3))
       var total = 0.0
       for (qi, q) in arrays.q.enumerated() {
-        let qx = Double(q.x), qy = Double(q.y)
+        let qx = Double(q.x)
+        let qy = Double(q.y)
         let shift = 2 * Double.pi * (qx * thr + qy * thc)
-        var nr = 0.0, ni = 0.0, dd = 0.0
+        var nr = 0.0
+        var ni = 0.0
+        var dd = 0.0
         for (ki, k) in arrays.k.enumerated() {
-          let kx = Double(k.x), ky = Double(k.y), gk = arrays.probe[ki]
-          let gm = geometry(qx - kx, qy - ky), gp = geometry(qx + kx, qy + ky)
-          let a1 = gm.1 * Double(gk.w), a2 = gp.1 * Double(gk.w)
+          let kx = Double(k.x)
+          let ky = Double(k.y)
+          let gk = arrays.probe[ki]
+          let gm = geometry(qx - kx, qy - ky)
+          let gp = geometry(qx + kx, qy + ky)
+          let a1 = gm.1 * Double(gk.w)
+          let a2 = gp.1 * Double(gk.w)
           if a1 == 0 && a2 == 0 { continue }
           let chiK = chi(kx, ky, c)
-          var gr = 0.0, gi = 0.0
+          var gr = 0.0
+          var gi = 0.0
           if a1 != 0 {
             let phase = chi(kx - qx, ky - qy, c) - chiK
             let b1 = t != 0 ? sinc(0.5 * t * (-factor * (gm.0 - Double(gk.x)) - shift)) * a1 : a1
@@ -190,7 +209,8 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
             gi -= b2 * sin(phase)
           }
           let g = arrays.evidence[ki * arrays.q.count + qi]
-          let gre = Double(g.x), gim = Double(g.y)
+          let gre = Double(g.x)
+          let gim = Double(g.y)
           nr += gre * gr + gim * gi
           ni += gim * gr - gre * gi
           dd += gr * gr + gi * gi

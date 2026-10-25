@@ -82,7 +82,9 @@ public enum SSBOutputSampling: Codable, Equatable, Hashable, Sendable {
   case factor(Int)
 
   /// The viewer choices: Auto and explicit 1x to 4x.
-  public static let choices: [SSBOutputSampling] = [.auto, .factor(1), .factor(2), .factor(3), .factor(4)]
+  public static let choices: [SSBOutputSampling] = [
+    .auto, .factor(1), .factor(2), .factor(3), .factor(4),
+  ]
 
   /// The factors a reconstruction accepts explicitly (8x as in Python, outside the viewer choices).
   public static let supportedFactors = [1, 2, 3, 4, 8]

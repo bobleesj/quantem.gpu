@@ -49,7 +49,8 @@ final class SSBModelReconstructionTests: XCTestCase {
       detectorRows: detector, detectorColumns: detector, detectorSum: sums, scanRows: scan,
       scanColumns: scan)
     return Scene(
-      calibration: calibration, scan: scan, counts: setup.pixels.flatMap { planes[$0] }, pixels: setup.pixels,
+      calibration: calibration, scan: scan, counts: setup.pixels.flatMap { planes[$0] },
+      pixels: setup.pixels,
       geometry: setup.geometry)
   }
 
@@ -397,7 +398,8 @@ final class SSBModelReconstructionTests: XCTestCase {
       let best = try model.agreements(neighbours).max()!
       print(
         String(
-          format: "EXACT_FIT tilt %d agreement %.9e best neighbour %.9e (rel %.2e) centers %d", tilt ? 1 : 0,
+          format: "EXACT_FIT tilt %d agreement %.9e best neighbour %.9e (rel %.2e) centers %d",
+          tilt ? 1 : 0,
           agreement, best, (best - agreement) / agreement,
           fit.newtonStarts?.reduce(0) { $0 + $1.evaluations } ?? -1))
       XCTAssertLessThan(best, agreement * (1 + 1e-6))
@@ -465,7 +467,8 @@ final class SSBModelReconstructionTests: XCTestCase {
         worstGradient = max(worstGradient, abs(numeric - exact.gradient[d]) * steps[d] / valueScale)
         for e in 0..<6 {
           let mixed = richardson(d) { $0.gradient[e] }
-          let scale = (0..<6).map { abs(exact.hessian[e][$0]) * steps[$0] * steps[e] }.max()! + 1e-6
+          let scale =
+            (0..<6).map { abs(exact.hessian[e][$0]) * steps[$0] * steps[e] }.max()! + 1e-6
             * valueScale
           worstHessian = max(
             worstHessian, abs(mixed - exact.hessian[d][e]) * steps[d] * steps[e] / scale)
@@ -473,7 +476,8 @@ final class SSBModelReconstructionTests: XCTestCase {
       }
       print(
         String(
-          format: "LOW_ORDER_DERIVATIVES depth %.0f value rel %.2e gradient rel %.2e hessian rel %.2e",
+          format:
+            "LOW_ORDER_DERIVATIVES depth %.0f value rel %.2e gradient rel %.2e hessian rel %.2e",
           point.depthSpreadAngstroms, (exact.value - agreement) / agreement, worstGradient,
           worstHessian))
       XCTAssertLessThan(worstGradient, 2e-3)
@@ -488,14 +492,18 @@ final class SSBModelReconstructionTests: XCTestCase {
         var derivatives = 0.0
         for (x, y) in zip(a, b) {
           value = max(value, abs(x.value - y.value) / x.value)
-          let gradientScale = (0..<6).map { abs(x.gradient[$0]) * steps[$0] }.max()! + 1e-6 * x.value
+          let gradientScale =
+            (0..<6).map { abs(x.gradient[$0]) * steps[$0] }.max()! + 1e-6 * x.value
           for d in 0..<6 {
-            derivatives = max(derivatives, abs(x.gradient[d] - y.gradient[d]) * steps[d] / gradientScale)
+            derivatives = max(
+              derivatives, abs(x.gradient[d] - y.gradient[d]) * steps[d] / gradientScale)
             let hessianScale =
-              (0..<6).map { abs(x.hessian[d][$0]) * steps[$0] * steps[d] }.max()! + 1e-6 * gradientScale
+              (0..<6).map { abs(x.hessian[d][$0]) * steps[$0] * steps[d] }.max()! + 1e-6
+              * gradientScale
             for e in 0..<6 {
               derivatives = max(
-                derivatives, abs(x.hessian[d][e] - y.hessian[d][e]) * steps[d] * steps[e] / hessianScale)
+                derivatives,
+                abs(x.hessian[d][e] - y.hessian[d][e]) * steps[d] * steps[e] / hessianScale)
             }
           }
         }

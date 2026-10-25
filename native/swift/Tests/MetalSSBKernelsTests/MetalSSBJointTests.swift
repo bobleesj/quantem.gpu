@@ -195,7 +195,9 @@ final class MetalSSBJointTests: XCTestCase {
   func testAutoSamplingIsCappedAtFourTimes() throws {
     let wavelength = MetalSSBCalibration.wavelengthAngstroms(voltageKV: 300)
     let spacing = wavelength / (4 * 20e-3)
-    for (required, expected) in [(0.5, 1), (1, 1), (1.1, 2), (2.1, 3), (3.1, 4), (4.1, 4), (8, 4), (12, 4)] {
+    for (required, expected) in [
+      (0.5, 1), (1, 1), (1.1, 2), (2.1, 3), (3.1, 4), (4.1, 4), (8, 4), (12, 4),
+    ] {
       let cal = MetalSSBCalibration(
         voltageKV: 300, semiangleMrad: 20,
         scanSamplingRowAngstroms: 0.5 * spacing, scanSamplingColumnAngstroms: required * spacing,
@@ -206,7 +208,8 @@ final class MetalSSBJointTests: XCTestCase {
       XCTAssertEqual(try SSBOutputSampling.auto.resolve(cal), expected)
     }
     let thick = MetalSSBCalibration(
-      voltageKV: 300, semiangleMrad: 30, scanSamplingRowAngstroms: 0.373, scanSamplingColumnAngstroms: 0.373,
+      voltageKV: 300, semiangleMrad: 30, scanSamplingRowAngstroms: 0.373,
+      scanSamplingColumnAngstroms: 0.373,
       detectorSamplingRowMrad: 0.57, detectorSamplingColumnMrad: 0.57,
       brightfieldCenterRowPixels: 96, brightfieldCenterColumnPixels: 96)
     XCTAssertEqual(try thick.ssbUpsamplingFactor(), 3)
@@ -215,7 +218,8 @@ final class MetalSSBJointTests: XCTestCase {
     XCTAssertThrowsError(try SSBOutputSampling.factor(5).resolve(thick))
     XCTAssertEqual(SSBOutputSampling.choices.map(\.label), ["Auto", "1×", "2×", "3×", "4×"])
     let coded = try JSONEncoder().encode(SSBOutputSampling.choices)
-    XCTAssertEqual(try JSONDecoder().decode([SSBOutputSampling].self, from: coded), SSBOutputSampling.choices)
+    XCTAssertEqual(
+      try JSONDecoder().decode([SSBOutputSampling].self, from: coded), SSBOutputSampling.choices)
   }
 
   /// A measured 512 x 512 calibration (300 kV, 1.0855 A step, 33.145 mrad from the BF edge) needs about 7.3x:
@@ -224,12 +228,15 @@ final class MetalSSBJointTests: XCTestCase {
     let cal = MetalSSBCalibration(
       voltageKV: 300, semiangleMrad: 33.145, scanSamplingRowAngstroms: 1.0855,
       scanSamplingColumnAngstroms: 1.0855, detectorSamplingRowMrad: 0.6044,
-      detectorSamplingColumnMrad: 0.6044, brightfieldCenterRowPixels: 96, brightfieldCenterColumnPixels: 96)
+      detectorSamplingColumnMrad: 0.6044, brightfieldCenterRowPixels: 96,
+      brightfieldCenterColumnPixels: 96)
     XCTAssertEqual(try cal.ssbUpsamplingRequirement(), 7.31, accuracy: 0.01)
     XCTAssertEqual(try cal.ssbUpsamplingFactor(), 4)
     XCTAssertEqual(try SSBOutputSampling.auto.resolve(cal), 4)
     XCTAssertEqual(try SSBOutputSampling.factor(8).resolve(cal), 8)
-    for invalid in [0, 5, 6, 7, 16] { XCTAssertThrowsError(try SSBOutputSampling.factor(invalid).resolve(cal)) }
+    for invalid in [0, 5, 6, 7, 16] {
+      XCTAssertThrowsError(try SSBOutputSampling.factor(invalid).resolve(cal))
+    }
 
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let s = try SSBModelReconstructionTests.scene()
@@ -244,7 +251,8 @@ final class MetalSSBJointTests: XCTestCase {
     let auto = try model.reconstruct(point, outputSampling: .auto, calibration: s.calibration)
     XCTAssertEqual(auto.upsamplingFactor, try s.calibration.ssbUpsamplingFactor())
     XCTAssertEqual(auto.outputSampling, .auto)
-    let manual = try model.reconstruct(point, outputSampling: .factor(2), calibration: s.calibration)
+    let manual = try model.reconstruct(
+      point, outputSampling: .factor(2), calibration: s.calibration)
     XCTAssertEqual(manual.upsamplingFactor, 2)
     XCTAssertEqual(manual.outputSampling, .factor(2))
     XCTAssertNil(try model.reconstruct(point, upsamplingFactor: 2).outputSampling)
@@ -253,7 +261,8 @@ final class MetalSSBJointTests: XCTestCase {
       result: manual, sourceIdentity: String(repeating: "a", count: 64), backendRevision: "test",
       sourceRows: s.scan, sourceColumns: s.scan, region: nil, calibration: s.calibration,
       optimization: nil, provenance: [:])
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jointssb")
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString + ".jointssb")
     defer { try? FileManager.default.removeItem(at: url) }
     try run.save(to: url)
     let reopened = try MetalSSBJointSavedRun.load(from: url, sourceIdentity: run.sourceIdentity)

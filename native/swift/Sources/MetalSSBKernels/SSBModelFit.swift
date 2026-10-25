@@ -69,7 +69,8 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
     tilt: Bool = true, objective: SSBObjective = .agreement, trials: Int = 200, seed: Int = 42,
     compareStandard: Bool? = nil, tiltLimitMrad: Double = 25,
     maximumOrder: Int? = nil, maxHigherOrderEvaluations: Int = 5000,
-    higherOrderLimit: Double = SSBFitOptions.defaultHigherOrderLimit, computeHigherOrderGuard: Bool = false,
+    higherOrderLimit: Double = SSBFitOptions.defaultHigherOrderLimit,
+    computeHigherOrderGuard: Bool = false,
     checkHigherOrderConsistency: Bool = true
   ) {
     self.higherOrderLimit = higherOrderLimit
@@ -506,17 +507,22 @@ public enum SSBModelFit {
         trialCount: primary.trialCount, timings: primary.timings)
       fit.higherOrderRefinement = refined.result
       fit.higherOrderNormalization = refined.normalization
-      return (fit, refined.result.coordinates, refined.agreement64, Date().timeIntervalSince(started))
+      return (
+        fit, refined.result.coordinates, refined.agreement64, Date().timeIntervalSince(started)
+      )
     }
     let requested = try refine(options.higherOrderLimit)
     var fit = requested.fit
     fit.timings["higher_order_refinement_s"] = requested.seconds
     var shown = requested
     try onRefinedFit(fit)
-    if options.checkHigherOrderConsistency && options.higherOrderLimit == SSBFitOptions.wideHigherOrderLimit {
+    if options.checkHigherOrderConsistency
+      && options.higherOrderLimit == SSBFitOptions.wideHigherOrderLimit
+    {
       let started = Date()
       let check = try higherOrderConsistency(
-        start: primary.point, checked: requested.coordinates, model: model, search: options.higherOrderSearch,
+        start: primary.point, checked: requested.coordinates, model: model,
+        search: options.higherOrderSearch,
         maxEvaluations: options.maxHigherOrderEvaluations, limit: options.higherOrderLimit,
         progress: { progress("Half-band check", $0, $1) }, isCancelled: isCancelled)
       let checkSeconds = Date().timeIntervalSince(started)

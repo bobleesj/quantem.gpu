@@ -17,7 +17,8 @@ func limitSweep(
     let initial = first["initial"] as? [String: Any],
     let rotation = (first["fit"] as? [String: Any])?["rotation_deg"] as? Double,
     let c10 = initial["C10_nm"] as? Double, let c12 = initial["C12_nm"] as? Double,
-    let phi12 = initial["phi12_deg"] as? Double, let tilt = initial["sample_tilt_mrad"] as? [Double],
+    let phi12 = initial["phi12_deg"] as? Double,
+    let tilt = initial["sample_tilt_mrad"] as? [Double],
     let depth = initial["depth_spread_nm"] as? Double
   else { throw failure("\(runURL.path) has no kept low-order fit") }
   let start = SSBModelPoint(
@@ -31,7 +32,8 @@ func limitSweep(
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   var records: [[String: Any]] = []
   for limit in limits {
-    let bounds = Array(SSBFifthOrderSearch.bounds.prefix(6)) + Array(repeating: -limit...limit, count: 22)
+    let bounds =
+      Array(SSBFifthOrderSearch.bounds.prefix(6)) + Array(repeating: -limit...limit, count: 22)
     let started = Date()
     let refined = try SSBModelFit.refineFifthOrder(
       start, model: model, search: search, bounds: bounds)
@@ -42,7 +44,8 @@ func limitSweep(
         start: phase.phase.contents().assumingMemoryBound(to: Float.self),
         count: phase.rows * phase.columns))
     let name = "\(label)-limit\(limit.formatted(.number.precision(.fractionLength(0...2))))"
-    try values.withUnsafeBytes { Data($0) }.write(to: directory.appendingPathComponent(name + ".f32"))
+    try values.withUnsafeBytes { Data($0) }.write(
+      to: directory.appendingPathComponent(name + ".f32"))
     let z = refined.result.coordinates
     let p = refined.point
     records.append([
@@ -62,7 +65,9 @@ func limitSweep(
     ])
     log(
       String(
-        format: "%@ limit %.1f: %.2f s, agreement64 %.9e, C10 %.4f nm, C12 %.4f nm, %d on bound, %@", label,
+        format:
+          "%@ limit %.1f: %.2f s, agreement64 %.9e, C10 %.4f nm, C12 %.4f nm, %d on bound, %@",
+        label,
         limit, seconds, refined.agreement64, p.c10Nanometers, p.c12Nanometers,
         records.last!["on_bound"] as! Int, refined.result.stop))
   }

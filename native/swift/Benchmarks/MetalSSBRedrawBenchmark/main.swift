@@ -71,7 +71,9 @@ for scan in options.scans {
     scanRows: scan, scanColumns: scan)
   let count = setup.pixels.count
   let plane = scan * scan
-  print("scan \(scan)^2, bright-field pixels \(count), auto output \(try calibration.ssbUpsamplingFactor())x")
+  print(
+    "scan \(scan)^2, bright-field pixels \(count), auto output \(try calibration.ssbUpsamplingFactor())x"
+  )
 
   guard let counts = device.makeBuffer(length: count * plane, options: .storageModeShared) else {
     fatalError("Cannot allocate \(count * plane) count bytes")
@@ -113,7 +115,8 @@ for scan in options.scans {
   func percentile(_ values: [Double], _ p: Double) -> Double {
     let sorted = values.sorted()
     let position = p * Double(sorted.count - 1)
-    let low = Int(position.rounded(.down)), high = Int(position.rounded(.up))
+    let low = Int(position.rounded(.down))
+    let high = Int(position.rounded(.up))
     return sorted[low] + (sorted[high] - sorted[low]) * (position - Double(low))
   }
 
@@ -135,14 +138,16 @@ for scan in options.scans {
         if run >= options.warmup { times.append(elapsed) }
         lastKernel = result.kernel
       }
-      let median = percentile(times, 0.5), p90 = percentile(times, 0.9)
+      let median = percentile(times, 0.5)
+      let p90 = percentile(times, 0.9)
       print("  kernel \(lastKernel?.label ?? "unrecorded")")
       print(
         String(
           format: "%d %@ %dx (%d^2): median %.2f ms, p90 %.2f ms, min %.2f ms, %.1f FPS at median",
           scan, order, factor, scan * factor, median, p90, times.min()!, 1000 / median))
       records.append([
-        "scan": scan, "brightfield_pixels": count, "order": order, "factor": factor, "output": scan * factor, "median_ms": median,
+        "scan": scan, "brightfield_pixels": count, "order": order, "factor": factor,
+        "output": scan * factor, "median_ms": median,
         "p90_ms": p90, "min_ms": times.min()!, "runs": times.count,
         "kernel": lastKernel?.label ?? "unrecorded",
       ])

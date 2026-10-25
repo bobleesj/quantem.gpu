@@ -106,9 +106,11 @@ final class SSBFifthOrderAgreement {
   /// Squared radii inside which the soft aperture is exactly 1 and outside which it is exactly 0 (worst-case
   /// anisotropic sampling); they move inward/outward by 1e-4, far beyond the float32 rounding of the edge expression.
   static func apertureRadii(_ geometry: MetalSSBGeometry) -> (inner2: Float, outer2: Float) {
-    let wl = Double(geometry.wavelengthAngstroms), semi = Double(geometry.semiangleRadians)
+    let wl = Double(geometry.wavelengthAngstroms)
+    let semi = Double(geometry.semiangleRadians)
     let angular = Double(max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
-    let inner = (semi - 0.5 * angular) / wl, outer = (semi + 0.5 * angular) / wl
+    let inner = (semi - 0.5 * angular) / wl
+    let outer = (semi + 0.5 * angular) / wl
     return (inner > 0 ? Float(inner * inner * (1 - 1e-4)) : -1, Float(outer * outer * (1 + 1e-4)))
   }
 
@@ -228,7 +230,9 @@ final class SSBFifthOrderAgreement {
           encoder.setBuffer(buffer, offset: 0, index: index)
         }
         encoder.setBytes(&rowsGrid, length: MemoryLayout<RowsGrid>.stride, index: 4)
-        for (index, buffer) in [batch.trials, probeGeometry, batch.polynomials, tiles, chi].enumerated() {
+        for (index, buffer) in [batch.trials, probeGeometry, batch.polynomials, tiles, chi]
+          .enumerated()
+        {
           encoder.setBuffer(buffer, offset: 0, index: 5 + index)
         }
         encoder.setThreadgroupMemoryLength(2 * Self.pixelBatch * perThread * 64, index: 0)
@@ -253,7 +257,8 @@ final class SSBFifthOrderAgreement {
     guard !input.isEmpty else { return [] }
     // Candidates with equal (depth, tilt) become neighbours and share their depth-sinc weights in the kernel.
     let order = input.indices.sorted {
-      let a = input[$0], b = input[$1]
+      let a = input[$0]
+      let b = input[$1]
       return (a[0], a[1], a[2], $0) < (b[0], b[1], b[2], $1)
     }
     let sorted = order.map { input[$0] }

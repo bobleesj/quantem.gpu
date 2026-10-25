@@ -38,7 +38,8 @@ private func pack(_ z: [Double], wavelength: Double, semiangle: Double) -> [Floa
 /// The low-order part of SSBFifthOrderCoordinates.point (the higher orders travel in the packed coefficients).
 private func lowOrder(_ z: [Double]) -> SSBModelPoint {
   SSBModelPoint(
-    c10Angstroms: z[0] * 100, c12Angstroms: hypot(z[1], z[2]) * 100, phi12Radians: atan2(z[2], z[1]) / 2,
+    c10Angstroms: z[0] * 100, c12Angstroms: hypot(z[1], z[2]) * 100,
+    phi12Radians: atan2(z[2], z[1]) / 2,
     sampleTiltMrad: [z[3] * 5, z[4] * 5], depthSpreadAngstroms: z[5] * 100)
 }
 
@@ -50,9 +51,11 @@ func objectiveBenchmark(
     let result = (json["results"] as? [[String: Any]])?.first,
     let fit = result["fit"] as? [String: Any], let initial = result["initial"] as? [String: Any],
     let rotation = fit["rotation_deg"] as? Double,
-    let zFinal = (fit["refinement"] as? [String: Any])?["coordinates"] as? [Double], zFinal.count == 28,
+    let zFinal = (fit["refinement"] as? [String: Any])?["coordinates"] as? [Double],
+    zFinal.count == 28,
     let c10 = initial["C10_nm"] as? Double, let c12 = initial["C12_nm"] as? Double,
-    let phi12 = initial["phi12_deg"] as? Double, let tilt = initial["sample_tilt_mrad"] as? [Double],
+    let phi12 = initial["phi12_deg"] as? Double,
+    let tilt = initial["sample_tilt_mrad"] as? [Double],
     let depth = initial["depth_spread_nm"] as? Double
   else { throw failure("\(run.path) lacks a kept fifth-order fit with its low-order start") }
   let prepared = Date()
@@ -100,13 +103,16 @@ func objectiveBenchmark(
       sampleTiltMrad: tilt.map { $0 + (uniform() - 0.5) * 1.0 },
       depthSpreadAngstroms: max(0, start.depthSpreadAngstroms + (uniform() - 0.5) * 40))
   }
-  let wl = model.wavelengthAngstroms, semi = model.semiangleRadians
+  let wl = model.wavelengthAngstroms
+  let semi = model.semiangleRadians
   let fifthSets: [(String, [[Double]])] = [
     ("fifth final", [zFinal]), ("fifth start+final", [zStart, zFinal]),
-    ("fifth random4", Array(random.prefix(4))), ("fifth stencil57", stencil), ("fifth random64", random),
+    ("fifth random4", Array(random.prefix(4))), ("fifth stencil57", stencil),
+    ("fifth random64", random),
   ]
   let lowSets: [(String, [SSBModelPoint])] = [
-    ("low initial", [start]), ("low random8", Array(lowRandom.prefix(8))), ("low random64", lowRandom),
+    ("low initial", [start]), ("low random8", Array(lowRandom.prefix(8))),
+    ("low random64", lowRandom),
   ]
   var sets: [[String: Any]] = []
   func measure(_ name: String, count: Int, _ evaluate: () throws -> [Double]) throws {
@@ -124,7 +130,8 @@ func objectiveBenchmark(
     let wallMedian = wall.sorted()[wall.count / 2] / Double(count) * 1e3
     log(
       String(
-        format: "  %-18@ %3d candidates  GPU %8.3f ms/candidate  wall %8.3f ms/candidate  first %.9e",
+        format:
+          "  %-18@ %3d candidates  GPU %8.3f ms/candidate  wall %8.3f ms/candidate  first %.9e",
         name as NSString, count, gpuMedian, wallMedian, values[0]))
     sets.append([
       "name": name, "candidates": count, "gpu_ms_per_candidate": gpuMedian,
@@ -144,7 +151,8 @@ func objectiveBenchmark(
   // The exact low-order value, gradient and Hessian (the primary Newton's centers) in Newton z.
   func newtonZ(_ p: SSBModelPoint) -> [Double] {
     [
-      p.c10Angstroms, p.c12Angstroms * cos(2 * p.phi12Radians), p.c12Angstroms * sin(2 * p.phi12Radians),
+      p.c10Angstroms, p.c12Angstroms * cos(2 * p.phi12Radians),
+      p.c12Angstroms * sin(2 * p.phi12Radians),
       p.sampleTiltMrad[0], p.sampleTiltMrad[1], p.depthSpreadAngstroms,
     ]
   }
@@ -188,7 +196,9 @@ func objectiveBenchmark(
   // Hessian batch on every 64th) at its start and at the final point.
   var searchKernels: [[String: Any]] = []
   for (label, z) in [("start", zStart), ("final", zFinal)] {
-    for entry in try SSBModelFit.fifthOrderKernelTimings(model: model, z: z, repeats: max(3, repeats)) {
+    for entry in try SSBModelFit.fifthOrderKernelTimings(
+      model: model, z: z, repeats: max(3, repeats))
+    {
       var entry = entry
       entry["point"] = label
       log(
@@ -203,9 +213,11 @@ func objectiveBenchmark(
   let summary: [String: Any] = [
     "schema": "quantem-gpu-ssb-objective-benchmark/v1", "device": device.name, "run": run.path,
     "rotation_deg": rotation, "band_count": model.bandCount, "repeats": repeats,
-    "timing_boundary": "gpu: command-buffer gpuStartTime..gpuEndTime of one agreements call; wall: the call",
+    "timing_boundary":
+      "gpu: command-buffer gpuStartTime..gpuEndTime of one agreements call; wall: the call",
     "sets": sets, "search_kernels": searchKernels,
   ]
-  let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
+  let data = try JSONSerialization.data(
+    withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
   if let output { try data.write(to: output) } else { FileHandle.standardOutput.write(data) }
 }
