@@ -1,9 +1,14 @@
 # Native detector median contract
 
-The native count loaders use `native_median3x3`: valid neighbors inside a
-3 × 3 detector window, the floored mean of the two middle counts for an even
-neighborhood, and zero if no valid neighbor exists. This preserves the frozen
-native counts, native CPU correction and original-HDF5 Metal loader policy.
+The native encoded source and corrected resident view use `native_median3x3`:
+valid neighbors inside a 3 × 3 detector window, the floored mean of the two
+middle counts for an even neighborhood, and zero if no valid neighbor exists.
+This preserves the frozen native counts.
+
+Since 2026-10-25 the original-HDF5 Metal loader (`hotPixelPolicy: .median`)
+and `NativeHotPixelCorrection.median3x3` round that mean half to even, as
+Python `fill_flagged` does; see
+[2026-10-25-original-load-median-fill.md](2026-10-25-original-load-median-fill.md).
 
 The Python resident correction uses its separately validated planned-neighbor
 policy: expand the window when needed and round half to even. These policies
