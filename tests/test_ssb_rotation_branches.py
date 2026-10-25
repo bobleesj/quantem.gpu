@@ -112,6 +112,27 @@ def test_a_small_effect_over_many_columns_is_not_decisive():
     assert "columns not decisive" in branches.summary
 
 
+@pytest.mark.parametrize("weak_column_amplitude", [0.005, -0.03])
+def test_negative_columns_do_not_certify_a_weak_alternative(weak_column_amplitude):
+    """Independent fits need positive evidence on the branch selected by columns."""
+    rng = np.random.default_rng(2)
+    dark_field = _lattice()
+    first = -0.2 * dark_field + rng.normal(scale=0.02, size=dark_field.shape)
+    first[2::12, 2::12] += 3.0
+    second = weak_column_amplitude * dark_field + rng.normal(scale=0.2, size=dark_field.shape)
+    fits = [_fit(0.0, first), _fit(180.0, second)]
+    result = compare_branches(fits, dark_field=dark_field, scan_sampling_A=0.264, keep_first=False)
+    assert result.branches[0].column_z < -COLUMN_Z_MIN
+    assert result.branches[0].column_effect < -COLUMN_EFFECT_MIN
+    assert abs(result.branches[1].column_effect) < COLUMN_EFFECT_MIN
+    assert result.branches[0].phase_skewness > result.branches[1].phase_skewness
+    assert result.decided_by == "phase_tail" and result.chosen == 0
+    assert "atomic columns positive" not in result.summary
+    reversed_result = compare_branches(fits[::-1], dark_field=dark_field,
+                                       scan_sampling_A=0.264, keep_first=False)
+    assert reversed_result.chosen_rotation_deg == result.chosen_rotation_deg
+
+
 def test_unresolved_columns_fall_back_to_the_phase_tail():
     rng = np.random.default_rng(5)
     phase = rng.exponential(scale=0.1, size=(96, 96))

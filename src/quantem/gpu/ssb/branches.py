@@ -7,9 +7,10 @@ other, so one decision chooses the branch:
 
 1. Atomic columns are located on the dark-field image of the same scan. Dark field is incoherent, so the column
    positions are the same on both branches. Atoms push the electron phase forward, so on the right branch the phase
-   at the columns is positive. The test is decisive when, on either branch, the mean column phase is at least
+   at the columns is positive. A branch is eligible only when its positive mean column phase is at least
    ``COLUMN_Z_MIN`` standard errors from zero and at least ``COLUMN_EFFECT_MIN`` of its spread (so many columns cannot
-   make a negligible shift decisive); the branch with the more positive columns is kept.
+   make a negligible shift decisive); the eligible branch with the more positive columns is kept. Negative
+   evidence on one independent fit does not establish positive columns on the other fit.
 2. Otherwise the phase tail decides: the branch with the larger mean-centred third-moment ratio ``phase_skewness``
    (a few bright columns over a flatter background) is kept.
 
@@ -182,8 +183,8 @@ class RotationBranches:
     kept : int
         Index of the branch the session holds; the chosen one unless a given rotation was kept.
     decided_by : {"columns", "phase_tail"}
-        ``"columns"`` when the column test was decisive on either branch (``|z| >= COLUMN_Z_MIN`` and
-        ``|effect| >= COLUMN_EFFECT_MIN``), else ``"phase_tail"`` (``phase_skewness``).
+        ``"columns"`` when the selected branch has decisive positive columns (``z >= COLUMN_Z_MIN`` and
+        ``effect >= COLUMN_EFFECT_MIN``), else ``"phase_tail"`` (``phase_skewness``).
     scan_sampling_A : tuple[float, float] | None
         The native scan step (row, col) in Å.
     upsampling_factor : int | None
@@ -263,7 +264,7 @@ class RotationBranches:
                         + ("negative" if (other.column_z or 0.0) < 0 else f"z {_signed(other.column_z, 1)}"))
             choice = f"{chosen.scan_detector_rotation_deg:.1f}°: {evidence}"
         else:
-            reason = (f"columns not decisive (z {_signed(chosen.column_z, 1)}, effect "
+            reason = (f"positive columns not decisive (z {_signed(chosen.column_z, 1)}, effect "
                       f"{_signed(chosen.column_effect, 2)})" if self.num_columns else
                       "no atomic columns located on a dark-field image")
             choice = (f"{chosen.scan_detector_rotation_deg:.1f}° by the phase tail "
@@ -333,6 +334,7 @@ class RotationBranches:
         >>> ssb.compare_rotation_branches().show(size="large")  # doctest: +SKIP
         """
         import matplotlib.pyplot as plt
+
         from quantem.gpu.display._layout import panel_inches
 
         if size is not None and axsize is not None:
@@ -472,8 +474,9 @@ def compare_branches(fits, *, dark_field, scan_sampling_A, keep_first: bool) -> 
     """Score two fits (the session's rotation first, then plus 180 degrees) and choose the branch.
 
     ``fits`` are SSB results whose phase is the native-sampling reconstruction. ``dark_field`` is the same scan's
-    dark-field image, or None when the session has none; then, or when the column test is not decisive on either
-    branch (``|z| >= COLUMN_Z_MIN`` and ``|effect| >= COLUMN_EFFECT_MIN``), the larger ``phase_skewness`` decides. ``keep_first`` keeps the first branch whatever the evidence says
+    dark-field image, or None when the session has none; then, or when neither branch has decisive positive
+    columns (``z >= COLUMN_Z_MIN`` and ``effect >= COLUMN_EFFECT_MIN``), the larger ``phase_skewness`` decides.
+    A negative column score never certifies the other independent fit. ``keep_first`` keeps the first branch whatever the evidence says
     (a rotation the user gave), and the result still says which branch the evidence selects.
     """
     phases = [host_array(fit.phase).astype(np.float32) for fit in fits]
@@ -492,11 +495,12 @@ def compare_branches(fits, *, dark_field, scan_sampling_A, keep_first: bool) -> 
             sample_tilt_mrad=fit.sample_tilt_mrad, depth_spread_nm=fit.depth_spread_nm,
             column_effect=None if z is None else z / math.sqrt(sampled.size),
         ))
-    scores = [branch.column_z for branch in branches]
-    if any(branch.column_z is not None and abs(branch.column_z) >= COLUMN_Z_MIN
-           and abs(branch.column_effect) >= COLUMN_EFFECT_MIN for branch in branches):
+    positive_branches = [index for index, branch in enumerate(branches)
+                         if branch.column_z is not None and branch.column_z >= COLUMN_Z_MIN
+                         and branch.column_effect is not None and branch.column_effect >= COLUMN_EFFECT_MIN]
+    if positive_branches:
         decided_by = "columns"
-        chosen = int(np.argmax([-math.inf if z is None else z for z in scores]))
+        chosen = max(positive_branches, key=lambda index: branches[index].column_z)
     else:
         decided_by = "phase_tail"
         chosen = 0 if branches[0].phase_skewness >= branches[1].phase_skewness else 1
