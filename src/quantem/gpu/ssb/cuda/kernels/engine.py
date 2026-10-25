@@ -228,6 +228,8 @@ thick_correct_kernel = cp.ElementwiseKernel(
     name="thick_correct_kernel",
 )
 
+# Serves: every SSB redraw (sliders, previews, run) on the fine grid; tuned on 3x of a 512 x 512 scan with
+# about 9300 BF pixels (30 ms with a 14-term fit, 22.5 ms with C10/C12/phi12 only), where thick.py pairs q, -q.
 # Sum corrected spectra in bounded BF groups. Read aliases from the native
 # spectrum directly, avoiding an expanded (detector, row, col) output volume.
 # The float32 corrections are summed with an error-free float32 two-sum (a high word and its rounding error), close to
