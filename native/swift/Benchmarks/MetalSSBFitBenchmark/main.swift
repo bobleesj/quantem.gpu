@@ -62,6 +62,7 @@ struct Options {
   var phaseOut: URL?
   var phaseLabel = "run"
   var limitSweep: URL?
+  var estimators: URL?
   var limits: [Double] = [2, 3, 4, 6, 10]
   /// `--objective-bench` times only the exact-gradient search's calls.
   var searchKernelsOnly = false
@@ -127,6 +128,7 @@ struct Options {
       case "--phase-out": phaseOut = URL(fileURLWithPath: try value(flag))
       case "--phase-label": phaseLabel = try value(flag)
       case "--limit-sweep": limitSweep = URL(fileURLWithPath: try value(flag))
+      case "--estimators": estimators = URL(fileURLWithPath: try value(flag))
       case "--limits": limits = try value(flag).split(separator: ",").compactMap { Double($0) }
       case "--search-kernels-only": searchKernelsOnly = true
       default: throw failure("Unknown argument \(flag)")
@@ -579,6 +581,13 @@ guard setup.pixels == caseRecord.pixels else { throw failure("BF selection diffe
 let counts = try mapped(options.cache.appendingPathComponent("counts.bin"), device: device)
 guard let countType = MetalSSBCountType(rawValue: caseRecord.countType) else {
   throw failure("Unknown count type")
+}
+if let sweep = options.estimators, let directory = options.phaseOut {
+  try estimatorExport(
+    sweep: sweep, limits: options.limits, label: options.phaseLabel, directory: directory, device: device,
+    calibration: caseRecord.calibration, geometry: setup.geometry, counts: counts,
+    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees)
+  exit(0)
 }
 if let run = options.limitSweep, let directory = options.phaseOut {
   try limitSweep(
