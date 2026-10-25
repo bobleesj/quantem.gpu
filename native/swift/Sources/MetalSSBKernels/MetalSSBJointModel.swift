@@ -92,6 +92,10 @@ public final class MetalSSBJointModel {
   public let bandCount: Int
   private var grid: Grid
   private let qBuffer, indexBuffer, weights, bandG: MTLBuffer
+  /// G(0, k) of each active BF pixel, the counts at k summed over the scan (the Poisson variance of G(q, k)).
+  private let zeroFrequency: MTLBuffer
+  /// sum_k |G(q, k)|^2 of each band frequency, computed on the first `bandPowerSummary()` call.
+  private var frequencyPower: [Double]?
   private var kBuffer: MTLBuffer
   private let activeIndices: [Int]
   private let library: MTLLibrary
@@ -214,6 +218,7 @@ public final class MetalSSBJointModel {
     indexBuffer = try Self.buffer(device, indices)
     weights = try Self.buffer(device, ws)
     bandG = try Self.allocate(device, activeIndices.count * bandCount * 8)
+    zeroFrequency = try Self.allocate(device, activeIndices.count * 8, shared: true)
     let chunks = (activeIndices.count + 255) / 256
     grid = Grid(
       n: UInt32(n), outputN: UInt32(n), count: 0, bfOffset: 0,
@@ -239,6 +244,15 @@ public final class MetalSSBJointModel {
         encoder.setBuffer(indexBuffer, offset: 0, index: 2)
         encoder.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
         dispatch(encoder, width: bandCount, height: count)
+        // G(0, k) is the first element of each spectrum, Hermitian half or full plane.
+        guard let blit = commands.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
+        let spectrumBytes = (half ? n * (n / 2 + 1) : n * n) * 8
+        for i in 0..<count {
+          blit.copy(
+            from: source, sourceOffset: offset + i * spectrumBytes, to: zeroFrequency,
+            destinationOffset: (bfOffset + i) * 8, size: 8)
+        }
+        blit.endEncoding()
         try finish(commands)
       }
     }
@@ -546,6 +560,82 @@ public final class MetalSSBJointModel {
         "bf_count": Double(count), "band_count": Double(bandCount),
       ]
     )
+  }
+
+  /// G's power over the agreement band and its noise (Python `band_power`): P = sum_q w_q sum_k |G(q, k)|^2 (the
+  /// agreement's upper bound) over the active BF pixels, the band weight sum_q w_q, and the noise variance of one
+  /// G(q, k) for counted electrons, the mean over k of G(0, k). The per-frequency sums are computed once per model,
+  /// in Double from the float32 evidence; the weights are read at each call.
+  public func bandPowerSummary(isCancelled: () -> Bool = { false }) throws -> SSBBandPower {
+    try validatePreparation()
+    let count = activeIndices.count
+    if frequencyPower == nil {
+      let bands = bandCount
+      var power = [Double](repeating: 0, count: bands)
+      let rowBytes = bands * 8
+      let rowsPerCopy = max(1, min(count, (256 << 20) / rowBytes))
+      let staging = try Self.allocate(device, rowsPerCopy * rowBytes, shared: true)
+      let workers = max(1, min(ProcessInfo.processInfo.activeProcessorCount, 16, bands))
+      for first in stride(from: 0, to: count, by: rowsPerCopy) {
+        if isCancelled() { throw CancellationError() }
+        let rows = min(rowsPerCopy, count - first)
+        let commands = try command()
+        guard let blit = commands.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
+        blit.copy(
+          from: bandG, sourceOffset: first * rowBytes, to: staging, destinationOffset: 0,
+          size: rows * rowBytes)
+        blit.endEncoding()
+        try finish(commands)
+        let g = UnsafePointer(staging.contents().assumingMemoryBound(to: SIMD2<Float>.self))
+        power.withUnsafeMutableBufferPointer { sums in
+          let out = sums.baseAddress!
+          // Each worker owns a range of band frequencies, so no partial sums need combining.
+          DispatchQueue.concurrentPerform(iterations: workers) { worker in
+            let lower = bands * worker / workers
+            let upper = bands * (worker + 1) / workers
+            for row in 0..<rows {
+              let base = g + row * bands
+              for i in lower..<upper {
+                let v = base[i]
+                out[i] += Double(v.x) * Double(v.x) + Double(v.y) * Double(v.y)
+              }
+            }
+          }
+        }
+      }
+      frequencyPower = power
+    }
+    let w = weights.contents().assumingMemoryBound(to: Float.self)
+    var total = 0.0
+    var weight = 0.0
+    for (i, p) in frequencyPower!.enumerated() {
+      total += Double(w[i]) * p
+      weight += Double(w[i])
+    }
+    let dc = zeroFrequency.contents().assumingMemoryBound(to: SIMD2<Float>.self)
+    var counts = 0.0
+    for i in 0..<count { counts += Double(dc[i].x) }
+    return SSBBandPower(
+      power: total, bandWeight: weight, noiseVariance: counts / Double(count),
+      brightFieldPixelCount: count)
+  }
+
+  /// The band frequencies q (1/A, row and column) of the agreement, in the order of its weights.
+  var bandFrequencies: [SIMD2<Float>] {
+    Array(UnsafeBufferPointer(start: qBuffer.contents().assumingMemoryBound(to: SIMD2<Float>.self), count: bandCount))
+  }
+
+  /// Evaluate `body` with the per-frequency agreement weights multiplied by `mask` (0 or 1 per band frequency), as
+  /// for a fit on part of the band; the weights are restored afterwards, also when `body` throws.
+  func withBandMask<T>(_ mask: [Bool], _ body: () throws -> T) throws -> T {
+    guard mask.count == bandCount else {
+      throw MetalSSBError.invalidGeometry("Supply one mask entry per band frequency.")
+    }
+    let target = weights.contents().assumingMemoryBound(to: Float.self)
+    let original = Array(UnsafeBufferPointer(start: target, count: bandCount))
+    for i in 0..<bandCount where !mask[i] { target[i] = 0 }
+    defer { for i in 0..<bandCount { target[i] = original[i] } }
+    return try body()
   }
 
   func agreements(rows: [[Float]], isCancelled: () -> Bool) throws -> [Double] {

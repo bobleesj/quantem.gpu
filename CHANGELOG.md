@@ -17,6 +17,22 @@ new `rcN` heading when that rc is published to TestPyPI.
   within 10x at the maximum): phase 2e-8 to 1.5e-7 rad rms, amplitude 0.8e-7 to 1.4e-7 of its mean. On an Apple
   M5 Max an optics change takes about 0.3-0.5 s at 3x and 0.6-0.9 s at 4x, a damping change 11-20 ms at 3x and
   26-60 ms at 4x. Drag windows and the post-fit three-method comparison remain CUDA-only.
+- Native (Metal) SSB fifth-order fit: the higher-order box is wide by default. `SSBFitOptions.higherOrderLimit`
+  bounds each of the 22 higher-order coordinates (C21 through C56) to ±20 rad of probe phase at the aperture edge
+  (`wideHigherOrderLimit`, the default, which no longer binds) or ±2 (`standardHigherOrderLimit`, the earlier box,
+  still an option); other values are refused, and saved options without it decode as ±2.
+  `SSBModelFit.fifthOrderBounds(higherOrderLimit:)` gives the box, and `refineToFifthOrder` refines an already
+  refined fit again from its kept low-order fit. A ±20 fit is checked by default (`checkHigherOrderConsistency`,
+  `SSBFit.higherOrderConsistency`): it is refitted on each half of an alternating 0.05 1/A ring split of the band
+  frequencies from the same low-order start, and when the two halves' probe phases differ by more than 0.5 rad rms
+  over the aperture (`half_band_rms_rad`) the ±2 fit is returned instead with its higher orders marked not trusted
+  (`trusted`, `shown_limit`). On measured frames of a thin two-dimensional crystal the halves agree to 0.16-0.35 rad;
+  a thick crystalline acquisition (1.33 rad) falls back. The check adds two fifth-order fits (a third on fallback); `onRefinedFit` hands a viewer the
+  ±20 fit first. An opt-in record (`computeHigherOrderGuard`, default false) adds `SSBFit.higherOrderGuard`
+  (`SSBHigherOrderGuard`, Python `higher_order_fit.assess`): the coherence with Poisson noise floors from G(0, k) and
+  each term's standard and edge-phase error from the Hessian covariance (0.65-0.9 s on a 512 x 512 scan); its
+  simulation thresholds do not separate measured data, so nothing acts on it. `MetalSSBJointModel.bandPowerSummary()`
+  gives P, the band weight and the noise variance.
 
 - Native (Metal) drag previews of the regularized `phase` and `complex` reconstructions (`ssb-direct` v0.2):
   `MetalSSBJointModel.buildDragWindow(along:at:upsamplingFactor:method:regularization:nodes:)` builds a Chebyshev

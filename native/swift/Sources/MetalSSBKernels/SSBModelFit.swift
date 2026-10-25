@@ -21,7 +21,23 @@ public enum SSBObjective: String, Codable, Sendable {
 ///
 /// The older phase-variance search (`objective: .phaseVariance`) is retired; saved options naming it decode, and
 /// `validate()` refuses them.
+///
+/// `higherOrderLimit` bounds each of the 22 higher-order coordinates of the fifth-order fit (C21 through C56) to
+/// ±L rad of probe phase at the aperture edge: `wideHigherOrderLimit` (±20, the default; past about 14 the box no
+/// longer binds) or `standardHigherOrderLimit` (±2). A wide fit is checked by default
+/// (`checkHigherOrderConsistency`, `SSBHigherOrderConsistency`): it is refitted on two halves of the band
+/// frequencies, and when the halves disagree the fit falls back to ±2 with its higher orders marked not trusted.
+/// `computeHigherOrderGuard` adds the coherence and precision record `SSBFit.higherOrderGuard` (opt-in).
 public struct SSBFitOptions: Codable, Equatable, Sendable {
+  /// ±2 rad of phase at the aperture edge per higher-order coordinate: the original box.
+  public static let standardHigherOrderLimit = 2.0
+  /// ±20 rad: wide enough that the box no longer binds (it stops binding near 14).
+  public static let wideHigherOrderLimit = 20.0
+  /// The higher-order limits a fit accepts.
+  public static let higherOrderLimits = [standardHigherOrderLimit, wideHigherOrderLimit]
+  /// The limit of `SSBFitOptions()`.
+  public static let defaultHigherOrderLimit = wideHigherOrderLimit
+
   public var tilt: Bool
   public var objective: SSBObjective
   public var trials: Int
@@ -37,12 +53,28 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
   /// Saved runs without this key used the finite-difference Newton search, which stays available as the
   /// Python-trajectory reference.
   public var higherOrderSearch: SSBModelFit.HigherOrderSearch = .exactGradientCoarseToFine
+  /// The bound of each higher-order coordinate, in rad of probe phase at the aperture edge: one of
+  /// `higherOrderLimits`. Saved runs without this key used the standard ±2.
+  public var higherOrderLimit = SSBFitOptions.defaultHigherOrderLimit
+  /// Also compute `SSBFit.higherOrderGuard` after a fifth-order fit (29 gradient evaluations, about 0.7 s on a
+  /// 512 x 512 scan). Off by default: its simulation-derived thresholds do not yet separate real data. Saved options
+  /// without this key decode as false.
+  public var computeHigherOrderGuard = false
+  /// Check a wide (±20) fifth-order fit against its two half-band refits and fall back to ±2 when they disagree
+  /// (`SSBHigherOrderConsistency`; two further fifth-order fits, and a third on fallback). Saved options without this
+  /// key decode as false: those fits were not checked.
+  public var checkHigherOrderConsistency = true
 
   public init(
     tilt: Bool = true, objective: SSBObjective = .agreement, trials: Int = 200, seed: Int = 42,
     compareStandard: Bool? = nil, tiltLimitMrad: Double = 25,
-    maximumOrder: Int? = nil, maxHigherOrderEvaluations: Int = 5000
+    maximumOrder: Int? = nil, maxHigherOrderEvaluations: Int = 5000,
+    higherOrderLimit: Double = SSBFitOptions.defaultHigherOrderLimit, computeHigherOrderGuard: Bool = false,
+    checkHigherOrderConsistency: Bool = true
   ) {
+    self.higherOrderLimit = higherOrderLimit
+    self.computeHigherOrderGuard = computeHigherOrderGuard
+    self.checkHigherOrderConsistency = checkHigherOrderConsistency
     self.tilt = tilt
     self.objective = objective
     self.trials = trials
@@ -55,7 +87,8 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case tilt, objective, trials, seed, compareStandard, tiltLimitMrad, maximumOrder,
-      maxHigherOrderEvaluations, higherOrderSearch
+      maxHigherOrderEvaluations, higherOrderSearch, higherOrderLimit, computeHigherOrderGuard,
+      checkHigherOrderConsistency
   }
 
   /// Old saved runs describe the original primary fit, never an implicit fifth-order fit.
@@ -73,6 +106,12 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
     higherOrderSearch =
       try c.decodeIfPresent(SSBModelFit.HigherOrderSearch.self, forKey: .higherOrderSearch)
       ?? .finiteDifferenceNewton
+    higherOrderLimit =
+      try c.decodeIfPresent(Double.self, forKey: .higherOrderLimit) ?? Self.standardHigherOrderLimit
+    computeHigherOrderGuard =
+      try c.decodeIfPresent(Bool.self, forKey: .computeHigherOrderGuard) ?? false
+    checkHigherOrderConsistency =
+      try c.decodeIfPresent(Bool.self, forKey: .checkHigherOrderConsistency) ?? false
   }
 
   /// A short name for the method, as the results and the app state it.
@@ -91,6 +130,11 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
     guard objective == .agreement else {
       throw MetalSSBError.invalidGeometry(
         "The phase-variance SSB fit is retired. Fit with the model agreement objective (the default)."
+      )
+    }
+    guard Self.higherOrderLimits.contains(higherOrderLimit) else {
+      throw MetalSSBError.invalidGeometry(
+        "Choose a higher-order limit of 2 (standard) or 20 (wide) rad of phase at the aperture edge, not \(higherOrderLimit)."
       )
     }
     guard [1, 5].contains(maximumOrder), maxHigherOrderEvaluations > 0 else {
@@ -132,6 +176,12 @@ public struct SSBFit: Codable, Sendable {
   public var higherOrderRefinement: SSBFifthOrderSearch.Result? = nil
   /// Initial agreement for the shared fifth-order model, using the strict 0.2...0.9 inverse-Angstrom band.
   public var higherOrderNormalization: Double? = nil
+  /// Whether the fitted higher orders can be read as the probe's aberrations (coherence and edge-phase precision);
+  /// set on a fifth-order fit with `SSBFitOptions.computeHigherOrderGuard`, nil otherwise.
+  public var higherOrderGuard: SSBHigherOrderGuard? = nil
+  /// The half-band check of a wide fit (`SSBFitOptions.checkHigherOrderConsistency`): whether its higher orders are
+  /// trusted, and the limit of this fit (±2 after a fallback, when `options.higherOrderLimit` is 2). nil otherwise.
+  public var higherOrderConsistency: SSBHigherOrderConsistency? = nil
 }
 
 /// Both 180-degree branches fitted independently and the branch kept (Python `RotationBranches`).
@@ -155,10 +205,19 @@ public struct SSBBranchedFit: Codable, Sendable {
 public enum SSBModelFit {
   public typealias Progress = (_ stage: String, _ completed: Int, _ total: Int) -> Void
 
-  /// Fit at the model's current rotation.
+  /// The box of the fifth-order search in its dimensionless coordinates (`SSBFifthOrderCoordinates`): C10, Cartesian
+  /// C12, tilt, depth spread, then the 22 higher-order Cartesian coordinates, each bounded to ±`higherOrderLimit` rad
+  /// of probe phase at the aperture edge. A limit of 2 is the original box; 20 no longer binds.
+  public static func fifthOrderBounds(higherOrderLimit: Double) -> [ClosedRange<Double>] {
+    [-3...3, -2...2, -2...2, -5...5, -5...5, 0.2...6]
+      + Array(repeating: -higherOrderLimit...higherOrderLimit, count: 22)
+  }
+
+  /// Fit at the model's current rotation. `onRefinedFit` receives a fifth-order fit before its guard is computed.
   public static func fit(
     model: MetalSSBJointModel, options: SSBFitOptions,
     progress: Progress = { _, _, _ in }, onInitialFit: (SSBFit) throws -> Void = { _ in },
+    onRefinedFit: (SSBFit) throws -> Void = { _ in },
     isCancelled: () -> Bool = { false }
   ) throws -> SSBFit {
     try options.validate()
@@ -168,7 +227,7 @@ public enum SSBModelFit {
     try onInitialFit(primary)
     return try refineHigherOrder(
       primary, model: model, options: options,
-      progress: progress, isCancelled: isCancelled)
+      progress: progress, onRefinedFit: onRefinedFit, isCancelled: isCancelled)
   }
 
   private static func fitPrimary(
@@ -295,18 +354,23 @@ public enum SSBModelFit {
   ///
   /// `checkRotation: false` fits `rotation` alone (Python `check_rotation=False`), the standard comparison
   /// included.
+  ///
+  /// `onInitialFit` receives the kept low-order fit, `onRefinedFit` the fifth-order fit before its guard (the
+  /// Hessian of `higherOrderGuard`, with `computeHigherOrderGuard`) is computed, so a viewer can show each while the
+  /// rest runs.
   public static func findAberrations(
     model: MetalSSBJointModel, rotationDegrees: Double,
     darkField: [Float]?, scanSampling: (Double, Double), options: SSBFitOptions = SSBFitOptions(),
     checkRotation: Bool = true, keepFirst: Bool = false, progress: Progress = { _, _, _ in },
     onInitialFit: (SSBFit) throws -> Void = { _ in },
+    onRefinedFit: (SSBFit) throws -> Void = { _ in },
     isCancelled: () -> Bool = { false }
   ) throws -> SSBBranchedFit {
     if !checkRotation {
       try model.retarget(scanDetectorRotationDegrees: rotationDegrees)
       let fitted = try fit(
         model: model, options: options, progress: progress,
-        onInitialFit: onInitialFit, isCancelled: isCancelled
+        onInitialFit: onInitialFit, onRefinedFit: onRefinedFit, isCancelled: isCancelled
       )
       return SSBBranchedFit(
         fits: [fitted], branches: [], chosen: 0, kept: 0, decidedBy: .phaseTail, columnCount: 0)
@@ -380,17 +444,20 @@ public enum SSBModelFit {
     if options.maximumOrder > 1 {
       result.refinedFit = try refineHigherOrder(
         result.fit, model: model, options: options,
-        progress: progress, isCancelled: isCancelled)
+        progress: progress, onRefinedFit: onRefinedFit, isCancelled: isCancelled)
     }
     return result
   }
 
   /// Refine a low-order fit through fifth order without repeating its seeded search: the same result as
   /// `findAberrations` with `maximumOrder: 5`, which reruns the low-order search to the same point first.
-  /// `model` must be at the kept branch's rotation, as `findAberrations` leaves it.
+  /// `model` must be at the kept branch's rotation, as `findAberrations` leaves it. A fit already refined is refined
+  /// again from its kept low-order fit (e.g. at another `higherOrderLimit`). `onRefinedFit` receives the fifth-order
+  /// fit before its guard is computed.
   public static func refineToFifthOrder(
     _ fitted: SSBBranchedFit, model: MetalSSBJointModel, options: SSBFitOptions = SSBFitOptions(),
-    progress: Progress = { _, _, _ in }, isCancelled: () -> Bool = { false }
+    progress: Progress = { _, _, _ in }, onRefinedFit: (SSBFit) throws -> Void = { _ in },
+    isCancelled: () -> Bool = { false }
   ) throws -> SSBBranchedFit {
     try options.validate()
     let kept = fitted.fits[fitted.kept]
@@ -406,13 +473,14 @@ public enum SSBModelFit {
     }
     var result = fitted
     result.refinedFit = try refineHigherOrder(
-      kept, model: model, options: options, progress: progress, isCancelled: isCancelled)
+      kept, model: model, options: options, progress: progress, onRefinedFit: onRefinedFit,
+      isCancelled: isCancelled)
     return result
   }
 
   private static func refineHigherOrder(
     _ primary: SSBFit, model: MetalSSBJointModel, options: SSBFitOptions,
-    progress: Progress, isCancelled: () -> Bool
+    progress: Progress, onRefinedFit: (SSBFit) throws -> Void, isCancelled: () -> Bool
   ) throws -> SSBFit {
     guard options.maximumOrder == 5 else { return primary }
     guard model.bandInverseAngstroms == Float(0.2)...Float(0.9) else {
@@ -420,20 +488,53 @@ public enum SSBModelFit {
         "The fifth-order fit requires the 0.2...0.9 inverse-Angstrom fitting band. Prepare the joint model with its default band."
       )
     }
-    let started = Date()
-    let refined = try refineFifthOrder(
-      primary.point, model: model, search: options.higherOrderSearch,
-      maxEvaluations: options.maxHigherOrderEvaluations,
-      progress: { progress("Fifth-order Newton", $0, $1) }, isCancelled: isCancelled)
-    var timings = primary.timings
-    timings["higher_order_refinement_s"] = Date().timeIntervalSince(started)
-    var fit = SSBFit(
-      scanDetectorRotationDegrees: primary.scanDetectorRotationDegrees,
-      point: refined.point, options: options,
-      sampleAgreement: refined.agreement, standardAgreement: nil, tiltFitGain: nil,
-      trialCount: primary.trialCount, timings: timings)
-    fit.higherOrderRefinement = refined.result
-    fit.higherOrderNormalization = refined.normalization
+    func refine(_ limit: Double) throws -> (
+      fit: SSBFit, coordinates: [Double], agreement64: Double, seconds: Double
+    ) {
+      let started = Date()
+      let refined = try refineFifthOrder(
+        primary.point, model: model, search: options.higherOrderSearch,
+        maxEvaluations: options.maxHigherOrderEvaluations,
+        bounds: fifthOrderBounds(higherOrderLimit: limit),
+        progress: { progress("Fifth-order Newton", $0, $1) }, isCancelled: isCancelled)
+      var fitOptions = options
+      fitOptions.higherOrderLimit = limit
+      var fit = SSBFit(
+        scanDetectorRotationDegrees: primary.scanDetectorRotationDegrees,
+        point: refined.point, options: fitOptions,
+        sampleAgreement: refined.agreement, standardAgreement: nil, tiltFitGain: nil,
+        trialCount: primary.trialCount, timings: primary.timings)
+      fit.higherOrderRefinement = refined.result
+      fit.higherOrderNormalization = refined.normalization
+      return (fit, refined.result.coordinates, refined.agreement64, Date().timeIntervalSince(started))
+    }
+    let requested = try refine(options.higherOrderLimit)
+    var fit = requested.fit
+    fit.timings["higher_order_refinement_s"] = requested.seconds
+    var shown = requested
+    try onRefinedFit(fit)
+    if options.checkHigherOrderConsistency && options.higherOrderLimit == SSBFitOptions.wideHigherOrderLimit {
+      let started = Date()
+      let check = try higherOrderConsistency(
+        start: primary.point, checked: requested.coordinates, model: model, search: options.higherOrderSearch,
+        maxEvaluations: options.maxHigherOrderEvaluations, limit: options.higherOrderLimit,
+        progress: { progress("Half-band check", $0, $1) }, isCancelled: isCancelled)
+      let checkSeconds = Date().timeIntervalSince(started)
+      if !check.trusted {
+        shown = try refine(check.shownLimit)
+        fit = shown.fit
+        fit.timings["higher_order_refinement_s"] = requested.seconds
+        fit.timings["higher_order_fallback_s"] = shown.seconds
+      }
+      fit.timings["higher_order_consistency_s"] = checkSeconds
+      fit.higherOrderConsistency = check
+    }
+    guard options.computeHigherOrderGuard else { return fit }
+    let guardStarted = Date()
+    fit.higherOrderGuard = try higherOrderGuard(
+      model: model, z: shown.coordinates, agreement: shown.agreement64,
+      progress: { progress("Higher-order precision", $0, $1) }, isCancelled: isCancelled)
+    fit.timings["higher_order_guard_s"] = Date().timeIntervalSince(guardStarted)
     return fit
   }
 }
