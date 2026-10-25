@@ -76,7 +76,20 @@ above that level. The new one ends below it, within 2 pm of the float64 optimum 
 also gains (+1.2e-7 to +1.5e-6). Its C10 and C12 move by 1–2e-3 nm, inside the 0.05 Å step at which the
 finite-difference Newton stops.
 
+## MPS and the native app
+
+On an Apple M5 Max (Python MPS, fresh sessions, under a shared GPU lock), `find_aberrations()` goes from
+67.6–218.9 s to 6.7–20.5 s (6.7–16.4×). The fifth-order stage drops from 57.7–168.7 s to 0.95–4.7 s. On MPS the
+200-trial search (2.0–6.3 s) and the low-order Newton (1.7–7.7 s) are now most of the time. The MPS kernels agree
+with the float64 reference in the hardware tests at the same tolerances as CUDA.
+
+Scored by the same float64 reference, the new CUDA, MPS and native Metal fits keep the same 180° branch on all
+five acquisitions. They lie 7e-8 or less below the float64 optimum and agree with each other to 6.8e-8 in S,
+2.1e-3 nm in C10 and 1.1e-3 nm in C12. Every earlier fit (CUDA and MPS) is 7e-8 to 5.1e-7 below. One native
+fit is 1.9e-9 above the optimum found by the float64 search, so along the flat directions that optimum is itself
+determined to about 2e-9.
+
 ## Conclusion
 
 The speed-up is algorithmic and carries over to CUDA unchanged: 10–17× end to end on the same GPU, with a better
-optimum. Float32 kernels with float64 reductions suffice; the float64 reference certifies the result.
+optimum. MPS gains 7–16×, and all three backends reach the same optimum. Float32 kernels with float64 reductions suffice; the float64 reference certifies the result.
