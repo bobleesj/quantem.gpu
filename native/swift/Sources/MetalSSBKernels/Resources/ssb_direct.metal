@@ -22,7 +22,7 @@ constant bool DIRECT_COMPLEX [[function_constant(61)]];  // log-amplitude and ph
 constant uint DIRECT_FIRST [[function_constant(62)]];    // first augmented entry of this part
 constant uint DIRECT_LAST [[function_constant(63)]];     // one past the last entry of this part
 constexpr constant uint DIRECT_MAX_ALIASES = 16u;
-constexpr constant uint DIRECT_MAX_SHARE = 48u;
+constexpr constant uint DIRECT_MAX_SHARE = 96u;
 constant uint DIRECT_DIM = DIRECT_COMPLEX ? 2u * DIRECT_ALIASES : DIRECT_ALIASES;
 constant uint DIRECT_WIDTH = DIRECT_DIM + 1u;
 constant uint DIRECT_OUTPUTS = DIRECT_WIDTH * (DIRECT_WIDTH + 1u) / 2u;
@@ -52,17 +52,38 @@ kernel void direct_pixel_terms(device const float2* k [[buffer(0)]], device cons
     pixel[2 * j + 1] = float4(g.x, g.w, 0.0f, 0.0f);
 }
 
+// sin(x) / x (1 at |x| < 1e-6, as joint_sinc), the sine of x reduced to [-pi, pi] by fast::sin.
+inline float direct_sinc(float x) {
+    if (metal::abs(x) < 1e-6f) return 1.0f;
+    const float turns = metal::rint(x * 0.159154943f);
+    const float reduced = metal::fma(-turns, -1.74845553e-7f, metal::fma(-turns, 6.28318548f, x));
+    return metal::fast::sin(reduced) / x;
+}
+
 // One side of the transfer: amplitude * exp(sign * i (chi(k +- q) - chi(k))), zero where the aperture is closed.
+// The soft aperture is CUDA's thick_probe_geometry (square detector pixels: the edge width is the constant sampling).
 inline float2 direct_side(float dr, float dc, float sign, float shift, float4 gk, float ck, constant DirectGrid& p,
                           device const float* coefficients) {
-    if (dr * dr + dc * dc >= p.outer2) return float2(0.0f);
-    const float4 g = joint_geometry_xy(dr, dc, p.wl, p.semiangle, p.angularRow, p.angularColumn);
+    const float r2 = dr * dr + dc * dc;
+    if (r2 >= p.outer2) return float2(0.0f);
+    float4 g;
+    if (p.angularRow == p.angularColumn) {
+        const float edge = r2 > 1e-30f ? metal::fma(p.semiangle - metal::sqrt(r2) * p.wl, 1.0f / p.angularColumn, 0.5f)
+                                       : 1.0f;
+        g = float4(r2 * p.wl * p.wl, 0.0f, 0.0f, metal::clamp(edge, 0.0f, 1.0f));
+    } else {
+        g = joint_geometry_xy(dr, dc, p.wl, p.semiangle, p.angularRow, p.angularColumn);
+    }
     if (g.w * gk.y == 0.0f) return float2(0.0f);
     const float chi = ssb_chi_full(dr, dc, p.wl, coefficients);
-    const float w = p.depth != 0.0f ? joint_sinc(0.5f * p.depth * (sign * p.factor * (g.x - gk.x) - shift)) : 1.0f;
+    const float w = p.depth != 0.0f ? direct_sinc(0.5f * p.depth * (sign * p.factor * (g.x - gk.x) - shift)) : 1.0f;
     const float amplitude = g.w * gk.y * w;
+    // chi - ck reduced to [-pi, pi] (2 pi split in two floats, fused), then the fast sine and cosine.
+    const float x = chi - ck;
+    const float turns = metal::rint(x * 0.159154943f);
+    const float reduced = metal::fma(-turns, -1.74845553e-7f, metal::fma(-turns, 6.28318548f, x));
     float c;
-    const float s = metal::precise::sincos(chi - ck, c);
+    const float s = metal::fast::sincos(reduced, c);
     return float2(amplitude * c, sign * amplitude * s);
 }
 
@@ -97,14 +118,18 @@ kernel void direct_normal_equations(device const float2* g [[buffer(0)]],
             v[DIRECT_DIM - DIRECT_ALIASES + a] = float2(-(t1.y - t2.y), t1.x - t2.x);
             if (DIRECT_COMPLEX) v[a] = t1 + t2;
         }
-        uint i = 0;
+        // Columns of an alias with both sidebands closed are zero: skip their products (the SIMD group's
+        // neighbouring frequencies mostly agree, so the branches stay coherent).
 #pragma unroll
         for (uint a = 0; a < DIRECT_WIDTH; ++a) {
+            if (a < DIRECT_DIM && v[a].x == 0.0f && v[a].y == 0.0f) continue;
             // w conj(v_a) v_b
             const float ur = w * v[a].x, ui = -w * v[a].y;
 #pragma unroll
-            for (uint b = a; b < DIRECT_WIDTH; ++b, ++i) {
+            for (uint b = a; b < DIRECT_WIDTH; ++b) {
+                const uint i = a * DIRECT_WIDTH - a * (a - 1u) / 2u + (b - a);
                 if (i >= DIRECT_FIRST && i < DIRECT_LAST) {
+                    if (b < DIRECT_DIM && v[b].x == 0.0f && v[b].y == 0.0f) continue;
                     float2 s = sum[i - DIRECT_FIRST];
                     s.x = metal::fma(ur, v[b].x, metal::fma(-ui, v[b].y, s.x));
                     s.y = metal::fma(ur, v[b].y, metal::fma(ui, v[b].x, s.y));

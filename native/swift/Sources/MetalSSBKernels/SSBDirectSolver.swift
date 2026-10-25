@@ -104,7 +104,7 @@ final class SSBDirectSolver {
   }
 
   /// Augmented entries per dispatch: the float32 running sums stay in registers below this.
-  static let maximumShare = 48
+  static let maximumShare = 96
   static let maximumAliases = 16
   static let batch = 512
 
@@ -220,52 +220,70 @@ final class SSBDirectSolver {
     let dqRow = geometry.qxByRow[1], dqColumn = geometry.qyByColumn[1]
     let half = n / 2 + 1
     let smoothness2 = Float(key.smoothness * key.smoothness)
-    struct Entry {
-      var row, column: UInt32
-      var q: [SIMD2<Float>]
-      var positions: [Int32]
-    }
-    var byCount: [Int: [Entry]] = [:]
+    // Signed output frequency of every output row and column, as the CUDA layout: int -> float32, times the step.
+    func signed(_ index: Int) -> Int { index <= (outputN - 1) / 2 ? index : index - outputN }
+    let qRow = (0..<outputN).map { Float(signed($0)) * dqRow }
+    let qColumn = (0..<outputN).map { Float(signed($0)) * dqColumn }
+    // Kept source frequencies (row-major) and the supported aliases of each, as a bit pattern over factor^2.
+    var kept: [(row: Int, column: Int, pattern: Int)] = []
+    kept.reserveCapacity(n * half)
     for r in 0..<n {
       for c in 0..<half {
         var keep = c > 0 || (r > 0 && r <= (n - 1) / 2)
         if n % 2 == 0 { keep = keep && r != n / 2 && c != n / 2 }
         guard keep else { continue }
-        var entry = Entry(row: UInt32(r), column: UInt32(c), q: [], positions: [])
+        var pattern = 0
         for ar in 0..<factor {
+          let qr = qRow[r + ar * n]
           for ac in 0..<factor {
-            let outputRow = r + ar * n, outputColumn = c + ac * n
-            let signedRow = outputRow <= (outputN - 1) / 2 ? outputRow : outputRow - outputN
-            let signedColumn = outputColumn <= (outputN - 1) / 2 ? outputColumn : outputColumn - outputN
-            let qr = Float(signedRow) * dqRow, qc = Float(signedColumn) * dqColumn
-            if qr * qr + qc * qc < cutoff2 {
-              entry.q.append(SIMD2(qr, qc))
-              entry.positions.append(Int32(outputRow * outputN + outputColumn))
-            }
+            let qc = qColumn[c + ac * n]
+            if qr * qr + qc * qc < cutoff2 { pattern |= 1 << (ar * factor + ac) }
           }
         }
         // Frequencies without a supported alias add only to the signal power, which no output uses.
-        if !entry.q.isEmpty { byCount[entry.q.count, default: []].append(entry) }
+        if pattern != 0 { kept.append((r, c, pattern)) }
       }
     }
+    var byCount: [Int: [Int]] = [:]
+    for (index, entry) in kept.enumerated() { byCount[entry.pattern.nonzeroBitCount, default: []].append(index) }
     guard let largest = byCount.keys.max(), largest <= Self.maximumAliases else {
       throw MetalSSBError.invalidGeometry(
         "Direct inversion supports up to \(Self.maximumAliases) aliases per scan frequency; choose a lower sampling.")
     }
     var groups: [Group] = []
     for count in byCount.keys.sorted() {
-      let entries = byCount[count]!
-      let q = entries.flatMap(\.q)
-      let prior = q.map { value -> Double in
-        guard key.smoothness != 0 else { return 1 }
-        let t = 1 + (value.x * value.x + value.y * value.y) / smoothness2
-        return Double(t * t)
+      // Frequencies with the same supported aliases, in scan order: a SIMD group's neighbouring threads then hold
+      // neighbouring q of every alias and take the same aperture branches.
+      let members = byCount[count]!.sorted { (kept[$0].pattern, $0) < (kept[$1].pattern, $1) }
+      var frequency: [SIMD2<UInt32>] = []
+      var q: [SIMD2<Float>] = []
+      var positions: [Int32] = []
+      var prior: [Double] = []
+      frequency.reserveCapacity(members.count)
+      q.reserveCapacity(members.count * count)
+      positions.reserveCapacity(members.count * count)
+      prior.reserveCapacity(members.count * count)
+      for index in members {
+        let (r, c, pattern) = kept[index]
+        frequency.append(SIMD2(UInt32(r), UInt32(c)))
+        for alias in 0..<(factor * factor) where pattern & (1 << alias) != 0 {
+          let outputRow = r + (alias / factor) * n, outputColumn = c + (alias % factor) * n
+          let value = SIMD2(qRow[outputRow], qColumn[outputColumn])
+          q.append(value)
+          positions.append(Int32(outputRow * outputN + outputColumn))
+          if key.smoothness == 0 {
+            prior.append(1)
+          } else {
+            // float32, as the CUDA layout's (1 + q^2 / s^2)^2
+            let t = 1 + (value.x * value.x + value.y * value.y) / smoothness2
+            prior.append(Double(t * t))
+          }
+        }
       }
       groups.append(
         Group(
-          count: count, size: entries.count,
-          frequency: try Self.buffer(device, entries.map { SIMD2<UInt32>($0.row, $0.column) }),
-          alias: try Self.buffer(device, q), positions: entries.flatMap(\.positions), prior: prior))
+          count: count, size: members.count, frequency: try Self.buffer(device, frequency),
+          alias: try Self.buffer(device, q), positions: positions, prior: prior))
     }
     // Dose: sum_k G_k(0) / (scan positions * sum_k A(k)^2) over every logical BF pixel; the common scan mean.
     let logical = geometry.logicalBrightfieldCount
@@ -390,7 +408,7 @@ final class SSBDirectSolver {
               try normalEquations(count: group.count, complex: complex, range: range))
             compute.dispatchThreads(
               MTLSize(width: group.size, height: 1, depth: 1),
-              threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+              threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
           }
         }
         compute.endEncoding()
@@ -445,6 +463,7 @@ final class SSBDirectSolver {
       timing.prepareGPUSeconds = gpuSeconds
     }
     timing.prepareSeconds = Date().timeIntervalSince(started)
+    lastTiming = timing
     if isCancelled() { throw CancellationError() }
     started = Date()
     let outputN = layout.outputN

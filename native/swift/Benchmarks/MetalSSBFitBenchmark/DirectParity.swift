@@ -125,8 +125,13 @@ func directParity(
         var row: [String: Any] = ["limit": limit, "method": method.rawValue, "factor": factor]
         let regularization = SSBDirectRegularization()
         var started = Date()
-        let result = try model.reconstruct(
-          point, upsamplingFactor: factor, method: method, regularization: regularization)
+        let result: MetalSSBJointPhase
+        do {
+          result = try model.reconstruct(point, upsamplingFactor: factor, method: method, regularization: regularization)
+        } catch {
+          log("\(method.rawValue) failed: \(error); stages \(timing(model.lastDirectTiming))")
+          continue
+        }
         row["first_ms"] = Date().timeIntervalSince(started) * 1e3
         if method != .ssb { row["first_stages"] = timing(model.lastDirectTiming) }
         started = Date()
