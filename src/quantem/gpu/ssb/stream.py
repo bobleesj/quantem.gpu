@@ -17,6 +17,7 @@ reconstructs the finished frames from them, with no refit and no registration, a
 """
 
 import copy
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -47,7 +48,7 @@ CONFIDENCE = 0.04
 # The live search reaches as far as drift's pairs: the residual past the extrapolated guess is a few Å.
 REACH_A = 30.0
 # The layout of a saved frame record; a record of another layout is computed again.
-RECORD_SCHEMA = "quantem.ssb-stream-frame/1"
+RECORD_SCHEMA = "quantem.ssb-stream-frame/2"
 
 
 def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", save_dir=None, show: bool = True,
@@ -87,7 +88,7 @@ def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", save_di
                       "signature": fit.metadata.get("signature")},
         "settings": {**settings, "upsampling_factor": upsampling_factor}, "software": software_signature(),
     }
-    resuming = records is not None
+    resuming, previous = records is not None, None
     sources = [Path(source) for source in sources]
     iterator = sources
     if verbose:
@@ -107,10 +108,12 @@ def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", save_di
         session = type(ptycho)(data, **settings)
         saved = objective = None
         if records is not None:
-            identity = {**shared, "index": index, "source": acquisition_identity(
-                source, hot_pixel_correction=data.metadata.get("hot_pixel_correction"))}
             # A frame's refit starts from the frame before and its placement from the frames placed
-            # before it, so only an unbroken run of records from the first frame can be reused.
+            # before it, so its identity holds the SHA-256 of the previous frame's record, which holds
+            # the one before it: a recomputed frame invalidates every later record, also when the run
+            # stopped before rewriting them, and only an unbroken chain from the first frame is reused.
+            identity = {**shared, "index": index, "previous": previous, "source": acquisition_identity(
+                source, hot_pixel_correction=data.metadata.get("hot_pixel_correction"))}
             saved = _recorded(records / f"{name}.json", identity) if resuming else None
             resuming = saved is not None
         if saved is None:
@@ -158,15 +161,18 @@ def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", save_di
         aberrations.append({**optics, "evaluations": evaluations, "stop": stop, "resumed": saved is not None})
         timings.append(clock)
         if records is not None and saved is None:
+            # Frame 0 has no pair to score (its confidence is infinite); strict JSON has no Infinity.
             record = json_value({
                 "schema": RECORD_SCHEMA, "identity": identity, "frame": name, "aberrations": optics,
                 "sample_tilt_mrad": tilt, "depth_spread_nm": depth, "coordinates": coordinates,
                 "evaluations": evaluations, "stop": stop, "shift_px": shift,
-                "shift_A": np.array(shift) * np.array(sampling), "confidence": score,
+                "shift_A": np.array(shift) * np.array(sampling), "confidence": None if index == 0 else score,
                 "object_sampling_A": sampling, "timings": clock,
             })
-            _write_atomically(records / f"{name}.json", "w", lambda handle: json.dump(record, handle, indent=1),
-                              encoding="utf-8")
+            _write_atomically(records / f"{name}.json", "w",
+                              lambda handle: json.dump(record, handle, indent=1, allow_nan=False), encoding="utf-8")
+        if records is not None:
+            previous = hashlib.sha256(json.dumps(saved or record, sort_keys=True, allow_nan=False).encode()).hexdigest()
         start = coordinates[VARIED].copy()
         del data, session, objective, result
         # Release this frame's resident counts before reading the next one.
@@ -346,13 +352,17 @@ def _recorded(path, identity):
     """A frame's saved record when it was made from this very frame and fit, else None.
 
     It must carry RECORD_SCHEMA and an identity equal to this call's: the frame's position in the
-    series, the frame's acquisition_identity (its file name, size and the SHA-256 of its first MiB and
+    series, the SHA-256 of the previous frame's record, the frame's acquisition_identity (its file name, size and the SHA-256 of its first MiB and
     of each linked data file, and how flagged pixels were held), the reference fit's coordinates,
     bounds and saved signature, the calibration and upsampling, and the SSB source hash. The record
-    then holds the exact float64 optics and shift the uninterrupted run would find again."""
+    then holds the exact float64 optics and shift the uninterrupted run would find again. A file cut
+    short (a crash while it was copied, a full disk) is no record: the frame is computed again."""
     if not path.is_file():
         return None
-    saved = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
     if saved.get("schema") != RECORD_SCHEMA or saved.get("identity") != json.loads(json.dumps(json_value(identity))):
         return None
     return saved

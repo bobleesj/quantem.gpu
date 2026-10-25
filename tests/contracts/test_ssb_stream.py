@@ -170,11 +170,13 @@ def fake_stream(monkeypatch, tmp_path, rows=256):
     loaded = {}
 
     def load(source, device):
-        loaded["name"] = Path(source).name
+        # the file's content moves the frame's defocus peak, so a rewritten frame refits elsewhere
+        loaded["name"], loaded["bytes"] = Path(source).name, len(Path(source).read_bytes())
         return SimpleNamespace(phase=phases[Path(source).name], metadata={})
 
     monkeypatch.setattr(stream_module.io, "load", load)
-    monkeypatch.setattr(stream_module, "_objective", lambda session: FrameObjective(peaks[loaded["name"]]))
+    monkeypatch.setattr(stream_module, "_objective", lambda session: FrameObjective(
+        peaks[loaded["name"]] + np.r_[1e-3 * loaded["bytes"], np.zeros(27)]))
     monkeypatch.setattr(stream_module, "public_params", lambda objective, z, order: (
         {"C10_nm": z[0], "C12_nm": z[1], "phi12_deg": z[2]}, (0.0, 0.0), 1.0))
     fit = SimpleNamespace(optimizer={"coordinates": reference.tolist(), "bounds": [(-3., 3.)] * 28},
@@ -239,3 +241,31 @@ def test_records_of_another_source_or_fit_are_ignored(monkeypatch, tmp_path):
     other = SimpleNamespace(**{**vars(fit), "optimizer": {**fit.optimizer, "coordinates": (np.array(fit.optimizer["coordinates"]) + 1e-9).tolist()}})
     refit, calls = streamed(sources, other, tmp_path / "results")
     assert calls > 0 and not any(optics["resumed"] for optics in refit.aberrations)
+
+
+def test_a_rewritten_frame_invalidates_every_later_record_even_if_interrupted(monkeypatch, tmp_path):
+    """Frame 2 is rewritten and recomputed, then the run stops before frames 3 and 4 are: their old
+    records came from the old frame 2, so the next call refits them and equals an uninterrupted run."""
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    streamed(sources, fit, tmp_path / "results")
+    sources[2].write_bytes(b"another acquisition")
+    streamed(sources[:3], fit, tmp_path / "results")
+    resumed, _ = streamed(sources, fit, tmp_path / "results")
+    assert [optics["resumed"] for optics in resumed.aberrations] == [True, True, True, False, False]
+    whole, _ = streamed(sources, fit, None)
+    assert_same_stream(whole, resumed)
+
+
+def test_a_corrupt_record_is_computed_again(monkeypatch, tmp_path):
+    """A record cut short is treated as missing: that frame and the ones after it are refit, and the
+    records are strict JSON (frame 0's confidence is null, not Infinity)."""
+    import json
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    first, _ = streamed(sources, fit, tmp_path / "results")
+    records = tmp_path / "results" / "stream"
+    assert json.loads((records / "frame_0.json").read_text(), parse_constant=lambda name: 1 / 0)["confidence"] is None
+    (records / "frame_1.json").write_text((records / "frame_1.json").read_text()[:40])
+    again, _ = streamed(sources, fit, tmp_path / "results")
+    assert [optics["resumed"] for optics in again.aberrations] == [True, False, False, False, False]
+    assert_same_stream(first, again)
