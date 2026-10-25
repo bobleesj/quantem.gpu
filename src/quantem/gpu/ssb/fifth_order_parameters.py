@@ -46,6 +46,53 @@ def monomial_map(wavelength: float) -> np.ndarray:
     return mapping
 
 
+def packed_coefficients(z, wavelength: float, semiangle_rad: float, order: int = 5) -> np.ndarray:
+    """(len(z), 14, 2): the packed Cartesian coefficients C_nm / (n + 1) (cos, sin) in A of coordinates z, float64."""
+    z = np.atleast_2d(np.asarray(z, dtype=np.float64))
+    packs = np.zeros((len(z), 14, 2))
+    packs[:, 0, 0] = z[:, 0] * 50
+    packs[:, 1, 0] = z[:, 1] * 50
+    packs[:, 1, 1] = z[:, 2] * 50
+    j = 6
+    for i, (n, m) in enumerate(ORDERS):
+        if n < 2 or n > order:
+            continue
+        scale = wavelength / (2 * np.pi * semiangle_rad ** (n + 1))
+        packs[:, i, 0] = z[:, j] * scale
+        j += 1
+        if m:
+            packs[:, i, 1] = z[:, j] * scale
+            j += 1
+    return packs
+
+
+def aperture_phase(z, wavelength: float, semiangle_rad: float, order: int = 5, points: int = 96) -> np.ndarray:
+    """(len(z), samples): chi (rad) of coordinates z over the aperture |theta| <= alpha, in float64.
+
+    Every aberration order counts, C10 and C12 included; tilt and depth spread do not enter chi. The samples are the
+    centres of a ``points`` x ``points`` grid on the aperture's square that fall inside it (the native
+    ``SSBHigherOrderConsistency.apertureDisagreement`` grid), so a plain mean over them is an area average.
+    """
+    unit = (np.arange(points) + 0.5) / points * 2 - 1
+    x, y = np.meshgrid(unit, unit, indexing="ij")
+    inside = x * x + y * y <= 1
+    angle = (x[inside] + 1j * y[inside]) * semiangle_rad
+    r2 = np.abs(angle) ** 2
+    terms = np.empty((28, angle.size))
+    for i, (n, m) in enumerate(ORDERS):
+        term = r2 ** ((n + 1 - m) // 2) * angle ** m
+        terms[2 * i], terms[2 * i + 1] = term.real, term.imag
+    packs = packed_coefficients(z, wavelength, semiangle_rad, order).reshape(-1, 28)
+    return (2 * np.pi / wavelength) * packs @ terms
+
+
+def aperture_rms(chi_a, chi_b) -> np.ndarray:
+    """Root mean square over the aperture of chi_a - chi_b after removing the piston (``aperture_phase`` rows)."""
+    difference = np.asarray(chi_a, dtype=np.float64) - np.asarray(chi_b, dtype=np.float64)
+    difference = difference - difference.mean(axis=-1, keepdims=True)
+    return np.sqrt(np.mean(difference ** 2, axis=-1))
+
+
 class Coordinates:
     """Encode physical aberrations without changing backend arithmetic."""
 
@@ -82,25 +129,12 @@ class Coordinates:
     def encode(self, z, order):
         z = np.asarray(z)
         rows = np.zeros((len(z), 6))
-        packs = np.zeros((len(z), 14, 2))
         rows[:, 0] = z[:, 0] * 100
         rows[:, 1] = np.hypot(z[:, 1], z[:, 2]) * 100
         rows[:, 2] = 0.5 * np.arctan2(z[:, 2], z[:, 1])
         rows[:, 3:5] = z[:, 3:5] * 5
         rows[:, 5] = z[:, 5] * 100
-        packs[:, 0, 0] = rows[:, 0] / 2
-        packs[:, 1, 0] = z[:, 1] * 50
-        packs[:, 1, 1] = z[:, 2] * 50
-        j = 6
-        for i, (n, m) in enumerate(ORDERS):
-            if n < 2 or n > order:
-                continue
-            scale = self.p.wavelength / (2 * np.pi * self.p.semiangle_rad ** (n + 1))
-            packs[:, i, 0] = z[:, j] * scale
-            j += 1
-            if m:
-                packs[:, i, 1] = z[:, j] * scale
-                j += 1
+        packs = packed_coefficients(z, self.p.wavelength, self.p.semiangle_rad, order)
         return (rows, packs.astype(np.float32))
 
 

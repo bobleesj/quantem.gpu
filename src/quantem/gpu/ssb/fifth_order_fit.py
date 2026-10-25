@@ -75,6 +75,62 @@ def _refine_with_gradients(objective, start, bounds, norm, cap, *, on_progress=N
                            progress=on_progress)
 
 
+# A broad search refines from the standard start (the initial fit) and from the best BROAD_STARTS distinct TPE
+# candidates, and keeps the highest agreement. A later start replaces the kept one only when its float64-summed
+# agreement is higher by BASIN_MARGIN (relative), so a tie keeps the standard fit.
+BROAD_STARTS = 8
+BASIN_MARGIN = 1e-6
+# Two candidates are the same start when their aperture phases differ by less than 0.25 rad rms (piston removed),
+# each tilt component by less than 0.5 mrad and the depth spread by less than 1 nm.
+SAME_START = {"phase_rad": 0.25, "tilt_mrad": 0.5, "depth_nm": 1.0}
+
+
+def broad_starts(standard, proposals, scores, wavelength, semiangle_rad, count=BROAD_STARTS):
+    """[(name, coordinates)]: ``standard`` (skipped when None), then the ``count`` best TPE candidates by coarse
+    score that differ from every earlier start (``SAME_START``), named ``"trial <n>"``."""
+    from .fifth_order_parameters import aperture_phase, aperture_rms
+
+    starts = [] if standard is None else [("standard", np.asarray(standard, dtype=float))]
+    proposals = np.asarray(proposals, dtype=float).reshape(-1, 28)
+    scores = np.asarray(scores, dtype=float)
+    phases = aperture_phase(proposals, wavelength, semiangle_rad)
+    kept = [] if standard is None else [(starts[0][1], aperture_phase(standard, wavelength, semiangle_rad)[0])]
+    for index in np.argsort(-scores, kind="stable"):
+        if len(starts) - (standard is not None) == count or not np.isfinite(scores[index]):
+            break
+        z, phase = proposals[index], phases[index]
+        if all(aperture_rms(phase, other_phase) >= SAME_START["phase_rad"]
+               or np.max(np.abs(z[3:5] - other[3:5])) * 5 >= SAME_START["tilt_mrad"]
+               or abs(z[5] - other[5]) * 10 >= SAME_START["depth_nm"] for other, other_phase in kept):
+            starts.append((f"trial {index}", z))
+            kept.append((z, phase))
+    return starts
+
+
+def _refine_from_starts(objective, starts, bounds, norm, cap, *, on_progress=None):
+    """``_refine_with_gradients`` from each of ``starts``; the kept record has the highest agreement (BASIN_MARGIN).
+
+    Returns (kept record, its start name, per-start summaries, one trace over all starts with objective counts and
+    seconds running on and the best agreement so far).
+    """
+    kept, kept_name, summaries, trace = None, None, [], []
+    done, best, started = 0, -np.inf, time.perf_counter()
+    for name, point in starts:
+        offset, offset_s, prior = done, time.perf_counter() - started, best
+        progress = None if on_progress is None else (
+            lambda count, value, offset=offset, prior=prior: on_progress(offset + count, max(prior, value)))
+        record = _refine_with_gradients(objective, point, bounds, norm, cap, on_progress=progress)
+        summaries.append({"start": name, "agreement": float(record["agreement"]),
+                          "objectives": int(record["objectives"]), "gradients": int(record["gradients"]),
+                          "stop": record["stop"], "initial_coordinates": np.asarray(point).tolist()})
+        trace += [[offset + count, max(prior, value), offset_s + seconds] for count, value, seconds in record["trace"]]
+        done += int(record["objectives"])
+        best = max(best, float(record["agreement"]))
+        if kept is None or record["agreement"] > kept["agreement"] * (1.0 + BASIN_MARGIN):
+            kept, kept_name = record, name
+    return kept, kept_name, summaries, trace
+
+
 HIGHER_ORDER_LIMITS = {2.0: "standard", 20.0: "wide"}
 
 
@@ -106,7 +162,9 @@ def fit_fifth_order(
     """Fit the fifth-order model; standard skips additional higher-order TPE.
 
     ``refinement="auto"`` refines with exact gradients (``"bfgs"``) where the backend has them, else with the
-    finite-difference Newton (``"newton"``), which stays available as the trajectory reference.
+    finite-difference Newton (``"newton"``), which stays available as the trajectory reference. With exact gradients a
+    broad search refines from the standard start and the best distinct TPE candidates (``broad_starts``) and keeps
+    the highest agreement; the finite-difference refinements start from the best TPE trial only.
     ``higher_order_limit`` bounds each higher-order Cartesian coordinate at +-2 (standard) or +-20 (wide) rad of
     phase at the aperture edge.
     """
@@ -144,6 +202,8 @@ def fit_fifth_order(
         "primary_options": primary_options,
         "compute_loss": bool(compute_loss),
     }
+    if search == "broad" and refinement == "bfgs":
+        settings["broad_starts"] = BROAD_STARTS
     paths = result_paths(save_dir, "find_aberrations") if save_dir is not None else None
     signature = (
         ssb._result_signature("find_aberrations", settings)
@@ -225,15 +285,24 @@ def fit_fifth_order(
         tpe_started = time.perf_counter()
         study.optimize(coarse, n_trials=trials, show_progress_bar=verbose, callbacks=[record_time])
         tpe_elapsed_s = time.perf_counter() - tpe_started
-        start = np.array([study.best_params[name] for name in names])
         coarse_scores = [trial.value for trial in study.trials]
-    else:
-        start = vector(primary, 5)
-        if not np.isfinite(start).all() or np.any(start < bounds[:, 0]) or np.any(start > bounds[:, 1]):
+    standard = vector(primary, 5)
+    if not np.isfinite(standard).all() or np.any(standard < bounds[:, 0]) or np.any(standard > bounds[:, 1]):
+        if search != "broad":
             raise ValueError(
                 "The initial fit lies outside the fifth-order model bounds. "
                 "Inspect calibration or use search='broad' for an independent exploration."
             )
+        standard = None
+    if search != "broad":
+        starts = [("standard", standard)]
+    elif refinement == "bfgs":
+        starts = broad_starts(standard, proposals, coarse_scores, float(objective.p.wavelength),
+                              float(objective.p.semiangle_rad))
+    else:
+        # The finite-difference refinements keep their reference trajectory: one start, the best TPE trial.
+        starts = [("best trial", np.array([study.best_params[name] for name in names]))]
+    start_name, start = starts[0]
     cache = {}
 
     def evaluate(points):
@@ -252,16 +321,17 @@ def fit_fifth_order(
         started += time.perf_counter() - before
 
     gradient_record = None
+    start_summaries = None
     if refinement == "bfgs":
         refinement_started = time.perf_counter()
         refinement_start_s = refinement_started - started
-        gradient_record = _refine_with_gradients(
-            objective, start, bounds, norm, refinement_cap,
+        gradient_record, start_name, start_summaries, trace = _refine_from_starts(
+            objective, starts, bounds, norm, refinement_cap,
             on_progress=refinement_progress if show_convergence else None)
+        start = np.asarray(next(s["initial_coordinates"] for s in start_summaries if s["start"] == start_name))
         best_z = gradient_record["coordinates"]
         stop = gradient_record["stop"]
-        nfev = gradient_record["objectives"]
-        trace = gradient_record["trace"]
+        nfev = sum(s["objectives"] for s in start_summaries)
         # The reported agreement is the search objective's float32 score, as the other refinements report it.
         best_score = float(objective.evaluate(best_z, 5)[0])
         refine_elapsed_s = time.perf_counter() - refinement_started
@@ -322,12 +392,15 @@ def fit_fifth_order(
         "rotation_policy": "initial fit selection; fifth-order refinement holds that rotation",
     }
     if gradient_record is not None:
-        # Values and gradients of the agreement summed in float64; subsamples steer only.
+        # Values and gradients of the agreement summed in float64; subsamples steer only. The record is the kept
+        # start's; ``starts`` lists every start's agreement (normalized) and cost.
         chosen.optimizer["exact_gradients"] = {
             key: gradient_record[key] for key in (
                 "agreement", "objectives", "gradients", "subsampled", "iterations", "hessian_bf_stride",
                 "coarse_bf_stride")
         }
+        chosen.optimizer["starts"] = start_summaries
+        chosen.optimizer["kept_start"] = start_name
     chosen.num_trials = trials
     if refinement != "newton":
         chosen.optimizer.pop("newton_cap")

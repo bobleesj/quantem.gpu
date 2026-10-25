@@ -12,9 +12,9 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb import _exact_newton, fifth_order_fit
+from quantem.gpu.ssb import _exact_newton, fifth_order_fit, fifth_order_parameters
 from quantem.gpu.ssb._gradient_refinement import Settings, bounded_step, projected_gradient, refine
-from quantem.gpu.ssb.fifth_order_parameters import Coordinates
+from quantem.gpu.ssb.fifth_order_parameters import Coordinates, aperture_phase, aperture_rms, packed_coefficients
 from quantem.gpu.ssb.higher_order import ORDERS
 from quantem.gpu.ssb.results import SSBResult
 from quantem.gpu.ssb.workflow import SSB
@@ -62,6 +62,35 @@ def test_packed_encoding_matches_the_shared_coordinates():
     z = np.random.default_rng(3).uniform(-1, 1, 28)
     _, packed = coordinates.encode(z[None], 5)
     np.testing.assert_allclose(packed[0].ravel(), _packed(coordinates, z), rtol=1e-6, atol=1e-12)
+
+
+def test_aperture_phase_is_the_shared_chi_over_the_aperture():
+    coordinates = _coordinates()
+    wavelength, semiangle = coordinates.p.wavelength, coordinates.p.semiangle_rad
+    z = np.random.default_rng(5).uniform(-1, 1, (2, 28))
+    np.testing.assert_allclose(packed_coefficients(z, wavelength, semiangle).reshape(2, 28)[1], _packed(coordinates, z[1]),
+                               rtol=1e-14)
+    chi = aperture_phase(z, wavelength, semiangle, points=8)
+    axis = ((np.arange(8) + 0.5) / 8 * 2 - 1) * semiangle
+    angles = [(a, b) for a in axis for b in axis if a * a + b * b <= semiangle ** 2]
+    expected = [_chi(a / wavelength, b / wavelength, wavelength, _packed(coordinates, z[0])) for a, b in angles]
+    assert chi.shape == (2, 52)
+    np.testing.assert_allclose(chi[0], expected, rtol=1e-12, atol=1e-12)
+    # C10 = 1 nm: chi = pi C10 theta^2 / wl, a paraboloid whose rms over a disk is its edge value / sqrt(12)
+    defocus = np.zeros(28)
+    defocus[0] = 0.1
+    edge = math.pi * 10 * semiangle ** 2 / wavelength
+    chi = aperture_phase(defocus, wavelength, semiangle)
+    assert chi.shape == (1, 7232)
+    assert aperture_rms(chi, np.zeros_like(chi))[0] == pytest.approx(edge / math.sqrt(12), rel=2e-3)
+    # a higher-order coordinate is its phase at the aperture edge: C30 = z (theta / alpha)^4
+    spherical = np.zeros(28)
+    spherical[10] = 1.0
+    chi = aperture_phase(spherical, wavelength, semiangle, points=4)[0]
+    unit = (np.arange(4) + 0.5) / 4 * 2 - 1
+    radius2 = np.add.outer(unit ** 2, unit ** 2).ravel()
+    np.testing.assert_allclose(np.sort(chi), np.sort(radius2[radius2 <= 1] ** 2), rtol=1e-12)
+    assert aperture_rms(chi + 3.0, chi) == pytest.approx(0.0, abs=1e-12)
 
 
 def test_monomial_sums_map_to_the_phase_gradient_in_every_coordinate():
@@ -344,3 +373,128 @@ def test_higher_order_limit_is_recorded_and_checked_before_computation(monkeypat
         call(SimpleNamespace(), search="primary", higher_order_limit=20)
     with pytest.raises(ValueError, match="2 \\(standard\\)"):
         call(SimpleNamespace(), higher_order_limit=4)
+
+
+def _broad_candidates():
+    """A standard start and TPE proposals: the best, a copy within 0.25 rad, one differing only in tilt, a copy of the
+    standard start, a non-finite score and a distinct worse one."""
+    standard = np.zeros(28)
+    standard[[0, 5]] = 0.5, 1.2
+    best = standard.copy()
+    best[6:] = 0.8
+    near = best.copy()
+    near[6] += 0.01
+    tilted = best.copy()
+    tilted[3] += 0.2
+    worse = standard.copy()
+    worse[10] = -1.5
+    proposals = [worse, near, best, tilted, standard + 1e-4, standard]
+    scores = [0.5, 1.9, 2.0, 1.8, 1.7, float("nan")]
+    return standard, np.array(proposals), np.array(scores)
+
+
+def test_broad_starts_put_the_standard_start_first_then_the_best_distinct_candidates():
+    coordinates = _coordinates()
+    standard, proposals, scores = _broad_candidates()
+    starts = fifth_order_fit.broad_starts(standard, proposals, scores, coordinates.p.wavelength,
+                                          coordinates.p.semiangle_rad)
+    assert [name for name, _ in starts] == ["standard", "trial 2", "trial 3", "trial 0"]
+    np.testing.assert_array_equal(starts[0][1], standard)
+    np.testing.assert_array_equal(starts[2][1], proposals[3])
+    limited = fifth_order_fit.broad_starts(standard, proposals, scores, coordinates.p.wavelength,
+                                           coordinates.p.semiangle_rad, count=1)
+    assert [name for name, _ in limited] == ["standard", "trial 2"]
+    alone = fifth_order_fit.broad_starts(None, proposals, scores, coordinates.p.wavelength,
+                                         coordinates.p.semiangle_rad)
+    assert [name for name, _ in alone] == ["trial 2", "trial 3", "trial 4", "trial 0"]
+
+
+def test_refinement_from_starts_keeps_the_first_unless_clearly_higher(monkeypatch):
+    agreements = {0: 1.5, 1: 1.5 * (1 + 5e-7), 2: 1.6, 3: 1.55}
+
+    def refine_one(objective, start, bounds, norm, cap, *, on_progress=None):
+        key = int(start[0])
+        if on_progress is not None:
+            on_progress(1, agreements[key] - 0.1)
+            on_progress(2, agreements[key])
+        return {"agreement": agreements[key], "coordinates": start + 0.5, "objectives": 2 + key, "gradients": 1,
+                "stop": "converged", "trace": [[1, agreements[key] - 0.1, 0.0], [2 + key, agreements[key], 0.0]]}
+
+    monkeypatch.setattr(fifth_order_fit, "_refine_with_gradients", refine_one)
+    starts = [(name, np.full(28, float(i))) for i, name in enumerate(["standard", "trial 7", "trial 3", "trial 9"])]
+    seen = []
+    kept, name, summaries, trace = fifth_order_fit._refine_from_starts(
+        None, starts, FIFTH_BOUNDS, 1.0, 400, on_progress=lambda count, best: seen.append((count, best)))
+    assert name == "trial 3" and kept["agreement"] == 1.6
+    assert [s["agreement"] for s in summaries] == [agreements[i] for i in range(4)]
+    assert [s["objectives"] for s in summaries] == [2, 3, 4, 5]
+    trace = np.array(trace)
+    assert trace[:, 0].tolist() == [1, 2, 3, 5, 6, 9, 10, 14]
+    assert np.all(np.diff(trace[:, 1]) >= 0) and np.all(np.diff(trace[:, 2]) >= 0)
+    assert seen[-1] == (11, 1.6)
+    # a gain inside BASIN_MARGIN keeps the earlier start
+    kept, name, _, _ = fifth_order_fit._refine_from_starts(None, starts[:2], FIFTH_BOUNDS, 1.0, 400)
+    assert name == "standard"
+
+
+class _TwoBumps:
+    """Exact-gradient objective 1 + sum_i h_i exp(-|z - c_i|^2 / w) with the standard start at c_0."""
+
+    def __init__(self, centers, heights, width=0.5):
+        self.centers, self.heights, self.width = np.asarray(centers), np.asarray(heights), width
+        self.p = SimpleNamespace(wavelength=0.019687489006849, semiangle_rad=0.03)
+        self.num_bright_field_pixels = 9000
+
+    def _terms(self, points):
+        points = np.atleast_2d(points)
+        offsets = points[:, None, :] - self.centers[None]
+        return offsets, self.heights * np.exp(-np.sum(offsets ** 2, axis=2) / self.width)
+
+    def evaluate(self, points, order):
+        points = np.atleast_2d(points)
+        return np.ones(len(points)) if points.shape[1] < 28 else self.values(points)
+
+    def values(self, points, stride=1):
+        return 1 + self._terms(points)[1].sum(axis=1)
+
+    def gradients(self, points, stride=1):
+        offsets, terms = self._terms(points)
+        return -2 / self.width * np.sum(terms[:, :, None] * offsets, axis=1)
+
+
+def _broad_session(monkeypatch, objective, standard):
+    monkeypatch.setattr(fifth_order_fit, "_objective", lambda ssb, gradients=False: objective)
+    monkeypatch.setattr(fifth_order_parameters, "vector", lambda fit, order: standard.copy())
+    monkeypatch.setattr(fifth_order_parameters, "public_params", lambda *args: ({}, (0.0, 0.0), 10.0))
+    return SimpleNamespace(
+        backend="cuda", _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None,
+                                                                             trial_records=[])),
+        run=lambda result, **kwargs: result, _accept_result=lambda result: result,
+    )
+
+
+@pytest.mark.parametrize("tpe_height, kept", [(0.5, "standard"), (1.2, "trial 0")])
+def test_broad_search_never_ends_below_its_standard_start(monkeypatch, tpe_height, kept):
+    """The TPE study's first trial (zero optics, unit depth) sits on a second bump; the standard start on the first."""
+    standard = np.zeros(28)
+    standard[[0, 3, 5]] = 1.0, 2.0, 2.0
+    tpe_peak = np.zeros(28)
+    tpe_peak[5] = 1.0
+    objective = _TwoBumps([standard, tpe_peak], [0.8, tpe_height])
+    session = _broad_session(monkeypatch, objective, standard)
+    options = dict(trials=12, save_dir=None, force=False, verbose=False, show=False,
+                   primary_options={"check_rotation": False, "refine_rotation": False})
+    broad = fifth_order_fit.fit_fifth_order(session, search="broad", seed=17, **options)
+    alone = fifth_order_fit.fit_fifth_order(session, search="standard", seed=42, **options)
+    starts = broad.optimizer["starts"]
+    assert starts[0]["start"] == "standard" and 2 <= len(starts) <= 1 + fifth_order_fit.BROAD_STARTS
+    assert starts[0]["agreement"] == alone.optimizer["exact_gradients"]["agreement"]
+    assert broad.optimizer["kept_start"] == kept
+    assert broad.optimizer["exact_gradients"]["agreement"] == max(s["agreement"] for s in starts)
+    assert broad.optimizer["exact_gradients"]["agreement"] >= alone.optimizer["exact_gradients"]["agreement"]
+    assert broad.optimizer["executed_objectives"] == sum(s["objectives"] for s in starts)
+    kept_start = next(s for s in starts if s["start"] == kept)
+    assert broad.optimizer["initial_coordinates"] == kept_start["initial_coordinates"]
+    if kept == "standard":
+        assert broad.optimizer["coordinates"] == alone.optimizer["coordinates"]
+    assert alone.optimizer["kept_start"] == "standard" and len(alone.optimizer["starts"]) == 1

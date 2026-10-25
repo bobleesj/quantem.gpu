@@ -254,6 +254,16 @@ new `rcN` heading when that rc is published to TestPyPI.
   The fused depth-model test bound (n = 128, 256, 512) rises from 5e-8 to 1e-7 for the same reason: other float32
   roundings of k give 4.5e-8 to 6.8e-8 between its two summation orders.
 
+- Python SSB (CUDA and MPS): `find_aberrations(search="broad")` with exact gradients no longer ends below
+  `search="standard"` on the same data. It refined only the best TPE trial and could converge in a lower basin
+  (on two measured frames of a thin two-dimensional crystal 1.7237 and 1.7183 against standard's 1.8075 and
+  1.7863). The refinement now runs from the standard start and from the 8 best TPE candidates that differ from every
+  earlier start (aperture phase by 0.25 rad rms, tilt by 0.5 mrad or depth spread by 1 nm) and keeps the highest
+  float64-summed agreement; a later start replaces the kept one only when higher by 1e-6 relative.
+  `optimizer["starts"]` lists each start's agreement and `optimizer["kept_start"]` the one kept. On seven measured
+  512 x 512 acquisitions broad equals standard on six and is 0.5 % higher on one, is never below the earlier
+  finite-difference broad fit, and repeats bit for bit; it takes 7.3-8.6 s (two larger acquisitions 11.7-12.9 s)
+  on an RTX PRO 6000 Blackwell Max-Q instead of about 6 s, of which TPE is 5.0-6.9 s.
 - Native (Metal) SSB redraw (`ssb-redraw` v0.3, replaces v0.2): the lowest scan frequencies, where the two
   sidebands nearly cancel, are resolved by evaluating chi(k +- q) - chi(k) as polynomials expanded about each BF
   pixel and forming gamma from their half sum and half difference. On five measured 512 x 512 acquisitions, 1x, 2x

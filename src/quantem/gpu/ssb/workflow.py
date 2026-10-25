@@ -1870,6 +1870,11 @@ class DirectPtycho:
         ``search="broad"`` retains the same 200-trial initialization, followed
         by 400 additional fifth-order TPE trials and joint refinement.
         ``trials`` changes this additional budget; its seed defaults to 17.
+        With exact gradients the refinement runs from the standard start and
+        from the 8 best distinct TPE candidates and keeps the highest
+        agreement, so at the default trials and seeds a broad fit never ends
+        below the standard fit. ``optimizer["starts"]`` lists each start's
+        agreement and ``optimizer["kept_start"]`` the one kept.
         ``refinement="nelder-mead"`` selects the same bounded simplex path in
         either fifth-order strategy. Newton has a 5000-evaluation ceiling;
         Nelder-Mead has 3000; the exact-gradient refinement 400 full-data
