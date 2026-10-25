@@ -29,6 +29,9 @@ EXACT_TOLERANCES = TOLERANCES / 10
 DISTINCT = np.array([50.0, 20.0, _f(0.3), 2.0, 2.0, 50.0])
 # The second polish replaces the first only when its agreement is higher by this relative margin (BASIN_MARGIN).
 BASIN_MARGIN = 1e-6
+# The joint fit's Newton polishes on exact derivatives where the backend has them (CUDA, MPS); False keeps the
+# resident finite-difference stencils as the reference trajectory.
+EXACT_NEWTON = True
 
 
 def encode(p):
@@ -53,6 +56,17 @@ def decode(z):
     p[2] = _atan2(z[2], z[1]) / 2
     p[5] = abs(z[5])
     return p
+
+
+def joint_trial(z) -> np.ndarray:
+    """The joint objective kernels' float32 trial rows of Newton coordinates z.
+
+    The kernels form their astigmatism terms as C12 cos 2 phi12 and C12 sin 2 phi12 from a row's second to fourth
+    entries; (1, a, b) gives a and b exactly. Rows: C10, 1, a, b, depth spread [A], tilt row, tilt column [rad].
+    """
+    z = np.atleast_2d(np.asarray(z, dtype=np.float64))
+    return np.stack([z[:, 0], np.ones(len(z)), z[:, 1], z[:, 2], np.abs(z[:, 5]), z[:, 3] * 1e-3, z[:, 4] * 1e-3],
+                    axis=1).astype(np.float32)
 
 
 def wrap_phi(phi):

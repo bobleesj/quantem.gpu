@@ -805,7 +805,7 @@ def fit_resident(
     Parameters use the existing engine units. ``evaluate`` accepts resident
     encoded model trials and returns resident extended scores. Public callers
     use ``SSB.find_aberrations(tilt=True)``; no solver setting is needed.
-    ``derivatives`` (``cuda.exact_derivatives.LowOrderDerivatives``) polishes
+    ``derivatives`` (``LowOrderDerivatives`` of ``cuda`` or ``mps.exact_derivatives``) polishes
     on the exact gradient and Hessian of the same objective
     (``_exact_newton``) instead of finite-difference stencils; the search and
     its trials are unchanged. A fit with fixed aberrations keeps the stencils.

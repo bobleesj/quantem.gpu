@@ -229,6 +229,63 @@ def _probe_geometry(prepared, scalars):
     return prepared.fit_probe_geometry
 
 
+def band_sums(prepared, rows, flat, band_qx, band_qy, scalars):
+    """Per band frequency N_q (real, imaginary) and D_q of the encoded trial ``rows``, summed over the BF chunks.
+
+    Shape (3, rows, band frequencies), float32: the joint objective's kernel before its band reduction.
+    """
+    mx = prepared.mx
+    g = prepared.g_qk
+    n_band = int(flat.size)
+    storage_bf = int(g.shape[0])
+    plane = int(g.shape[1]) * int(g.shape[2])
+    chunks = (storage_bf + _K_CHUNK - 1) // _K_CHUNK
+    batch = len(rows)
+    tile = min(_FIT_DISPATCH_BATCH, batch)
+    if ANGLE_SUMS:
+        probe_geometry = _probe_geometry(prepared, scalars)
+        kernel = _angle_sum_kernel()
+        extra = [*_row_steps(prepared), mx.array([batch], dtype=mx.uint32)]
+    else:
+        probe_geometry, probe_chi = _trial_probe_kernel()(
+            inputs=[prepared.kx, prepared.ky, scalars, rows.reshape(-1)],
+            template=[("NUM_BF", storage_bf), ("B", batch)],
+            grid=(storage_bf, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(storage_bf, 4), (storage_bf, batch)],
+            output_dtypes=[mx.float32] * 2,
+        )
+        kernel, extra = _thick_fit_batch_kernel(), [probe_chi]
+    parts = kernel(
+        inputs=[
+            g,
+            flat,
+            band_qx,
+            band_qy,
+            prepared.kx,
+            prepared.ky,
+            rows.reshape(-1),
+            scalars,
+            probe_geometry,
+            *extra,
+        ],
+        template=[
+            *([("ANCHOR", ANCHOR)] if ANGLE_SUMS else []),
+            ("B", tile),
+            *([] if ANGLE_SUMS else [("TOTAL", batch)]),
+            ("N_BAND", n_band),
+            ("NUM_BF", storage_bf),
+            ("PLANE", plane),
+            ("K_CHUNK", _K_CHUNK),
+        ],
+        grid=(n_band, chunks, (batch + tile - 1) // tile),
+        threadgroup=(64, 1, 1),
+        output_shapes=[(chunks, batch, n_band)] * 3,
+        output_dtypes=[mx.float32] * 3,
+    )
+    sums = mx.stack([mx.sum(part, axis=0) for part in parts])
+    return sums
+
+
 def evaluate(prepared, trial, band_inv_A=(0.2, 0.9)):
     """Evaluate resident encoded trials without a score or parameter readback."""
     device = _Device("mps")
@@ -238,7 +295,6 @@ def evaluate(prepared, trial, band_inv_A=(0.2, 0.9)):
     n_band = int(flat.size)
     g = prepared.g_qk
     storage_bf = int(g.shape[0])
-    plane = int(g.shape[1]) * int(g.shape[2])
     chunks = (storage_bf + _K_CHUNK - 1) // _K_CHUNK
     scalars = mx.array(
         [
@@ -265,48 +321,7 @@ def evaluate(prepared, trial, band_inv_A=(0.2, 0.9)):
         checkpoint()
         rows = trial[start : start + execution]
         batch = len(rows)
-        tile = min(_FIT_DISPATCH_BATCH, batch)
-        if ANGLE_SUMS:
-            probe_geometry = _probe_geometry(prepared, scalars)
-            kernel = _angle_sum_kernel()
-            extra = [*_row_steps(prepared), mx.array([batch], dtype=mx.uint32)]
-        else:
-            probe_geometry, probe_chi = _trial_probe_kernel()(
-                inputs=[prepared.kx, prepared.ky, scalars, rows.reshape(-1)],
-                template=[("NUM_BF", storage_bf), ("B", batch)],
-                grid=(storage_bf, 1, 1), threadgroup=(256, 1, 1),
-                output_shapes=[(storage_bf, 4), (storage_bf, batch)],
-                output_dtypes=[mx.float32] * 2,
-            )
-            kernel, extra = _thick_fit_batch_kernel(), [probe_chi]
-        parts = kernel(
-            inputs=[
-                g,
-                flat,
-                band_qx,
-                band_qy,
-                prepared.kx,
-                prepared.ky,
-                rows.reshape(-1),
-                scalars,
-                probe_geometry,
-                *extra,
-            ],
-            template=[
-                *([("ANCHOR", ANCHOR)] if ANGLE_SUMS else []),
-                ("B", tile),
-                *([] if ANGLE_SUMS else [("TOTAL", batch)]),
-                ("N_BAND", n_band),
-                ("NUM_BF", storage_bf),
-                ("PLANE", plane),
-                ("K_CHUNK", _K_CHUNK),
-            ],
-            grid=(n_band, chunks, (batch + tile - 1) // tile),
-            threadgroup=(64, 1, 1),
-            output_shapes=[(chunks, batch, n_band)] * 3,
-            output_dtypes=[mx.float32] * 3,
-        )
-        sums = mx.stack([mx.sum(part, axis=0) for part in parts])
+        sums = band_sums(prepared, rows, flat, band_qx, band_qy, scalars)
         constants = f"\n#define BATCH {batch}\n#define BAND {n_band}\n"
         partial = device.run(
             "ssb_joint_reduce_band",

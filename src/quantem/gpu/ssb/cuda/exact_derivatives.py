@@ -30,6 +30,7 @@ import cupy as cp
 import numpy as np
 
 from quantem.gpu.ssb.cuda._broad_shared import kernel as _saturated_kernel
+from quantem.gpu.ssb._exact_newton import joint_trial
 from quantem.gpu.ssb.cuda.broad_batch import Objective as _BatchObjective
 from quantem.gpu.ssb.cuda.broad_batch import kernel as _tiled_kernel
 from quantem.gpu.ssb.cuda.broad_objective import kernel as _baseline_kernel
@@ -552,17 +553,6 @@ def _low_kernel():
     return _low_module.get_function("low_order_derivatives")
 
 
-def low_order_trial(z) -> np.ndarray:
-    """``thick_fit_batch`` rows of Newton coordinates z = (C10, a, b, tilt row, tilt column, depth spread).
-
-    The kernel forms its astigmatism terms as C12 cos 2 phi12 and C12 sin 2 phi12 from the row's second to fourth
-    entries; (1, a, b) gives a and b exactly.
-    """
-    z = np.atleast_2d(np.asarray(z, dtype=np.float64))
-    return np.stack([z[:, 0], np.ones(len(z)), z[:, 1], z[:, 2], np.abs(z[:, 5]), z[:, 3] * 1e-3, z[:, 4] * 1e-3],
-                    axis=1).astype(np.float32)
-
-
 class LowOrderDerivatives:
     """The low-order joint agreement (``ThickSample.fit_resident``'s values) with exact gradient and Hessian.
 
@@ -606,7 +596,7 @@ class LowOrderDerivatives:
 
     def values(self, z, all_derivatives=False):
         """Agreements at rows of z: ``ThickSample.fit_resident``'s float64 sums of the same kernel."""
-        trial = cp.asarray(low_order_trial(z))
+        trial = cp.asarray(joint_trial(z))
         numerators, denominators, weight = self._sums(trial)
         values = _power_sum(numerators, denominators, weight)
         self._last = (trial, numerators, denominators, weight, values)
