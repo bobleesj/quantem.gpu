@@ -7,7 +7,10 @@ import XCTest
 /// `docs/performance/kernels.md` must list that version and digest. Changing a kernel therefore
 /// means a new version, a registry row and fresh measurements.
 final class SSBKernelRegistryTests: XCTestCase {
-  private let entries = [SSBKernelRegistry.redraw, SSBKernelRegistry.perTerm, SSBKernelRegistry.meanPhase]
+  private let entries = [
+    SSBKernelRegistry.redraw, SSBKernelRegistry.perTerm, SSBKernelRegistry.meanPhase,
+    SSBKernelRegistry.fifthAgreement,
+  ]
 
   func testShippedSourceMatchesRegisteredVersion() throws {
     for entry in entries {

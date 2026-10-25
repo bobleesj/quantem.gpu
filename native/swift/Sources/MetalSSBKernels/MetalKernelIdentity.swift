@@ -50,6 +50,12 @@ enum SSBKernelRegistry {
   static let perTerm = Entry(
     name: "ssb-per-term", version: "0.1", files: ["ssb_model", "ssb_fifth_order", "ssb_separable"],
     registeredSourceSHA256: "1c390cc7b833c1cd83ec77cdd63670edc78a33a42426e2ad1512950677983fa5")
+  /// The fifth-order agreement objective of the fit (`fifth_agreement_rows` with the `fifth_probe`, `fifth_power`
+  /// and `fifth_score` passes): the only production objective kernel there. v0.1 was `fifth_agreement` in
+  /// `ssb_fifth_order` (ssb-per-term), now the parity reference of the tests.
+  static let fifthAgreement = Entry(
+    name: "ssb-fifth-agreement", version: "0.2", files: ["ssb_fifth_order", "ssb_fifth_agreement"],
+    registeredSourceSHA256: "f2f700147e47edaac7f91e41e32e955ca016df4de4236b4b6b314e0f0a23bfad")
   /// `mean_phase` (C10/C12 only).
   static let meanPhase = Entry(
     name: "ssb-mean-phase", version: "0.1", files: ["ssb_joint", "ssb_joint_fft", "ssb_fft"],

@@ -162,7 +162,7 @@ public final class MetalSSBJointModel {
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
-        "ssb_redraw",
+        "ssb_redraw", "ssb_fifth_agreement",
       ]),
       options: options)
     self.library = library
@@ -396,21 +396,42 @@ public final class MetalSSBJointModel {
     }
     if isCancelled() { throw CancellationError() }
     if points.isEmpty { return [] }
-    if fifthOrder == nil {
-      fifthOrder = try SSBFifthOrderAgreement(device: device, queue: queue, library: library)
-    }
-    let rows = zip(points, coefficients).map { point, packed in
-      [
-        Float(point.depthSpreadAngstroms), Float(point.sampleTiltMrad[0] * 1e-3),
-        Float(point.sampleTiltMrad[1] * 1e-3),
-      ] + packed
-    }
+    let rows = try fifthOrderRows(points, coefficients)
     let scores = try fifthOrder!.evaluate(
       rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
       probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
       isCancelled: isCancelled)
     lastAgreementGPUSeconds = fifthOrder!.lastGPUSeconds
     return scores
+  }
+
+  /// The kernel rows of `fifthOrderAgreements`: depth, tilt row and column (rad), the 28 packed coefficients.
+  private func fifthOrderRows(_ points: [SSBModelPoint], _ coefficients: [[Float]]) throws -> [[Float]] {
+    if fifthOrder == nil {
+      let q = Array(
+        UnsafeBufferPointer(
+          start: qBuffer.contents().assumingMemoryBound(to: SIMD2<Float>.self), count: bandCount))
+      fifthOrder = try SSBFifthOrderAgreement(device: device, queue: queue, library: library, q: q)
+    }
+    return zip(points, coefficients).map { point, packed in
+      [
+        Float(point.depthSpreadAngstroms), Float(point.sampleTiltMrad[0] * 1e-3),
+        Float(point.sampleTiltMrad[1] * 1e-3),
+      ] + packed
+    }
+  }
+
+  /// Tests only: `fifthOrderAgreements` through the retired per-term kernel `fifth_agreement`, the parity reference
+  /// of ssb-fifth-agreement v0.2.
+  func fifthOrderAgreementsReference(_ points: [SSBModelPoint], packedCoefficients: [[Float]]? = nil)
+    throws -> [Double]
+  {
+    try validatePreparation()
+    let coefficients = packedCoefficients ?? points.map(\.reconstructionCoefficients)
+    let rows = try fifthOrderRows(points, coefficients)
+    return try fifthOrder!.evaluateReference(
+      rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
+      probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount)
   }
 
   /// The exact float32 inputs of the agreement objective at the current rotation, for an independent

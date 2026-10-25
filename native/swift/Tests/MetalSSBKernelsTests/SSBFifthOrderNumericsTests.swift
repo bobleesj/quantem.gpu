@@ -62,6 +62,122 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
       try model.fifthOrderAgreements([higher]), try fresh.fifthOrderAgreements([higher]))
   }
 
+  /// ssb-fifth-agreement v0.2 against its parity reference, the retired per-term kernel `fifth_agreement`, at fixed
+  /// candidates: shared and distinct depth/tilt (the shared depth-sinc path), zero depth, every remainder of the
+  /// four-candidate groups, and batch invariance.
+  func testRowsKernelMatchesPerTermReference() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let scene = try SSBModelReconstructionTests.scene()
+    let input = try SSBCoherentReconstruction.buffer(device, scene.counts)
+    let engine = try MetalSSBEngine(device: device, geometry: scene.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+    // About one radian at the aperture edge per term: lambda (n + 1) / (2 pi alpha^(n + 1)).
+    let points = (0..<11).map { i -> SSBModelPoint in
+      var point = SSBModelPoint(
+        c10Angstroms: -38 + 3 * Double(i), c12Angstroms: 9, phi12Radians: -0.4,
+        sampleTiltMrad: [2.5, i < 6 ? -4 : -3], depthSpreadAngstroms: i % 5 == 4 ? 0 : 140)
+      point.higherOrder = SSBModelHigherOrder.supported.enumerated().map { j, term in
+        let n = Double(term.order)
+        let scale = 0.0197 * (n + 1) / (2 * Double.pi * pow(0.03, n + 1))
+        return SSBModelHigherOrder(
+          order: term.order, symmetry: term.symmetry,
+          magnitudeAngstroms: scale * (0.3 + 0.07 * Double((i + j) % 9)),
+          angleRadians: 0.37 * Double(i) - 0.21 * Double(j))
+      }
+      return point
+    }
+    let reference = try model.fifthOrderAgreementsReference(points)
+    let exact = try Self.doubleAgreements(model: model, points: points)
+    let all = try model.fifthOrderAgreements(points)
+    // Both are float32 objectives about 1e-6 from the float64 one on this 40-pixel scene (on the measured
+    // acquisitions v0.2 and the per-term kernel agree within 3e-7); v0.2 must be no less accurate.
+    var squares = (new: 0.0, old: 0.0)
+    for i in points.indices {
+      let new = abs(all[i] / exact[i] - 1), old = abs(reference[i] / exact[i] - 1)
+      print(String(format: "candidate %2d: v0.2 %.3e, per-term %.3e from float64; v0.2 vs per-term %.3e",
+        i, new, old, abs(all[i] / reference[i] - 1)))
+      XCTAssertLessThan(new, 2e-6)
+      squares.new += new * new
+      squares.old += old * old
+    }
+    XCTAssertLessThan(squares.new, 1.5 * 1.5 * squares.old)
+    for count in [1, 2, 3, 4, 5] {
+      XCTAssertEqual(Array(all.prefix(count)), try model.fifthOrderAgreements(Array(points.prefix(count))))
+    }
+    XCTAssertEqual(all, try points.map { try model.fifthOrderAgreements([$0])[0] })
+    XCTAssertEqual(all, try model.fifthOrderAgreements(points.reversed()).reversed())
+  }
+
+  /// The agreement objective of `fifth_agreement` with every term and sum in double precision, from the model's
+  /// float32 inputs (k, q, weights, probe geometry, evidence) and the float32 packed coefficients.
+  static func doubleAgreements(model: MetalSSBJointModel, points: [SSBModelPoint]) throws -> [Double] {
+    let arrays = try model.objectiveArrays()
+    let wl = arrays.constants["wavelength_A"]!, semi = arrays.constants["semiangle_rad"]!
+    let ay = arrays.constants["angular_row_rad"]!, ax = arrays.constants["angular_column_rad"]!
+    let factor = arrays.constants["factor"]!
+    let azimuth = [0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, 2, 4, 6]
+    let power = [1, 0, 1, 0, 2, 1, 0, 2, 1, 0, 3, 2, 1, 0]
+    func chi(_ row: Double, _ col: Double, _ c: [Double]) -> Double {
+      let x = row * wl, y = col * wl, r2 = x * x + y * y
+      var re = [1.0], im = [0.0]
+      for m in 1...6 {
+        re.append(re[m - 1] * x - im[m - 1] * y)
+        im.append(im[m - 1] * x + re[m - 1] * y)
+      }
+      var total = 0.0
+      for i in 0..<14 {
+        total += pow(r2, Double(power[i])) * (re[azimuth[i]] * c[2 * i] + im[azimuth[i]] * c[2 * i + 1])
+      }
+      return 2 * Double.pi / wl * total
+    }
+    func geometry(_ dx: Double, _ dy: Double) -> (Double, Double) {
+      let r = (dx * dx + dy * dy).squareRoot(), alpha = r * wl
+      let denom = r > 1e-15 ? (dx * ay * dx * ay + dy * ax * dy * ax).squareRoot() / r : 0
+      let edge = denom > 1e-15 ? (semi - alpha) / denom + 0.5 : 1
+      return (alpha * alpha, min(max(edge, 0), 1))
+    }
+    func sinc(_ x: Double) -> Double { abs(x) < 1e-6 ? 1 : sin(x) / x }
+    return points.map { point in
+      let c = point.reconstructionCoefficients.map(Double.init)
+      let t = Double(Float(point.depthSpreadAngstroms))
+      let thr = Double(Float(point.sampleTiltMrad[0] * 1e-3)), thc = Double(Float(point.sampleTiltMrad[1] * 1e-3))
+      var total = 0.0
+      for (qi, q) in arrays.q.enumerated() {
+        let qx = Double(q.x), qy = Double(q.y)
+        let shift = 2 * Double.pi * (qx * thr + qy * thc)
+        var nr = 0.0, ni = 0.0, dd = 0.0
+        for (ki, k) in arrays.k.enumerated() {
+          let kx = Double(k.x), ky = Double(k.y), gk = arrays.probe[ki]
+          let gm = geometry(qx - kx, qy - ky), gp = geometry(qx + kx, qy + ky)
+          let a1 = gm.1 * Double(gk.w), a2 = gp.1 * Double(gk.w)
+          if a1 == 0 && a2 == 0 { continue }
+          let chiK = chi(kx, ky, c)
+          var gr = 0.0, gi = 0.0
+          if a1 != 0 {
+            let phase = chi(kx - qx, ky - qy, c) - chiK
+            let b1 = t != 0 ? sinc(0.5 * t * (-factor * (gm.0 - Double(gk.x)) - shift)) * a1 : a1
+            gr += b1 * cos(phase)
+            gi -= b1 * sin(phase)
+          }
+          if a2 != 0 {
+            let phase = chi(qx + kx, qy + ky, c) - chiK
+            let b2 = t != 0 ? sinc(0.5 * t * (factor * (gp.0 - Double(gk.x)) - shift)) * a2 : a2
+            gr -= b2 * cos(phase)
+            gi -= b2 * sin(phase)
+          }
+          let g = arrays.evidence[ki * arrays.q.count + qi]
+          let gre = Double(g.x), gim = Double(g.y)
+          nr += gre * gr + gim * gi
+          ni += gim * gr - gre * gi
+          dd += gr * gr + gi * gi
+        }
+        if dd > 0 { total += Double(arrays.weights[qi]) * (nr * nr + ni * ni) / dd }
+      }
+      return total
+    }
+  }
+
   func testSavedPhaseRetainsExactHigherOrderPointAndReadsLegacyRun() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let scene = try SSBModelReconstructionTests.scene()
