@@ -61,23 +61,34 @@ registered with `ssb-per-term`) is 25.0 ms single / 22.0 ms each in a batch of 2
 
 ## Fit objectives (`MetalSSBJointModel` agreement)
 
-GPU ms per candidate objective (median of three batches; command-buffer GPU time, which the wall time of the
-call exceeds by at most 0.2 ms) for the fifth-order objective at a fit's kept rotation. Batch: one candidate,
-four seeded random candidates, the 57-point Newton diagonal stencil, 64 random candidates. Data: film
-`scan_06` (8,805 BF pixels, 44,247 band frequencies), a second 512² acquisition (9,296 BF, 44,255) and a
-third (8,928 BF, 77,842), all 300 keV, 30 mrad. Benchmark: `metal-ssb-fit-benchmark --objective-bench`.
+GPU ms per candidate objective (median of three calls; command-buffer GPU time, which the wall time of the
+call exceeds by at most 0.3 ms) at a fit's kept rotation. Fifth order: one candidate, four seeded random
+candidates, the 57-point Newton diagonal stencil, 64 random candidates. Low order: one candidate, eight (one
+search-trial batch) and 64 random candidates. Data: the first acquisition (8,805 BF pixels, 44,247 band
+frequencies), a second 512² acquisition (9,296 BF, 44,255) and a third (8,928 BF, 77,842), all 300 keV,
+30 mrad. Benchmark: `metal-ssb-fit-benchmark --objective-bench RUN.json`, 2026-10-25.
 
-| Kernel | Status | Source digest | Serves | Validated | film 1 / 4 / 57 / 64 | Second | Third | Parity | Replaced by | Retired |
+| Kernel | Status | Source digest | Serves | Validated | film | Second | Third | Parity | Replaced by | Retired |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `ssb-fifth-agreement` v0.2 | **active** | `f2f700147e47` | `fifthOrderAgreements` (fifth-order fit) | 2026-10-25 | 11.2 / 6.5 / 6.4 / 7.5 | 11.9 / 7.2 / 6.3 / 7.4 | 18.6 / 11.5 / 10.3 / 12.9 | `SSBFifthOrderNumericsTests` (per-term kernel and float64 objective); measured: within 3.1e-7 of v0.1 on all three acquisitions | — | — |
+| `ssb-fifth-agreement` v0.2 | **active** | `f2f700147e47` | `fifthOrderAgreements` (fifth-order fit, stencil Newton, gradient check) | 2026-10-25 | 11.0 / 6.6 / 5.6 / 6.6 | 11.1 / 7.2 / 5.8 / 6.9 | 18.4 / 11.5 / 9.8 / 12.0 | `SSBFifthOrderNumericsTests` (v0.1 and the float64 objective); measured: within 3.1e-7 of v0.1 on all three acquisitions | — | — |
 | `ssb-fifth-agreement` v0.1 (`fifth_agreement` in `ssb-per-term`) | **retired** (test reference) | `1c390cc7b833` | before 2026-10-25 | before 2026-10-25 | 24.4 / 19.6 / 20.8 / 21.2 | 25.4 / 21.4 / 23.3 / 22.9 | 41.3 / 36.6 / 37.9 / 37.5 | reference for v0.2 | `ssb-fifth-agreement` v0.2 | 2026-10-25 |
+| `ssb-joint-agreement` v0.2 | **active** | `d698aa9cb17a` | `agreements` with `.angleSums` (low-order search trials, branch scores) | 2026-10-25 | 8.7 / 5.1 / 5.1 | 10.2 / 5.9 / 5.8 | 16.3 / 9.5 / 9.8 | `SSBFifthOrderNumericsTests.testLowOrderAngleSumsMatchReference`; measured: within 1.3e-8 of v0.1 | — | — |
+| `ssb-joint-agreement` v0.1 (`joint_objective_angle_sums` in `ssb_joint`) | **retired** (test reference) | `4aa7c1da6391` (with `ssb-mean-phase`) | before 2026-10-25 | before 2026-10-25 | 35.3 / 8.9 / 9.4 | 41.1 / 10.3 / 10.9 | 65.3 / 18.2 / 17.8 | reference for v0.2 | `ssb-joint-agreement` v0.2 | 2026-10-25 |
 
-v0.2 evaluates the same per-pair float32 terms. Only chi(k -/+ q) is reassociated: a threadgroup owns band
-frequencies of at most two band rows and collapses the bivariate chi polynomial once per BF pixel and row, so
-each sideband is one degree-6 Horner evaluation. The aperture edge, alpha^2 and depth-sinc arguments are
-bitwise those of v0.1 on every (k, q) pair of film (3.9e8 pairs; edge expression only in the one-pixel ring,
-divisions through the correctly rounded reciprocal with a Markstein correction); `fast::sin` / `fast::sincos`
-equal `precise::` with fast math off except for 1-ulp differences in about one argument in 1e7. Candidates
-with equal depth and tilt share their depth-sinc weights. On the synthetic test scene both kernels are about
-1e-6 from the float64 objective and v0.2 is no less accurate.
+Both v0.2 kernels evaluate the per-pair float32 terms of v0.1:
 
+- The soft aperture of `joint_geometry_xy` is exactly 1 inside and 0 outside conservatively rounded radii; the
+  full expression runs only for SIMD groups with a lane in the one-pixel edge ring (a one-trip `simd_ballot`
+  loop, since the compiler if-converts plain uniform branches). Divisions use the correctly rounded reciprocal
+  with a Markstein correction, which reproduces IEEE division. The edge, alpha^2 and the depth-sinc arguments
+  are bitwise those of v0.1 on every (k, q) pair of film and of the third acquisition.
+- `fast::sin` / `fast::sincos` equal `precise::` with fast math off except for 1-ulp differences in about one
+  argument in 1e7, at less than half the cost.
+- A threadgroup computes one to four candidates per thread with no padding candidates.
+
+The fifth-order kernel also reassociates chi(k -/+ q), its only change of rounding: a threadgroup owns band
+frequencies of at most two band rows and collapses the bivariate chi polynomial (built in double precision from
+the same packed float32 terms) once per BF pixel and row, so each sideband is one degree-6 Horner evaluation
+instead of the 14-term harmonic sum. Candidates with equal depth and tilt share depth-sinc weights. On the
+synthetic test scene both fifth-order kernels are about 1e-6 from the float64 objective and v0.2 is no less
+accurate.

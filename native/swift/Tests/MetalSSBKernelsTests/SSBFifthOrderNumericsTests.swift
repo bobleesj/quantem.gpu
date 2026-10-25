@@ -109,6 +109,39 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
     XCTAssertEqual(all, try model.fifthOrderAgreements(points.reversed()).reversed())
   }
 
+  /// ssb-joint-agreement v0.2 (`joint_agreement_angle_sums`) against its parity reference v0.1
+  /// (`joint_objective_angle_sums`): thick and thin candidates, every remainder of the four-candidate groups, more
+  /// than one group of eight, and batch invariance.
+  func testLowOrderAngleSumsMatchReference() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let scene = try SSBModelReconstructionTests.scene()
+    let input = try SSBCoherentReconstruction.buffer(device, scene.counts)
+    let engine = try MetalSSBEngine(device: device, geometry: scene.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+    let points = (0..<11).map { (i: Int) -> SSBModelPoint in
+      let x = Double(i)
+      let tilt: [Double] = [2.5 - 0.4 * x, -4 + 0.6 * x]
+      let depth: Double = i % 5 == 4 ? 0 : 140 + 20 * x
+      return SSBModelPoint(
+        c10Angstroms: -38 + 7 * x, c12Angstroms: 9 - 0.5 * x, phi12Radians: -0.4 + 0.3 * x,
+        sampleTiltMrad: tilt, depthSpreadAngstroms: depth)
+    }
+    model.referenceAngleSums = true
+    let reference = try model.agreements(points)
+    model.referenceAngleSums = false
+    let all = try model.agreements(points)
+    for (value, expected) in zip(all, reference) {
+      XCTAssertLessThan(abs(value / expected - 1), 1e-7)
+    }
+    print("ssb-joint-agreement v0.2 vs v0.1 maximum relative difference",
+      zip(all, reference).map { abs($0 / $1 - 1) }.max()!)
+    for count in [1, 2, 3, 5, 8] {
+      XCTAssertEqual(Array(all.prefix(count)), try model.agreements(Array(points.prefix(count))))
+    }
+    XCTAssertEqual(all, try points.map { try model.agreements([$0])[0] })
+  }
+
   /// The agreement objective of `fifth_agreement` with every term and sum in double precision, from the model's
   /// float32 inputs (k, q, weights, probe geometry, evidence) and the float32 packed coefficients.
   static func doubleAgreements(model: MetalSSBJointModel, points: [SSBModelPoint]) throws -> [Double] {

@@ -9,7 +9,7 @@ import XCTest
 final class SSBKernelRegistryTests: XCTestCase {
   private let entries = [
     SSBKernelRegistry.redraw, SSBKernelRegistry.perTerm, SSBKernelRegistry.meanPhase,
-    SSBKernelRegistry.fifthAgreement,
+    SSBKernelRegistry.fifthAgreement, SSBKernelRegistry.jointAgreement,
     SSBKernelRegistry.lowOrderDerivatives,
     SSBKernelRegistry.fifthGradient,
   ]
