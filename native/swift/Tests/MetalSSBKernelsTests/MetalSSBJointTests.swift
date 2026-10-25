@@ -115,8 +115,8 @@ final class MetalSSBJointTests: XCTestCase {
       if cacheBudget > 0 {
         let tilted = cases.first { $0.name == "tilted" }!
         for factor in [2, 3, 4] {
-          // The fixture's tilted-<factor>x images are of the retired mean_phase estimator; the SSB result is
-          // saved and restored here.
+          // Fixtures generated before 2026-10-25 also hold tilted-<factor>x images of the retired mean_phase
+          // estimator, which are not compared; the SSB result is saved and restored here.
           let result = try model.reconstruct(tilted.parameters, upsamplingFactor: factor)
           XCTAssertEqual(result.rows, 128 * factor)
           let calibration = MetalSSBCalibration(

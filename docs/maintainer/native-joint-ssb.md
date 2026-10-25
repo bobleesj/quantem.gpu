@@ -97,7 +97,8 @@ SSB_DIRECT_FIXTURE=... [SSB_DIRECT_ALL=1] swift test -c release -Xswiftc -enable
 ```
 
 The joint fixtures (`SSB_JOINT_REFERENCE`, `SSB_JOINT_CALIBRATED_REFERENCE`) gate the objective (loss relative
-error < 5e-5); their phase images are of the retired `mean_phase` estimator and are no longer compared. Missing
+error < 5e-5). Their phase images were of the retired `mean_phase` estimator; they are not compared, and
+`scripts/build_metal_ssb_joint_reference.py` no longer writes them (nor needs an upsampling source). Missing
 external fixtures are reported as skips, never passes. Keep acquisitions, screenshots and raw logs outside this
 repository.
 

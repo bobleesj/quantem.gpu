@@ -1,12 +1,12 @@
 """Generate independent synthetic fixtures for native joint SSB validation.
 
-Run with the installed QuantEM MPS implementation and an explicit alias-
-upsampling source file. Outputs are disposable test data, never acquisitions.
+Run with the installed QuantEM MPS implementation. Writes the geometry, the
+selected BF counts and the agreement objective of three cases, which
+``MetalSSBJointTests`` reads. Outputs are disposable test data, never
+acquisitions.
 """
 
 import argparse
-import hashlib
-import importlib.util
 import json
 from pathlib import Path
 
@@ -15,10 +15,7 @@ import numpy as np
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.mps.frames import ArrayFrames
 from quantem.gpu.ssb.mps.prepared import prepare_selection
-from quantem.gpu.ssb.mps.thick_sample import (
-    reconstruct_thick_reference,
-    thick_fit_batch,
-)
+from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
 
 
 def _floats(array: object) -> list[float]:
@@ -28,7 +25,6 @@ def _floats(array: object) -> list[float]:
 def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--upsampling-source", required=True, type=Path)
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -76,11 +72,6 @@ def _main() -> None:
         ("tilted", 42, (8, -3), 240),
         ("negative", -42, (-8, 3), 240),
     ):
-        phase, _ = reconstruct_thick_reference(
-            prepared, C10=c10, C12=12, phi12=0.3,
-            sample_tilt_mrad=tilt, thickness=depth,
-        )
-        phase.tofile(output / f"{name}.f32")
         loss = -float(thick_fit_batch(prepared, [[c10, 12, 0.3, *tilt, depth]])[0])
         cases.append({
             "name": name,
@@ -94,24 +85,6 @@ def _main() -> None:
             "loss": loss,
         })
     (output / "cases.json").write_text(json.dumps(cases, indent=2))
-    source = args.upsampling_source.resolve()
-    spec = importlib.util.spec_from_file_location("ssb_reference_upsampling", source)
-    if spec is None or spec.loader is None:
-        raise ValueError(f"Cannot import the upsampling reference at {source}.")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    for factor in (2, 3, 4):
-        phase = module._reconstruct_upsampled(
-            prepared, C10=42, C12=12, phi12=0.3,
-            sample_tilt_mrad=(8, -3), thickness=240,
-            upsampling_factor=factor, phase_estimator="mean_phase",
-        )
-        phase.tofile(output / f"tilted-{factor}x.f32")
-    (output / "reference-provenance.json").write_text(json.dumps({
-        "upsampling_source_name": source.name,
-        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-        "random_seed": 42,
-    }, indent=2))
     print(f"Reference fixtures written to {output}")
 
 

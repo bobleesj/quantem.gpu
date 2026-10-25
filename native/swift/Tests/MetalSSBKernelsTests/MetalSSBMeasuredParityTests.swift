@@ -105,8 +105,6 @@ struct MeasuredSSBFixture {
     }
     // swift-format-ignore: AlwaysUseLowerCamelCase
     let fixed_parameters: [String: Fixed]
-    // swift-format-ignore: AlwaysUseLowerCamelCase
-    let fixed_loss: [String: Double]
     let `default`: Default
     // swift-format-ignore: AlwaysUseLowerCamelCase
     let model_tilt0: Standard
