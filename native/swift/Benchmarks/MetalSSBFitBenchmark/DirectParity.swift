@@ -189,3 +189,168 @@ func directParity(
   let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
   if let output { try data.write(to: output) } else { print(String(decoding: data, as: UTF8.self)) }
 }
+
+/// The parity gates of the native port: phase correlation >= 0.99999 and rms <= 1e-4 rad and <= 1 % of the reference
+/// std; amplitude rms <= 1e-4 of its mean.
+func gates(phase: [String: Double]?, amplitude: [String: Double]?) -> [String: Bool] {
+  var result: [String: Bool] = [:]
+  if let phase {
+    result["phase_correlation"] = phase["correlation"]! >= 0.99999
+    result["phase_rms"] = phase["rms"]! <= 1e-4 && phase["rms"]! <= 0.01 * phase["reference_std"]!
+  }
+  if let amplitude { result["amplitude_relative_rms"] = amplitude["rms"]! <= 1e-4 * amplitude["reference_mean"]! }
+  return result
+}
+
+/// `--fixture-parity CASE_DIR [--oracle-dir DIR]`: every reconstruction listed in the fixture's `references.json`
+/// (optics sets of `optics.json`, methods, 1x and Auto, regularization settings) natively, against the CUDA arrays and,
+/// where present, the float64 oracle's arrays of the same names, with the first-call and repeat wall times.
+func fixtureParity(
+  directory: URL, oracleDirectory: URL?, output: URL?, phaseOut: URL?, device: MTLDevice,
+  calibration: MetalSSBCalibration, geometry: MetalSSBGeometry, counts: MTLBuffer, countType: MetalSSBCountType,
+  rotationEstimate: Double, only: String?
+) throws {
+  guard
+    let optics = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("optics.json")))
+      as? [String: Any],
+    let sets = optics["optics_sets"] as? [[String: Any]],
+    let manifest = try JSONSerialization.jsonObject(
+      with: Data(contentsOf: directory.appendingPathComponent("references.json"))) as? [String: Any],
+    let references = manifest["references"] as? [[String: Any]]
+  else { throw failure("\(directory.path) is not a fixture (optics.json, references.json)") }
+  let auto = try calibration.ssbUpsamplingFactor()
+  let engine = try MetalSSBEngine(device: device, geometry: geometry)
+  try engine.prepare(brightfield: counts, countType: countType)
+  let model = try engine.jointModel(scanDetectorRotationDegrees: rotationEstimate)
+  func values(_ buffer: MTLBuffer, _ count: Int) -> [Float] {
+    Array(UnsafeBufferPointer(start: buffer.contents().assumingMemoryBound(to: Float.self), count: count))
+  }
+  var rows: [[String: Any]] = []
+  var failures = 0
+  for set in sets {
+    guard let name = set["name"] as? String, var record = set["aberrations"] as? [String: Any],
+      let rotation = set["rotation_deg"] as? Double
+    else { throw failure("Incomplete optics set") }
+    if let only, only != name { continue }
+    record["higher_order"] = set["higher_order"]
+    record["sample_tilt_mrad"] = set["sample_tilt_mrad"]
+    record["depth_spread_nm"] = set["depth_spread_nm"]
+    let point = try modelPoint(record)
+    try model.retarget(scanDetectorRotationDegrees: rotation)
+    for reference in references where (reference["optics"] as? String) == name {
+      guard let file = reference["file"] as? String, let methodName = reference["method"] as? String,
+        let method = SSBReconstructionMethod(rawValue: methodName), let factor = reference["upsampling"] as? Int
+      else { throw failure("Incomplete reference entry") }
+      let requested = reference["requested"] as? [String: Any] ?? [:]
+      let regularization = SSBDirectRegularization(
+        phaseDamping: requested["phase_damping"] as? Double ?? 0.03,
+        amplitudeDamping: requested["amplitude_damping"] as? Double ?? 0.03,
+        smoothnessInverseAngstroms: requested["smoothness_inv_A"] as? Double ?? 1,
+        detectorWeighting: (requested["detector_weighting"] as? String).flatMap(SSBDetectorWeighting.init) ?? .uniform)
+      var row: [String: Any] = [
+        "optics": name, "file": file, "method": methodName, "factor": factor,
+        "setting": reference["setting"] as? String ?? "", "auto": (reference["factor"] as? String) == "auto",
+      ]
+      if (reference["factor"] as? String) == "auto" && factor != auto {
+        row["error"] = "CUDA auto factor \(factor) differs from the native \(auto)"
+      }
+      var started = Date()
+      let result: MetalSSBJointPhase
+      do {
+        result = try model.reconstruct(
+          point, upsamplingFactor: factor, method: method, regularization: regularization)
+      } catch {
+        row["error"] = "\(error)"
+        failures += 1
+        rows.append(row)
+        log(String(describing: row))
+        continue
+      }
+      row["first_ms"] = Date().timeIntervalSince(started) * 1e3
+      if method != .ssb, let t = model.lastDirectTiming {
+        row["first_stages"] = [
+          "layout_ms": t.layoutSeconds * 1e3, "prepare_ms": t.prepareSeconds * 1e3,
+          "prepare_gpu_ms": t.prepareGPUSeconds * 1e3, "solve_ms": t.solveSeconds * 1e3,
+          "wave_ms": t.waveSeconds * 1e3, "prepared_from_cache": t.preparedFromCache,
+        ] as [String: Any]
+      }
+      started = Date()
+      _ = try model.reconstruct(point, upsamplingFactor: factor, method: method, regularization: regularization)
+      row["repeat_ms"] = Date().timeIntervalSince(started) * 1e3
+      let count = result.rows * result.columns
+      let phase = values(result.phase, count)
+      let amplitude = result.amplitude.map { values($0, count) }
+      let base = (file as NSString).lastPathComponent.replacingOccurrences(of: "-phase.npy", with: "")
+      if let phaseOut {
+        let folder = phaseOut.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try phase.withUnsafeBytes { Data($0) }.write(to: folder.appendingPathComponent(base + "-phase.f32"))
+        if let amplitude {
+          try amplitude.withUnsafeBytes { Data($0) }.write(to: folder.appendingPathComponent(base + "-amplitude.f32"))
+        }
+      }
+      let cuda = try readNPY(directory.appendingPathComponent(file))
+      guard cuda.shape == [result.rows, result.columns] else {
+        row["error"] = "shape \(cuda.shape) vs native \([result.rows, result.columns])"
+        failures += 1
+        rows.append(row)
+        continue
+      }
+      let phaseParity = parity(phase, cuda.values, wrap: true)
+      row["phase"] = phaseParity
+      var amplitudeParity: [String: Double]?
+      if let amplitude, let amplitudeFile = reference["amplitude_file"] as? String {
+        var p = parity(amplitude, try readNPY(directory.appendingPathComponent(amplitudeFile)).values, wrap: false)
+        p["relative_rms"] = p["rms"]! / p["reference_mean"]!
+        amplitudeParity = p
+        row["amplitude"] = p
+      } else if method == .complex {
+        row["error"] = "complex result without amplitude"
+      }
+      let gate = gates(phase: phaseParity, amplitude: amplitudeParity)
+      row["gates"] = gate
+      if gate.values.contains(false) && method != .ssb { failures += 1 }
+      if let oracleDirectory {
+        let oracle = oracleDirectory.appendingPathComponent(name).appendingPathComponent(
+          (file as NSString).lastPathComponent)
+        if FileManager.default.fileExists(atPath: oracle.path) {
+          let reference = try readNPY(oracle).values
+          var nativeOracle = parity(phase, reference, wrap: true)
+          let cudaOracle = parity(cuda.values.map(Float.init), reference, wrap: true)
+          nativeOracle["cuda_rms"] = cudaOracle["rms"]
+          nativeOracle["ratio_to_cuda"] = nativeOracle["rms"]! / max(cudaOracle["rms"]!, 1e-30)
+          row["phase_vs_oracle"] = nativeOracle
+          if amplitude != nil, let amplitudeFile = reference_amplitude(oracle) {
+            let ref = try readNPY(amplitudeFile).values
+            var p = parity(amplitude!, ref, wrap: false)
+            let c = parity(
+              try readNPY(directory.appendingPathComponent(row["file"] as! String)
+                .deletingLastPathComponent().appendingPathComponent(amplitudeFile.lastPathComponent)).values
+                .map(Float.init), ref, wrap: false)
+            p["cuda_rms"] = c["rms"]
+            p["ratio_to_cuda"] = p["rms"]! / max(c["rms"]!, 1e-30)
+            row["amplitude_vs_oracle"] = p
+          }
+        }
+      }
+      log(
+        "\(name) \(methodName) \(factor)x \(row["setting"]!): corr \(phaseParity["correlation"]!) rms \(phaseParity["rms"]!)"
+          + (amplitudeParity.map { " amp \($0["relative_rms"]!)" } ?? "")
+          + " first \(String(format: "%.1f", row["first_ms"] as! Double)) ms")
+      rows.append(row)
+    }
+  }
+  let summary: [String: Any] = [
+    "device": device.name, "fixture": directory.path, "auto_factor": auto, "rows": rows, "failures": failures,
+  ]
+  let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
+  if let output { try data.write(to: output) } else { print(String(decoding: data, as: UTF8.self)) }
+  log("\(rows.count) reconstructions, \(failures) failing a gate")
+}
+
+/// The oracle's amplitude array beside its phase array, if present.
+func reference_amplitude(_ phase: URL) -> URL? {
+  let url = phase.deletingLastPathComponent().appendingPathComponent(
+    phase.lastPathComponent.replacingOccurrences(of: "-phase.npy", with: "-amplitude.npy"))
+  return FileManager.default.fileExists(atPath: url.path) ? url : nil
+}

@@ -26,6 +26,9 @@ import Native4DSTEMIO
 //   metal-ssb-fit-benchmark --cache DIR --direct-parity LIMITS.json --cuda-dir DIR [--limits 2,10] [--factors 1,3]
 //     [--output PARITY.json] [--phase-out DIR]
 //     ssb, phase and complex of the limits' optics against CUDA's arrays, with timings (DirectParity.swift).
+//   metal-ssb-fit-benchmark --cache FIXTURE --fixture-parity FIXTURE [--oracle-dir DIR] [--optics NAME]
+//     [--output PARITY.json] [--phase-out DIR]
+//     every reconstruction of a fixture's references.json natively, with per-setting parity and timing.
 //   metal-ssb-fit-benchmark --cache DIR --objective-bench RUN.json [--repeats 3] [--output BENCH.json]
 //     [--search-kernels-only]
 //     times the agreement objectives at fixed candidates instead of fitting (ObjectiveBenchmark.swift).
@@ -72,6 +75,9 @@ struct Options {
   var directParity: URL?
   var cudaDirectory: URL?
   var directFactors: [Int]?
+  var fixtureParity: URL?
+  var oracleDirectory: URL?
+  var opticsName: String?
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -139,6 +145,9 @@ struct Options {
       case "--search-kernels-only": searchKernelsOnly = true
       case "--direct-parity": directParity = URL(fileURLWithPath: try value(flag))
       case "--cuda-dir": cudaDirectory = URL(fileURLWithPath: try value(flag))
+      case "--fixture-parity": fixtureParity = URL(fileURLWithPath: try value(flag))
+      case "--oracle-dir": oracleDirectory = URL(fileURLWithPath: try value(flag))
+      case "--optics": opticsName = try value(flag)
       case "--factors": directFactors = try value(flag).split(separator: ",").compactMap { Int($0) }
       default: throw failure("Unknown argument \(flag)")
       }
@@ -590,6 +599,13 @@ guard setup.pixels == caseRecord.pixels else { throw failure("BF selection diffe
 let counts = try mapped(options.cache.appendingPathComponent("counts.bin"), device: device)
 guard let countType = MetalSSBCountType(rawValue: caseRecord.countType) else {
   throw failure("Unknown count type")
+}
+if let fixture = options.fixtureParity {
+  try fixtureParity(
+    directory: fixture, oracleDirectory: options.oracleDirectory, output: options.output, phaseOut: options.phaseOut,
+    device: device, calibration: caseRecord.calibration, geometry: setup.geometry, counts: counts,
+    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees, only: options.opticsName)
+  exit(0)
 }
 if let sweep = options.directParity {
   try directParity(
