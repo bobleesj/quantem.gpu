@@ -58,10 +58,11 @@ def model(values, offsets, old):
     return (gradient, hessian)
 
 
-def newton(track, z0, bounds):
+def newton(track, z0, bounds, h=None):
     center = z0.copy()
     n = len(center)
-    h = np.array([0.02, 0.02, 0.02, 0.05, 0.05, 0.05] + [0.02] * (n - 6))
+    if h is None:
+        h = np.array([0.02, 0.02, 0.02, 0.05, 0.05, 0.05] + [0.02] * (n - 6))
     radius = 8.0
     curvature = np.zeros((n, n))
     nit = 0
@@ -98,11 +99,12 @@ class BudgetReached(Exception):
 
 
 class Tracker:
-    def __init__(self, fun, start, bounds, cap):
+    def __init__(self, fun, start, bounds, cap, *, on_progress=None):
         self.fun, self.bounds, self.cap = (fun, bounds, cap)
         self.best_z, self.best, self.nfev = (start.copy(), -np.inf, 0)
         self.started = time.perf_counter()
         self.trace, self.checkpoints = ([], {})
+        self.on_progress = on_progress
 
     def __call__(self, points):
         points = np.atleast_2d(points)
@@ -122,6 +124,10 @@ class Tracker:
             self.trace.append([self.nfev, self.best, elapsed])
             if self.nfev == 1000:
                 self.checkpoints[1000] = (self.best_z.copy(), self.best, elapsed)
+        if self.on_progress is not None:
+            started = time.perf_counter()
+            self.on_progress(self.nfev, self.best)
+            self.started += time.perf_counter() - started
         if count < len(points):
             raise BudgetReached
         return values
