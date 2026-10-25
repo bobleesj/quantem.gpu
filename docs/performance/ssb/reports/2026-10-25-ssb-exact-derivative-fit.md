@@ -21,7 +21,9 @@ plain-PyTorch float64 ground truth.
   search is unchanged.
 - `workflow._mapped_branch`: the opposite 180° branch is the exact image of the first fit (C10 and C12 change
   sign, φ12 moves by 90°, the tilt changes sign, depth is kept) instead of a second search.
-- `higher_order_limit`: the box of the 22 higher-order coordinates, 2 (default) or 20 rad at the aperture edge.
+- `higher_order_limit`: the box of the 22 higher-order coordinates, 2 or 20 rad at the aperture edge. The
+  measurements below are at 2, the default when they were taken; the default is now 20 with the half-band
+  check (`fifth_order_fit.higher_order_consistency`).
 - `torch_agreement.py`: S(z) in ordinary torch arithmetic, on any device and dtype, with autograd gradient
   and Hessian. In float64 on the CPU it is the ground truth for the kernels and searches, and the referee
   between fits.

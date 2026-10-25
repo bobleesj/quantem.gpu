@@ -5,6 +5,7 @@ the shared chi polynomial, and the branch map on a stub session. The CUDA deriva
 central differences in ``tests/hardware/cuda/test_ssb_exact_derivatives.py``.
 """
 
+import copy
 import math
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -304,7 +305,7 @@ def test_auto_refinement_uses_exact_gradients_where_the_backend_has_them(monkeyp
     )
     fit = fifth_order_fit.fit_fifth_order(
         session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
-        primary_options={"check_rotation": False, "refine_rotation": False}, show=False)
+        primary_options={"check_rotation": False, "refine_rotation": False}, show=False, higher_order_limit=2)
     assert fit.refinement == expected
     assert seen["gradients"] is (expected == "bfgs")
     if expected == "bfgs":
@@ -359,10 +360,11 @@ def test_higher_order_limit_is_recorded_and_checked_before_computation(monkeypat
     )
     fit = fifth_order_fit.fit_fifth_order(
         session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
-        primary_options={"check_rotation": False, "refine_rotation": False}, show=False, higher_order_limit=20)
-    assert fit.optimizer["higher_order_limit"] == 20.0
-    assert seen["bounds"][6:, 1].tolist() == [20.0] * 22
-    assert fit.optimizer["bounds"][27] == [-20.0, 20.0]
+        primary_options={"check_rotation": False, "refine_rotation": False}, show=False, higher_order_limit=2)
+    assert fit.optimizer["higher_order_limit"] == 2.0
+    assert seen["bounds"][6:, 1].tolist() == [2.0] * 22
+    assert fit.optimizer["bounds"][27] == [-2.0, 2.0]
+    assert "higher_order_consistency" not in fit.optimizer
     with pytest.raises(ValueError, match="higher_order_limit"):
         fifth_order_fit.fit_fifth_order(
             SimpleNamespace(backend="cuda", _find_aberrations=Mock()), search="standard", trials=200, seed=42,
@@ -371,6 +373,8 @@ def test_higher_order_limit_is_recorded_and_checked_before_computation(monkeypat
     call = inspect.unwrap(SSB.find_aberrations)
     with pytest.raises(ValueError, match="search='primary'"):
         call(SimpleNamespace(), search="primary", higher_order_limit=20)
+    with pytest.raises(ValueError, match="search='primary'"):
+        call(SimpleNamespace(), search="primary", higher_order_limit=2)
     with pytest.raises(ValueError, match="2 \\(standard\\)"):
         call(SimpleNamespace(), higher_order_limit=4)
 
@@ -482,7 +486,7 @@ def test_broad_search_never_ends_below_its_standard_start(monkeypatch, tpe_heigh
     tpe_peak[5] = 1.0
     objective = _TwoBumps([standard, tpe_peak], [0.8, tpe_height])
     session = _broad_session(monkeypatch, objective, standard)
-    options = dict(trials=12, save_dir=None, force=False, verbose=False, show=False,
+    options = dict(trials=12, save_dir=None, force=False, verbose=False, show=False, higher_order_limit=2,
                    primary_options={"check_rotation": False, "refine_rotation": False})
     broad = fifth_order_fit.fit_fifth_order(session, search="broad", seed=17, **options)
     alone = fifth_order_fit.fit_fifth_order(session, search="standard", seed=42, **options)
@@ -498,3 +502,107 @@ def test_broad_search_never_ends_below_its_standard_start(monkeypatch, tpe_heigh
     if kept == "standard":
         assert broad.optimizer["coordinates"] == alone.optimizer["coordinates"]
     assert alone.optimizer["kept_start"] == "standard" and len(alone.optimizer["starts"]) == 1
+
+
+def test_ring_parity_splits_the_band_into_alternate_rings():
+    q_row = np.array([0.21, 0.26, -0.33, 0.0, 0.47, 0.03], dtype=np.float32)
+    q_col = np.array([0.0, 0.0, 0.0, -0.38, 0.0, 0.52], dtype=np.float32)
+    assert fifth_order_fit.ring_parity(q_row, q_col).tolist() == [0, 1, 0, 1, 1, 0]
+    assert fifth_order_fit.ring_parity(-q_row, -q_col).tolist() == [0, 1, 0, 1, 1, 0]
+
+
+class _RingBumps:
+    """Exact-gradient objective sum_q w_q (1 + exp(-|z - c(q)|^2 / width)) over six band frequencies whose optimum
+    c(q) is ``even`` or ``odd`` by ring parity: the half-band fits find ``even`` and ``odd``."""
+
+    def __init__(self, even, odd, width=40.0):
+        self.q_row = np.array([0.21, 0.26, 0.33, 0.38, 0.47, 0.52], dtype=np.float32)
+        self.q_col = np.zeros(6, dtype=np.float32)
+        parity = fifth_order_fit.ring_parity(self.q_row, self.q_col)
+        self.centers = np.where(parity[:, None] == 0, np.asarray(even)[None], np.asarray(odd)[None])
+        self.weights = np.ones(6)
+        self.width = width
+        self.p = SimpleNamespace(wavelength=0.019687489006849, semiangle_rad=0.03)
+        self.num_bright_field_pixels = 9000
+
+    def band_frequencies(self):
+        return self.q_row, self.q_col
+
+    def with_band_weights(self, factor):
+        weighted = copy.copy(self)
+        weighted.weights = self.weights * np.asarray(factor, dtype=float)
+        return weighted
+
+    def _terms(self, points):
+        offsets = np.atleast_2d(points)[:, None, :] - self.centers[None]
+        return offsets, self.weights * np.exp(-np.sum(offsets ** 2, axis=2) / self.width)
+
+    def evaluate(self, points, order):
+        points = np.atleast_2d(points)
+        return np.full(len(points), self.weights.sum()) if points.shape[1] < 28 else self.values(points)
+
+    def values(self, points, stride=1):
+        return self.weights.sum() + self._terms(points)[1].sum(axis=1)
+
+    def gradients(self, points, stride=1):
+        offsets, terms = self._terms(points)
+        return -2 / self.width * np.sum(terms[:, :, None] * offsets, axis=1)
+
+
+@pytest.mark.parametrize("difference, trusted", [(0.0, True), (5.0, False)])
+def test_wide_fit_is_checked_on_two_band_halves(monkeypatch, capsys, difference, trusted):
+    """Halves that agree keep the +-20 fit; halves whose C30 differs by 5 rad at the aperture edge (1.49 rad rms over
+    the aperture) return the +-2 fit with the checked +-20 fit in the record."""
+    standard = np.zeros(28)
+    standard[[0, 3, 5]] = 1.0, 2.0, 2.0
+    even = standard.copy()
+    even[[6, 10]] = 1.0, 3.0
+    odd = even.copy()
+    odd[10] += difference
+    session = _broad_session(monkeypatch, _RingBumps(even, odd), standard)
+    fit = fifth_order_fit.fit_fifth_order(
+        session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=True, show=False,
+        primary_options={"check_rotation": False, "refine_rotation": False})
+    check = fit.optimizer["higher_order_consistency"]
+    assert check["limit"] == 20.0 and check["ring_width_inv_A"] == 0.05 and check["max_half_band_rms_rad"] == 0.5
+    assert [half["frequencies"] for half in check["halves"]] == [3, 3]
+    np.testing.assert_allclose(check["halves"][0]["coordinates"], even, atol=1e-3)
+    np.testing.assert_allclose(check["halves"][1]["coordinates"], odd, atol=1e-3)
+    assert check["start_coordinates"] == standard.tolist()
+    assert check["checked_stop"] == "converged" and check["checked_objectives"] >= 1
+    rms_of_c30 = difference * math.sqrt(1 / 5 - 1 / 9)
+    assert check["half_band_rms_rad"] == pytest.approx(rms_of_c30, rel=2e-3, abs=2e-3)
+    assert check["trusted"] is trusted
+    assert check["shown_limit"] == (20.0 if trusted else 2.0)
+    assert fit.optimizer["higher_order_limit"] == check["shown_limit"]
+    assert fit.optimizer["bounds"][27] == [-check["shown_limit"], check["shown_limit"]]
+    assert "higher_order_consistency_s" in fit.timings
+    printed = capsys.readouterr().out
+    if trusted:
+        assert fit.optimizer["coordinates"] == check["checked_coordinates"]
+        assert "higher_order_fallback_s" not in fit.timings and "not trusted" not in printed
+    else:
+        assert max(abs(v) for v in fit.optimizer["coordinates"][6:]) <= 2.0
+        assert check["checked_coordinates"][10] > 2.0
+        assert fit.timings["higher_order_fallback_s"] > 0
+        assert "Higher orders not trusted" in printed and "1.49 rad" in printed
+
+
+def test_the_half_band_check_uses_exact_gradients_whatever_the_refinement(monkeypatch):
+    standard = np.zeros(28)
+    standard[[0, 5]] = 1.0, 2.0
+    bumps = _RingBumps(standard, standard)
+    seen = []
+
+    def objective(ssb, gradients=False):
+        seen.append(gradients)
+        return bumps
+
+    session = _broad_session(monkeypatch, bumps, standard)
+    monkeypatch.setattr(fifth_order_fit, "_objective", objective)
+    monkeypatch.setattr(fifth_order_fit, "newton", lambda tracker, initial, bounds: (0, "small bounded Newton step"))
+    fit = fifth_order_fit.fit_fifth_order(
+        session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False, show=False,
+        primary_options={"check_rotation": False, "refine_rotation": False}, refinement="newton")
+    assert seen == [False, True]
+    assert fit.refinement == "newton" and fit.optimizer["higher_order_consistency"]["trusted"]

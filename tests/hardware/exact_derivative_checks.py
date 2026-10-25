@@ -69,6 +69,24 @@ def check_fifth_order_gradient(ssb, stride):
         assert values[0] == pytest.approx(float(objective.evaluate(z, 5)[0]), rel=1e-6)
 
 
+def check_band_halves(ssb):
+    """The two ring halves of the half-band check partition the band: their values and gradients add up to the full
+    objective's, and unit weights change nothing."""
+    from quantem.gpu.ssb.fifth_order_fit import ring_parity
+
+    objective = fifth_objective(ssb)
+    z = away_from_the_optimum()
+    full_values, full_gradient = objective.values_and_gradients(z, 1)
+    parity = ring_parity(*objective.band_frequencies())
+    assert 0 < parity.sum() < parity.size
+    halves = [objective.with_band_weights(parity == ring).values_and_gradients(z, 1) for ring in (0, 1)]
+    assert halves[0][0][0] + halves[1][0][0] == pytest.approx(full_values[0], rel=1e-9)
+    assert relative(halves[0][1][0] + halves[1][1][0], full_gradient[0]) < 1e-5
+    unit_values, unit_gradient = objective.with_band_weights(np.ones(parity.size)).values_and_gradients(z, 1)
+    np.testing.assert_array_equal(unit_values, full_values)
+    np.testing.assert_array_equal(unit_gradient, full_gradient)
+
+
 def check_low_order_derivatives(ssb):
     """Value, exact gradient and exact Hessian of the low-order kernel against float64 autograd."""
     from quantem.gpu.ssb.torch_agreement import fifth_from_low
@@ -130,7 +148,7 @@ def check_fit(simulation, backend):
 
     data, _, detector_mrad = simulation
     with session(data, detector_mrad, backend) as ssb:
-        exact = ssb.find_aberrations(show=False, verbose=False, check_rotation="both")
+        exact = ssb.find_aberrations(show=False, verbose=False, check_rotation="both", higher_order_limit=2)
         truth = reference(ssb)
         fitted = np.asarray(exact.optimizer["coordinates"])
         optimum = float64_optimum(truth, fitted)
@@ -139,7 +157,8 @@ def check_fit(simulation, backend):
     exact_newton.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH = False, False
     try:
         with session(data, detector_mrad, backend) as ssb:
-            earlier = ssb.find_aberrations(show=False, verbose=False, check_rotation="both", refinement="newton")
+            earlier = ssb.find_aberrations(show=False, verbose=False, check_rotation="both", refinement="newton",
+                                           higher_order_limit=2)
     finally:
         exact_newton.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH = previous
     assert exact.refinement == "bfgs" and earlier.refinement == "newton"
@@ -150,3 +169,26 @@ def check_fit(simulation, backend):
     # C10 changes sign on the opposite branch
     mirrored = 1.0 if exact.scan_detector_rotation_deg == 0.0 else -1.0
     assert abs(exact.aberrations["C10_nm"] - mirrored * TRUTH["C10_nm"]) < 0.5
+
+
+def check_wide_fit(simulation, backend):
+    """The default fit is wide (+-20) and checked on two ring halves of the band; on the weak-phase simulation the
+    halves agree, so +-20 is shown, and each half is the masked refit from the same low-order start."""
+    from quantem.gpu.ssb.fifth_order_fit import _refine_with_gradients, fifth_order_bounds, ring_parity
+
+    data, _, detector_mrad = simulation
+    with session(data, detector_mrad, backend) as ssb:
+        fit = ssb.find_aberrations(show=False, verbose=False)
+        check = fit.optimizer["higher_order_consistency"]
+        assert check["trusted"] and check["shown_limit"] == 20.0 and fit.optimizer["higher_order_limit"] == 20.0
+        assert check["half_band_rms_rad"] < 0.1
+        assert [half["ring_parity"] for half in check["halves"]] == [0, 1]
+        assert check["checked_coordinates"] == fit.optimizer["coordinates"]
+        assert fit.timings["higher_order_consistency_s"] > 0 and "higher_order_fallback_s" not in fit.timings
+        objective = fifth_objective(ssb)
+        parity = ring_parity(*objective.band_frequencies())
+        assert check["halves"][1]["frequencies"] == int(parity.sum())
+        half = objective.with_band_weights(parity == 1)
+        start = np.asarray(check["start_coordinates"])
+        refit = _refine_with_gradients(half, start, fifth_order_bounds(20), float(half.values(start, 1)[0]), 400)
+        np.testing.assert_allclose(refit["coordinates"], check["halves"][1]["coordinates"], rtol=0, atol=1e-9)

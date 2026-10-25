@@ -8,6 +8,7 @@ the derivative passes repeat their per-pair arithmetic in float32 (precise sinco
 group on the GPU and sum the groups in float64 on the host.
 """
 
+import copy
 from functools import lru_cache
 
 import numpy as np
@@ -325,12 +326,26 @@ class FifthOrderGradients(fifth_order.Objective):
         super().__init__(prepared, partial_bytes)
         self._pixels_by_stride = {}
         self._last = None
+        self._band_factor = None
         self.value_passes = 0
         self.gradient_passes = 0
 
     @property
     def num_bright_field_pixels(self) -> int:
         return int(self.p.g_qk.shape[0])
+
+    def band_frequencies(self, band=(0.2, 0.9)):
+        """(q row, q column) of the band frequencies on the stored half plane, 1/A, float32 on the host."""
+        _, qx, qy, _ = _band(self.p, tuple(float(value) for value in band))
+        return np.asarray(qx, dtype=np.float32).ravel(), np.asarray(qy, dtype=np.float32).ravel()
+
+    def with_band_weights(self, factor):
+        """This objective with each band frequency's weight multiplied by ``factor`` (one value per frequency of
+        ``band_frequencies``; 0 leaves a frequency out of values and gradients)."""
+        weighted = copy.copy(self)
+        weighted._band_factor = np.asarray(factor, dtype=np.float32)
+        weighted._last = None
+        return weighted
 
     def _pixels(self, stride):
         if stride not in self._pixels_by_stride:
@@ -352,7 +367,8 @@ class FifthOrderGradients(fifth_order.Objective):
     def _band_arrays_for(self, band):
         """The band frequencies on the device and their float32 weights on the host."""
         flat, qx, qy, weight = _band(self.p, tuple(float(value) for value in band))
-        return flat, qx, qy, np.asarray(weight, dtype=np.float32)
+        weight = np.asarray(weight, dtype=np.float32)
+        return flat, qx, qy, weight if self._band_factor is None else weight * self._band_factor
 
     def _sums(self, rows, packed, stride, band):
         """``score``'s kernels on every ``stride``-th BF pixel: per-frequency numerators, denominators, chi(k)."""

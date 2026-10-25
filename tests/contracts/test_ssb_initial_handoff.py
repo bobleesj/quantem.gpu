@@ -134,13 +134,15 @@ def handoff(monkeypatch):
     ))
 
     def run(session=None, **options):
-        # the finite-difference Newton refinement, which this fixture replaces with a bounded stub
+        # the finite-difference Newton refinement, which this fixture replaces with a bounded stub, in the
+        # standard box (the wide box's half-band check needs exact gradients)
         return fifth_order_fit.fit_fifth_order(
             Session() if session is None else session,
             search="standard", trials=200, seed=42,
             save_dir=options.pop("save_dir", None), force=False, verbose=False,
             primary_options={"check_rotation": False, "refine_rotation": False},
-            refinement=options.pop("refinement", "newton"), **options,
+            refinement=options.pop("refinement", "newton"), higher_order_limit=options.pop("higher_order_limit", 2),
+            **options,
         )
 
     return SimpleNamespace(

@@ -97,6 +97,19 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- Python SSB (CUDA and MPS): the fifth-order fit's higher-order box is wide by default, as on native:
+  `find_aberrations(higher_order_limit=None)` (the default) bounds each of the 22 higher-order coordinates to ±20 rad
+  of probe phase at the aperture edge, and `higher_order_limit=2` keeps the earlier box (`search="primary"` refuses
+  either). A ±20 fit is checked with native's definition (`fifth_order_fit.higher_order_consistency`): the fifth
+  order is refitted with exact gradients on each half of an alternating 0.05 1/A ring split of the band frequencies,
+  both from the low-order fit, and when the two probe phases through fifth order (C10 and C12 included, tilt and depth
+  not) differ by more than 0.5 rad rms over the aperture the ±2 fit is returned and its higher orders are not
+  trusted, with one printed line. `optimizer["higher_order_consistency"]` records `half_band_rms_rad`, `trusted`,
+  `shown_limit`, both halves and the checked ±20 fit; `optimizer["higher_order_limit"]` is the limit of the fit
+  returned. On five measured 512 x 512 acquisitions CUDA's statistic equals native's to 0.001 rad (0.155-0.353 rad on
+  four thin two-dimensional crystal frames, ±20 kept; 1.333 rad on a thick crystal, ±2 returned), and MPS gives the
+  same values. The check adds 0.65-1.2 s on an RTX PRO 6000 Blackwell Max-Q (default fit 1.5-3.0 s against 0.8-1.6 s
+  at ±2) and 2.2-7.4 s on an Apple M5 Max (8.1-23.6 s against 5.0-18.3 s).
 - Native (Metal) SSB fifth-order fit: an exact-gradient trust-region quasi-Newton search (`ssb-fifth-gradient`
   v0.1, `SSBFitOptions.higherOrderSearch = .exactGradientCoarseToFine`) replaces the finite-difference Newton by
   default, which remains available as `.finiteDifferenceNewton`. On an Apple M5 Max the fifth-order stage takes

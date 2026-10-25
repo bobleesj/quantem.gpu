@@ -130,6 +130,7 @@ def test_broad_records_refinement_budget(monkeypatch, tmp_path, refinement, cap)
     result = fifth_order_fit.fit_fifth_order(
         session, search="broad", trials=400, seed=17, save_dir=tmp_path,
         force=False, verbose=False, primary_options={"check_rotation": True, "refine_rotation": False}, refinement=refinement,
+        higher_order_limit=2,
     )
     assert signature.call_args.args[1]["newton_cap"] == cap
     assert result.optimizer["refinement_cap"] == cap
@@ -202,7 +203,7 @@ def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch, refinement):
     )
     fit = fifth_order_fit.fit_fifth_order(
         session, search="standard", trials=200, seed=42, save_dir=None,
-        force=False, verbose=False, refinement=refinement,
+        force=False, verbose=False, refinement=refinement, higher_order_limit=2,
         primary_options={"check_rotation": False, "refine_rotation": False},
     )
     assert session._find_aberrations.call_args.args == ("off",)

@@ -26,6 +26,8 @@ is a strided view of G and steers only.
 Hessian in z = (C10, C12 cos 2 phi12, C12 sin 2 phi12 [A], tilt row, tilt column [mrad], depth spread [A]).
 """
 
+import copy
+
 import cupy as cp
 import numpy as np
 
@@ -225,12 +227,26 @@ class FifthOrderGradients(_BatchObjective):
         super().__init__(engine, partial_bytes)
         self._pixels_by_stride = {}
         self._last = None
+        self._band_factor = None
         self.value_passes = 0
         self.gradient_passes = 0
 
     @property
     def num_bright_field_pixels(self) -> int:
         return int(self.e._bf_grid()[0])
+
+    def band_frequencies(self, band=(0.2, 0.9)):
+        """(q row, q column) of the band frequencies on the stored half plane, 1/A, float32 on the host."""
+        _, _, _, qx, qy, _ = self.e.thick._prepare_fit_band(band)
+        return cp.asnumpy(qx).ravel(), cp.asnumpy(qy).ravel()
+
+    def with_band_weights(self, factor):
+        """This objective with each band frequency's weight multiplied by ``factor`` (one value per frequency of
+        ``band_frequencies``; 0 leaves a frequency out of values and gradients)."""
+        weighted = copy.copy(self)
+        weighted._band_factor = cp.asarray(factor, dtype=cp.float32)
+        weighted._last = None
+        return weighted
 
     def _pixels(self, stride):
         if stride not in self._pixels_by_stride:
@@ -255,6 +271,8 @@ class FifthOrderGradients(_BatchObjective):
         rows = np.atleast_2d(rows)
         packed = np.asarray(packed, dtype=np.float32).reshape(len(rows), 28)
         _, _, flat, qx, qy, weight = e.thick._prepare_fit_band(band)
+        if self._band_factor is not None:
+            weight = weight * self._band_factor
         kx, ky, nk, _ = self._pixels(stride)
         plane = int(e.G_qk.shape[1] * e.G_qk.shape[2]) * stride
         nb = int(flat.size)

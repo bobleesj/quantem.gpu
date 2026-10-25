@@ -1810,7 +1810,7 @@ class DirectPtycho:
         columns: int = 3,
         show_convergence: bool = False,
         on_initial_fit: Callable[[SSBResult], None] | None = None,
-        higher_order_limit: float = 2,
+        higher_order_limit: float | None = None,
     ) -> SSBResult | dict[int, SSBResult]:
         """Fit aberrations, sample tilt and depth with one search interface.
 
@@ -1831,9 +1831,17 @@ class DirectPtycho:
 
         ``higher_order_limit`` bounds each of the 22 higher-order Cartesian
         coordinates of the fifth-order fit, in rad of phase at the aperture
-        edge: 2 (standard, the default) or 20 (wide). The result records it
-        in ``optimizer["higher_order_limit"]``; a wider box lets degenerate
-        polynomial directions move C10 and C12 at the bright-field rim.
+        edge: 20 (wide, the default for ``None``) or 2 (standard). A wide fit
+        is checked on two halves of the band: the fifth order is refitted
+        on alternate 0.05 1/A rings of the band frequencies from the same
+        low-order fit, and the two probe phases through fifth order (C10 and
+        C12 included) must agree to 0.5 rad rms over the aperture. Otherwise
+        the ±2 fit is returned and its higher orders are not trusted.
+        ``optimizer["higher_order_consistency"]`` records the check
+        (``half_band_rms_rad``, ``trusted``, ``shown_limit``, both halves and
+        the checked ±20 fit) and ``optimizer["higher_order_limit"]`` the
+        limit of the fit returned. A wider box lets degenerate polynomial
+        directions move C10 and C12 at the bright-field rim.
 
         In a live notebook, ``show=True`` displays the initial fit at Auto
         sampling. After standard/broad refinement, resident CUDA sessions
@@ -2063,11 +2071,12 @@ class DirectPtycho:
                              "For a primary fit, use fit.show('convergence') afterwards.")
         if search not in ("standard", "broad", "primary"):
             raise ValueError("search must be 'standard', 'broad' or 'primary'.")
-        from .fifth_order_fit import validate_higher_order_limit
+        from .fifth_order_fit import DEFAULT_HIGHER_ORDER_LIMIT, validate_higher_order_limit
 
-        higher_order_limit = validate_higher_order_limit(higher_order_limit)
-        if search == "primary" and higher_order_limit != 2:
+        if search == "primary" and higher_order_limit is not None:
             raise ValueError("higher_order_limit bounds the fifth-order fit; search='primary' fits the low orders only.")
+        higher_order_limit = validate_higher_order_limit(
+            DEFAULT_HIGHER_ORDER_LIMIT if higher_order_limit is None else higher_order_limit)
         if check_rotation not in (True, False, "both"):
             raise ValueError("check_rotation must be True, False or 'both'.")
         if isinstance(trials, Sequence) and not isinstance(trials, (str, bytes)):

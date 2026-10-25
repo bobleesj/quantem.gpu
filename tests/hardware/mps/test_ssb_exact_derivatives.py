@@ -40,6 +40,10 @@ def test_gradient_pass_needs_its_value_pass(ssb):
         objective.gradients(z, 4)
 
 
+def test_ring_halves_partition_the_band(ssb):
+    checks.check_band_halves(ssb)
+
+
 def test_low_order_gradient_and_hessian_match_the_reference(ssb):
     checks.check_low_order_derivatives(ssb)
 
@@ -50,3 +54,7 @@ def test_opposite_branch_point_has_the_same_agreement(simulation):
 
 def test_exact_fit_reaches_the_float64_optimum(simulation):
     checks.check_fit(simulation, "mps")
+
+
+def test_default_wide_fit_is_checked_on_two_band_halves(simulation):
+    checks.check_wide_fit(simulation, "mps")
