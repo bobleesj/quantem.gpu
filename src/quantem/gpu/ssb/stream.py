@@ -11,9 +11,13 @@ Each new phase is also placed live: registered against the frame placed before i
 registration of quantem.gpu.drift, with Bragg-spot bands from the first frame, and added in register to a
 combined image that grows with the drift. On the time series this adds 0.08 s a frame and agrees with the full pairwise
 drift to 0.09 Å over 107 Å of drift; ``SSBStream.align`` then re-places every frame by that pairwise drift.
+
+With ``save_dir`` each frame's optics and shift are written as it finishes, so a restarted kernel
+reconstructs the finished frames from them, with no refit and no registration, and continues.
 """
 
 import copy
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +32,7 @@ from quantem.gpu.drift import bands, peaks, prepared, register_spectra, shifted,
 from quantem.gpu.ssb._broad_newton import BudgetReached, Tracker, newton
 from quantem.gpu.ssb.fifth_order_fit import _objective
 from quantem.gpu.ssb.fifth_order_parameters import public_params
+from quantem.gpu.ssb.persistence import _write_atomically, acquisition_identity, json_value, software_signature
 from quantem.gpu.ssb.results import SSBResult, host_array
 
 # Coordinates 0..2 of the fifth-order vector: C10 and the two C12 components.
@@ -41,9 +46,11 @@ EVALUATION_CAP = 300
 CONFIDENCE = 0.04
 # The live search reaches as far as drift's pairs: the residual past the extrapolated guess is a few Å.
 REACH_A = 30.0
+# The layout of a saved frame record; a record of another layout is computed again.
+RECORD_SCHEMA = "quantem.ssb-stream-frame/1"
 
 
-def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", show: bool = True,
+def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", save_dir=None, show: bool = True,
            verbose: bool = True) -> "SSBStream":
     """Refit C10, C12 and phi12 on each source with ``fit``'s higher orders, tilt and depth held.
 
@@ -57,6 +64,11 @@ def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", show: b
     Each phase is then registered against the last confidently placed frame (``_place``: lattice-safe
     band registration with frame 0's Bragg spots) and added in register to ``combined``. With ``show``
     in a notebook, one figure (latest frame, combined image, drift) refreshes at most twice a second.
+
+    With ``save_dir``, ``<save_dir>/stream/<frame>.json`` records each frame's optics, shift, confidence
+    and timings. A later call with the same ``fit`` and sources reconstructs a recorded frame from its
+    saved optics and places it at its saved shift, then refits the first unrecorded frame from the last
+    recorded one, so the series equals one uninterrupted run (``_recorded`` says what must match).
     """
     reference = np.array(fit.optimizer["coordinates"])
     bounds = np.array(fit.optimizer["bounds"])[VARIED]
@@ -68,6 +80,14 @@ def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", show: b
         "scan_detector_rotation_deg": fit.scan_detector_rotation_deg,
         "scan_detector_rotation_flipped": fit.scan_detector_rotation_flipped,
     }
+    records = None if save_dir is None else Path(save_dir).expanduser() / "stream"
+    # What every frame's record shares: the reference fit it refits from and the code that ran it.
+    shared = None if records is None else {
+        "reference": {"coordinates": fit.optimizer["coordinates"], "bounds": fit.optimizer["bounds"],
+                      "signature": fit.metadata.get("signature")},
+        "settings": {**settings, "upsampling_factor": upsampling_factor}, "software": software_signature(),
+    }
+    resuming = records is not None
     sources = [Path(source) for source in sources]
     iterator = sources
     if verbose:
@@ -78,19 +98,34 @@ def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", show: b
     phases, aberrations, timings, shifts, confidence = [], [], [], [], []
     panel = _LivePanel(fit.phase_limits, enabled=show)
     for index, source in enumerate(iterator):
+        name = source.name.removesuffix("_master.h5")
         clock = {}
         began = time.perf_counter()
         data = io.load(source, device=device)
         clock["load_s"] = time.perf_counter() - began
         began = time.perf_counter()
         session = type(ptycho)(data, **settings)
-        objective = _objective(session)
-        clock["setup_s"] = time.perf_counter() - began
-        began = time.perf_counter()
-        coordinates, evaluations, stop = _refit(objective, reference, start, bounds)
-        clock["refit_s"] = time.perf_counter() - began
-        began = time.perf_counter()
-        optics, tilt, depth = public_params(objective, coordinates, 5)
+        saved = objective = None
+        if records is not None:
+            identity = {**shared, "index": index, "source": acquisition_identity(
+                source, hot_pixel_correction=data.metadata.get("hot_pixel_correction"))}
+            # A frame's refit starts from the frame before and its placement from the frames placed
+            # before it, so only an unbroken run of records from the first frame can be reused.
+            saved = _recorded(records / f"{name}.json", identity) if resuming else None
+            resuming = saved is not None
+        if saved is None:
+            objective = _objective(session)
+            clock["setup_s"] = time.perf_counter() - began
+            began = time.perf_counter()
+            coordinates, evaluations, stop = _refit(objective, reference, start, bounds)
+            clock["refit_s"] = time.perf_counter() - began
+            began = time.perf_counter()
+            optics, tilt, depth = public_params(objective, coordinates, 5)
+        else:
+            clock["setup_s"], clock["refit_s"] = time.perf_counter() - began, 0.0
+            began = time.perf_counter()
+            coordinates, evaluations, stop = np.array(saved["coordinates"]), saved["evaluations"], saved["stop"]
+            optics, tilt, depth = saved["aberrations"], tuple(saved["sample_tilt_mrad"]), saved["depth_spread_nm"]
         chosen = copy.copy(fit)
         chosen.aberrations, chosen.sample_tilt_mrad, chosen.depth_spread_nm = optics, tilt, depth
         result = session.run(chosen, upsampling_factor=upsampling_factor, compute_loss=False,
@@ -103,7 +138,12 @@ def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", show: b
             lattice, canvas, placed = _lattice(phases[0], sampling), _start(phases[0]), [(0, (0.0, 0.0))]
             shift, score = (0.0, 0.0), float("inf")
         else:
-            shift, score = _place(canvas, phases[-1], lattice, sampling, REACH_A, _guess(placed, index))
+            if saved is None:
+                shift, score = _place(canvas, phases[-1], lattice, sampling, REACH_A, _guess(placed, index))
+            else:
+                shift, score = tuple(saved["shift_px"]), saved["confidence"]
+                if score >= CONFIDENCE:
+                    _add(canvas, phases[-1], shift)
             if score >= CONFIDENCE:
                 placed.append((index, shift))
         shifts.append(shift)
@@ -111,12 +151,22 @@ def stream(ptycho, sources, fit: SSBResult, *, upsampling_factor="auto", show: b
         cp.cuda.Device().synchronize()
         clock["align_s"] = time.perf_counter() - began
         began = time.perf_counter()
-        panel.update(source.name.removesuffix("_master.h5"), phases[-1], canvas, np.array(shifts) * np.array(sampling),
+        panel.update(name, phases[-1], canvas, np.array(shifts) * np.array(sampling),
                      sampling, final=index == len(sources) - 1)
         clock["display_s"] = time.perf_counter() - began
         clock["total_s"] = sum(clock.values())
-        aberrations.append({**optics, "evaluations": evaluations, "stop": stop})
+        aberrations.append({**optics, "evaluations": evaluations, "stop": stop, "resumed": saved is not None})
         timings.append(clock)
+        if records is not None and saved is None:
+            record = json_value({
+                "schema": RECORD_SCHEMA, "identity": identity, "frame": name, "aberrations": optics,
+                "sample_tilt_mrad": tilt, "depth_spread_nm": depth, "coordinates": coordinates,
+                "evaluations": evaluations, "stop": stop, "shift_px": shift,
+                "shift_A": np.array(shift) * np.array(sampling), "confidence": score,
+                "object_sampling_A": sampling, "timings": clock,
+            })
+            _write_atomically(records / f"{name}.json", "w", lambda handle: json.dump(record, handle, indent=1),
+                              encoding="utf-8")
         start = coordinates[VARIED].copy()
         del data, session, objective, result
         # Release this frame's resident counts before reading the next one.
@@ -160,7 +210,8 @@ class SSBStream:
         return found
 
     def report(self, *, to_dict: bool = False):
-        """One row per frame: fitted C10, C12, phi12, refit evaluations, the shift against frame 0
+        """One row per frame: fitted C10, C12, phi12, refit evaluations, whether the frame came from
+        its saved record (its evaluations are then the original refit's), the shift against frame 0
         and its confidence (below CONFIDENCE: measured, not added), and seconds per stage."""
         import pandas as pd
 
@@ -169,7 +220,7 @@ class SSBStream:
                                                       self.confidence, strict=True):
             rows[frame] = {
                 "C10 (nm)": optics["C10_nm"], "C12 (nm)": optics["C12_nm"], "phi12 (deg)": optics["phi12_deg"],
-                "Refit evaluations": optics["evaluations"], "Shift row (Å)": shift[0], "Shift col (Å)": shift[1],
+                "Refit evaluations": optics["evaluations"], "Resumed": optics["resumed"], "Shift row (Å)": shift[0], "Shift col (Å)": shift[1],
                 "Confidence": score, "Load (s)": clock["load_s"], "Setup (s)": clock["setup_s"],
                 "Refit (s)": clock["refit_s"], "Reconstruction (s)": clock["reconstruction_s"],
                 "Align (s)": clock["align_s"], "Display (s)": clock["display_s"], "Total (s)": clock["total_s"],
@@ -289,6 +340,22 @@ def _live_figure(frame, phase, combined, shifts_A, sampling_A, phase_limits, siz
 def _combined(canvas):
     """The frames in register averaged where they reach: total over cover, zero where none does."""
     return (canvas.total / cp.maximum(canvas.cover, 1)).astype(cp.float32)
+
+
+def _recorded(path, identity):
+    """A frame's saved record when it was made from this very frame and fit, else None.
+
+    It must carry RECORD_SCHEMA and an identity equal to this call's: the frame's position in the
+    series, the frame's acquisition_identity (its file name, size and the SHA-256 of its first MiB and
+    of each linked data file, and how flagged pixels were held), the reference fit's coordinates,
+    bounds and saved signature, the calibration and upsampling, and the SSB source hash. The record
+    then holds the exact float64 optics and shift the uninterrupted run would find again."""
+    if not path.is_file():
+        return None
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    if saved.get("schema") != RECORD_SCHEMA or saved.get("identity") != json.loads(json.dumps(json_value(identity))):
+        return None
+    return saved
 
 
 def _refit(objective, reference, start, bounds):

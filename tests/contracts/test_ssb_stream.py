@@ -1,5 +1,8 @@
 """Streaming refits only defocus and astigmatism and holds every other coordinate."""
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import numpy as np
 
 from quantem.gpu.ssb.stream import _refit
@@ -117,3 +120,122 @@ def test_align_replaces_the_live_shifts_with_the_pairwise_drift():
     for frame, shift in zip(phase[1:], found.displacement_A[1:] / sampling[0]):
         _add(canvas, frame, tuple(shift))
     cupy.testing.assert_array_equal(series.combined, _combined(canvas))
+
+
+class FrameObjective(PeakedObjective):
+    """One frame's model agreement: its low-order peak is the frame's own, the rest the reference."""
+
+    calls = 0
+
+    def evaluate(self, points, order):
+        FrameObjective.calls += len(points)
+        return super().evaluate(points, order)
+
+
+class FakeSession:
+    """Stands in for DirectPtycho on one loaded frame: run returns the frame's lattice phase."""
+
+    backend, voltage_kV, semiangle_mrad, scan_sampling_A = "cuda", 300.0, 30.0, 0.2
+    detector_sampling_mrad, bright_field_center_px, bright_field_radius_px = 0.5, (96.0, 96.0), 40.0
+
+    def __init__(self, data=None, **settings):
+        self.data = data
+
+    def run(self, chosen, **options):
+        return SimpleNamespace(phase=self.data.phase, object_sampling_A=(0.2, 0.2))
+
+
+def fake_stream(monkeypatch, tmp_path, rows=256):
+    """Five frames of one specimen drifting a known amount, each with its own defocus peak, written
+    as small files so their identities are real; returns the sources and the reference fit."""
+    import cupy
+
+    from quantem.gpu.drift import shifted
+    from quantem.gpu.ssb import stream as stream_module
+
+    specimen = lattice_image(rows, 0.2, seed=5)
+    truth = [(0, 0), (1.3, -0.7), (3.45, 1.2), (5.1, 2.85), (6.6, 4.3)]
+    generator = cupy.random.default_rng(6)
+    reference = np.linspace(-.5, .5, 28)
+    phases, peaks, sources = {}, {}, []
+    for index, shift in enumerate(truth):
+        source = tmp_path / "data" / f"frame_{index}_master.h5"
+        source.parent.mkdir(exist_ok=True)
+        source.write_bytes(bytes([index]) * 64)
+        sources.append(source)
+        phases[source.name] = (shifted(specimen, shift) + 0.3 * generator.standard_normal((rows, rows))).astype(cupy.float32)
+        peak = reference.copy()
+        peak[:3] = (.1 * index, -.05 * index, .02 * index)
+        peaks[source.name] = peak
+    loaded = {}
+
+    def load(source, device):
+        loaded["name"] = Path(source).name
+        return SimpleNamespace(phase=phases[Path(source).name], metadata={})
+
+    monkeypatch.setattr(stream_module.io, "load", load)
+    monkeypatch.setattr(stream_module, "_objective", lambda session: FrameObjective(peaks[loaded["name"]]))
+    monkeypatch.setattr(stream_module, "public_params", lambda objective, z, order: (
+        {"C10_nm": z[0], "C12_nm": z[1], "phi12_deg": z[2]}, (0.0, 0.0), 1.0))
+    fit = SimpleNamespace(optimizer={"coordinates": reference.tolist(), "bounds": [(-3., 3.)] * 28},
+                          scan_detector_rotation_deg=176.3, scan_detector_rotation_flipped=False,
+                          phase_limits=(-1.0, 1.0), metadata={})
+    return sources, fit
+
+
+def streamed(sources, fit, save_dir):
+    from quantem.gpu.ssb.stream import stream
+
+    FrameObjective.calls = 0
+    series = stream(FakeSession(), sources, fit, save_dir=save_dir, show=False, verbose=False)
+    return series, FrameObjective.calls
+
+
+def assert_same_stream(left, right):
+    import cupy
+
+    keep = ("C10_nm", "C12_nm", "phi12_deg", "evaluations", "stop")
+    assert [{name: optics[name] for name in keep} for optics in left.aberrations] == \
+        [{name: optics[name] for name in keep} for optics in right.aberrations]
+    np.testing.assert_array_equal(left.shifts_A, right.shifts_A)
+    assert left.confidence == right.confidence
+    cupy.testing.assert_array_equal(left.phase, right.phase)
+    cupy.testing.assert_array_equal(left.combined, right.combined)
+
+
+def test_stream_resumes_from_saved_records_without_refitting(monkeypatch, tmp_path):
+    """A second call with the same fit and sources refits nothing: every frame is reconstructed from
+    its saved optics and placed at its saved shift, and the series equals the first call exactly."""
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    first, first_calls = streamed(sources, fit, tmp_path / "results")
+    assert first_calls > 0
+    assert sorted(path.name for path in (tmp_path / "results" / "stream").iterdir()) == \
+        [f"frame_{index}.json" for index in range(5)]
+    again, again_calls = streamed(sources, fit, tmp_path / "results")
+    assert again_calls == 0
+    assert all(optics["resumed"] for optics in again.aberrations)
+    assert_same_stream(first, again)
+
+
+def test_an_interrupted_stream_continues_as_if_never_stopped(monkeypatch, tmp_path):
+    """Streaming the first three frames, then all five, equals one uninterrupted run: the first three
+    come from their records and the fourth refits from the third's saved low-order values."""
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    whole, _ = streamed(sources, fit, None)
+    streamed(sources[:3], fit, tmp_path / "results")
+    resumed, _ = streamed(sources, fit, tmp_path / "results")
+    assert [optics["resumed"] for optics in resumed.aberrations] == [True] * 3 + [False] * 2
+    assert_same_stream(whole, resumed)
+
+
+def test_records_of_another_source_or_fit_are_ignored(monkeypatch, tmp_path):
+    """A record keys on the frame's file content and on the reference fit: a rewritten frame and every
+    frame after it are fitted again, and a different reference fit refits them all."""
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    streamed(sources, fit, tmp_path / "results")
+    sources[2].write_bytes(b"another acquisition")
+    changed, _ = streamed(sources, fit, tmp_path / "results")
+    assert [optics["resumed"] for optics in changed.aberrations] == [True, True, False, False, False]
+    other = SimpleNamespace(**{**vars(fit), "optimizer": {**fit.optimizer, "coordinates": (np.array(fit.optimizer["coordinates"]) + 1e-9).tolist()}})
+    refit, calls = streamed(sources, other, tmp_path / "results")
+    assert calls > 0 and not any(optics["resumed"] for optics in refit.aberrations)
