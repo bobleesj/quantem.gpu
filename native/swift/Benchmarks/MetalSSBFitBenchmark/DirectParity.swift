@@ -208,7 +208,7 @@ func gates(phase: [String: Double]?, amplitude: [String: Double]?) -> [String: B
 func fixtureParity(
   directory: URL, oracleDirectory: URL?, output: URL?, phaseOut: URL?, device: MTLDevice,
   calibration: MetalSSBCalibration, geometry: MetalSSBGeometry, counts: MTLBuffer, countType: MetalSSBCountType,
-  rotationEstimate: Double, only: String?
+  rotationEstimate: Double, only: String?, methods: Set<String>? = nil
 ) throws {
   guard
     let optics = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("optics.json")))
@@ -237,7 +237,8 @@ func fixtureParity(
     record["depth_spread_nm"] = set["depth_spread_nm"]
     let point = try modelPoint(record)
     try model.retarget(scanDetectorRotationDegrees: rotation)
-    for reference in references where (reference["optics"] as? String) == name {
+    for reference in references where (reference["optics"] as? String) == name
+      && methods.map({ $0.contains(reference["method"] as? String ?? "") }) ?? true {
       guard let file = reference["file"] as? String, let methodName = reference["method"] as? String,
         let method = SSBReconstructionMethod(rawValue: methodName), let factor = reference["upsampling"] as? Int
       else { throw failure("Incomplete reference entry") }

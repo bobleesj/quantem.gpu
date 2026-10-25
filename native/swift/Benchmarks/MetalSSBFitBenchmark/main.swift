@@ -27,7 +27,7 @@ import Native4DSTEMIO
 //     [--output PARITY.json] [--phase-out DIR]
 //     ssb, phase and complex of the limits' optics against CUDA's arrays, with timings (DirectParity.swift).
 //   metal-ssb-fit-benchmark --cache FIXTURE --fixture-parity FIXTURE [--oracle-dir DIR] [--optics NAME]
-//     [--output PARITY.json] [--phase-out DIR]
+//     [--methods ssb,phase,complex] [--output PARITY.json] [--phase-out DIR]
 //     every reconstruction of a fixture's references.json natively, with per-setting parity and timing.
 //   metal-ssb-fit-benchmark --cache DIR --objective-bench RUN.json [--repeats 3] [--output BENCH.json]
 //     [--search-kernels-only]
@@ -77,6 +77,8 @@ struct Options {
   var fixtureParity: URL?
   var oracleDirectory: URL?
   var opticsName: String?
+  /// `--fixture-parity` only: the reconstruction methods to run (default all).
+  var methods: Set<String>?
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -146,6 +148,7 @@ struct Options {
       case "--fixture-parity": fixtureParity = URL(fileURLWithPath: try value(flag))
       case "--oracle-dir": oracleDirectory = URL(fileURLWithPath: try value(flag))
       case "--optics": opticsName = try value(flag)
+      case "--methods": methods = Set(try value(flag).split(separator: ",").map(String.init))
       case "--factors": directFactors = try value(flag).split(separator: ",").compactMap { Int($0) }
       default: throw failure("Unknown argument \(flag)")
       }
@@ -602,7 +605,8 @@ if let fixture = options.fixtureParity {
   try fixtureParity(
     directory: fixture, oracleDirectory: options.oracleDirectory, output: options.output, phaseOut: options.phaseOut,
     device: device, calibration: caseRecord.calibration, geometry: setup.geometry, counts: counts,
-    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees, only: options.opticsName)
+    countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees, only: options.opticsName,
+    methods: options.methods)
   exit(0)
 }
 if let sweep = options.directParity {
