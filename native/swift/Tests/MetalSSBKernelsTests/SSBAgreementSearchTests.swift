@@ -115,6 +115,48 @@ final class SSBAgreementSearchTests: XCTestCase {
     XCTAssertEqual(fit.agreement, 994247)
   }
 
+  /// The exact-derivative Newton on the same objective: the same 200 search trials, then a few centers to the
+  /// maximum, which it reaches more closely than the stencil Newton.
+  func testExactNewtonReachesTheMaximumWithTheSameSearch() throws {
+    let stencil = Recorder()
+    let reference = try SSBAgreementSearch.fitTilt(stencil.evaluate)
+    let recorder = Recorder()
+    var centers = 0
+    // The objective in z in double precision: an exact maximum and analytic derivatives.
+    let target = [37.25, 30, -12, 3.5, -1.25, 151]
+    let curvature = [0.25, 1, 1, 400, 400, 0.01]
+    let fit = try SSBAgreementSearch.fitTilt(
+      recorder.evaluate,
+      derivatives: { rows in
+        centers += rows.count
+        return rows.map { z in
+          var value = 1.0e6
+          var gradient = [Double](repeating: 0, count: 6)
+          var hessian = [[Double]](repeating: [Double](repeating: 0, count: 6), count: 6)
+          for d in 0..<6 {
+            let x = d == 5 ? abs(z[d]) : z[d]
+            value -= curvature[d] * (x - target[d]) * (x - target[d])
+            gradient[d] = -2 * curvature[d] * (x - target[d]) * (d == 5 && z[d] < 0 ? -1 : 1)
+            hessian[d][d] = -2 * curvature[d]
+          }
+          return SSBAgreementSearch.Derivatives(value: value, gradient: gradient, hessian: hessian)
+        }
+      })
+    XCTAssertEqual(Array(recorder.rows.prefix(200)), Array(stencil.rows.prefix(200)))
+    // One more row: the fitted point on the search's own objective.
+    XCTAssertEqual(recorder.rows.count, 201)
+    XCTAssertEqual(fit.newtonStarts.map(\.evaluations).reduce(0, +), centers)
+    XCTAssertLessThan(centers, 30)
+    let point = SSBAgreementSearch.encode(fit.point)
+    for d in 0..<6 {
+      XCTAssertEqual(point[d], target[d], accuracy: [1e-3, 1e-3, 1e-3, 1e-4, 1e-4, 1e-2][d])
+    }
+    print(
+      "EXACT_NEWTON centers \(centers) (stencil rows \(stencil.rows.count - 200)) agreement \(fit.agreement) (stencil \(reference.agreement))"
+    )
+    XCTAssertGreaterThanOrEqual(fit.agreement, reference.agreement)
+  }
+
   func testRandomStreamsAndRanks() {
     // The first MT19937 outputs for seed 5489 (the reference generator's default seed).
     var generator = SSBAgreementSearch.MersenneTwister(seed: 5489)

@@ -81,6 +81,48 @@ public enum SSBRotationBranches {
     return other >= 360 ? 0 : other
   }
 
+  /// The model point on the opposite 180-degree branch with exactly the same agreement.
+  ///
+  /// Rotating the scan-detector frame by 180 degrees negates every BF coordinate, k -> -k. With chi split
+  /// into its even- and odd-degree parts, the point with the even-degree part negated has
+  /// chi'(-k) = -chi(k): the two phase differences of the double-overlap model swap and change sign, the
+  /// apertures swap, and gamma becomes -gamma. Negating the sample tilt negates the tilt shift of the
+  /// depth-averaged transfer, the depth spread enters it evenly, so the same holds with tilt and depth.
+  /// Every |sum_k G conj(gamma)|^2 / sum_k |gamma|^2 is unchanged, while the reconstructed phase
+  /// changes contrast, which is what the branch test reads.
+  ///
+  /// Even degree (C10, C12, C30, C32, C34, C50, C52, C54, C56) is negated: C10 and the other round
+  /// terms change sign, a term of symmetry m turns by pi/m (phi12 by 90 degrees). Odd degree (C21, C23,
+  /// C41, C43, C45) is kept. The tilt is negated and the depth spread kept.
+  public static func oppositeBranch(_ point: SSBModelPoint) -> SSBModelPoint {
+    func turned(_ angle: Double, symmetry m: Int) -> Double {
+      // An azimuth of symmetry m is periodic in 2 pi / m; keep it in [-pi/m, pi/m).
+      let period = 2 * Double.pi / Double(m)
+      var wrapped = (angle + Double.pi / Double(m) + period / 2).truncatingRemainder(
+        dividingBy: period)
+      if wrapped < 0 { wrapped += period }
+      return wrapped - period / 2
+    }
+    return SSBModelPoint(
+      // 0 - x, not -x: a zero stays +0, the value a fit at zero tilt or defocus holds.
+      c10Angstroms: 0 - point.c10Angstroms, c12Angstroms: point.c12Angstroms,
+      phi12Radians: SSBAgreementSearch.wrapPhi(point.phi12Radians + Double.pi / 2),
+      sampleTiltMrad: point.sampleTiltMrad.map { 0 - $0 },
+      depthSpreadAngstroms: point.depthSpreadAngstroms,
+      higherOrder: point.higherOrder.map { term in
+        // chi degree n + 1: odd orders are even in k.
+        guard term.order % 2 == 1 else { return term }
+        if term.symmetry == 0 {
+          return SSBModelHigherOrder(
+            order: term.order, symmetry: 0, magnitudeAngstroms: 0 - term.magnitudeAngstroms,
+            angleRadians: term.angleRadians)
+        }
+        return SSBModelHigherOrder(
+          order: term.order, symmetry: term.symmetry, magnitudeAngstroms: term.magnitudeAngstroms,
+          angleRadians: turned(term.angleRadians, symmetry: term.symmetry))
+      })
+  }
+
   /// `optics.physics.wrap_degrees`: an angle in [0, period).
   public static func wrap(_ degrees: Double, period: Double = 360) -> Double {
     var wrapped = degrees.truncatingRemainder(dividingBy: period)

@@ -13,6 +13,16 @@ import Native4DSTEMIO
 //     [--search newton|gradient] [--fifth-only BASELINE.json [--gradient-check]]
 // --fifth-only starts the fifth-order stage at the kept low-order fit and rotation of an earlier result;
 // --gradient-check compares the exact gradient with central differences there and at the earlier optimum.
+//     [--compare-standard] [--dark-field DARK.f32] [--verify-branches] [--check-maximum]
+//   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --export-dark-field DARK.f32
+//
+// --max-order 1 stops after the low-order branch fits and the branch test. --dark-field passes a float32
+// scan-shaped dark-field image to the branch test (written by --export-dark-field from the original HDF5 with
+// the app's mask: valid detector pixels at or beyond 1.1 BF radii). --verify-branches also searches the
+// branch that was mapped from the fitted one, and reports both points' agreements and phases and the branch
+// decision taken with the searched fit instead. --check-maximum evaluates the kept low-order fit's neighbours
+// one stencil-Newton tolerance away along each Newton coordinate (C10, C12 x/y, tilt row/column, depth), and
+// with --baseline RESULT.json the same for that run's kept low-order fit.
 
 struct Options {
   var input: URL?
@@ -32,6 +42,17 @@ struct Options {
   var gradientSettings = SSBFifthOrderGradientSearch.Settings()
   var verbose = false
   var curvature = false
+  var detectorSampling: Double?
+  var center: (Double, Double)?
+  var radius: Double?
+  /// Use the case's exported `dark_field.f32` for the branch test unless `--no-dark-field`.
+  var caseDarkField = true
+  var compareStandard = false
+  var darkField: URL?
+  var exportDarkField: URL?
+  var verifyBranches = false
+  var checkMaximum = false
+  var baseline: URL?
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -75,6 +96,19 @@ struct Options {
         gradientSettings.update = SSBFifthOrderGradientSearch.Update(rawValue: try value(flag)) ?? .bfgs
       case "--verbose": verbose = true
       case "--curvature": curvature = true
+      case "--detector-sampling": detectorSampling = Double(try value(flag))
+      case "--center":
+        let parts = try value(flag).split(separator: ",").compactMap { Double($0) }
+        guard parts.count == 2 else { throw failure("--center takes ROW,COLUMN") }
+        center = (parts[0], parts[1])
+      case "--radius": radius = Double(try value(flag))
+      case "--no-dark-field": caseDarkField = false
+      case "--compare-standard": compareStandard = true
+      case "--dark-field": darkField = URL(fileURLWithPath: try value(flag))
+      case "--export-dark-field": exportDarkField = URL(fileURLWithPath: try value(flag))
+      case "--verify-branches": verifyBranches = true
+      case "--check-maximum": checkMaximum = true
+      case "--baseline": baseline = URL(fileURLWithPath: try value(flag))
       default: throw failure("Unknown argument \(flag)")
       }
     }
@@ -103,47 +137,79 @@ struct CaseRecord: Codable {
   var countType: Int
   var rotationEstimateDegrees: Double
   var exportSeconds: Double
+  /// Median-filled camera-flagged pixels; nil for the first export format (flagged pixels excluded).
+  var flaggedPixels: [Int]? = nil
+  var evidence: String? = nil
 }
 
 func log(_ message: String) {
   FileHandle.standardError.write(Data((message + "\n").utf8))
 }
 
-/// Python `dpc.workflow.find_optimal_rotation` (unflipped): the exact minimum of the mean squared curl.
-func curlRotation(rowCOM: [Double], columnCOM: [Double], rows: Int, columns: Int) -> Double {
-  var curl = 0.0
-  var divergence = 0.0
-  var cross = 0.0
-  var count = 0.0
-  for r in 1..<(rows - 1) {
-    for c in 1..<(columns - 1) {
-      let vcDown = Double(Float(columnCOM[(r + 1) * columns + c]))
-      let vcUp = Double(Float(columnCOM[(r - 1) * columns + c]))
-      let vrRight = Double(Float(rowCOM[r * columns + c + 1]))
-      let vrLeft = Double(Float(rowCOM[r * columns + c - 1]))
-      let vrDown = Double(Float(rowCOM[(r + 1) * columns + c]))
-      let vrUp = Double(Float(rowCOM[(r - 1) * columns + c]))
-      let vcRight = Double(Float(columnCOM[r * columns + c + 1]))
-      let vcLeft = Double(Float(columnCOM[r * columns + c - 1]))
-      let k = 0.5 * (vcDown - vcUp) - 0.5 * (vrRight - vrLeft)
-      let d = 0.5 * (vrDown - vrUp) + 0.5 * (vcRight - vcLeft)
-      curl += k * k
-      divergence += d * d
-      cross += k * d
-      count += 1
+/// The app's flagged-pixel handling (Live4DSTEM `SSBFlaggedPixels`, Python `io.load`): each flagged pixel takes,
+/// at every scan position, the median of the valid pixels in the smallest square around it that has any.
+struct FlaggedPixels {
+  var pixels: [Int] = []
+  var neighbors: [[Int]] = []
+
+  init(validity: [UInt8], rows: Int, columns: Int) {
+    for pixel in validity.indices where validity[pixel] == 0 {
+      let row = pixel / columns
+      let column = pixel % columns
+      var radius = 1
+      while true {
+        var near: [Int] = []
+        for r in max(0, row - radius)...min(rows - 1, row + radius) {
+          for c in max(0, column - radius)...min(columns - 1, column + radius)
+          where validity[r * columns + c] != 0 {
+            near.append(r * columns + c)
+          }
+        }
+        if !near.isEmpty {
+          neighbors.append(near)
+          break
+        }
+        radius += 1
+      }
+      pixels.append(pixel)
     }
   }
-  curl /= count
-  divergence /= count
-  cross /= count
-  let half = 0.5 * (curl - divergence)
-  guard hypot(half, cross) > 0 else { return 0 }
-  let angle = (0.5 * (atan2(cross, half) + Double.pi)).truncatingRemainder(dividingBy: Double.pi)
-  let degrees = (angle * 180 / Double.pi).truncatingRemainder(dividingBy: 180)
-  return degrees == 180 ? 0 : degrees
+
+  static func median(_ values: inout [UInt32]) -> UInt32 {
+    values.sort()
+    let total = UInt64(values[(values.count - 1) / 2]) + UInt64(values[values.count / 2])
+    let half = total >> 1
+    return UInt32(half + (total & half & 1))
+  }
 }
 
-/// Read the original acquisition once and keep its exact selected BF columns beside a case record.
+/// Exact detector columns (uint32, plane-major) of the given pixels.
+func readColumns(
+  _ pixels: [Int], resident: MetalCompactH5ResidentSource, device: MTLDevice, plane: Int
+) throws -> [[UInt32]] {
+  guard let queue = device.makeCommandQueue(),
+    let staging = device.makeBuffer(length: 32 * plane * 4, options: .storageModeShared)
+  else { throw failure("Metal staging unavailable") }
+  var columns: [[UInt32]] = []
+  columns.reserveCapacity(pixels.count)
+  for first in stride(from: 0, to: pixels.count, by: 32) {
+    let batch = Array(pixels[first..<min(first + 32, pixels.count)])
+    guard let commands = queue.makeCommandBuffer() else { throw failure("Metal command unavailable") }
+    try resident.encodeDetectorColumns(pixels: batch, into: staging, commands: commands)
+    commands.commit()
+    commands.waitUntilCompleted()
+    if let error = commands.error { throw error }
+    let values = staging.contents().assumingMemoryBound(to: UInt32.self)
+    for index in batch.indices {
+      columns.append(Array(UnsafeBufferPointer(start: values + index * plane, count: plane)))
+    }
+  }
+  return columns
+}
+
+/// Read the original acquisition once and keep its exact selected BF columns beside a case record, prepared as
+/// the app prepares SSB: flagged pixels median-filled and kept, the BF disk measured on the filled totals, the
+/// rotation from the marker-free filled moments, and the dark field of the branch test.
 func export(options: Options, device: MTLDevice) throws {
   guard let input = options.input else {
     throw failure("No cache at \(options.cache.path); pass --input MASTER.h5 to create it")
@@ -159,54 +225,93 @@ func export(options: Options, device: MTLDevice) throws {
   let resident = try MetalCompactH5Loader.load(source: indexed, device: device)
   defer { resident.releaseResidentStorage() }
   let metadata = resident.metadata
-  log("loaded \(metadata.scanRows)x\(metadata.scanColumns) scan, \(metadata.detectorRows)x\(metadata.detectorColumns) detector in \(String(format: "%.1f", Date().timeIntervalSince(started))) s")
-  let detectorSum = try resident.meanDiffractionPattern().detectorSum
-  // Camera-flagged pixels hold the dtype's maximum in every frame; the app's validity mask excludes them.
-  let markers: [UInt64] = [255, 65535, 4_294_967_295].map { $0 * UInt64(metadata.scanCount) }
-  let flagged = detectorSum.indices.filter { markers.contains(detectorSum[$0]) }
-  let excluded = Set(metadata.excludedDetectorPixels).union(flagged)
-  log("excluded \(excluded.count) flagged detector pixels")
+  let plane = metadata.scanCount
+  let rows = metadata.detectorRows
+  let columns = metadata.detectorColumns
+  log("loaded \(metadata.scanRows)x\(metadata.scanColumns) scan, \(rows)x\(columns) detector in \(String(format: "%.1f", Date().timeIntervalSince(started))) s")
+  let raw = try resident.meanDiffractionPattern().detectorSum
+  // Camera-flagged pixels hold the dtype's maximum in every frame.
+  let markers: [UInt64] = [255, 65535, 4_294_967_295]
+  let validity = raw.map { total in markers.contains { $0 * UInt64(plane) == total } ? UInt8(0) : 1 }
+  let flagged = FlaggedPixels(validity: validity, rows: rows, columns: columns)
+  let neighborPixels = Array(Set(flagged.neighbors.flatMap { $0 })).sorted()
+  let neighborColumns = Dictionary(
+    uniqueKeysWithValues: zip(
+      neighborPixels,
+      try readColumns(neighborPixels, resident: resident, device: device, plane: plane)))
+  let filled: [[UInt32]] = flagged.neighbors.map { near in
+    var values = [UInt32](repeating: 0, count: near.count)
+    return (0..<plane).map { position in
+      for (slot, pixel) in near.enumerated() { values[slot] = neighborColumns[pixel]![position] }
+      return FlaggedPixels.median(&values)
+    }
+  }
+  var detectorSum = raw
+  for (pixel, column) in zip(flagged.pixels, filled) {
+    detectorSum[pixel] = column.reduce(UInt64(0)) { $0 + UInt64($1) }
+  }
+  log("median-filled \(flagged.pixels.count) flagged detector pixels \(flagged.pixels)")
+  let excluded = Set(metadata.excludedDetectorPixels)
   let disk = try MetalSSBBrightfieldEstimate.measure(
-    device: device, detectorSum: detectorSum, rows: metadata.detectorRows,
-    columns: metadata.detectorColumns, excluded: excluded)
-  let sampling = try disk.detectorSampling(semiangle: options.semiangleMrad)
+    device: device, detectorSum: detectorSum, rows: rows, columns: columns, excluded: excluded)
+  let sampling = try options.detectorSampling ?? disk.detectorSampling(semiangle: options.semiangleMrad)
   let calibration = MetalSSBCalibration(
     voltageKV: options.voltageKV, semiangleMrad: options.semiangleMrad,
     scanSamplingRowAngstroms: options.scanStep, scanSamplingColumnAngstroms: options.scanStep,
     detectorSamplingRowMrad: sampling, detectorSamplingColumnMrad: sampling,
-    brightfieldCenterRowPixels: disk.centerRow, brightfieldCenterColumnPixels: disk.centerColumn,
-    brightfieldRadiusPixels: disk.selectionRadius)
+    brightfieldCenterRowPixels: options.center?.0 ?? disk.centerRow,
+    brightfieldCenterColumnPixels: options.center?.1 ?? disk.centerColumn,
+    brightfieldRadiusPixels: options.radius ?? disk.selectionRadius)
   let setup = try calibration.geometry(
-    detectorRows: metadata.detectorRows, detectorColumns: metadata.detectorColumns,
-    detectorSum: detectorSum, excludedPixels: excluded,
+    detectorRows: rows, detectorColumns: columns, detectorSum: detectorSum, excludedPixels: excluded,
     scanRows: metadata.scanRows, scanColumns: metadata.scanColumns)
+  // Rotation from exact moments without the markers, with each flagged pixel's filled column
+  // (Live4DSTEM `SSBMeasuredEvidence.rotation`).
   guard let moments = try resident.preparedDPCMomentValues() else {
     throw failure("The resident has no exact DPC moments for the rotation estimate")
   }
-  let rowCOM = zip(moments.detectorRowMoment, moments.total).map {
-    $1 > 0 ? Double($0) / Double($1) : 0
+  var total = moments.total
+  var rowMoment = moments.detectorRowMoment
+  var columnMoment = moments.detectorColumnMoment
+  for (slot, pixel) in flagged.pixels.enumerated() {
+    let marker = raw[pixel] / UInt64(plane)
+    let r = UInt64(pixel / columns)
+    let c = UInt64(pixel % columns)
+    for position in 0..<plane {
+      let value = UInt64(filled[slot][position])
+      total[position] = total[position] - marker + value
+      rowMoment[position] = rowMoment[position] - marker * r + value * r
+      columnMoment[position] = columnMoment[position] - marker * c + value * c
+    }
   }
-  let columnCOM = zip(moments.detectorColumnMoment, moments.total).map {
-    $1 > 0 ? Double($0) / Double($1) : 0
+  let com = SSBRotationBranches.centerOfMass(
+    total: total, rowMoment: rowMoment, columnMoment: columnMoment)
+  let rotation = SSBRotationBranches.curlRotationDegrees(
+    row: com.row, column: com.column, rows: metadata.scanRows, columns: metadata.scanColumns)
+  // Dark field: every count at or beyond 1.1 BF radii (float32 distances, Python `_dark_field_of`).
+  let inner = Float(
+    SSBRotationBranches.darkFieldInnerRadius * calibration.semiangleMrad
+      / min(calibration.detectorSamplingRowMrad, calibration.detectorSamplingColumnMrad))
+  let insidePixels = (0..<(rows * columns)).filter { pixel in
+    let dr = Float(pixel / columns) - Float(calibration.brightfieldCenterRowPixels)
+    let dc = Float(pixel % columns) - Float(calibration.brightfieldCenterColumnPixels)
+    return (dr * dr + dc * dc).squareRoot() < inner
   }
-  let rotation = curlRotation(
-    rowCOM: rowCOM, columnCOM: columnCOM, rows: metadata.scanRows, columns: metadata.scanColumns)
-  // Exact columns, narrowed only when every count fits.
-  let plane = metadata.scanCount
-  guard let queue = device.makeCommandQueue(),
-    let staging = device.makeBuffer(length: 32 * plane * 4, options: .storageModeShared)
-  else { throw failure("Metal staging unavailable") }
-  var wide = [UInt32](repeating: 0, count: setup.pixels.count * plane)
-  for first in stride(from: 0, to: setup.pixels.count, by: 32) {
-    let pixels = Array(setup.pixels[first..<min(first + 32, setup.pixels.count)])
-    guard let commands = queue.makeCommandBuffer() else { throw failure("Metal command unavailable") }
-    try resident.encodeDetectorColumns(pixels: pixels, into: staging, commands: commands)
-    commands.commit()
-    commands.waitUntilCompleted()
-    if let error = commands.error { throw error }
-    let values = staging.contents().assumingMemoryBound(to: UInt32.self)
-    for i in 0..<(pixels.count * plane) { wide[first * plane + i] = values[i] }
+  let filledByPixel = Dictionary(uniqueKeysWithValues: zip(flagged.pixels, filled))
+  var dark = total.map(Double.init)
+  for first in stride(from: 0, to: insidePixels.count, by: 1024) {
+    let batch = Array(insidePixels[first..<min(first + 1024, insidePixels.count)])
+    let read = try readColumns(batch, resident: resident, device: device, plane: plane)
+    for (pixel, column) in zip(batch, read) {
+      let values = filledByPixel[pixel] ?? column
+      for position in 0..<plane { dark[position] -= Double(values[position]) }
+    }
   }
+  // Exact BF columns (flagged pixels as filled), narrowed only when every count fits.
+  let selected = try readColumns(setup.pixels, resident: resident, device: device, plane: plane)
+  var wide = [UInt32]()
+  wide.reserveCapacity(setup.pixels.count * plane)
+  for (pixel, column) in zip(setup.pixels, selected) { wide += filledByPixel[pixel] ?? column }
   let maximum = wide.max() ?? 0
   try FileManager.default.createDirectory(at: options.cache, withIntermediateDirectories: true)
   let countType: MetalSSBCountType = maximum <= 255 ? .uint8 : (maximum <= 65535 ? .uint16 : .uint32)
@@ -216,12 +321,15 @@ func export(options: Options, device: MTLDevice) throws {
   case .uint16: try Data(wide.map { UInt16($0) }.withUnsafeBytes { Data($0) }).write(to: countsURL)
   case .uint32: try wide.withUnsafeBytes { Data($0) }.write(to: countsURL)
   }
+  try dark.map(Float.init).withUnsafeBytes { Data($0) }.write(
+    to: options.cache.appendingPathComponent("dark_field.f32"))
   let record = CaseRecord(
     source: input.path, scanRows: metadata.scanRows, scanColumns: metadata.scanColumns,
-    detectorRows: metadata.detectorRows, detectorColumns: metadata.detectorColumns,
+    detectorRows: rows, detectorColumns: columns,
     calibration: calibration, excludedPixels: excluded.sorted(), pixels: setup.pixels,
     countType: countType.rawValue, rotationEstimateDegrees: rotation,
-    exportSeconds: Date().timeIntervalSince(started))
+    exportSeconds: Date().timeIntervalSince(started), flaggedPixels: flagged.pixels,
+    evidence: "app-v2: flagged median fill, marker-free moments, dark field")
   let encoder = JSONEncoder()
   encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
   try encoder.encode(record).write(to: options.cache.appendingPathComponent("case.json"))
@@ -229,6 +337,40 @@ func export(options: Options, device: MTLDevice) throws {
     to: options.cache.appendingPathComponent("detector_sum.u64"))
   log(
     "exported \(setup.pixels.count) BF columns (max count \(maximum), \(countType)) rotation \(rotation) deg in \(String(format: "%.1f", record.exportSeconds)) s"
+  )
+}
+
+/// The app's branch-test dark field (`SSBMeasuredEvidence.darkFieldMask`): exact counts of the valid detector
+/// pixels at or beyond 1.1 BF radii from the calibrated centre, per scan position, as float32.
+func exportDarkField(options: Options, record: CaseRecord, to url: URL, device: MTLDevice) throws {
+  guard let input = options.input else { throw failure("--export-dark-field needs --input MASTER.h5") }
+  let started = Date()
+  let index = options.index ?? options.cache.appendingPathComponent("index", isDirectory: true)
+  let catalog = try Native4DSTEMCatalogBuilder(cacheDirectory: index).prepare(input: input)
+  guard let dataset = catalog.datasets.first else { throw failure("No acquisition in \(input.path)") }
+  let resident = try MetalCompactH5Loader.load(
+    source: try Native4DSTEMIndexedSource.open(dataset: dataset), device: device)
+  defer { resident.releaseResidentStorage() }
+  let metadata = resident.metadata
+  guard metadata.scanRows == record.scanRows, metadata.scanColumns == record.scanColumns,
+    metadata.detectorRows == record.detectorRows, metadata.detectorColumns == record.detectorColumns
+  else { throw failure("\(input.path) is not the acquisition of \(options.cache.path)") }
+  let calibration = record.calibration
+  let radius =
+    calibration.semiangleMrad
+    / min(calibration.detectorSamplingRowMrad, calibration.detectorSamplingColumnMrad)
+  let inner = Float(SSBRotationBranches.darkFieldInnerRadius * radius)
+  let excluded = Set(record.excludedPixels)
+  let mask = (0..<(record.detectorRows * record.detectorColumns)).map { pixel -> UInt8 in
+    let dr = Float(pixel / record.detectorColumns) - Float(calibration.brightfieldCenterRowPixels)
+    let dc = Float(pixel % record.detectorColumns) - Float(calibration.brightfieldCenterColumnPixels)
+    return (dr * dr + dc * dc).squareRoot() >= inner && !excluded.contains(pixel) ? 1 : 0
+  }
+  try resident.updateVirtualDetector(mask: mask)
+  let values = try resident.virtualDetectorValues64().map { Float($0) }
+  try values.withUnsafeBytes { Data($0) }.write(to: url)
+  log(
+    "exported dark field (\(mask.reduce(0) { $0 + Int($1) }) detector pixels, inner radius \(inner) px) in \(String(format: "%.1f", Date().timeIntervalSince(started))) s"
   )
 }
 
@@ -265,6 +407,14 @@ func record(_ fit: SSBFit) -> [String: Any] {
     },
   ]
   if let agreement = fit.sampleAgreement { values["sample_agreement"] = agreement }
+  if let starts = fit.newtonStarts {
+    values["newton_starts"] = starts.map {
+      ["iterations": $0.iterations, "evaluations": $0.evaluations, "converged": $0.converged]
+        as [String: Any]
+    }
+    values["newton_evaluations"] = starts.reduce(0) { $0 + $1.evaluations }
+  }
+  if let source = fit.mappedFromBranch { values["mapped_from_branch"] = source }
   if let normalization = fit.higherOrderNormalization {
     values["higher_order_normalization"] = normalization
   }
@@ -277,6 +427,81 @@ func record(_ fit: SSBFit) -> [String: Any] {
     ] as [String: Any]
   }
   return values
+}
+
+func branchRecord(_ branch: SSBRotationBranches.Branch) -> [String: Any] {
+  var values: [String: Any] = [
+    "rotation_deg": branch.scanDetectorRotationDegrees, "phase_skewness": branch.phaseSkewness,
+  ]
+  if let column = branch.column {
+    values["column_count"] = column.count
+    if let z = column.z { values["column_z"] = z }
+    if let effect = column.effect { values["column_effect"] = effect }
+    if let positive = column.positiveFraction { values["column_positive_fraction"] = positive }
+  }
+  return values
+}
+
+func phaseValues(_ phase: MetalSSBJointPhase) -> [Float] {
+  Array(
+    UnsafeBufferPointer(
+      start: phase.phase.contents().assumingMemoryBound(to: Float.self),
+      count: phase.rows * phase.columns))
+}
+
+/// Search every mapped branch at its own rotation with the same primary options and compare: the agreement of
+/// both points there, the largest phase difference, and the branch decision made with the searched fit. The
+/// model is left at the kept rotation.
+func verifyBranches(
+  _ fitted: SSBBranchedFit, model: MetalSSBJointModel, engine: MetalSSBEngine, darkField: [Float]?,
+  sampling: (Double, Double), trials: Int
+) throws -> [String: Any] {
+  var report: [String: Any] = [:]
+  var phases: [[Float]] = []
+  var size = 0
+  var searchedFits = fitted.fits
+  for (index, fit) in fitted.fits.enumerated() {
+    try model.retarget(scanDetectorRotationDegrees: fit.scanDetectorRotationDegrees)
+    let phase = try model.reconstruct(fit.point, upsamplingFactor: 1)
+    size = phase.rows
+    guard let source = fit.mappedFromBranch else {
+      phases.append(phaseValues(phase))
+      continue
+    }
+    let started = Date()
+    let searched = try SSBModelFit.fit(
+      model: model, engine: engine,
+      options: SSBFitOptions(trials: trials, compareStandard: false, maximumOrder: 1))
+    let seconds = Date().timeIntervalSince(started)
+    searchedFits[index] = searched
+    let agreements = try model.agreements([fit.point, searched.point])
+    let searchedPhase = phaseValues(try model.reconstruct(searched.point, upsamplingFactor: 1))
+    let mappedPhase = phaseValues(phase)
+    let largest = zip(mappedPhase, searchedPhase).reduce(Float(0)) { max($0, abs($1.0 - $1.1)) }
+    phases.append(searchedPhase)
+    // The source point's agreement at its own rotation, against its image here.
+    try model.retarget(scanDetectorRotationDegrees: fitted.fits[source].scanDetectorRotationDegrees)
+    let sourceAgreement = try model.agreements([fitted.fits[source].point])[0]
+    report["branch_\(index)"] = [
+      "mapped_from": source, "mapped": record(fit), "searched": record(searched),
+      "searched_s": seconds, "mapped_agreement": agreements[0], "searched_agreement": agreements[1],
+      "source_agreement_at_source_rotation": sourceAgreement,
+      "mapped_minus_source_relative": (agreements[0] - sourceAgreement) / sourceAgreement,
+      "searched_minus_mapped_relative": (agreements[1] - agreements[0]) / agreements[0],
+      "max_abs_phase_difference_rad": Double(largest),
+    ] as [String: Any]
+  }
+  let decision = SSBRotationBranches.compare(
+    phases: phases, rotations: fitted.fits.map(\.scanDetectorRotationDegrees), rows: size,
+    columns: size, darkField: darkField, scanSampling: sampling)
+  report["searched_decision"] = [
+    "kept": decision.kept, "chosen": decision.chosen, "decided_by": decision.decidedBy.rawValue,
+    "columns": decision.columns, "branch_tests": decision.branches.map(branchRecord),
+  ] as [String: Any]
+  report["decision_unchanged"] =
+    decision.kept == fitted.kept && decision.decidedBy == fitted.decidedBy
+  try model.retarget(scanDetectorRotationDegrees: fitted.fits[fitted.kept].scanDetectorRotationDegrees)
+  return report
 }
 
 /// The exact objective inputs at the kept rotation, with the baseline start and result, for an independent
@@ -308,6 +533,22 @@ if !FileManager.default.fileExists(atPath: caseURL.path) {
 }
 let loadStarted = Date()
 let caseRecord = try JSONDecoder().decode(CaseRecord.self, from: Data(contentsOf: caseURL))
+if let target = options.exportDarkField {
+  try exportDarkField(options: options, record: caseRecord, to: target, device: device)
+  exit(0)
+}
+let caseDarkFieldURL = options.cache.appendingPathComponent("dark_field.f32")
+let darkFieldURL =
+  options.darkField
+  ?? (options.caseDarkField && FileManager.default.fileExists(atPath: caseDarkFieldURL.path)
+    ? caseDarkFieldURL : nil)
+let darkField: [Float]? = try darkFieldURL.map { url in
+  let values = try Data(contentsOf: url).withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+  guard values.count == caseRecord.scanRows * caseRecord.scanColumns else {
+    throw failure("\(url.path) is not a \(caseRecord.scanRows)x\(caseRecord.scanColumns) float32 image")
+  }
+  return values
+}
 let detectorSum = try Data(contentsOf: options.cache.appendingPathComponent("detector_sum.u64"))
   .withUnsafeBytes { Array($0.bindMemory(to: UInt64.self)) }
 let setup = try caseRecord.calibration.geometry(
@@ -338,15 +579,17 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
     var lastStage = ""
     let fitStarted = Date()
     var initialSeconds = 0.0
-    var options5 = SSBFitOptions(trials: options.trials, maximumOrder: options.maximumOrder)
+    var options5 = SSBFitOptions(
+      trials: options.trials, compareStandard: options.compareStandard,
+      maximumOrder: options.maximumOrder)
     options5.higherOrderSearch = options.search
+    let sampling = (
+      caseRecord.calibration.scanSamplingRowAngstroms,
+      caseRecord.calibration.scanSamplingColumnAngstroms
+    )
     let fitted = try SSBModelFit.findAberrations(
       model: model, engine: engine, rotationDegrees: caseRecord.rotationEstimateDegrees,
-      darkField: nil,
-      scanSampling: (
-        caseRecord.calibration.scanSamplingRowAngstroms,
-        caseRecord.calibration.scanSamplingColumnAngstroms
-      ), options: options5,
+      darkField: darkField, scanSampling: sampling, options: options5,
       progress: { stage, _, _ in
         if stage != lastStage {
           stages.append((stage, Date().timeIntervalSince(fitStarted)))
@@ -359,6 +602,7 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
       "repeat": repeatIndex, "device": device.name, "source": caseRecord.source,
       "bf_pixels": setup.pixels.count, "band_count": model.bandCount,
       "rotation_estimate_deg": caseRecord.rotationEstimateDegrees,
+      "dark_field": darkField != nil, "evidence": caseRecord.evidence ?? "v1: flagged excluded",
       "prepare_s": prepareSeconds, "joint_model_s": modelSeconds,
       "initial_fit_s": initialSeconds, "fit_total_s": totalSeconds,
       "stages": stages.map { ["stage": $0.0, "start_s": $0.1] as [String: Any] },
@@ -367,6 +611,57 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
     ]
     if let initial = fitted.refinedFit == nil ? nil : fitted.fits[fitted.kept] as SSBFit? {
       result["initial"] = record(initial)
+    }
+    result["branch_tests"] = fitted.branches.map(branchRecord)
+    result["column_count"] = fitted.columnCount
+    func neighbours(_ p: SSBModelPoint, rotation: Double) throws -> [String: Any] {
+      try model.retarget(scanDetectorRotationDegrees: rotation)
+      let z = [
+        p.c10Angstroms, p.c12Angstroms * cos(2 * p.phi12Radians),
+        p.c12Angstroms * sin(2 * p.phi12Radians), p.sampleTiltMrad[0], p.sampleTiltMrad[1],
+        p.depthSpreadAngstroms,
+      ]
+      let delta = [0.05, 0.05, 0.05, 0.005, 0.005, 0.5]
+      var points = [p]
+      for d in 0..<6 {
+        for sign in [1.0, -1.0] {
+          var shifted = z
+          shifted[d] += sign * delta[d]
+          points.append(
+            SSBModelPoint(
+              c10Angstroms: shifted[0], c12Angstroms: hypot(shifted[1], shifted[2]),
+              phi12Radians: atan2(shifted[2], shifted[1]) / 2,
+              sampleTiltMrad: [shifted[3], shifted[4]], depthSpreadAngstroms: shifted[5]))
+        }
+      }
+      let values = try model.agreements(points)
+      return [
+        "agreement": values[0], "delta": delta, "rotation_deg": rotation,
+        "neighbour_relative": values.dropFirst().map { ($0 - values[0]) / values[0] },
+      ]
+    }
+    if options.checkMaximum {
+      let kept = fitted.fits[fitted.kept]
+      result["maximum_check"] = try neighbours(
+        kept.point, rotation: kept.scanDetectorRotationDegrees)
+      if let baseline = options.baseline {
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: baseline)) as! [String: Any]
+        let run = (json["results"] as! [[String: Any]])[0]
+        let branch = (run["branches"] as! [[String: Any]])[run["kept"] as! Int]
+        let point = SSBModelPoint(
+          c10Nanometers: branch["C10_nm"] as! Double, c12Nanometers: branch["C12_nm"] as! Double,
+          phi12Degrees: branch["phi12_deg"] as! Double,
+          sampleTiltMrad: branch["sample_tilt_mrad"] as! [Double],
+          depthSpreadNanometers: branch["depth_spread_nm"] as! Double)
+        result["baseline_maximum_check"] = try neighbours(
+          point, rotation: branch["rotation_deg"] as! Double)
+      }
+      try model.retarget(scanDetectorRotationDegrees: kept.scanDetectorRotationDegrees)
+    }
+    if options.verifyBranches {
+      result["verification"] = try verifyBranches(
+        fitted, model: model, engine: engine, darkField: darkField, sampling: sampling,
+        trials: options.trials)
     }
     results.append(result)
     if repeatIndex == 0, let dump = options.dump {

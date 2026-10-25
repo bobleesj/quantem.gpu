@@ -126,6 +126,7 @@ public final class MetalSSBJointModel {
   private var batchPower: MTLBuffer?
   private var coherent: SSBCoherentReconstruction
   private var fifthOrder: SSBFifthOrderAgreement?
+  private var lowOrder: SSBLowOrderDerivatives?
   private var fifthOrderGradient: SSBFifthOrderGradient?
 
   public var wavelengthAngstroms: Double {
@@ -160,7 +161,7 @@ public final class MetalSSBJointModel {
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
-        "ssb_fifth_order_gradient", "ssb_redraw",
+        "ssb_fifth_order_gradient", "ssb_redraw", "ssb_low_order",
       ]),
       options: options)
     self.library = library
@@ -483,6 +484,24 @@ public final class MetalSSBJointModel {
       start: weights.contents().assumingMemoryBound(to: Float.self), count: bandCount)
     let sub = stride(from: 0, to: bandCount, by: qStride).reduce(0.0) { $0 + Double(w[$1]) }
     return w.reduce(0.0) { $0 + Double($1) } / sub
+  }
+
+  /// The low-order agreement with its exact gradient and Hessian at each row of Newton coordinates
+  /// (C10, C12 cos 2 phi12, C12 sin 2 phi12 [A], tilt row, tilt column [mrad], depth spread [A]).
+  func lowOrderDerivatives(_ rows: [[Double]], isCancelled: () -> Bool = { false }) throws
+    -> [SSBLowOrderDerivatives.Result]
+  {
+    try validatePreparation()
+    if lowOrder == nil {
+      lowOrder = try SSBLowOrderDerivatives(device: device, queue: queue, library: library)
+    }
+    var p = grid
+    let bytes = withUnsafeBytes(of: &p) { Array($0) }
+    return try lowOrder!.evaluate(
+      rows: rows, grid: bytes, bandCount: bandCount, count: activeIndices.count,
+      chunks: Int(grid.chunks), band: bandG, k: kBuffer, q: qBuffer, weights: weights,
+      probeGeometry: probeGeometry, neighbour: neighbourBuffer, rowStep: rowStep,
+      isCancelled: isCancelled)
   }
 
   /// The exact float32 inputs of the agreement objective at the current rotation, for an independent
