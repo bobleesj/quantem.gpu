@@ -5,10 +5,15 @@
 1. Can the 3x SSB redraw with a 14-term fit get closer to 30 fps without changing the model?
 2. Can the regularized `phase` and `complex` methods redraw while one aberration slider is dragged in a few ms, at float32-level precision?
 3. Can an SSB drag do the same, although its correction gamma / |gamma| is not analytic in the optics?
+4. With these, how many frames per second does ShowPtycho paint while a person drags each control?
 
 **1. Yes, 56 -> 30 ms.** Every term of the SSB sum obeys F(-q) = -conj F(q) for any aberration order, so the fine-grid kernel now sums each pair q, -q once with the 14-term probe too. Images differ from the full-plane sum by at most 3.0e-8 rad (one float32 ulp of the largest phase).
 
 **2. Yes, 1.0 ms (phase) and 2.9 ms (complex) per update**, against 34 and 45-48 ms for an exact preparation. Error against a float64 reference: 4.1-5.3e-7 of the largest phase, the exact path's own 4.1-4.9e-7. The cost moves to the grab: 0.45 s (phase) or 0.75 s (complex) of exact preparations, built one per frame while exact frames are shown.
+
+**3. Yes, 6.5-10 ms per frame** (single-sideband terms interpolated, triple overlap exact), 1.5-7.7e-7 of the largest phase from the exact preview.
+
+**4. 25-28 fps for C10, C12 and phi12 with phase, about 26 for C10 with complex, 18-27 for SSB, 23-27 for the regularization sliders** (GPU 0, real pointer drags in Chrome on the same machine, section 4). The Jupyter Comm transfer of each 9.4 MB float32 frame (25-33 ms) is now the bound, not the reconstruction (3-10 ms).
 
 ## Setup
 
@@ -16,7 +21,7 @@
 - GPU 0 only (RTX PRO 6000 Blackwell Workstation, 600 W), confirmed by name; GPU 1 (Max-Q) is never compared with it.
 - Timing: device-synchronized wall clock; SSB 8 calls with C10 changed each call, first two dropped; drag window 5 calls after one warm-up, median.
 - Strengths 0.03 / 0.03, smoothness 1 1/A, uniform weights.
-- Source: quantem.gpu `oct-24-direct-iterative-api` at `f1cbe8aa` before; commits `953f9370` (regularized drag window), `c5b17d86` (SSB pairing), `bc438e85` (SSB drag window), `9fdd3c4d` (triple-overlap list), `d0e6ad84` (windows per control, idle prepare).
+- Source: quantem.gpu `oct-24-direct-iterative-api` at `f1cbe8aa` before; commits `953f9370` (regularized drag window), `c5b17d86` (SSB pairing), `bc438e85` (SSB drag window), `9fdd3c4d` (triple-overlap list), `d0e6ad84` (windows per control, idle prepare), `ef144324` (wider, tiled windows), `4de5b446` (fixed tile anchor), `b648648e` (azimuth reach, measured orders).
 
 ## 1. SSB: the q, -q symmetry
 
@@ -44,7 +49,7 @@ What remains in the 30 ms: the 14-term chi is evaluated twice per (q, k) pair; w
 
 Along one control c with everything else held, every Gram entry and right side of the per-frequency normal equations is sum_k f_k exp(i (c - c0) u_k), an entire function of c. On [c0 - h, c0 + h] its Chebyshev series converges like 2 (z/2)^(N+1) / (N+1)!, z = h max|u|. `DragWindow` (`ssb/cuda/direct.py`) prepares the statistics exactly at the N + 1 = 13 Chebyshev nodes and keeps the coefficients c_n = (2/(N+1)) sum_j T_n(x_j) F(x_j). Any c in the window is then one matrix-vector product, F = sum_n c_n T_n(x), followed by a float64 Cholesky solve per frequency, the scatter and one inverse FFT.
 
-max|u| is the spread of d chi / dc over the aperture (chi enters every product as a difference of two pupil points): (2 pi / lambda) alpha^(n+1) / (n + 1) for a magnitude C_nm, doubled for m > 0; m C_nm times that, doubled, for an azimuth. h = 3 / max|u| with N = 12.
+max|u| is the spread of d chi / dc over the aperture (chi enters every product as a difference of two pupil points): (2 pi / lambda) alpha^(n+1) / (n + 1) for a magnitude C_nm, doubled for m > 0; m C_nm times that, doubled, for an azimuth. h = 3 / max|u| with N = 12 in the first version (the numbers in this section); section 4 widens the windows.
 
 | Control | half width h |
 |---|---|
@@ -97,7 +102,7 @@ Serves: SSB drags of C10, C12, phi12 (or any term) with the 14-term fit held, 3x
 
 A term (q, k) has one of three supports: neither sideband aperture open (zero), one open, or both open (triple overlap). With one open, gamma = w1 t1 alone and gamma / |gamma| = sign(w1) exp(-i (chi(k - q) - chi(k))): the sinc weight does not depend on the aberrations, so this term is an entire function of the control, like the regularized statistics. With both open, |gamma| depends on the optics and vanishes on the real axis where the two terms cancel, so no polynomial in the control fits it. The kernel now takes a class switch (`SSB_WAVE_PAIRS` 1 = one sideband, 2 = both); their sum is the full spectrum to 1.2e-18 of its largest value (float64 summation order). The scan mean is counted in class 1 only.
 
-`WaveWindow` (`ssb/cuda/thick.py`) keeps the class-1 spectrum as a Chebyshev series (N = 12, the same h as section 2) and sums class 2 exactly every frame. On the test field class 2 holds 3.3e8 of the 2.2e9 nonzero terms (15 %), all at |q| <= R (136k of the 543k frequencies in the support).
+`WaveWindow` (`ssb/cuda/thick.py`) keeps the class-1 spectrum as a Chebyshev series (the same h and N as section 2) and sums class 2 exactly every frame. On the test field class 2 holds 3.3e8 of the 2.2e9 nonzero terms (15 %), all at |q| <= R (136k of the 543k frequencies in the support).
 
 | GPU 0, 3x, 14-term fit | exact preview | drag frame | build (13 nodes) | memory |
 |---|---|---|---|---|
@@ -109,6 +114,48 @@ Window frame against the exact preview, max |difference| over the largest phase,
 The class-2 sum first took 9.3 ms of the 10 ms frame. ncu showed DRAM 57 % busy: each of its 10 launches wrote, and then reduced, 16 partial planes of the whole 1536 x 769 stored plane (302 MB) for 136k useful frequencies. Running class 2 over a list of the |q| <= R frequencies (`SSB_WAVE_QLIST`), with BF pixels in compact cells of a quarter BF radius (`SSB_WAVE_ORDER`, 64 per group) and 64 groups per launch: 9.2 -> 5.8 ms, frame 10.2 -> 6.5 ms. Tests: `tests/hardware/cuda/test_direct_drag_window.py` (`test_ssb_window_matches_exact_preview`: first frame bit-identical to the preview, nodes at 1e-6, between nodes at 2e-6 of the largest phase).
 
 A block whose frequencies all miss its BF group now returns before the per-tile BF setup (`__syncthreads_or`): bit-identical, 12.7 -> 12.3 ms of class 2 on GPU 1, kept.
+
+## 4. End to end in ShowPtycho
+
+Serves: a person dragging one slider of a live session, phase image and FFT panel on, 3x Auto.
+
+Setup: Jupyter on the GPU machine, headed Chrome on the same machine with the NVIDIA Vulkan adapter (`adapter.info`: nvidia / blackwell, subgroup 32, checked before every run), kernel on GPU 0 (threads capped at 4). Real pointer drags through raw CDP `Input` events (no Playwright, whose Network domain slows a 9.4 MB WebSocket message 6x): hold the value thumb, 20 moves 150 ms apart for latency (move to paint stamp), then 120 moves at 60 Hz for the frame rate (new phase paints per second). The thumb swings +-20 px each move, which is +-4.5 nm of C10, +-14 deg of phi12 and +-16 um of C30 on these sliders. Display on WebGPU and one message per frame come from the ShowPtycho transport work of the same day (quantem.widget `dbf3791c`); this section adds the drag windows (quantem.widget `298bb63a`): a request that moves exactly one aberration and is not a release is drawn by `drag`, one window node is built after each such frame, and after a release, the first frame or a change of method, windows along the released slider and C10, C12, phi12 build on idle IOLoop ticks.
+
+Measured on the way (each fixed and remeasured):
+
+| Problem seen in the timeline | Fix |
+|---|---|
+| +-2 nm windows (N = 12, z = 3): the +-4.5 nm swing left the window every frame, every frame exact | z = 10 (C10 +-6.8 nm, C12 +-3.4 nm), N = 28 |
+| a coalesced request repeating the last values counted as "no slider moved" and went exact, then re-asked for windows mid-drag | it stays on the dragged control's window; windows are asked for only on release, first frame or new settings |
+| a drag oscillating across a window edge re-centred a window per crossing | tiles on a fixed grid c0 + 2 h k, three kept per control, the grid anchored on the first tile |
+| phi12 slider spans 180 deg: +-14 deg tiles needed three, 75 nodes | azimuth z = 20 (phi12 +-28 deg at C12 = 6.9 nm), N = 49 |
+
+The window orders were measured, not taken from the bound: at z = 20 a bound of 1e-8 (N = 40) left 2-4e-6 of the largest phase, because a Gram entry is a sum with cancellation; N = 49 reaches the 4-7e-7 floor (synthetic test, and 6.4-8.5e-7 on the test field). Window cost on GPU 1 (Max-Q): C10 (N = 28) builds in 0.9 s phase, 1.4 s complex, 0.8 s SSB; phi12 (N = 49) in 2.5 s, 4.1 s, 2.2 s; memory per window 1.1-2.2 GB phase, 4-8 GB complex, 0.5-0.9 GB SSB.
+
+Frames per second while dragging (open loop) and median latency, GPU 0, final code. "No rest" drags each control right after the previous release; "rest" waits 4 s first, as a person moving to the next slider.
+
+| Control | method | fps, no rest | fps, rest | latency ms |
+|---|---|---|---|---|
+| C10 | phase | 27.6 | 24.7 | 42-49 |
+| C12 | phase | 28.2 | 26.8 | 46-56 |
+| phi12 | phase | 27.4 | 26.5 | 44-48 |
+| C21 (higher order) | phase | 17.7 | | 78 |
+| C30 (higher order) | phase | 18.4 | | 53 |
+| phase regularization | phase | 26.9 | | 43 |
+| C10 | complex | 26.1 | 27.0 | 45-49 |
+| phi12 | complex | | 18.8 | 54 |
+| phase regularization | complex | 24.4 | | 44 |
+| amplitude regularization | complex | 23.4 | | 48 |
+| C10 | SSB | 26.9 | 18.3 | 52-53 |
+| C12 | SSB | 17.3 | | 65 |
+| phi12 | SSB | | 25.2 | 50 |
+| C21 (higher order) | SSB | 17.2 | | 78 |
+
+Same drags before the windows (transport work only, GPU 1): 15-17 fps on C10, C12, phi12 with phase, 12.6 complex, 9.5 SSB. Run-to-run spread is a few fps; the low entries (SSB C10 with rest, C12 SSB, phi12 complex) are drags that began while a window for another control was still building on idle ticks. C21 and C30 get no window ahead of the grab and their sliders are coarse (one +-20 px swing moves C30 by +-16 um, past a +-15 um tile), so they build during the drag. C12 with complex could not be measured: the harness found no C12 thumb in that layout.
+
+What bounds it now: with a 3-10 ms reconstruction an update takes about 45 ms; the Jupyter Comm path moves a 9.4 MB frame in 25-33 ms back to back (a plain WebSocket in the same Chrome: 11 ms), so 30 fps is the ceiling of this transport. 60 fps needs another channel for the frame: a WebSocket beside the Comm (needs a forwarded port when the browser is on another computer), or sending the solved spectrum (about half the bytes) and taking its inverse FFT in the browser's WebGPU, whose float32 image would no longer be bit-identical to the one Python saves. Both are design decisions, not done here.
+
+Run note: the measurement kernel was shut down once, mid-run, together with every other kernel on the server, cause unknown (no session claims it); the runs above are from a fresh kernel.
 
 ## Rejected or deferred
 
@@ -122,5 +169,7 @@ A block whose frequencies all miss its BF group now returns before the per-tile 
 
 ## Next
 
-- End-to-end frames per second in ShowPtycho per control, once the transport path delivers one float32 image per update.
+- 60 fps: a frame channel faster than the Jupyter Comm (section 4), the bound for every control now.
+- Faster window builds, so a grab right after another slider's release, or of a higher-order slider, starts on window frames: one kernel evaluating all nodes of a control (the geometry, sinc and the other terms' chi are shared), or the fused preparation prototype (19.5 / 35.5 ms per node with its faster transcendentals, a precision decision).
+- Complex windows hold 4-8 GB each; storing the Hermitian Gram's upper triangle halves that.
 - SSB exact frames (shown while a window builds, and on release) remain 30-35 ms; the depth sinc (16 % of the kernel) is the next ablation-backed target.
