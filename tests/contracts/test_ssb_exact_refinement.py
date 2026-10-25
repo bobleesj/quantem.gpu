@@ -291,3 +291,56 @@ def test_bfgs_on_a_backend_without_gradients_fails_before_computation():
             session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
             primary_options={"check_rotation": False, "refine_rotation": False}, refinement="bfgs", show=False)
     session._find_aberrations.assert_not_called()
+
+
+@pytest.mark.parametrize("limit", [2, 20, 2.0, 20.0])
+def test_higher_order_limit_sets_the_box_of_the_22_higher_orders(limit):
+    bounds = fifth_order_fit.fifth_order_bounds(limit)
+    np.testing.assert_array_equal(bounds[6:], np.tile([-float(limit), float(limit)], (22, 1)))
+    np.testing.assert_array_equal(bounds[:6], [(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)])
+
+
+@pytest.mark.parametrize("limit", [10, 0, -2, "wide", None, float("nan")])
+def test_other_higher_order_limits_are_refused(limit):
+    with pytest.raises(ValueError, match="2 \\(standard\\) or 20 \\(wide\\)"):
+        fifth_order_fit.validate_higher_order_limit(limit)
+
+
+def test_higher_order_limit_is_recorded_and_checked_before_computation(monkeypatch):
+    import inspect
+    import sys
+
+    start = np.zeros(28)
+    start[5] = 1.0
+    objective = SimpleNamespace(evaluate=lambda points, order: np.ones(len(np.atleast_2d(points))))
+    monkeypatch.setattr(fifth_order_fit, "_objective", lambda ssb, gradients=False: objective)
+    monkeypatch.setitem(sys.modules, "quantem.gpu.ssb.fifth_order_parameters", SimpleNamespace(
+        vector=lambda fit, order: start.copy(), public_params=lambda *args: ({}, (0.0, 0.0), 10.0)))
+    seen = {}
+
+    def refine(tracker, initial, bounds):
+        seen["bounds"] = bounds
+        return 0, "small bounded Newton step"
+
+    monkeypatch.setattr(fifth_order_fit, "newton", refine)
+    session = SimpleNamespace(
+        backend="webgpu", _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None,
+                                                                               trial_records=[])),
+        run=lambda result, **kwargs: result, _accept_result=lambda result: result,
+    )
+    fit = fifth_order_fit.fit_fifth_order(
+        session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
+        primary_options={"check_rotation": False, "refine_rotation": False}, show=False, higher_order_limit=20)
+    assert fit.optimizer["higher_order_limit"] == 20.0
+    assert seen["bounds"][6:, 1].tolist() == [20.0] * 22
+    assert fit.optimizer["bounds"][27] == [-20.0, 20.0]
+    with pytest.raises(ValueError, match="higher_order_limit"):
+        fifth_order_fit.fit_fifth_order(
+            SimpleNamespace(backend="cuda", _find_aberrations=Mock()), search="standard", trials=200, seed=42,
+            save_dir=None, force=False, verbose=False, show=False,
+            primary_options={"check_rotation": False, "refine_rotation": False}, higher_order_limit=5)
+    call = inspect.unwrap(SSB.find_aberrations)
+    with pytest.raises(ValueError, match="search='primary'"):
+        call(SimpleNamespace(), search="primary", higher_order_limit=20)
+    with pytest.raises(ValueError, match="2 \\(standard\\)"):
+        call(SimpleNamespace(), higher_order_limit=4)

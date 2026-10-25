@@ -1821,6 +1821,7 @@ class DirectPtycho:
         columns: int = 3,
         show_convergence: bool = False,
         on_initial_fit: Callable[[SSBResult], None] | None = None,
+        higher_order_limit: float = 2,
     ) -> SSBResult | dict[int, SSBResult]:
         """Fit aberrations, sample tilt and depth with one search interface.
 
@@ -1838,6 +1839,12 @@ class DirectPtycho:
         then converged on all of them; steps are accepted on the full
         objective summed in float64. ``refinement="newton"`` keeps the earlier
         finite-difference fifth-order Newton as the reference trajectory.
+
+        ``higher_order_limit`` bounds each of the 22 higher-order Cartesian
+        coordinates of the fifth-order fit, in rad of phase at the aperture
+        edge: 2 (standard, the default) or 20 (wide). The result records it
+        in ``optimizer["higher_order_limit"]``; a wider box lets degenerate
+        polynomial directions move C10 and C12 at the bright-field rim.
 
         In a live notebook, ``show=True`` displays the initial fit at Auto
         sampling. After standard/broad refinement, resident CUDA sessions
@@ -2062,6 +2069,11 @@ class DirectPtycho:
                              "For a primary fit, use fit.show('convergence') afterwards.")
         if search not in ("standard", "broad", "primary"):
             raise ValueError("search must be 'standard', 'broad' or 'primary'.")
+        from .fifth_order_fit import validate_higher_order_limit
+
+        higher_order_limit = validate_higher_order_limit(higher_order_limit)
+        if search == "primary" and higher_order_limit != 2:
+            raise ValueError("higher_order_limit bounds the fifth-order fit; search='primary' fits the low orders only.")
         if check_rotation not in (True, False, "both"):
             raise ValueError("check_rotation must be True, False or 'both'.")
         if isinstance(trials, Sequence) and not isinstance(trials, (str, bytes)):
@@ -2091,7 +2103,7 @@ class DirectPtycho:
                         fixed_aberrations=fixed_aberrations, refine_rotation=refine_rotation,
                         compute_loss=compute_loss, higher_order=higher_order,
                         show=show, size=size, columns=columns, show_convergence=show_convergence,
-                        on_initial_fit=on_initial_fit,
+                        on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
                     )
             return fits
         if search in ("standard", "broad"):
@@ -2130,7 +2142,7 @@ class DirectPtycho:
                         refine_rotation=refine_rotation, compute_loss=compute_loss,
                         higher_order=higher_order, show=False, size=size, columns=columns,
                         show_convergence=show_convergence,
-                        on_initial_fit=initial_region,
+                        on_initial_fit=initial_region, higher_order_limit=higher_order_limit,
                     )
                     if result.rotation_branches is not None:
                         # Keep the region's Auto panels before its GPU evidence closes.
@@ -2172,7 +2184,7 @@ class DirectPtycho:
                 refinement=refinement,
                 compute_loss=False if compute_loss is None else compute_loss,
                 show=show, size=size, columns=columns, show_convergence=show_convergence,
-                on_initial_fit=on_initial_fit,
+                on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
             )
         if on_initial_fit is not None:
             raise ValueError("on_initial_fit is for standard or broad two-stage fits.")

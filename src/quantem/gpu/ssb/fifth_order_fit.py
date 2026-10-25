@@ -5,6 +5,7 @@ objective evaluation and reconstruction run on the selected GPU. This is a hybri
 """
 
 import copy
+import math
 import time
 
 import numpy as np
@@ -74,16 +75,42 @@ def _refine_with_gradients(objective, start, bounds, norm, cap, *, on_progress=N
                            progress=on_progress)
 
 
+HIGHER_ORDER_LIMITS = {2.0: "standard", 20.0: "wide"}
+
+
+def validate_higher_order_limit(limit) -> float:
+    """The box of the 22 higher-order coordinates: 2 (standard) or 20 (wide) rad of phase at the aperture edge."""
+    try:
+        value = float(limit)
+    except (TypeError, ValueError):
+        value = math.nan
+    if value not in HIGHER_ORDER_LIMITS:
+        raise ValueError(
+            f"higher_order_limit is 2 (standard) or 20 (wide): the largest phase, in rad at the aperture edge, of "
+            f"each higher-order Cartesian component; got {limit!r}.")
+    return value
+
+
+def fifth_order_bounds(higher_order_limit=2.0) -> np.ndarray:
+    """Bounds of the 28 coordinates: C10, the C12 pair, tilt, depth spread, then +-limit for the higher orders."""
+    limit = validate_higher_order_limit(higher_order_limit)
+    return np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-limit, limit)] * 22)
+
+
 def fit_fifth_order(
     ssb, *, search, trials, seed, save_dir, force, verbose,
     primary_options, refinement="auto", compute_loss=False,
     show=True, on_initial_fit=None, size="medium", columns=3, show_convergence=False,
+    higher_order_limit=2.0,
 ):
     """Fit the fifth-order model; standard skips additional higher-order TPE.
 
     ``refinement="auto"`` refines with exact gradients (``"bfgs"``) where the backend has them, else with the
     finite-difference Newton (``"newton"``), which stays available as the trajectory reference.
+    ``higher_order_limit`` bounds each higher-order Cartesian coordinate at +-2 (standard) or +-20 (wide) rad of
+    phase at the aperture edge.
     """
+    higher_order_limit = validate_higher_order_limit(higher_order_limit)
     if refinement == "auto":
         refinement = "bfgs" if _exact_gradients(ssb) else "newton"
     if refinement == "bfgs" and not _exact_gradients(ssb):
@@ -113,6 +140,7 @@ def fit_fifth_order(
         "primary_seed": primary_seed,
         "newton_cap": refinement_cap,
         "fit_band_inv_A": [0.2, 0.9],
+        "higher_order_limit": higher_order_limit,
         "primary_options": primary_options,
         "compute_loss": bool(compute_loss),
     }
@@ -153,9 +181,7 @@ def fit_fifth_order(
     # Keep plotting/caller work out of the numerical fit and convergence clocks.
     started += initial_handoff_s
     objective = _objective(ssb, gradients=True) if refinement == "bfgs" else _objective(ssb)
-    bounds = np.array(
-        [(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-2, 2)] * 22
-    )
+    bounds = fifth_order_bounds(higher_order_limit)
     norm = float(objective.evaluate(vector(primary, 1), 1)[0])
     if not np.isfinite(norm) or norm <= 0:
         raise ValueError(
@@ -281,6 +307,7 @@ def fit_fifth_order(
         "normalized_agreement": float(best_score / norm),
         "normalization": norm,
         "fit_band_inv_A": [0.2, 0.9],
+        "higher_order_limit": higher_order_limit,
         "bounds": bounds.tolist(),
         "coordinates": np.asarray(best_z).tolist(),
         "proposals": proposals,
