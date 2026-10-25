@@ -29,8 +29,10 @@ def test_series_drift_matches_myptycho(series):
     images, sampling_A, baseline = series
     found = drift(images, sampling_A=sampling_A)
     np.testing.assert_array_equal(found.displacement_A, baseline["series_drift_displacement"])
-    np.testing.assert_array_equal(found.sigma_A, baseline["series_drift_sigma"])
-    np.testing.assert_array_equal(found.closure_A, baseline["series_drift_closure"])
+    # refine counts its offsets in whole 1/100 px where myptycho stepped a float arange: σ and closure move in the
+    # last bit (3e-18 Å), the displacements not at all
+    np.testing.assert_allclose(found.sigma_A, baseline["series_drift_sigma"], rtol=0, atol=1e-12)
+    np.testing.assert_allclose(found.closure_A, baseline["series_drift_closure"], rtol=0, atol=1e-12)
 
 
 def test_series_running_matches_myptycho(series):

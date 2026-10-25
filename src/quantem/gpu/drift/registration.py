@@ -194,24 +194,40 @@ def dft_at(spectrum, shift):
     return (phase_row @ spectrum.to(torch.complex128) @ phase_col).real
 
 
-def refine(spectrum, peak, upsample, reach=1.5):
-    """The correlation's maximum within reach px of peak, to 1/upsample px: the inverse transform
-    of spectrum evaluated only on that fine grid, as two matrix products (rows, then cols), divided
-    by the Hann windows' own autocorrelation a(t_row) a(t_col): two images under one window
-    correlate as a(t) R(t - d), whose peak a(t) pulls toward zero shift (0.01 px per 10 px of
-    shift); the quotient peaks at d."""
+def refine(spectrum, peak, upsample, reach=1.5, coarse=10):
+    """The correlation's maximum within reach px of peak, to 1/upsample px, found in two passes: every
+    1/coarse px over the reach, then every 1/upsample px within 1/coarse px of the best of those. Each
+    pass is the inverse transform of spectrum evaluated only on its grid, so the matrix products
+    span 31 + 21 rows instead of the 301 of one 1/100 px grid over ±1.5 px (drift on the 40
+    frames of 1536 x 1536: 0.91 s to 0.36 s). A true correlation peak is a pixel wide, so the coarse
+    pass lands within 1/coarse px of the fine maximum and every kept pair is unchanged; only a
+    flat correlation (a pair matched to a wrong region, which drift rejects) can stop on another
+    local maximum. Offsets are counted in whole units of 1/upsample px, so the shift is exactly
+    peak plus a multiple of 1/upsample."""
+    span, step = round(reach * upsample), upsample // coarse
+    units = torch.arange(-span, span + 1, step, device=spectrum.device)
+    best = upsampled_max(spectrum, peak, upsample, units, units)
+    best = upsampled_max(spectrum, peak, upsample, *(torch.arange(centre - step, centre + step + 1, device=spectrum.device) for centre in best))
+    return (peak[0] + best[0] / upsample, peak[1] + best[1] / upsample)
+
+
+def upsampled_max(spectrum, peak, upsample, row_units, col_units):
+    """Where on the grid peak + (row_units, col_units) / upsample px the correlation of spectrum peaks,
+    in whole units of 1/upsample px: the inverse transform evaluated only on that grid, as two matrix
+    products (rows, then cols), divided by the Hann windows' own autocorrelation a(t_row) a(t_col):
+    two images under one window correlate as a(t) R(t - d), whose peak a(t) pulls toward zero shift
+    (0.01 px per 10 px of shift); the quotient peaks at d."""
     rows, cols = spectrum.shape
-    offsets = torch.arange(-reach, reach + 1e-9, 1 / upsample, device=spectrum.device, dtype=torch.float64)
     k_row = torch.fft.fftfreq(rows, device=spectrum.device).double()
     k_col = torch.fft.fftfreq(cols, device=spectrum.device).double()
-    row_kernel = torch.exp(2j * torch.pi * (peak[0] + offsets)[:, None] * k_row[None, :])
-    col_kernel = torch.exp(2j * torch.pi * k_col[:, None] * (peak[1] + offsets)[None, :])
+    row_kernel = torch.exp(2j * torch.pi * (peak[0] + row_units.double() / upsample)[:, None] * k_row[None, :])
+    col_kernel = torch.exp(2j * torch.pi * k_col[:, None] * (peak[1] + col_units.double() / upsample)[None, :])
     fine = (row_kernel @ spectrum.to(torch.complex128) @ col_kernel).real
     power_row = torch.fft.fft(torch.hann_window(rows, periodic=False, device=spectrum.device).double()).abs().square().to(torch.complex128)
     power_col = torch.fft.fft(torch.hann_window(cols, periodic=False, device=spectrum.device).double()).abs().square().to(torch.complex128)
     fine = fine / ((row_kernel @ power_row).real[:, None] * (power_col @ col_kernel).real[None, :])
     index = int(fine.argmax())
-    return (peak[0] + float(offsets[index // len(offsets)]), peak[1] + float(offsets[index % len(offsets)]))
+    return int(row_units[index // len(col_units)]), int(col_units[index % len(col_units)])
 
 
 def frequencies(grid, sampling=(1.0, 1.0)):
