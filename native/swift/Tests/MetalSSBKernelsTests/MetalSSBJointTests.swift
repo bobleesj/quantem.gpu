@@ -263,4 +263,46 @@ final class MetalSSBJointTests: XCTestCase {
     let coded = try JSONEncoder().encode(SSBOutputSampling.choices)
     XCTAssertEqual(try JSONDecoder().decode([SSBOutputSampling].self, from: coded), SSBOutputSampling.choices)
   }
+
+  /// A measured 512 x 512 calibration (300 kV, 1.0855 A step, 33.145 mrad from the BF edge) needs about 7.3x:
+  /// Auto is capped at 4x, an explicit 8x stays a recorded manual override.
+  func testCoarseScanAutoIsCappedAndOverrideIsRecorded() throws {
+    let cal = MetalSSBCalibration(
+      voltageKV: 300, semiangleMrad: 33.145, scanSamplingRowAngstroms: 1.0855,
+      scanSamplingColumnAngstroms: 1.0855, detectorSamplingRowMrad: 0.6044,
+      detectorSamplingColumnMrad: 0.6044, brightfieldCenterRowPixels: 96, brightfieldCenterColumnPixels: 96)
+    XCTAssertEqual(try cal.ssbUpsamplingRequirement(), 7.31, accuracy: 0.01)
+    XCTAssertEqual(try cal.ssbUpsamplingFactor(), 4)
+    XCTAssertEqual(try SSBOutputSampling.auto.resolve(cal), 4)
+    XCTAssertEqual(try SSBOutputSampling.factor(8).resolve(cal), 8)
+    for invalid in [0, 5, 6, 7, 16] { XCTAssertThrowsError(try SSBOutputSampling.factor(invalid).resolve(cal)) }
+
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try SSBModelReconstructionTests.scene()
+    let input = try XCTUnwrap(
+      s.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+    let point = SSBModelPoint(c10Angstroms: 40, c12Angstroms: 8, phi12Radians: 0.3)
+    let auto = try model.reconstruct(point, outputSampling: .auto, calibration: s.calibration)
+    XCTAssertEqual(auto.upsamplingFactor, try s.calibration.ssbUpsamplingFactor())
+    XCTAssertEqual(auto.outputSampling, .auto)
+    let manual = try model.reconstruct(point, outputSampling: .factor(2), calibration: s.calibration)
+    XCTAssertEqual(manual.upsamplingFactor, 2)
+    XCTAssertEqual(manual.outputSampling, .factor(2))
+    XCTAssertNil(try model.reconstruct(point, upsamplingFactor: 2).outputSampling)
+    // The saved run keeps the choice through a round trip.
+    let run = try MetalSSBJointSavedRun(
+      result: manual, sourceIdentity: String(repeating: "a", count: 64), backendRevision: "test",
+      sourceRows: s.scan, sourceColumns: s.scan, region: nil, calibration: s.calibration,
+      optimization: nil, provenance: [:])
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jointssb")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try run.save(to: url)
+    let reopened = try MetalSSBJointSavedRun.load(from: url, sourceIdentity: run.sourceIdentity)
+    XCTAssertEqual(reopened.outputSampling, .factor(2))
+  }
 }

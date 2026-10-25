@@ -13,6 +13,8 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
   public let rows: Int
   public let columns: Int
   public let upsamplingFactor: Int
+  /// Auto or an explicit override; absent in older files and when the factor was passed directly.
+  public let outputSampling: SSBOutputSampling?
   public let calibration: MetalSSBCalibration
   public let parameters: SSBJointParameters
   /// Exact reconstruction point. Absent in older files that stored only the Float UI parameters.
@@ -43,6 +45,7 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
     rows = result.rows
     columns = result.columns
     upsamplingFactor = result.upsamplingFactor
+    outputSampling = result.outputSampling
     self.calibration = calibration
     parameters = result.parameters
     point = result.point
@@ -88,7 +91,8 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
       rows / upsamplingFactor == (region?.size ?? sourceRows),
       columns / upsamplingFactor == (region?.size ?? sourceColumns),
       phase.count == rows * columns * 4, phaseSHA256 == SSBPhaseArtifact.digest(phase),
-      rotationDegrees.isFinite
+      rotationDegrees.isFinite,
+      outputSampling.map({ $0 == .auto ? upsamplingFactor <= 4 : $0 == .factor(upsamplingFactor) }) ?? true
     else {
       throw MetalSSBError.invalidGeometry(
         "This joint SSB result is incomplete, corrupted or belongs to another source.")

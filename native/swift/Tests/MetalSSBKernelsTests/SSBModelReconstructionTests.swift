@@ -10,13 +10,14 @@ final class SSBModelReconstructionTests: XCTestCase {
   struct Scene {
     let calibration: MetalSSBCalibration
     let detector = 12
-    let scan = 128
+    let scan: Int
     let counts: [UInt16]
     let pixels: [Int]
     let geometry: MetalSSBGeometry
   }
 
-  static func scene() throws -> Scene {
+  /// `scan` is 128 (the default) or another supported size; the pattern is the same function of position.
+  static func scene(scan: Int = 128) throws -> Scene {
     let calibration = MetalSSBCalibration(
       voltageKV: 300, semiangleMrad: 30, scanSamplingRowAngstroms: 0.4,
       scanSamplingColumnAngstroms: 0.4,
@@ -24,7 +25,6 @@ final class SSBModelReconstructionTests: XCTestCase {
       brightfieldCenterRowPixels: 5.4,
       brightfieldCenterColumnPixels: 5.7, brightfieldRadiusPixels: 3.6)
     let detector = 12
-    let scan = 128
     // A weak lattice with a slow gradient, so the phase has structure at several frequencies.
     var sums = [UInt64](repeating: 0, count: detector * detector)
     var planes: [[UInt16]] = []
@@ -49,7 +49,7 @@ final class SSBModelReconstructionTests: XCTestCase {
       detectorRows: detector, detectorColumns: detector, detectorSum: sums, scanRows: scan,
       scanColumns: scan)
     return Scene(
-      calibration: calibration, counts: setup.pixels.flatMap { planes[$0] }, pixels: setup.pixels,
+      calibration: calibration, scan: scan, counts: setup.pixels.flatMap { planes[$0] }, pixels: setup.pixels,
       geometry: setup.geometry)
   }
 

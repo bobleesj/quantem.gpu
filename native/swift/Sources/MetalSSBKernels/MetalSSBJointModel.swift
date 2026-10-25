@@ -59,6 +59,9 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public var amplitude: MTLBuffer? = nil
   /// The estimator that produced this result.
   public var estimator: SSBPhaseEstimator = .phaseOfMean
+  /// How the output factor was chosen: `.auto` (from the calibration, at most 4x) or an explicit
+  /// `.factor(n)` override. Nil when the caller passed a bare `upsamplingFactor`.
+  public var outputSampling: SSBOutputSampling? = nil
 }
 
 /// How the agreement objective evaluates its phases.
@@ -508,6 +511,20 @@ public final class MetalSSBJointModel {
     try reconstruct(
       SSBModelPoint(parameters), upsamplingFactor: upsamplingFactor, estimator: estimator,
       isCancelled: isCancelled)
+  }
+
+  /// Reconstruct with Auto or an explicit output sampling, recorded in the result's `outputSampling` so a
+  /// manual 8x is never mistaken for an automatic choice.
+  public func reconstruct(
+    _ point: SSBModelPoint, outputSampling: SSBOutputSampling, calibration: MetalSSBCalibration,
+    estimator: SSBPhaseEstimator = .phaseOfMean,
+    isCancelled: () -> Bool = { false }
+  ) throws -> MetalSSBJointPhase {
+    var result = try reconstruct(
+      point, upsamplingFactor: outputSampling.resolve(calibration), estimator: estimator,
+      isCancelled: isCancelled)
+    result.outputSampling = outputSampling
+    return result
   }
 
   /// Reconstruct a double-precision model point (a fit's result) with all BF pixels.

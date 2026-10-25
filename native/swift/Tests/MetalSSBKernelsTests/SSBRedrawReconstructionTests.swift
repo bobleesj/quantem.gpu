@@ -49,14 +49,23 @@ final class SSBRedrawReconstructionTests: XCTestCase {
   }
 
   func testRedrawMatchesPerTermKernel() throws {
+    try redrawMatchesPerTermKernel(scan: 128, caches: [nil, 0])
+  }
+
+  /// A 256 x 256 scan: two column tiles per threadgroup row and its own Nyquist geometry.
+  func testRedrawMatchesPerTermKernelAt256() throws {
+    try redrawMatchesPerTermKernel(scan: 256, caches: [nil])
+  }
+
+  private func redrawMatchesPerTermKernel(scan: Int, caches: [Int?]) throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
-    let s = try SSBModelReconstructionTests.scene()
+    let s = try SSBModelReconstructionTests.scene(scan: scan)
     let input = try XCTUnwrap(
       s.counts.withUnsafeBytes {
         device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
       })
     // Cached spectra (half spectra) and a streamed (uncached) engine.
-    for cache in [nil, 0] as [Int?] {
+    for cache in caches {
       let engine = try MetalSSBEngine(device: device, geometry: s.geometry, cacheBudgetBytes: cache)
       try engine.prepare(brightfield: input, countType: .uint16)
       let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
@@ -73,7 +82,7 @@ final class SSBRedrawReconstructionTests: XCTestCase {
             reference.phase.contents().assumingMemoryBound(to: Float.self),
             count: redraw.rows * redraw.columns)
           print(
-            "REDRAW factor \(factor) higher \(point.hasHigherOrder) depth \(point.depthSpreadAngstroms) cache \(cache.map(String.init) ?? "full") max \(d.maximum) rms \(d.rms)"
+            "REDRAW scan \(scan) factor \(factor) higher \(point.hasHigherOrder) depth \(point.depthSpreadAngstroms) cache \(cache.map(String.init) ?? "full") max \(d.maximum) rms \(d.rms)"
           )
           XCTAssertLessThan(d.maximum, 1e-5)
           XCTAssertLessThan(d.rms, 1e-6)
@@ -84,27 +93,30 @@ final class SSBRedrawReconstructionTests: XCTestCase {
 
   func testRedrawMatchesDoublePrecisionFifthOrderDefinition() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
-    let s = try SSBModelReconstructionTests.scene()
-    let input = try XCTUnwrap(
-      s.counts.withUnsafeBytes {
-        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
-      })
-    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
-    try engine.prepare(brightfield: input, countType: .uint16)
-    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
-    for point in Self.points.dropFirst() {
-      for factor in [1, 3] {
-        let expected = Self.referencePhase(s, point: point, rotation: 17.25, factor: factor)
-        let phase = try model.reconstruct(point, upsamplingFactor: factor)
-        let actual = phase.phase.contents().assumingMemoryBound(to: Float.self)
-        var maximum = 0.0
-        for i in expected.indices {
-          var d = Double(actual[i]) - expected[i]
-          d -= 2 * .pi * (d / (2 * .pi)).rounded()
-          maximum = max(maximum, abs(d))
+    for (scan, factors) in [(128, [1, 3]), (256, [2])] {
+      let s = try SSBModelReconstructionTests.scene(scan: scan)
+      let input = try XCTUnwrap(
+        s.counts.withUnsafeBytes {
+          device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+        })
+      let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+      try engine.prepare(brightfield: input, countType: .uint16)
+      let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+      for point in Self.points.dropFirst() {
+        for factor in factors {
+          let expected = Self.referencePhase(s, point: point, rotation: 17.25, factor: factor)
+          let phase = try model.reconstruct(point, upsamplingFactor: factor)
+          let actual = phase.phase.contents().assumingMemoryBound(to: Float.self)
+          var maximum = 0.0
+          for i in expected.indices {
+            var d = Double(actual[i]) - expected[i]
+            d -= 2 * .pi * (d / (2 * .pi)).rounded()
+            maximum = max(maximum, abs(d))
+          }
+          print(
+            "REDRAW DEFINITION scan \(scan) factor \(factor) depth \(point.depthSpreadAngstroms) max \(maximum)")
+          XCTAssertLessThan(maximum, 2e-4)
         }
-        print("REDRAW DEFINITION factor \(factor) depth \(point.depthSpreadAngstroms) max \(maximum)")
-        XCTAssertLessThan(maximum, 2e-4)
       }
     }
   }
