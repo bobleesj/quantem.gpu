@@ -36,7 +36,7 @@ struct Options {
   var repeats = 1
   var output: URL?
   var dump: URL?
-  var search = SSBModelFit.HigherOrderSearch.finiteDifferenceNewton
+  var search = SSBFitOptions().higherOrderSearch
   var fifthOnly: URL?
   var gradientCheck = false
   var gradientSettings = SSBFifthOrderGradientSearch.Settings()

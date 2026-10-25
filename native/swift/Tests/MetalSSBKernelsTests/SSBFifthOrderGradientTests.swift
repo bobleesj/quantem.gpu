@@ -248,4 +248,29 @@ final class SSBFifthOrderGradientTests: XCTestCase {
       )
     }
   }
+
+  /// Refining a low-order fit gives exactly the fifth-order fit that `findAberrations` computes in one call.
+  func testRefiningALowOrderFitEqualsTheFullFit() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let scene = try SSBModelReconstructionTests.scene()
+    let input = try SSBCoherentReconstruction.buffer(device, scene.counts)
+    let engine = try MetalSSBEngine(device: device, geometry: scene.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    func fit(_ order: Int) throws -> (SSBBranchedFit, MetalSSBJointModel) {
+      let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+      let result = try SSBModelFit.findAberrations(
+        model: model, engine: engine, rotationDegrees: 17.25, darkField: nil,
+        scanSampling: (0.5, 0.5), options: SSBFitOptions(trials: 40, maximumOrder: order),
+        checkRotation: false)
+      return (result, model)
+    }
+    let (full, _) = try fit(5)
+    let (low, model) = try fit(1)
+    XCTAssertNil(low.refinedFit)
+    let refined = try SSBModelFit.refineToFifthOrder(
+      low, model: model, options: SSBFitOptions(trials: 40, maximumOrder: 5))
+    XCTAssertEqual(refined.fit.point, full.fit.point)
+    XCTAssertEqual(refined.fit.sampleAgreement, full.fit.sampleAgreement)
+    XCTAssertEqual(refined.fits[refined.kept].point, low.fits[low.kept].point)
+  }
 }

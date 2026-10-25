@@ -29,8 +29,10 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
   /// Set 1 to retain the original low-order fit, including its reference trajectory.
   public var maximumOrder: Int
   public var maxHigherOrderEvaluations: Int
-  /// The fifth-order search; saved runs without it used the finite-difference Newton search.
-  public var higherOrderSearch: SSBModelFit.HigherOrderSearch = .finiteDifferenceNewton
+  /// The fifth-order search: exact gradients, converged on every BF pixel after a start on every 8th one.
+  /// Saved runs without this key used the finite-difference Newton search, which stays available as the
+  /// Python-trajectory reference.
+  public var higherOrderSearch: SSBModelFit.HigherOrderSearch = .exactGradientCoarseToFine
 
   public init(
     tilt: Bool = true, objective: SSBObjective = .agreement, trials: Int = 200, seed: Int = 42,
@@ -376,6 +378,31 @@ public enum SSBModelFit {
         result.fit, model: model, options: options,
         progress: progress, isCancelled: isCancelled)
     }
+    return result
+  }
+
+  /// Refine a low-order fit through fifth order without repeating its seeded search: the same result as
+  /// `findAberrations` with `maximumOrder: 5`, which reruns the low-order search to the same point first.
+  /// `model` must be at the kept branch's rotation, as `findAberrations` leaves it.
+  public static func refineToFifthOrder(
+    _ fitted: SSBBranchedFit, model: MetalSSBJointModel, options: SSBFitOptions = SSBFitOptions(),
+    progress: Progress = { _, _, _ in }, isCancelled: () -> Bool = { false }
+  ) throws -> SSBBranchedFit {
+    try options.validate()
+    let kept = fitted.fits[fitted.kept]
+    guard options.maximumOrder == 5, kept.options.tilt, kept.options.objective == .agreement,
+      kept.higherOrderRefinement == nil
+    else {
+      throw MetalSSBError.invalidGeometry(
+        "Refine a low-order tilt-corrected model fit with maximumOrder: 5.")
+    }
+    guard model.scanDetectorRotationDegrees == kept.scanDetectorRotationDegrees else {
+      throw MetalSSBError.invalidGeometry(
+        "The joint model is at another rotation than the kept branch. Fit again before refining.")
+    }
+    var result = fitted
+    result.refinedFit = try refineHigherOrder(
+      kept, model: model, options: options, progress: progress, isCancelled: isCancelled)
     return result
   }
 
