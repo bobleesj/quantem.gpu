@@ -16,6 +16,7 @@ import pytest
 
 from quantem.gpu import DirectPtycho
 from quantem.gpu.ssb import direct_workflow
+from quantem.gpu.ssb.cuda import chebyshev
 from quantem.gpu.ssb.cuda.direct import DragWindow, PreparedDirect
 
 pytestmark = pytest.mark.slow
@@ -96,7 +97,7 @@ def test_drag_builds_between_frames_and_rebuilds_outside(ptycho):
     cp.testing.assert_array_equal(first, exact({**coefs, "C10_nm": 12.1}))
     while not direct_workflow.advance(ptycho):
         pass
-    window = ptycho._direct_windows["C10_nm"][1].series
+    window = ptycho._direct_windows["C10_nm"][1][0].series
     assert window.ready and window.center == 12.1
     inside = window.center + 0.6 * window.half_width
     phase = direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": inside}, tilt, depth, 3, policy)
@@ -104,11 +105,12 @@ def test_drag_builds_between_frames_and_rebuilds_outside(ptycho):
     assert float(cp.abs(phase - expected).max()) <= 2e-6 * float(cp.abs(expected).max())
     outside = window.center + 1.5 * window.half_width
     direct_workflow.drag(ptycho, "C10_nm", {**coefs, "C10_nm": outside}, tilt, depth, 3, policy)
-    assert ptycho._direct_windows["C10_nm"][1].series is not window
-    assert ptycho._direct_windows["C10_nm"][1].series.center == outside
+    # the next tile on the grid, kept beside the first
+    tiles = [tile.series for tile in ptycho._direct_windows["C10_nm"][1]]
+    assert tiles[0] is not window and tiles[0].center == window.center + 2 * window.half_width and tiles[1] is window
     # moving C12 invalidates the C10 window, whose held inputs include C12
     direct_workflow.drag(ptycho, "C12_nm", {**coefs, "C10_nm": outside, "C12_nm": 3.2}, tilt, depth, 3, policy)
-    assert list(ptycho._direct_windows) == ["C12_nm"] and not ptycho._direct_windows["C12_nm"][1].series.ready
+    assert list(ptycho._direct_windows) == ["C12_nm"] and not ptycho._direct_windows["C12_nm"][1][0].series.ready
 
 
 def test_prepared_windows_serve_the_first_frame_of_a_grab(ptycho):
@@ -120,9 +122,9 @@ def test_prepared_windows_serve_the_first_frame_of_a_grab(ptycho):
     steps = 0
     while not direct_workflow.advance(ptycho):
         steps += 1
-    assert steps == 2 * 13 - 1
+    assert steps == 2 * (chebyshev.ORDER + 1) - 1
     moved = {**coefs, "phi12_deg": coefs["phi12_deg"] + 0.5}
-    assert ptycho._direct_windows["phi12_deg"][1].series.covers(moved["phi12_deg"])
+    assert ptycho._direct_windows["phi12_deg"][1][0].series.covers(moved["phi12_deg"])
     phase = direct_workflow.drag(ptycho, "phi12_deg", moved, tilt, depth, 3, policy)
     expected = ptycho.preview(moved, method="complex", phase_regularization=0.03, amplitude_regularization=0.05,
                               upsampling_factor=3, sample_tilt_mrad=tilt, depth_spread_nm=depth,
@@ -155,10 +157,10 @@ def test_ssb_window_matches_exact_preview(ptycho, control):
     cp.testing.assert_array_equal(first, exact(coefs))
     while not direct_workflow.advance(ptycho):
         pass
-    window = ptycho._direct_windows[control][1]
+    window = ptycho._direct_windows[control][1][0]
     series = window.series
     for value, relative in [(series.nodes[3], 1e-6)] + [(series.center + series.half_width * x, 2e-6) for x in (-1.0, 0.43, 1.0)]:
         phase = direct_workflow.drag(ptycho, control, {**coefs, control: value}, tilt, depth, 3, policy)
         expected = exact({**coefs, control: value})
         assert float(cp.abs(phase - expected).max()) <= relative * float(cp.abs(expected).max())
-    assert ptycho._direct_windows[control][1] is window
+    assert ptycho._direct_windows[control][1][0] is window

@@ -12,6 +12,9 @@ from quantem.gpu.ssb.persistence import load_result, result_paths
 from quantem.gpu.ssb.results import SSBResult
 from quantem.gpu.ssb.units import validate_aberrations
 
+# drag-window tiles kept per control: a drag back and forth across one tile edge needs two
+TILES = 3
+
 
 def settings(
     method,
@@ -176,7 +179,7 @@ def prepare(session, controls, coefs, tilt, depth, factor, policy):
 @_on_scan_gpu
 def advance(session) -> bool:
     """Add one node to the first incomplete window (the one dragged last first); True when none is left."""
-    windows = [window for _, window in getattr(session, "_direct_windows", {}).values()]
+    windows = [tile for _, tiles in getattr(session, "_direct_windows", {}).values() for tile in tiles]
     pending = [window for window in windows if not window.series.ready]
     if pending:
         pending[0].step()
@@ -193,11 +196,14 @@ def _windowed(session, factor, policy) -> bool:
 
 
 def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False):
-    """The session's window along ``control`` for these inputs, new (unbuilt) unless a valid one exists.
+    """The session's window along ``control`` covering its value, new (unbuilt) unless a valid one exists.
 
-    Windows whose held inputs no longer match these are dropped first: a
-    complex one holds about 2 GB on the test field. ``first`` puts this one
-    ahead in `advance`'s order.
+    Windows of one control are tiles on a fixed grid, centred at
+    c0 + 2 h k from the first one, so a drag that crosses a tile edge and
+    comes back reuses both instead of building a window per crossing; the
+    `TILES` most recently used are kept. Windows whose held inputs no longer
+    match these are dropped first: a complex one holds about 4 GB on the test
+    field. ``first`` puts this control and tile ahead in `advance`'s order.
     """
     method = policy.get("method", "ssb")
     complex_object = method == "complex"
@@ -205,30 +211,36 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
     windows = getattr(session, "_direct_windows", None)
     if windows is None:
         windows = session._direct_windows = {}
-    for name, (held, window) in list(windows.items()):
+    for name, (held, _) in list(windows.items()):
         if held != (kind, *_inputs(session, {**coefs, name: None}, tilt, depth, factor, policy)[2]):
             del windows[name]
     held = (kind, *_inputs(session, {**coefs, control: None}, tilt, depth, factor, policy)[2])
-    entry = windows.get(control)
     value = float(coefs.get(control, 0.0))
-    if entry is None or not entry[1].series.covers(value) or (complex_object and not entry[1].complex_object):
-        windows.pop(control, None)
+    tiles = windows.get(control, (held, []))[1]
+    if complex_object and tiles and not tiles[0].complex_object:
+        tiles = []
+    window = next((tile for tile in tiles if tile.series.covers(value)), None)
+    if window is None:
+        center = value
+        if tiles and not math.isinf(tiles[0].series.half_width):
+            anchor, width = tiles[0].series.center, 2 * tiles[0].series.half_width
+            center = anchor + width * round((value - anchor) / width)
+        tile_coefs = {**coefs, control: center}
         engine = session._backend()._get_accelerator()
         if kind == "ssb":
             from quantem.gpu.ssb.cuda.thick import WaveWindow
 
-            window = WaveWindow(engine.thick, coefs, control, tilt, depth, factor)
+            window = WaveWindow(engine.thick, tile_coefs, control, tilt, depth, factor)
         else:
             from quantem.gpu.ssb.cuda.direct import DragWindow
 
-            window = DragWindow(engine, _inputs(session, coefs, tilt, depth, factor, policy)[1], control, factor,
+            window = DragWindow(engine, _inputs(session, tile_coefs, tilt, depth, factor, policy)[1], control, factor,
                                 complex_object=complex_object, smoothness_inv_A=policy["smoothness_inv_A"],
                                 detector_weighting=policy["detector_weighting"])
-        entry = held, window
-    windows[control] = entry
+    windows[control] = held, [window] + [tile for tile in tiles if tile is not window][:TILES - 1]
     if first:
-        session._direct_windows = {control: entry, **{name: other for name, other in windows.items() if name != control}}
-    return entry[1]
+        session._direct_windows = {control: windows[control], **{name: other for name, other in windows.items() if name != control}}
+    return window
 
 
 def _exact(session, coefs, tilt, depth, factor, policy):

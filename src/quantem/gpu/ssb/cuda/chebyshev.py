@@ -5,8 +5,10 @@ the full 512 x 512 scan. Whatever a window holds (regularized normal
 equations, or the single-sideband part of the SSB spectrum) is a sum over BF
 pixels of f_k exp(i (c - c0) u_k), an entire function of the control c, so on
 [c0 - h, c0 + h] its Chebyshev series converges like 2 (z / 2)^(N + 1) / (N + 1)!,
-z = h max|u|. With N = 12 and z = 3 the truncation (3.6e-7 of the largest
-entry on the test field) stays below the float32 model's own error.
+z = h max|u|. N = 24 and z = 10 bound the truncation by 4e-8, below the
+float32 model's own error, over windows wide enough for a fast drag (C10
++-6.8 nm, C12 +-3.4 nm, phi12 +-14 deg on the test field; N = 12, z = 3 gave
++-2 nm, which a hand drag leaves within a few frames).
 """
 
 import math
@@ -14,8 +16,8 @@ import math
 import cupy as cp
 import numpy as np
 
-ORDER = 12
-REACH = 3.0
+ORDER = 24
+REACH = 10.0
 
 # coefficient row n gains weight[n] * node values: one node of a series
 _accumulate = cp.ElementwiseKernel(
