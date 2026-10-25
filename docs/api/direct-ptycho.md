@@ -111,6 +111,54 @@ from conventional SSB's phase-variance `loss`, and neither is an independent
 resolution measurement. Compare held-out data and repeatability as well as
 images with shared display scales.
 
+## Stream a time series
+
+```python
+fit = ptycho.find_aberrations(search="broad", save_dir="results")
+series = ptycho.stream(frames, fit, method=("phase", "complex"), save_dir="results")
+series.report()
+drift = series.align()
+series.show(size="large")
+```
+
+`stream` fits the full optics once (`fit`, from the first frame) and, for each
+later frame, refits only defocus C10 and two-fold astigmatism C12, phi12,
+starting from the previous frame. Higher orders, sample tilt and effective
+depth stay at `fit`. Each frame is read compressed onto the session's GPU with
+the session's calibration and released before the next one.
+
+Every frame is reconstructed by SSB, and by each method in `method`
+(`"ssb"`, `"phase"`, `"complex"` or a tuple) at that frame's optics, with
+`run`'s strengths (`phase_regularization=...`). Each frame is registered on its
+SSB phase against the last confidently placed frame (lattice-safe band
+registration from `quantem.gpu.drift`, Bragg spots from the first frame) and
+added in register to `series.combined[...]`. A frame whose pair confidence
+falls below 0.04 is measured but not added. In a notebook, `show=True` (the
+default) draws the newest frame, the combined image and the drift so far, at
+most twice a second.
+
+On a measured 40-frame series (512 x 512 scan, 192 x 192 detector, 1536 x 1536
+output, one GPU) a frame costs a median 0.92 s with phase-only and amplitude +
+phase (0.86 s with SSB alone): 0.49 s reading the file, 0.05 s refitting,
+0.03-0.05 s per method, 0.08 s registering. Registration on SSB, phase-only or
+amplitude + phase agrees within 0.05 Å.
+
+- `series.report()`: per frame, the refit optics, evaluations, shift against
+  frame 0 (Å), live confidence and seconds per stage.
+- `series.align()`: registers every pair up to three frames apart, solves one
+  shift per frame by least squares, replaces `shifts_A` and rebuilds every
+  combined image. Returns the `Drift` (pairs, closure, σ).
+- `series.reconstruct("phase", phase_regularization=0.05)`: rebuilds a method
+  after the series from each frame's saved optics (`series.fits[k]`) and shifts.
+- `series.show(interactive=False)`: the combined image of each method with the
+  displacement and C10/C12 traces; `interactive=True` returns Show2D.
+  Pixels no frame reaches are masked, not drawn as data.
+
+With `save_dir`, each frame's optics and shift are saved as it finishes. A
+later call with the same `fit` and frames rebuilds the recorded frames without
+refitting or registering and continues; the result equals an uninterrupted run.
+Every frame must have the scan shape of the first.
+
 ## Migration
 
 Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.

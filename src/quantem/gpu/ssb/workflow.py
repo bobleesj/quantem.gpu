@@ -2787,6 +2787,25 @@ class DirectPtycho:
         return result
 
     @_on_scan_gpu
+    def stream(self, sources: Sequence[str | Path], fit: SSBResult, *,
+               method: Literal["ssb", "phase", "complex"] | tuple[str, ...] = "ssb",
+               upsampling_factor: int | Literal["auto"] = "auto", save_dir: str | Path | None = None,
+               show: bool = True, verbose: bool = True, **strengths):
+        """Stream a series: refit defocus and astigmatism per frame, holding ``fit``'s other optics.
+
+        Each frame is reconstructed with ``method`` (``run``'s methods, or a tuple; ``strengths`` are
+        ``run``'s regularization keywords), registered on its SSB phase and combined in register.
+        Returns an ``SSBStream`` (``report``, ``show``, ``align``, ``reconstruct``); see
+        ``quantem.gpu.ssb.stream.stream`` for the model, resume with ``save_dir`` and the live view.
+
+        >>> series = ptycho.stream(frames, fit, method=("phase", "complex"))  # doctest: +SKIP
+        """
+        from quantem.gpu.ssb.stream import stream
+
+        return stream(self, sources, fit, method=method, upsampling_factor=upsampling_factor, save_dir=save_dir,
+                      show=show, verbose=verbose, **strengths)
+
+    @_on_scan_gpu
     def run(
         self, parameters: SSBResult | None = None, *,
         method: Literal["ssb", "phase", "complex"] = "ssb",
