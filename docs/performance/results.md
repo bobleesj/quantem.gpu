@@ -16,6 +16,12 @@ records a corrected cache invalidation when opening a viewer at unchanged
 optics. Cached numerical regularization updates and first preparation are
 timed separately; these observations do not establish browser frame rate.
 
+The [native Metal redraw record](ssb/reports/2026-10-24-native-metal-ssb-redraw.md)
+times `MetalSSBJointModel.reconstruct` with every BF pixel, all 14 terms, tilt
+and depth on Apple M5 Max: 512² fifth order at 3× falls from 215 ms to 29–34 ms
+per frame (median), 256² to 10 ms. Parity against the previous kernel is
+within 4e-6 rad. Displayed app frame rate is not part of this record.
+
 The [anonymous C10 cache and FFT transfer benchmark](rendering/reports/2026-10-24-ssb-c10-cache-transfer.md)
 retains full data and higher-order corrections. It separates CUDA cache
 experiments, an isolated WebGPU transfer improvement and actual notebook

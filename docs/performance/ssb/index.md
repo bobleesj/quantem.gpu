@@ -12,6 +12,7 @@ compared as interchangeable FPS or fit times.
 
 ## Reconstruction and interaction
 
+- [Native Metal redraw](reports/2026-10-24-native-metal-ssb-redraw.md): fifth-order 3× at 512² in 29–34 ms per frame on M5 Max (30 FPS met for a drag, at the line after long load); 256² above 97 FPS; app frame rate not yet measured.
 - [C10 caching and FFT transfer](../rendering/reports/2026-10-24-ssb-c10-cache-transfer.md): full higher-order CUDA experiments and actual notebook paints. It records an unmet 60 fps target and no demonstrated 2× speedup.
 - [Redraw symmetry and drag window](reports/2026-10-24-redraw-symmetry-and-drag-window.md): SSB 14-term redraw 56 to 30 ms by the q, -q symmetry; regularized drags in 1-3 ms.
 - [Staging memory](reports/2026-10-22-ssb-staging-memory.md): memory reduction with numerical checks.
