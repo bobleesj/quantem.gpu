@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # GPU-first SSB parity gate.
 #
-#   scripts/check_ssb_parity.sh                 # frozen GPU fit and repeat
-#   scripts/check_ssb_parity.sh --full          # adds the 512x512 GPU fit
-#   scripts/check_ssb_parity.sh --build-metal   # build the native harness first
-#   scripts/check_ssb_parity.sh --cpu-oracle --metal-only  # expensive opt-in
+#   scripts/check_ssb_parity.sh                      # native agreement-search gate
+#   scripts/check_ssb_parity.sh --cpu-oracle         # expensive opt-in: MPS against the CPU oracle
+#   scripts/check_ssb_parity.sh --cpu-oracle --full  # every case, the 512x512 one included
 #
-# The optional CPU oracle reports the MPS findings of this experiment as failures,
-# so its exit status is not the native Metal acceptance signal. Use
-# `--metal-only` when the change under test is in the Metal path: every bound is
-# unchanged, only the MPS measurement is skipped.
+# The optional CPU oracle reports the MPS findings of this experiment as failures.
+# The native engine's non-model reconstruction and phase-variance search, which
+# this gate also measured, are retired.
 #
 # Every GPU command runs under the shared gpurun lock so concurrent agents do
 # not corrupt each other's measurements.
@@ -23,46 +21,25 @@ PYTHON="${QUANTEM_SSB_PARITY_PYTHON:-$HOME/miniforge3/bin/python3.12}"
 RUNS_ROOT="${QUANTEM_SSB_PARITY_RUNS:-$HOME/perf-lab/ssb-audit/parity-runs}"
 GPURUN="${QUANTEM_SSB_PARITY_GPURUN:-$HOME/perf-lab/ssb-audit/gpurun}"
 REPORT_OVERRIDE="${QUANTEM_SSB_PARITY_REPORT_PATH:-}"
-BUILD_METAL=0
 FULL=0
 CPU_ORACLE=0
 EXTRA=()
 for argument in "$@"; do
   case "$argument" in
-    --build-metal) BUILD_METAL=1 ;;
     --full) FULL=1 ;;
     --cpu-oracle) CPU_ORACLE=1 ;;
-    --export|--force-export|--no-metal|--metal-only|--all-cases) EXTRA+=("$argument") ;;
+    --export|--force-export|--all-cases) EXTRA+=("$argument") ;;
     *) echo "check_ssb_parity: unknown argument $argument" >&2; exit 2 ;;
   esac
 done
 
 if [ "$CPU_ORACLE" = 0 ]; then
-  if [ "${#EXTRA[@]}" -gt 0 ]; then
-    echo "check_ssb_parity: oracle-specific flags require explicit --cpu-oracle; the default is frozen GPU parity" >&2
+  if [ "${#EXTRA[@]}" -gt 0 ] || [ "$FULL" = 1 ]; then
+    echo "check_ssb_parity: oracle-specific flags require explicit --cpu-oracle; the default is the GPU agreement gate" >&2
     exit 2
   fi
-  GPU_ARGS=(scripts/check_ssb_fit_trajectory.sh)
-  if [ "$BUILD_METAL" = 1 ]; then GPU_ARGS+=(--build-metal); fi
-  if [ "$FULL" = 1 ]; then GPU_ARGS+=(--full); fi
-  echo "GPU acceptance: frozen fit trajectory, repeat determinism, and MPS GPU comparison; no CPU oracle."
-  exec bash "${GPU_ARGS[@]}"
-fi
-
-# The native harness is a standalone binary: `swift test` needs Xcode, which
-# this host does not have.
-if [ "$BUILD_METAL" = 1 ]; then
-  swift build -c release --disable-sandbox --product metal-ssb-benchmark
-  build_dir=$(swift build -c release --show-bin-path)
-  mkdir -p build
-  # Ignore orphan objects left behind by earlier source names.
-  objects=()
-  while IFS= read -r source; do
-    objects+=("$build_dir/MetalSSBKernels.build/$(basename "$source").o")
-  done < "$build_dir/MetalSSBKernels.build/sources"
-  swiftc -O -I "$build_dir/Modules" tests/metal/ssb_parity_check.swift \
-    "${objects[@]}" -o build/ssb-parity-check -parse-as-library
-  printf '{"binary": "%s"}\n' "$PWD/build/ssb-parity-check" > build/ssb-parity-check.json
+  echo "GPU acceptance: native agreement search against the Python resident search; no CPU oracle."
+  exec bash scripts/check_ssb_fit_trajectory.sh
 fi
 
 if [ "$FULL" = 1 ]; then

@@ -458,7 +458,7 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
     let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
     let started = Date()
     let result = try SSBModelFit.findAberrations(
-      model: model, engine: engine, rotationDegrees: rotation, darkField: try fixture.darkField(),
+      model: model, rotationDegrees: rotation, darkField: try fixture.darkField(),
       scanSampling: (
         fixture.fixture.calibration.scan_sampling_A[0],
         fixture.fixture.calibration.scan_sampling_A[1]
@@ -541,7 +541,7 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
       step3.append(
         try time {
           let fit = try SSBModelFit.findAberrations(
-            model: model, engine: engine, rotationDegrees: rotation, darkField: nil,
+            model: model, rotationDegrees: rotation, darkField: nil,
             scanSampling: sampling,
             checkRotation: false)
           split = fit.fit.timings
@@ -549,20 +549,20 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
       step3b.append(
         try time {
           _ = try SSBModelFit.findAberrations(
-            model: model, engine: engine, rotationDegrees: rotation, darkField: nil,
+            model: model, rotationDegrees: rotation, darkField: nil,
             scanSampling: sampling,
             options: SSBFitOptions(compareStandard: false), checkRotation: false)
         })
       step4.append(
         try time {
           _ = try SSBModelFit.findAberrations(
-            model: model, engine: engine, rotationDegrees: fixture.expected.rotation_estimate_deg,
+            model: model, rotationDegrees: fixture.expected.rotation_estimate_deg,
             darkField: try fixture.darkField(), scanSampling: sampling)
         })
       step5.append(
         try time {
           try model.retarget(scanDetectorRotationDegrees: rotation)
-          _ = try SSBModelFit.fit(model: model, engine: engine, options: SSBFitOptions(tilt: false))
+          _ = try SSBModelFit.fit(model: model, options: SSBFitOptions(tilt: false))
         })
     }
     try model.retarget(scanDetectorRotationDegrees: rotation)

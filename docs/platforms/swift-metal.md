@@ -55,7 +55,7 @@ there.
 | `MetalDisplayKernels` | `display.metal`, packaged colormaps | `MetalDisplayKernelsTests` |
 | `MetalImageFFT` | `fft.metal`, MPS/MPSGraph frameworks | `MetalImageFFTTests` |
 | `MetalImageRuntime` | `MetalDisplayKernels` | `MetalImageRuntimeTests` |
-| `MetalSSBKernels` | custom radix-8 FFT, Hermitian SSB reconstruction, fused exact loss | `MetalSSBKernelsTests` plus `metal-ssb-benchmark` |
+| `MetalSSBKernels` | custom radix-8 FFT and Hermitian SSB preparation; joint-model fit, SSB redraw and regularized direct reconstruction | `MetalSSBKernelsTests` plus `metal-ssb-fit-benchmark` and `metal-ssb-redraw-benchmark` |
 
 The package imports no application UI framework. A client owns presentation,
 scheduling, and user-visible memory-policy choices; it must not copy or fork
@@ -106,10 +106,12 @@ platform page does not duplicate them.
 accepts plane-major lossless `uint8`, `uint16` or `uint32` bright-field columns
 with shape `[logical_brightfield, scan_row, scan_column]` for a 128×128,
 256×256 or 512×512 scan. It never
-crops or bins scan positions. Every result records the logical, executed,
-cached, streamed, and proven-zero BF counts plus the exact cache bytes. A client
-chooses `cacheBudgetBytes` from its resource policy; a smaller cache streams the
-remaining BF terms without changing the objective or normalization.
+crops or bins scan positions. It prepares the Fourier evidence; its joint model
+fits and reconstructs. Every result records the logical, executed, cached,
+streamed, and proven-zero BF counts plus the exact cache bytes. A client chooses
+`cacheBudgetBytes` from its resource policy; a smaller cache streams the
+remaining BF terms without changing the objective or normalization. The
+engine's own non-model reconstruction and phase-variance fit are retired.
 
 ## Build, profile, and verify
 
@@ -118,8 +120,6 @@ swift test
 swift run -c release native-4dstem-io-benchmark --help
 swift run -c release metal-4dstem-indexed-load-benchmark --help
 swift run -c release metal-display-benchmark 512
-swift run -c release metal-ssb-benchmark \
-  METADATA_JSON FULL_BF_U8 REFERENCE_PHASE_F32 7 full 200 3
 ```
 
 The indexed-load benchmark has an explicit `--uncached-source-reads` diagnostic

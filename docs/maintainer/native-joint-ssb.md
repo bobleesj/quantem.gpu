@@ -9,14 +9,14 @@ numerical state. Python is not needed at runtime.
 | --- | --- | --- |
 | `SSBFitOptions()` | `find_aberrations()` | model agreement, tilt-corrected (sample tilt and depth spread) |
 | `SSBFitOptions(tilt: false)` | `find_aberrations(tilt=False)` | model agreement, tilt and depth held at 0 |
-| `SSBFitOptions(tilt: false, objective: .phaseVariance)` | `find_aberrations(tilt=False, objective="phase_variance")` | the older phase-variance SSB |
+| `SSBFitOptions(tilt: false, objective: .phaseVariance)` | `find_aberrations(tilt=False, objective="phase_variance")` | retired natively (2026-10-25): saved options decode, `validate()` refuses a fit; Python keeps it |
 
 ## Minimal workflow
 
 ```swift
 let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)  // the curl estimate
 let fit = try SSBModelFit.findAberrations(
-  model: model, engine: engine, rotationDegrees: rotation, darkField: darkField,
+  model: model, rotationDegrees: rotation, darkField: darkField,
   scanSampling: (stepRow, stepColumn))                    // both 180-degree branches
 let phase = try model.reconstruct(
   fit.fit.point, upsamplingFactor: calibration.ssbUpsamplingFactor())  // phase_of_mean, auto factor
@@ -70,8 +70,7 @@ fitted detector sampling, the agreement at fixed parameters (1e-7 relative), the
 
 - The joint model supports C10/C12 and tilt/depth. Nonzero higher-order aberrations are rejected explicitly.
 - Supported scans are square 128, 256 and 512. There is no silent binning or padding for this model.
-- The phase-variance objective uses the native phase-variance search (seeded TPE and Nelder-Mead); its trials
-  are its own, not Python's.
+- Every native fit is model-based (the agreement objective). The phase-variance objective is Python's only.
 - The native engine has no detector transposition (`scan_detector_rotation_flipped` is false).
 - No absolute potential, acquisition focus sign or specimen thickness claim follows from contrast or the
   agreement alone.
@@ -81,7 +80,9 @@ fitted detector sampling, the agreement at fixed parameters (1e-7 relative), the
 `MetalSSBJointSavedRun` writes a phase-only `.jointssb` record with source identity, build identity,
 calibration, ROI, parameters, rotation, output sampling, the fit (`SSBBranchedFit`, both branches when compared)
 and a phase SHA-256. Reopening checks source identity, shape and checksum, then displays the exact stored phase
-without refitting. Records from the earlier native optimizer still decode.
+without refitting. Records from the earlier native optimizer still decode, phase-variance fits included
+(`SSBObjective.phaseVariance` is kept for decoding). `MetalSSBSavedRun` (`.ssb`, the retired non-model engine's
+complex object) still opens; `MetalSSBEngine.phase(of:)` converts its object to the phase.
 
 ## Reproducible checks
 
@@ -98,6 +99,20 @@ The joint fixtures (`SSB_JOINT_REFERENCE`, `SSB_JOINT_CALIBRATED_REFERENCE`) gat
 error < 5e-5); their phase images are of the retired `mean_phase` estimator and are no longer compared. Missing
 external fixtures are reported as skips, never passes. Keep acquisitions, screenshots and raw logs outside this
 repository.
+
+## Retired native engine paths
+
+The engine's own non-model SSB and the phase-variance fit were removed on 2026-10-25; native SSB is model-based
+only. `MetalSSBEngine` keeps Fourier preparation, the joint-model bridge and the saved-run phase conversion.
+Removed: `MetalSSBEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`, `phaseVariance`, `optimize`,
+`MetalSSBPhaseVarianceResult`, `SSBOptimizer` with `SSBOptimizationProgress`, the phase-variance branch of
+`SSBModelFit` (and its `engine:` argument), `SSBFit.phaseVarianceLoss`, the `metal-ssb-benchmark` product, the
+standalone `tests/metal` SSB harnesses and the frozen phase-variance fit trajectory. Their `ssb.metal` kernels
+(`ssb_gamma_accumulate*`, `ssb_finalize_fourier_sum`, the chi and cross trigonometric tables, the fused 512 and
+small-scan phase-loss kernels, the phase-moment and Nyquist-correction kernels and the half-plane transposes) are
+deleted; `ssb.metal` keeps the count conversion, row FFTs, transpose, Hermitian extraction and
+`ssb_object_phase`. These kernels were never registered (`docs/performance/kernels.md`), so no registered digest
+changed. Python's phase-variance search is unchanged.
 
 ## Retired estimators
 

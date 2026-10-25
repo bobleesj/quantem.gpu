@@ -494,7 +494,7 @@ func phaseValues(_ phase: MetalSSBJointPhase) -> [Float] {
 /// both points there, the largest phase difference, and the branch decision made with the searched fit. The
 /// model is left at the kept rotation.
 func verifyBranches(
-  _ fitted: SSBBranchedFit, model: MetalSSBJointModel, engine: MetalSSBEngine, darkField: [Float]?,
+  _ fitted: SSBBranchedFit, model: MetalSSBJointModel, darkField: [Float]?,
   sampling: (Double, Double), trials: Int
 ) throws -> [String: Any] {
   var report: [String: Any] = [:]
@@ -511,7 +511,7 @@ func verifyBranches(
     }
     let started = Date()
     let searched = try SSBModelFit.fit(
-      model: model, engine: engine,
+      model: model,
       options: SSBFitOptions(trials: trials, compareStandard: false, maximumOrder: 1))
     let seconds = Date().timeIntervalSince(started)
     searchedFits[index] = searched
@@ -665,7 +665,7 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
       caseRecord.calibration.scanSamplingColumnAngstroms
     )
     let fitted = try SSBModelFit.findAberrations(
-      model: model, engine: engine, rotationDegrees: caseRecord.rotationEstimateDegrees,
+      model: model, rotationDegrees: caseRecord.rotationEstimateDegrees,
       darkField: darkField, scanSampling: sampling, options: options5,
       progress: { stage, _, _ in
         if stage != lastStage {
@@ -737,7 +737,7 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
     }
     if options.verifyBranches {
       result["verification"] = try verifyBranches(
-        fitted, model: model, engine: engine, darkField: darkField, sampling: sampling,
+        fitted, model: model, darkField: darkField, sampling: sampling,
         trials: options.trials)
     }
     results.append(result)

@@ -11,7 +11,18 @@ final class SSBFifthOrderSearchTests: XCTestCase {
     XCTAssertEqual(current.maxHigherOrderEvaluations, 5000)
     XCTAssertFalse(current.compareStandard)
     XCTAssertEqual(SSBFitOptions(tilt: false).maximumOrder, 1)
-    XCTAssertEqual(SSBFitOptions(tilt: false, objective: .phaseVariance).maximumOrder, 1)
+    // The retired phase-variance fit still decodes from a saved run, and is refused as a fit.
+    var retired = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(SSBFitOptions(tilt: false)))
+        as? [String: Any])
+    retired["objective"] = "phase_variance"
+    let saved = try JSONDecoder().decode(
+      SSBFitOptions.self, from: JSONSerialization.data(withJSONObject: retired))
+    XCTAssertEqual(saved.objective, .phaseVariance)
+    XCTAssertEqual(saved.method, "phase variance")
+    XCTAssertThrowsError(try saved.validate()) { error in
+      XCTAssertTrue(error.localizedDescription.contains("retired"))
+    }
     let encoded = try JSONEncoder().encode(current)
     XCTAssertEqual(try JSONDecoder().decode(SSBFitOptions.self, from: encoded), current)
     var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])

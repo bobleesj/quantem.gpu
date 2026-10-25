@@ -3,9 +3,11 @@ import Metal
 
 /// What a fit maximizes or minimizes.
 public enum SSBObjective: String, Codable, Sendable {
-  /// The least-squares agreement of the transfer model with the measured double-overlap data (the default).
+  /// The least-squares agreement of the transfer model with the measured double-overlap data, the only
+  /// objective a fit runs.
   case agreement
-  /// The older SSB objective: the variance of the per-pixel phases, minimized.
+  /// Retired: the older native SSB objective, the variance of the per-pixel phases. Saved fits that used it still
+  /// decode; `SSBModelFit` refuses it.
   case phaseVariance = "phase_variance"
 }
 
@@ -16,7 +18,9 @@ public enum SSBObjective: String, Codable, Sendable {
 /// | `SSBFitOptions()` | 200 primary TPE trials, then joint fifth-order Newton with tilt/depth |
 /// | `SSBFitOptions(maximumOrder: 1)` | original low-order model agreement with tilt/depth |
 /// | `SSBFitOptions(tilt: false)` | model agreement, sample tilt and depth spread held at 0 |
-/// | `SSBFitOptions(tilt: false, objective: .phaseVariance)` | the older phase-variance SSB |
+///
+/// The older phase-variance search (`objective: .phaseVariance`) is retired; saved options naming it decode, and
+/// `validate()` refuses them.
 public struct SSBFitOptions: Codable, Equatable, Sendable {
   public var tilt: Bool
   public var objective: SSBObjective
@@ -84,16 +88,16 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
     guard trials > 0, tiltLimitMrad.isFinite, tiltLimitMrad > 0 else {
       throw MetalSSBError.invalidGeometry("Use at least one trial and a positive tilt limit.")
     }
-    if tilt && objective == .phaseVariance {
+    guard objective == .agreement else {
       throw MetalSSBError.invalidGeometry(
-        "The phase-variance objective does not see the sample tilt. Use tilt: false with it, or the agreement objective."
+        "The phase-variance SSB fit is retired. Fit with the model agreement objective (the default)."
       )
     }
     guard [1, 5].contains(maximumOrder), maxHigherOrderEvaluations > 0 else {
       throw MetalSSBError.invalidGeometry(
         "Choose maximumOrder 1 or 5 and a positive higher-order evaluation cap.")
     }
-    if maximumOrder == 5 && (!tilt || objective != .agreement) {
+    if maximumOrder == 5 && !tilt {
       throw MetalSSBError.invalidGeometry(
         "The standard fifth-order fit jointly refines tilt and depth. Use maximumOrder: 1 for the primary-only alternatives."
       )
@@ -116,8 +120,6 @@ public struct SSBFit: Codable, Sendable {
   /// The best agreement of the standard comparison and the ratio of the two (tilt fits only).
   public let standardAgreement: Double?
   public let tiltFitGain: Double?
-  /// The phase variance at the fit (phase-variance objective).
-  public let phaseVarianceLoss: Double?
   public let trialCount: Int
   public var timings: [String: Double]
   /// The trust-region Newton starts of the primary fit (iterations, objective evaluations, convergence).
@@ -153,15 +155,15 @@ public struct SSBBranchedFit: Codable, Sendable {
 public enum SSBModelFit {
   public typealias Progress = (_ stage: String, _ completed: Int, _ total: Int) -> Void
 
-  /// Fit at the model's current rotation. `engine` serves the phase-variance objective.
+  /// Fit at the model's current rotation.
   public static func fit(
-    model: MetalSSBJointModel, engine: MetalSSBEngine, options: SSBFitOptions,
+    model: MetalSSBJointModel, options: SSBFitOptions,
     progress: Progress = { _, _, _ in }, onInitialFit: (SSBFit) throws -> Void = { _ in },
     isCancelled: () -> Bool = { false }
   ) throws -> SSBFit {
     try options.validate()
     let primary = try fitPrimary(
-      model: model, engine: engine, options: options,
+      model: model, options: options,
       progress: progress, isCancelled: isCancelled)
     try onInitialFit(primary)
     return try refineHigherOrder(
@@ -170,7 +172,7 @@ public enum SSBModelFit {
   }
 
   private static func fitPrimary(
-    model: MetalSSBJointModel, engine: MetalSSBEngine, options: SSBFitOptions,
+    model: MetalSSBJointModel, options: SSBFitOptions,
     progress: Progress, isCancelled: () -> Bool
   ) throws -> SSBFit {
     try options.validate()
@@ -218,8 +220,7 @@ public enum SSBModelFit {
     }
     var timings: [String: Double] = [:]
     let rotation = model.scanDetectorRotationDegrees
-    switch (options.tilt, options.objective) {
-    case (true, _):
+    if options.tilt {
       var standard: SSBAgreementSearch.Result?
       if options.compareStandard {
         let started = Date()
@@ -251,11 +252,11 @@ public enum SSBModelFit {
           c10Angstroms: p[0], c12Angstroms: p[1], phi12Radians: p[2], sampleTiltMrad: [p[3], p[4]],
           depthSpreadAngstroms: p[5]),
         options: options, sampleAgreement: result.agreement, standardAgreement: standard?.agreement,
-        tiltFitGain: standard.map { result.agreement / $0.agreement }, phaseVarianceLoss: nil,
+        tiltFitGain: standard.map { result.agreement / $0.agreement },
         trialCount: options.trials, timings: timings)
       fit.newtonStarts = result.newtonStarts
       return fit
-    case (false, .agreement):
+    } else {
       let result = try withoutActuallyEscaping(values) { values in
         try withoutActuallyEscaping(derivatives) { derivatives in
           try SSBAgreementSearch.fitStandard(
@@ -276,28 +277,9 @@ public enum SSBModelFit {
         point: SSBModelPoint(c10Angstroms: p[0], c12Angstroms: p[1], phi12Radians: p[2]),
         options: options, sampleAgreement: result.agreement, standardAgreement: nil,
         tiltFitGain: nil,
-        phaseVarianceLoss: nil, trialCount: options.trials, timings: timings)
+        trialCount: options.trials, timings: timings)
       fit.newtonStarts = result.newtonStarts
       return fit
-    case (false, .phaseVariance):
-      // The native phase-variance search (seeded TPE and Nelder-Mead); its proposals are its own.
-      let started = Date()
-      let result = try engine.optimize(
-        start: MetalSSBAberrations(c10Angstroms: 0, c12Angstroms: 50, phi12Radians: 0),
-        scanDetectorRotationDegrees: Float(rotation), globalTrials: options.trials,
-        seed: UInt64(options.seed),
-        progress: {
-          progress($0.stage == "tpe" ? "Search trials" : "Refinement", $0.completed, $0.total)
-        },
-        isCancelled: isCancelled)
-      timings["fit_s"] = Date().timeIntervalSince(started)
-      return SSBFit(
-        scanDetectorRotationDegrees: rotation,
-        point: SSBModelPoint(
-          c10Angstroms: result.best.c10Angstroms, c12Angstroms: result.best.c12Angstroms,
-          phi12Radians: SSBAgreementSearch.wrapPhi(result.best.phi12Radians)),
-        options: options, sampleAgreement: nil, standardAgreement: nil, tiltFitGain: nil,
-        phaseVarianceLoss: result.loss, trialCount: options.trials, timings: timings)
     }
   }
 
@@ -309,13 +291,12 @@ public enum SSBModelFit {
   /// The agreement objective is exactly symmetric between the branches
   /// (`SSBRotationBranches.oppositeBranch`): every point of one branch has an equal-agreement point on the
   /// other, so the opposite branch's fit is the mapped fit of `rotation` (`mappedFromBranch` 0), its
-  /// agreement evaluated at its own rotation, not a second search. The phase-variance objective has no such
-  /// map, and both of its branches are searched.
+  /// agreement evaluated at its own rotation, not a second search.
   ///
   /// `checkRotation: false` fits `rotation` alone (Python `check_rotation=False`), the standard comparison
   /// included.
   public static func findAberrations(
-    model: MetalSSBJointModel, engine: MetalSSBEngine, rotationDegrees: Double,
+    model: MetalSSBJointModel, rotationDegrees: Double,
     darkField: [Float]?, scanSampling: (Double, Double), options: SSBFitOptions = SSBFitOptions(),
     checkRotation: Bool = true, keepFirst: Bool = false, progress: Progress = { _, _, _ in },
     onInitialFit: (SSBFit) throws -> Void = { _ in },
@@ -324,7 +305,7 @@ public enum SSBModelFit {
     if !checkRotation {
       try model.retarget(scanDetectorRotationDegrees: rotationDegrees)
       let fitted = try fit(
-        model: model, engine: engine, options: options, progress: progress,
+        model: model, options: options, progress: progress,
         onInitialFit: onInitialFit, isCancelled: isCancelled
       )
       return SSBBranchedFit(
@@ -336,27 +317,23 @@ public enum SSBModelFit {
     var size = 0
     var branchOptions = options
     branchOptions.compareStandard = false
-    let mapped = options.objective == .agreement
     for (index, rotation) in rotations.enumerated() {
       try model.retarget(scanDetectorRotationDegrees: rotation)
       let fitted: SSBFit
-      if mapped && index == 1 {
+      if index == 1 {
         let started = Date()
         let point = SSBRotationBranches.oppositeBranch(fits[0].point)
         let agreement = try model.agreements([point], isCancelled: isCancelled)[0]
         var opposite = SSBFit(
           scanDetectorRotationDegrees: rotation, point: point, options: branchOptions,
           sampleAgreement: agreement, standardAgreement: nil, tiltFitGain: nil,
-          phaseVarianceLoss: nil, trialCount: fits[0].trialCount,
+          trialCount: fits[0].trialCount,
           timings: ["mapped_agreement_s": Date().timeIntervalSince(started)])
         opposite.mappedFromBranch = 0
         fitted = opposite
       } else {
         fitted = try fitPrimary(
-          model: model, engine: engine, options: branchOptions,
-          progress: { stage, completed, total in
-            progress(mapped ? stage : "Branch \(index + 1)/2 · \(stage)", completed, total)
-          }, isCancelled: isCancelled)
+          model: model, options: branchOptions, progress: progress, isCancelled: isCancelled)
       }
       let started = Date()
       let phase = try model.reconstruct(fitted.point, upsamplingFactor: 1, isCancelled: isCancelled)
@@ -392,7 +369,7 @@ public enum SSBModelFit {
         options: options,
         sampleAgreement: agreement, standardAgreement: standard.agreement,
         tiltFitGain: standard.agreement > 0 ? agreement / standard.agreement : .nan,
-        phaseVarianceLoss: nil, trialCount: kept.trialCount, timings: timings)
+        trialCount: kept.trialCount, timings: timings)
       fits[decision.kept].newtonStarts = kept.newtonStarts
       fits[decision.kept].mappedFromBranch = kept.mappedFromBranch
     }
@@ -454,7 +431,7 @@ public enum SSBModelFit {
       scanDetectorRotationDegrees: primary.scanDetectorRotationDegrees,
       point: refined.point, options: options,
       sampleAgreement: refined.agreement, standardAgreement: nil, tiltFitGain: nil,
-      phaseVarianceLoss: nil, trialCount: primary.trialCount, timings: timings)
+      trialCount: primary.trialCount, timings: timings)
     fit.higherOrderRefinement = refined.result
     fit.higherOrderNormalization = refined.normalization
     return fit

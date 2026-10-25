@@ -447,7 +447,7 @@ speedup, exact comparison scope, source map, and regression commands.
 | Public workflow/results | `src/quantem/gpu/ssb` |
 | CUDA engine and optimizer | `src/quantem/gpu/ssb/cuda` |
 | Python MPS engine and optimizer | `src/quantem/gpu/ssb/mps` |
-| Native Swift/Metal engine and optimizer | `native/swift/Sources/MetalSSBKernels` |
+| Native Swift/Metal preparation and joint model (its phase-variance engine and optimizer are retired, 2026-10-25) | `native/swift/Sources/MetalSSBKernels` |
 | WebGPU kernels | `src/quantem/gpu/ssb/webgpu` |
 
 Parity uses the same source, bright-field selection, physical calibration,

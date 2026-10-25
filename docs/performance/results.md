@@ -623,9 +623,9 @@ The operating-system page cache was warm.
 | **CUDA** | Exact phase and loss | p50 of 7 | **32.335 ms** | Deterministic | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
 | **CUDA** | 200-trial TPE plus Nelder–Mead | p50/p95/max of 3 | **11.168/11.235/11.242 s** | Byte-identical fitted parameters, phase, object, and loss | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
 | **Python MPS** | Exact phase and loss | One synchronized run | **497.187 ms** | CUDA phase max `1.2815e-6` rad; loss error `7.45e-9` | Apple M5 Max, 40-core GPU |
-| **Native Swift/Metal** | Complex object, complete Hermitian cache | p50 of 7 | **8.911 ms** | CUDA phase relative L2 `5.8695e-5`; maximum `5.6288e-6` rad | Apple M5 Max, 40-core GPU |
-| **Native Swift/Metal** | Exact phase-variance loss, complete Hermitian cache | p50 of 7 | **25.120 ms** | Cached-versus-streamed loss relative error below `5e-5` | Apple M5 Max, 40-core GPU |
-| **Native Swift/Metal** | 200-trial TPE plus Nelder–Mead | p50 of 3 | **6.061 s** | Identical fitted parameters and loss, seed 42 | Apple M5 Max, 40-core GPU |
+| **Native Swift/Metal** | Complex object, complete Hermitian cache (engine retired 2026-10-25) | p50 of 7 | **8.911 ms** | CUDA phase relative L2 `5.8695e-5`; maximum `5.6288e-6` rad | Apple M5 Max, 40-core GPU |
+| **Native Swift/Metal** | Exact phase-variance loss, complete Hermitian cache (retired 2026-10-25) | p50 of 7 | **25.120 ms** | Cached-versus-streamed loss relative error below `5e-5` | Apple M5 Max, 40-core GPU |
+| **Native Swift/Metal** | 200-trial TPE plus Nelder–Mead (retired 2026-10-25) | p50 of 3 | **6.061 s** | Identical fitted parameters and loss, seed 42 | Apple M5 Max, 40-core GPU |
 | **WebGPU** | Complex object | Readback wall p50 of 5 | **32.5 ms** | Deterministic hash 5/5 | Chrome 151, Apple M5 Max Metal-3 |
 | **WebGPU** | Exact phase | Readback wall p50 of 5 | **102.1 ms** | Deterministic hash; one retained scheduling outlier | Chrome 151, Apple M5 Max Metal-3 |
 | **WebGPU** | Exact phase and loss | Readback wall p50 of 5 | **189.4 ms** | Phase byte-identical to no-loss 5/5 | Chrome 151, Apple M5 Max Metal-3 |

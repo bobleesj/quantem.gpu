@@ -42,7 +42,7 @@ both the timings and the output hashes the script prints.
 | CUDA/MPS screening | `scripts/benchmark_screening.py` | Separate build and prepared-reopen distributions, product hashes, stages, cache bytes, and memory |
 | Python MPS SSB | `scripts/benchmark_ssb_mps_scaling.py` | Reconstruction, parity-pair, and complete phase-variance fit (`objective="phase_variance"`) JSONL |
 | Native Swift/Metal indexed load | `metal-4dstem-indexed-load-benchmark` | Exact resident volume/products, stage timing, hashes, and Metal/process memory |
-| Native Swift/Metal SSB | `metal-ssb-benchmark` | Reconstruction, phase/loss, calibration, and cache-policy report |
+| Native Swift/Metal SSB | `metal-ssb-fit-benchmark`, `metal-ssb-redraw-benchmark` | Joint-model fit stages and fitted parameters; SSB redraw latency |
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_ssb.py scan_master.h5 --voltage-kV 300 --semiangle-mrad 30
@@ -242,40 +242,27 @@ swift test -c release --filter MetalSSBKernelsTests
 
 Opt-in real-source tests retain their fixture hashes and environment variables.
 A simulator or compile-only result does not replace physical Metal execution.
-The package-owned SSB benchmark accepts an exact metadata file, plane-major BF
-source, independent phase reference, repetition count, cache policy, fit-trial
-count, and fit-repetition count:
-
-```bash
-swift run -c release metal-ssb-benchmark \
-  METADATA_JSON FULL_BF_U8 REFERENCE_PHASE_F32 7 full 200 3
-```
-
-Record preparation separately from warm reconstruction, exact loss, and the
-complete fit. A finite cache budget is a different resource-policy row, not a
-replacement for the complete-cache timing.
+Record Fourier preparation separately from the fit and from warm reconstruction.
+A finite cache budget is a different resource-policy row, not a replacement for
+the complete-cache timing.
 
 ## SSB parity gates
 
 ```bash
-bash scripts/check_metal_ssb.sh
-bash scripts/check_ssb_parity.sh --build-metal
+bash scripts/check_ssb_parity.sh
 ```
 
-`check_ssb_parity.sh` checks the frozen GPU fitting trajectory, repeats it for
-determinism and reports the MPS comparison. It does not run a CPU
-reconstruction oracle or recapture a baseline; add `--full` only when a
-512×512 fit is relevant. Reconstruction and saved-result checks are in
-`check_metal_ssb.sh`. Set `QUANTEM_SSB_PARITY_SOURCE` to a local acquisition
-when exporting a new fixture and `QUANTEM_SSB_PARITY_RUNS` to a disposable
-working directory.
+`check_ssb_parity.sh` checks that the native `SSBAgreementSearch` draws the
+trials of the Python resident search (`scripts/ssb_agreement_gate.py`). It does
+not run a CPU reconstruction oracle or recapture a baseline. Native
+reconstruction, fit and saved-result checks are XCTest suites
+(`MetalSSBKernelsTests`). Set `QUANTEM_SSB_PARITY_SOURCE` to a local acquisition
+when exporting a new oracle fixture and `QUANTEM_SSB_PARITY_RUNS` to a
+disposable working directory.
 
-The frozen losses `0.14511984586715698`, `0.13808111846446991` and
-`0.13864889740943909` never change to make a test pass. They are not a
-sufficient gate for accumulation-order changes: `planesPerRange=4` diverges by
-one float32 ULP at fixture index 8 while those three values still pass. Widen
-the gate to the recorded 16-fixture set before accepting an accumulation
-reordering.
+The native engine's non-model reconstruction and phase-variance search are
+retired, with their harnesses (`check_metal_ssb.sh`, the frozen phase-variance
+fit trajectory and its losses).
 
 Routine optimization compares a known-good GPU revision with its candidate on
 identical inputs, calibration, precision, backend and hardware, and freezes the

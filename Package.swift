@@ -37,10 +37,6 @@ let package = Package(
       targets: ["MetalImageRuntimeBenchmark"]
     ),
     .executable(
-      name: "metal-ssb-benchmark",
-      targets: ["MetalSSBBenchmark"]
-    ),
-    .executable(
       name: "metal-ssb-redraw-benchmark",
       targets: ["MetalSSBRedrawBenchmark"]
     ),
@@ -191,11 +187,6 @@ let package = Package(
       name: "MetalImageRuntimeBenchmark",
       dependencies: ["MetalImageRuntime", "MetalImageFFT"],
       path: "native/swift/Benchmarks/MetalImageRuntimeBenchmark"
-    ),
-    .executableTarget(
-      name: "MetalSSBBenchmark",
-      dependencies: ["MetalSSBKernels"],
-      path: "native/swift/Benchmarks/MetalSSBBenchmark"
     ),
     .executableTarget(
       name: "MetalSSBRedrawBenchmark",

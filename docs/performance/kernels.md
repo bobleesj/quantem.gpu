@@ -156,3 +156,18 @@ the same packed float32 terms) once per BF pixel and row, so each sideband is on
 instead of the 14-term harmonic sum. Candidates with equal depth and tilt share depth-sinc weights. On the
 synthetic test scene both fifth-order kernels are about 1e-6 from the float64 objective and v0.2 is no less
 accurate.
+
+## Retired native engine (`MetalSSBEngine`, `ssb.metal`)
+
+The engine's own non-model SSB and its phase-variance fit, retired 2026-10-25: native SSB fits and reconstructs
+with the joint model only. These kernels were never registered in `SSBKernelRegistry` (the rows below have no
+version), so trimming `ssb.metal` changed no registered digest. `ssb.metal` keeps `counts_to_complex`, the row
+FFTs (`fft_rows_radix8`, `fft_rows_small_mixed_radix`), `transpose_complex32` and `extract_hermitian_half`, which
+prepare the Fourier evidence of every joint model, and `ssb_object_phase`, which shows a reopened `.ssb` run.
+Last measurements (2026-08-19, private 512² `uint8` fixture `native-ssb-fullbf-512-u8-v2`, Apple M5 Max,
+[migration record](../maintainer/native-metal-ssb-migration.md)).
+
+| Kernels | Status | Served | Last measured | Replaced by | Retired |
+|---|---|---|---|---|---|
+| `ssb_gamma_accumulate`, `ssb_gamma_accumulate_half`, `ssb_gamma_accumulate_half_aberrations`, `ssb_gamma_accumulate_full_aberrations`, `ssb_finalize_fourier_sum`, `ssb_precompute_cross_trig` | **retired** (non-model engine removed) | `MetalSSBEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`: SSB without tilt or depth, C10/C12 plus manual higher orders | warm reconstruction 8.9 ms p50, 512² | `ssb-redraw` (joint model, method `ssb`) | 2026-10-25 |
+| `ssb_precompute_chi_trig`, `ssb_correct_half_ifft_small`, `ssb_ifft_small_phase_moments`, `ssb_correct_half_column_ifft512_hermitian`, `ssb_ifft512_nyquist_correction`, `ssb_ifft512_rows_hermitian_phase_moments`, `ssb_correct_full_for_phase_loss`, `ssb_accumulate_phase_moments`, `ssb_transpose_half_to_column_major`, `ssb_transpose_half_to_row_major` | **retired** (phase-variance fit removed) | `MetalSSBEngine.phaseVariance` and `optimize` (`SSBOptimizer`: 200 seeded TPE trials, Nelder–Mead); `SSBFitOptions(objective: .phaseVariance)` | exact loss 25.1 ms p50; 200-trial fit 6.06 s p50, 512² | `ssb-joint-agreement`, `ssb-low-order-derivatives`, `ssb-fifth-agreement`, `ssb-fifth-gradient` (model agreement) | 2026-10-25 |
