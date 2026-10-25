@@ -15,6 +15,8 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
   public let upsamplingFactor: Int
   /// Auto or an explicit override; absent in older files and when the factor was passed directly.
   public let outputSampling: SSBOutputSampling?
+  /// The kernel that produced the phase; absent in older files.
+  public let kernel: MetalKernelIdentity?
   public let calibration: MetalSSBCalibration
   public let parameters: SSBJointParameters
   /// Exact reconstruction point. Absent in older files that stored only the Float UI parameters.
@@ -46,6 +48,7 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
     columns = result.columns
     upsamplingFactor = result.upsamplingFactor
     outputSampling = result.outputSampling
+    kernel = result.kernel
     self.calibration = calibration
     parameters = result.parameters
     point = result.point

@@ -62,6 +62,8 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   /// How the output factor was chosen: `.auto` (from the calibration, at most 4x) or an explicit
   /// `.factor(n)` override. Nil when the caller passed a bare `upsamplingFactor`.
   public var outputSampling: SSBOutputSampling? = nil
+  /// The registered GPU kernel (name, version, source fingerprint, variant) that produced this result.
+  public var kernel: MetalKernelIdentity? = nil
 }
 
 /// How the agreement objective evaluates its phases.
@@ -563,22 +565,30 @@ public final class MetalSSBJointModel {
         phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
         wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
         scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
-        point: point, amplitude: amplitude, estimator: estimator)
+        point: point, amplitude: amplitude, estimator: estimator, kernel: coherent.lastKernel)
     }
     guard !point.hasHigherOrder else {
       throw MetalSSBError.invalidGeometry(
         "Higher-order joint SSB uses phaseOfMean; choose that estimator to retain every fitted term."
       )
     }
+    let meanPhaseKernel = MetalKernelIdentity(
+      name: SSBKernelRegistry.meanPhase.name, version: SSBKernelRegistry.meanPhase.version,
+      sourceSHA256: try SSBKernelRegistry.sourceSHA256(SSBKernelRegistry.meanPhase),
+      variant: upsamplingFactor == 3 && supportsFused1536 ? "factor=3 fused1536" : "factor=\(upsamplingFactor) general")
     if upsamplingFactor == 3 && supportsFused1536 {
       var result = try reconstructFused1536(parameters, isCancelled: isCancelled)
       result.point = point
+      result.estimator = .meanPhase
+      result.kernel = meanPhaseKernel
       return result
     }
     var result = try reconstructGeneral(
       parameters, upsamplingFactor: upsamplingFactor,
       isCancelled: isCancelled)
     result.point = point
+    result.estimator = .meanPhase
+    result.kernel = meanPhaseKernel
     return result
   }
 

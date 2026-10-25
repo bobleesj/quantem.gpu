@@ -117,6 +117,7 @@ for scan in options.scans {
   for order in options.orders {
     for factor in options.factors {
       var times: [Double] = []
+      var lastKernel: MetalKernelIdentity?
       for run in 0..<(options.warmup + options.runs) {
         let c10 = -80.0 + 1.5 * Double(run)
         started = Date()
@@ -129,8 +130,10 @@ for scan in options.scans {
           try bytes.write(to: folder.appendingPathComponent("\(scan)_\(order)_\(factor)x.f32"))
         }
         if run >= options.warmup { times.append(elapsed) }
+        lastKernel = result.kernel
       }
       let median = percentile(times, 0.5), p90 = percentile(times, 0.9)
+      print("  kernel \(lastKernel?.label ?? "unrecorded")")
       print(
         String(
           format: "%d %@ %dx (%d^2): median %.2f ms, p90 %.2f ms, min %.2f ms, %.1f FPS at median",
@@ -138,6 +141,7 @@ for scan in options.scans {
       records.append([
         "scan": scan, "brightfield_pixels": count, "order": order, "factor": factor, "output": scan * factor, "median_ms": median,
         "p90_ms": p90, "min_ms": times.min()!, "runs": times.count,
+        "kernel": lastKernel?.label ?? "unrecorded",
       ])
     }
   }

@@ -169,6 +169,10 @@ final class SSBCoherentReconstruction {
   private var redrawPipelines: [String: MTLComputePipelineState] = [:]
   /// The largest BF pixel frequency magnitude.
   private let maximumK: Float
+  /// Source digests of the redraw and the earlier coherent kernels, from the bundled `.metal` text.
+  private let redrawSource, perTermSource: String
+  /// The kernel that produced the latest reconstruction.
+  private(set) var lastKernel: MetalKernelIdentity?
 
   init(
     device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary, geometry: MetalSSBGeometry,
@@ -181,6 +185,8 @@ final class SSBCoherentReconstruction {
     kHost = k
     self.library = library
     maximumK = k.map { hypotf($0.x, $0.y) }.max() ?? 0
+    redrawSource = try SSBKernelRegistry.sourceSHA256(SSBKernelRegistry.redraw)
+    perTermSource = try SSBKernelRegistry.sourceSHA256(SSBKernelRegistry.perTerm)
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
       guard let function = library.makeFunction(name: name) else {
         throw MetalSSBError.missingFunction(name)
@@ -321,6 +327,10 @@ final class SSBCoherentReconstruction {
     precondition(factor == 8 || referenceKernels, "1x-4x reconstruction uses the redraw kernel only")
     let higher = point.hasHigherOrder
     let useSeparable = self.useSeparable && !higher
+    lastKernel = MetalKernelIdentity(
+      name: SSBKernelRegistry.perTerm.name, version: SSBKernelRegistry.perTerm.version,
+      sourceSHA256: perTermSource,
+      variant: "factor=\(factor) \(useSeparable ? "separable" : "per-term")")
     let plan = try plan(factor: factor, higher: higher)
     let coefficients = higher ? try Self.buffer(device, point.reconstructionCoefficients) : nil
     let selectedProbe = higher ? higherProbePipeline : probePipeline
@@ -438,6 +448,10 @@ final class SSBCoherentReconstruction {
     let coefficients = try packed.map { try Self.buffer(device, $0) }
     let pipeline = try redrawPipeline(
       factor: factor, degree: higher ? 6 : 2, depth: point.depthSpreadAngstroms != 0)
+    lastKernel = MetalKernelIdentity(
+      name: SSBKernelRegistry.redraw.name, version: SSBKernelRegistry.redraw.version,
+      sourceSHA256: redrawSource,
+      variant: "factor=\(factor) degree=\(higher ? 6 : 2) depth=\(point.depthSpreadAngstroms != 0 ? "on" : "off")")
     let source = geometry.qxByRow.count
     let n = source * factor
     let total = try workspace("total", n * n * 8)
