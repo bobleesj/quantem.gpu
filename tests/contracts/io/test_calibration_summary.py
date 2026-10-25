@@ -72,7 +72,7 @@ def test_calibration_fields_are_named_and_a_scalar_sets_both_axes():
 
 
 def test_every_calibration_table_uses_one_label_set():
-    """data.calibration.table(), data.metadata_table() and SSB.calibration_table() name rows and units alike."""
+    """data.calibration.table(), data.metadata_table() and SSB.calibration() name rows and units alike."""
     from quantem.gpu.io import metadata_display as labels
 
     data = Dataset4dstemGPU(np.zeros((2, 3, 4, 5), np.uint16), {
@@ -86,6 +86,35 @@ def test_every_calibration_table_uses_one_label_set():
         assert calibration.loc[label, "Source"] == overview.loc[label, "Metadata"] == labels.RECORDED
     assert calibration.loc["Scan step (row, col)", "Value"] == (0.264, 0.264)
     assert overview.loc["Scan-detector rotation", "Metadata"] == labels.NOT_RECORDED
+
+
+def test_ssb_calibration_dict_holds_the_table_rows():
+    """SSB.calibration() is the DataFrame and calibration(to_dict=True) the same rows as a plain dict."""
+    import inspect
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from quantem.gpu.io.metadata_display import calibration_rows
+    from quantem.gpu.ssb.workflow import DirectPtycho
+
+    recorded = {"voltage_kV": 200.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
+                "detector_sampling_mrad": [0.55, 0.55]}
+    used = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.264, 0.264),
+            "detector_sampling_mrad": (0.55, 0.55), "scan_detector_rotation_deg": 17.0}
+    session = SimpleNamespace(
+        **used, scan_detector_rotation_flipped=False, scan_detector_rotation_source="given",
+        _calibration_file=calibration_rows(recorded), _calibration_supplied={"voltage_kV", "scan_detector_rotation_deg"},
+        _calibration_initial=dict(used), _detector_sampling_recorded=True, _compute=None, backend="cuda")
+    calibration = inspect.unwrap(DirectPtycho.calibration)
+    table = calibration(session)
+    rows = calibration(session, to_dict=True)
+    assert isinstance(table, pd.DataFrame) and type(rows) is dict
+    assert rows == table.to_dict(orient="index")
+    assert list(rows) == list(table.index)
+    assert rows["Accelerating voltage"] == {"File value": 200.0, "File unit": "kV", "Value used": 300.0,
+                                            "Unit used": "kV", "Source": "Explicit override"}
+    assert rows["Scan step (row, col)"]["Value used"] == (0.264, 0.264)
 
 
 def test_tables_round_for_reading_and_a_confirmed_value_stays_recorded():

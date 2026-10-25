@@ -34,7 +34,7 @@ def _objective(ssb):
 def fit_fifth_order(
     ssb, *, search, trials, seed, save_dir, force, verbose,
     primary_options, refinement="newton", compute_loss=False,
-    show=True, on_initial_fit=None,
+    show=True, on_initial_fit=None, size="medium", columns=3, show_convergence=False,
 ):
     """Fit the fifth-order model; standard skips additional higher-order TPE."""
     if trials < 1:
@@ -42,6 +42,10 @@ def fit_fifth_order(
             "Fifth-order fitting requires trials >= 1; use search='primary' for zero-trial refinement."
         )
     from .fifth_order_parameters import public_params, vector
+    from .fit_display import FitDisplay
+
+    display = FitDisplay(ssb, enabled=show, size=size, columns=columns,
+                         show_convergence=show_convergence)
 
     primary_trials = trials if search == "standard" else 200
     primary_seed = seed if search == "standard" else 42
@@ -70,10 +74,12 @@ def fit_fifth_order(
         reused = load_result(paths=paths, signature=signature, backend=ssb.backend)
         if reused is not None:
             ssb._aberration_search = ssb._accept_result(reused)
-            from .fit_display import FitDisplay
-
-            FitDisplay(ssb, enabled=show).update(reused, final=True)
+            display.update(reused, final=True)
+            if show_convergence and display.display is not None:
+                display.display(reused.show("convergence", size=size))
             return reused
+    wall_started = time.perf_counter()
+    display.progress(0)
     started = time.perf_counter()
     primary = ssb._find_aberrations(
         ("apply" if primary_options["check_rotation"] == "both" else
@@ -87,9 +93,6 @@ def fit_fifth_order(
         refine_rotation=primary_options["refine_rotation"],
     )
     primary_elapsed_s = time.perf_counter() - started
-    from .fit_display import FitDisplay
-
-    display = FitDisplay(ssb, enabled=show)
     handoff_started = time.perf_counter()
     if on_initial_fit is not None:
         on_initial_fit(primary)
@@ -110,6 +113,7 @@ def fit_fifth_order(
     coarse_scores = []
     coarse_elapsed_s = []
     tpe_started = time.perf_counter()
+    setup_elapsed_s = tpe_started - started - primary_elapsed_s
     tpe_elapsed_s = 0.0
     if search == "broad":
         names = [f"p{i}" for i in range(28)]
@@ -130,8 +134,15 @@ def fit_fifth_order(
             return float(objective.evaluate(point, 5)[0]) / norm
 
         def record_time(study, trial):
+            nonlocal started, tpe_started
             # Scalar bookkeeping only: the objective has already returned its value.
             coarse_elapsed_s.append(time.perf_counter() - started)
+            if show_convergence:
+                before = time.perf_counter()
+                display.progress(trial.number + 1, study.best_value, stage="Broad fifth-order search")
+                overhead = time.perf_counter() - before
+                started += overhead
+                tpe_started += overhead
 
         tpe_started = time.perf_counter()
         study.optimize(coarse, n_trials=trials, show_progress_bar=verbose, callbacks=[record_time])
@@ -155,7 +166,15 @@ def fit_fifth_order(
             cache.update(zip(missing, values))
         return np.array([cache[key] for key in keys])
 
-    tracker = Tracker(evaluate, start, bounds, refinement_cap)
+    def refinement_progress(count, best):
+        nonlocal started
+        before = time.perf_counter()
+        prior = max(coarse_scores, default=float("-inf"))
+        display.progress(exploration_trials + count, max(prior, best), stage="Joint fifth-order refinement")
+        started += time.perf_counter() - before
+
+    tracker = Tracker(evaluate, start, bounds, refinement_cap,
+                      on_progress=refinement_progress if show_convergence else None)
     refinement_start_s = tracker.started - started
     try:
         tracker(start)
@@ -233,18 +252,20 @@ def fit_fifth_order(
     result.timings = {
         "joint_fit_s": result.elapsed_s,
         "primary_fit_s": primary_elapsed_s,
-        "fifth_order_setup_s": tpe_started - started - primary_elapsed_s,
+        "fifth_order_setup_s": setup_elapsed_s,
         "initial_handoff_s": initial_handoff_s,
         "tpe_s": tpe_elapsed_s,
         "refinement_s": chosen.refine_elapsed_s,
         "reconstruction_s": time.perf_counter() - reconstruction_started,
     }
     final_handoff_started = time.perf_counter()
+    display.progress(exploration_trials + tracker.nfev, tracker.best,
+                     stage=f"Fit complete · {stop}", final=True)
     display.update(result, final=True)
     result.timings["final_display_s"] = time.perf_counter() - final_handoff_started
-    result.timings["fit_and_display_s"] = (
-        result.elapsed_s + initial_handoff_s + result.timings["final_display_s"]
-    )
+    result.timings["fit_and_display_s"] = time.perf_counter() - wall_started
+    if show_convergence:
+        result.timings["convergence_display_s"] = display.display_s
     if paths is not None:
         result = ssb._save_result(result, paths=paths, signature=signature)
     ssb._aberration_search = ssb._accept_result(result)

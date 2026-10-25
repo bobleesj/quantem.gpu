@@ -113,7 +113,7 @@ def plot_parameters(
     for unused in grid.ravel()[panels:]:
         unused.remove()
     if include_phase:
-        from quantem.gpu.ssb.results import host_array
+        from quantem.gpu.ssb.results import _phase_title, host_array
 
         phase = host_array(result.phase)
         sampling_nm = np.asarray(result.object_sampling_A) / 10.0
@@ -124,7 +124,7 @@ def plot_parameters(
             vmax=result.phase_limits[1],
             extent=(0, phase.shape[1] * sampling_nm[1], phase.shape[0] * sampling_nm[0], 0),
         )
-        axes[0].set(title=f"SSB phase · {result.upsampling_factor}× (rad)", xlabel="Scan column (nm)", ylabel="Scan row (nm)")
+        axes[0].set(title=_phase_title(result), xlabel="Scan column (nm)", ylabel="Scan row (nm)")
         figure.colorbar(phase_image, ax=axes[0], label="Phase (rad)", shrink=0.78)
     maximum = max(1.0, *(np.max(item["relative_agreement"]) for item in evidence["slices"].values()))
     parameter_axes = axes[int(include_phase):]

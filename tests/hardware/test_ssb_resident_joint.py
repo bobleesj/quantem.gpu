@@ -342,7 +342,7 @@ def test_loaded_metadata_and_explicit_ssb_overrides_keep_counts(device, tmp_path
             assert ssb.detector_sampling_mrad == (3.0, 3.0)
             assert ssb.source_path == data.metadata["source_path"]
             assert ssb.scan_detector_rotation_deg == 17.0
-            table = ssb.calibration_table()
+            table = ssb.calibration()
             assert table.loc["Accelerating voltage", "File value"] == 200.0
             assert table.loc["Accelerating voltage", "Value used"] == 300.0
             assert table.loc["Accelerating voltage", "Source"] == "Explicit override"
@@ -391,7 +391,7 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
     geometry = {"backend": device.backend, "bright_field_center_px": (12., 12.),
                 "bright_field_radius_px": 6.5}
     with SSB(data, **geometry) as ssb:
-        table = ssb.calibration_table()
+        table = ssb.calibration()
         assert table.loc["Accelerating voltage", "File value"] == 300.0
         assert table.loc["Accelerating voltage", "Source"] == "Overridden"
         assert table.loc["Scan-detector rotation", "File value"] == 12.0
@@ -401,7 +401,7 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
         assert table.loc["Detector step (row, col)", "Value used"] == "Pending probe fit"
         assert ssb._compute is None
         ssb.preview({"C10_nm": 8., "C12_nm": 0., "phi12_deg": 0.}, compute_loss=False)
-        table = ssb.calibration_table()
+        table = ssb.calibration()
         assert table.loc["Detector step (row, col)", "Source"] == "Estimated"
         # the table rounds for reading (six significant figures); the session keeps the full value
         assert display_value(ssb.detector_sampling_mrad) == table.loc["Detector step (row, col)", "Value used"]
@@ -411,9 +411,9 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
         assert display_value(ssb.detector_sampling_mrad) == table.loc["Detector step (row, col)", "Value used"]
         assert all(value > 0 for value in table.loc["Detector step (row, col)", "Value used"])
         ssb.set_rotation(9.0)
-        assert ssb.calibration_table().loc["Scan-detector rotation", "Source"] == "Modified in session"
+        assert ssb.calibration().loc["Scan-detector rotation", "Source"] == "Modified in session"
     with SSB(data, voltage_kV=300.0, scan_detector_rotation_deg=0.0, **geometry) as ssb:
-        table = ssb.calibration_table()
+        table = ssb.calibration()
         assert table.loc["Accelerating voltage", "Source"] == "Explicit override"
         assert table.loc["Scan-detector rotation", "Source"] == "Explicit override"
     assert data.metadata == original

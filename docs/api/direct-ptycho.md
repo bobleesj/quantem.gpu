@@ -27,12 +27,91 @@ complex_result = ptycho.run(
 ```
 
 End a notebook cell on `optics` to inspect every fitted aberration and its units.
-Use `optics.report()` for the full-precision pandas table or
+Use `optics.report()` for a full-precision pandas table with one row per
+parameter and units in the row labels, or
 `optics.report(to_dict=True)` for a dictionary, with coefficients under
 `"aberrations"` and rotation, tilt and effective depth stored separately.
 `optics.aberrations` remains the coefficient dictionary. The report also includes
 recorded timing and optimizer diagnostics; `optics.report(show_convergence=True)`
 adds the saved convergence plot without fitting again.
+Use `optics.report(columns=2)` for two parameter/value groups side by side,
+or `columns=3` for a wider, shorter table. The default is one group. This
+changes only the table layout; dictionary exports retain the same structure.
+
+To see convergence while fitting in Jupyter, request it on the fitting call:
+
+```python
+fit = ptycho.find_aberrations(
+    search="broad", compute_loss=False, size="large", show_convergence=True,
+)
+```
+
+`size` controls the phase preview and chart size, not the acquisition or fit.
+`columns` controls the final comparison layout: `columns=1` stacks the three
+methods vertically, `columns=2` wraps them, and `columns=3` (the default) keeps
+them side by side. `size` accepts a positive integer width in pixels per
+panel, such as `size=750`, or `"small"`, `"medium"`, `"large"`, `"xlarge"`
+(300, 450, 600, 900 pixels). `size=900` matches `"xlarge"`; static plots use
+a 100-DPI reference. Browser fitting and HiDPI display can scale the rendered
+figure. These settings do not alter reconstruction sampling. For example:
+
+```python
+fit = ptycho.find_aberrations(
+    search="broad", scan_region=scan_region, compute_loss=False,
+    size=900, show_convergence=True, columns=1,
+)
+```
+
+For a regional fit, each full field stays above its matching zoom within the
+chosen column layout. The convergence chart remains a separate plot.
+`show_convergence` defaults to `False`. For standard and broad searches, the
+optional chart updates at most twice per second using objective values the
+optimizer already computed. It shows fifth-order search and refinement after
+the initial low-order fit. Larger normalized agreement means a better fit to
+that model; it is not a resolution score. `compute_loss=False` still skips the
+separate phase-variance diagnostic, and no result files are saved unless asked.
+Use `show=False, show_convergence=True` for the chart without the phase preview.
+For a primary-only fit, inspect `fit.show("convergence")` after fitting.
+
+In a notebook, standard/broad fitting first shows a lightweight conventional
+SSB preview. When fitting finishes on resident CUDA data, that same output
+becomes three columns: **conventional SSB**, **regularized phase-only**, and
+**amplitude + phase**. Every column shows phase in radians using the same fitted
+optics, Auto sampling and shared contrast. The regularized previews use the
+`run` defaults: phase strength 0.03, amplitude strength 0.03 when applicable,
+smoothness crossover 1 Å⁻¹, and uniform weighting. They are comparison choices,
+not a selected winner. Use explicit `run` calls to tune or retain alternatives.
+Preparation happens once per model after fitting and is included in display
+time, not the optical-fit time. `show=False` skips it. MPS and streamed sessions
+continue to show conventional SSB because regularized methods require resident
+CUDA data. Subsequent phase-strength changes reuse the prepared phase equations.
+
+To fit only a selected part of a loaded acquisition:
+
+```python
+fit = ptycho.find_aberrations(
+    search="broad", scan_region=(128, 384, 128, 384),
+    compute_loss=False, size="large", show_convergence=True,
+)
+```
+
+`scan_region` uses scan positions `(row_start, row_stop, col_start, col_stop)`
+with exclusive stops. The square region must fit inside the acquisition and
+currently have 128, 256, 512 or 1024 positions per side. Only that region
+contributes to fitting. The initial preview shows full-field SSB with a box and
+a matching zoom. The final CUDA comparison puts all three full fields above
+their matching fit-region zooms. All previews apply the regional optics to the
+full acquisition; no second full-field fit is run.
+This display adds full-field reconstruction work; `show=False` skips it.
+The returned `fit.phase` and diagnostics remain regional, and
+`ptycho.run(fit, ...)` reconstructs the full field using those optics.
+`scan_region` changes fitting data; `result.show(region="top-left", ...)`
+only changes the displayed comparison zoom.
+
+The first `run(method="phase")` prepares the equations. Repeating it with only
+`phase_regularization` changed reuses them and is much faster. Defocus, tilt,
+method or sampling changes require new preparation. Plotting with `show()` is
+separate from the solve, so numerical update speed is not browser frame rate.
 
 The acquisition must supply its calibration, or it must be passed explicitly
 as in the [acquisition tutorial](../python-workflow.md). All three calls above
@@ -84,11 +163,44 @@ not supply missing independent measurements or validate apparent atom peaks.
 ## Review and reuse
 
 ```python
-phase.show()
+phase.show(compare=ssb, region="top-left", cmap="gray", size="large")
 phase.reconstruction_options
 phase.reconstruction_diagnostics
 ptycho.show(view="regularization", upsampling_factor="auto")
 ```
+
+Pass several results to compare regularization strengths in the same figure:
+
+```python
+phase_001.show(
+    compare=[phase_003, phase_005], region="bottom-left", cmap="gray",
+    interactive=True, show_fft=True, columns=3, size="large",
+)
+```
+
+Full fields appear above their matching zooms. Every panel uses the first
+result's phase limits, and each title identifies the method and regularization.
+Use `interactive=False` (the default) for a static Matplotlib figure, or
+`interactive=True` for linked Show2D inspection. `size` accepts `"small"`,
+`"medium"`, `"large"`, and `"xlarge"`; `columns` sets methods per row.
+Interactive comparisons require matching pixel grids. These viewers inspect
+saved results; `ptycho.show()` opens ShowPtycho for live aberration edits.
+
+`show_fft=True` adds an FFT of each exact displayed crop below the images.
+Without a crop, it uses the full field. FFTs remove the mean, apply a Hann
+window, and divide magnitude by the window sum. They share a frequency band
+and a 60 dB display range relative to the common maximum, preserving relative
+signal strengths. The reciprocal scale bar is calibrated from the crop size
+and object sampling. FFT appearance is a diagnostic, not an independent
+resolution measurement. Interactive image panning does not redefine the saved
+crop or its FFT; change `region` and rerun `show` to compare another crop.
+
+Comparison titles identify conventional SSB, regularized phase-only, or
+amplitude + phase, including recorded regularization strengths. Upsampling
+is labeled separately from the phase units. Full fields remain above the
+matching marked zooms with a shared contrast range. Choose `region="center"`
+(the default), `"top-left"`, `"top-right"`, `"bottom-left"`, or `"bottom-right"`.
+This selects only the displayed zoom; it does not crop the acquisition or refit.
 
 The widget and Python calls use the same backend. Changing only strengths
 reuses prepared normal equations. Phase updates use a cached eigendecomposition;

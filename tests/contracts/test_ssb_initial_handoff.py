@@ -51,8 +51,9 @@ def handoff(monkeypatch):
     monkeypatch.setattr(ipython, "get_ipython", lambda: SimpleNamespace(kernel=object()))
     monkeypatch.setattr(IPython.display, "display", Mock(side_effect=publish))
 
-    def draw(result, *, show_parameters):
+    def draw(result, *, show_parameters, size):
         assert show_parameters is False
+        assert size == "medium"
         events.append("draw")
         clock.now += 4.0
         figure = Mock()

@@ -29,7 +29,7 @@ from weakref import WeakKeyDictionary
 import numpy as np
 
 from quantem.gpu.detector.session import prepare
-from quantem.gpu.display._layout import panel_inches, resolve_columns
+from quantem.gpu.display._layout import panel_inches, resolve_columns, scalebar
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.representation import DataRepresentation
 
@@ -68,7 +68,7 @@ def mean(data) -> np.ndarray:
 def show(
     data,
     *,
-    size: Literal["small", "medium", "large", "xlarge"] = "medium",
+    size: Literal["small", "medium", "large", "xlarge"] | int = "medium",
     columns: int | None = None,
     rows: int | None = None,
     cmap: str = "inferno",
@@ -83,15 +83,19 @@ def show(
     outside it, and ADF collects from the disk edge to twice its radius.
     Use :func:`bf`, :func:`df`, :func:`adf` or :func:`mean` directly to retain
     arrays or choose collection angles. Display options never bin the data.
+    Scan panels carry a bar in Å or nm from ``scan_sampling_A`` and the mean
+    diffraction one in mrad from ``detector_sampling_mrad``; a panel whose
+    sampling is not set has no bar.
 
     Parameters
     ----------
     data
         One loaded acquisition or array supported by :func:`prepare`, ordered
         as scan row, scan column, detector row, detector column.
-    size : {"small", "medium", "large", "xlarge"}, optional
-        Per-panel size, medium by default: 3, 4.5, 6 or 9 inches. These follow
-        the Show2D/Show3D proportions (300, 450, 600 or 900 pixels at 100 dpi).
+    size : {"small", "medium", "large", "xlarge"} or int, optional
+        Per-panel size, medium by default: 3, 4.5, 6 or 9 inches, or a panel
+        width in pixels at 100 dpi. The presets follow the Show2D/Show3D
+        proportions (300, 450, 600 or 900 pixels at 100 dpi).
         Notebook scaling and the space for titles can affect visible width;
         source array resolution is unchanged.
     columns : int, optional
@@ -135,16 +139,56 @@ def show(
     titles = ["Bright field (BF)", "Dark field (DF)",
               "Annular dark field (ADF)", "Mean diffraction"]
     norms = [norm, norm, norm, diffraction_norm]
+    scan_sampling = data.calibration.scan_sampling_A if hasattr(data, "calibration") else None
+    detector_sampling = data.calibration.detector_sampling_mrad if hasattr(data, "calibration") else None
+    samplings = [(scan_sampling, "Å")] * 3 + [(detector_sampling, "mrad")]
+    bars = [None if sampling is None else _scalebar(image, sampling, units, width)
+            for image, (sampling, units) in zip(images, samplings)]
     figure, _ = show_2d(
         [images[i:i + columns] for i in range(0, len(images), columns)],
         title=[titles[i:i + columns] for i in range(0, len(images), columns)],
         cmap=cmap,
         norm=[norms[i:i + columns] for i in range(0, len(images), columns)],
+        scalebar=[bars[i:i + columns] for i in range(0, len(images), columns)],
         axsize=(width, width),
-        save=save,
     )
+    _outline_scalebars(figure.axes)
+    if save is not None:  # after the outlines, with show_2d's own save settings
+        figure.savefig(save, bbox_inches="tight", pad_inches=0, dpi=300)
     plt.close(figure)
     return figure
+
+
+def _scalebar(image, sampling, units, width) -> dict:
+    """Scale bar of a round length, 1, 2 or 5 times a power of ten, nearest 20 % of the field.
+
+    The field is ``columns * sampling`` along the bar; ``sampling`` is per pixel
+    (Å for scan images, mrad for diffraction), its column entry for a pair.
+    """
+    sampling = float(sampling[1] if isinstance(sampling, (tuple, list)) else sampling)
+    target = .2 * image.shape[1] * sampling
+    decade = 10 ** math.floor(math.log10(target))
+    length = min((step * decade for step in (1, 2, 5, 10)), key=lambda value: abs(value - target))
+    return scalebar(sampling, units, image.shape[0], width) | {"length": length, "bold": True}
+
+
+def _outline_scalebars(axes) -> None:
+    """Stroke each white bar and label in black, a tenth of the label size wide.
+
+    ``show_2d`` draws a bare white bar, which vanishes on the bright parts of
+    BF images and the diffraction disk; the stroke keeps it readable there and
+    grows with the label, which ``scalebar`` sizes from the panel width.
+    """
+    from matplotlib import patheffects
+    from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+
+    for axis in axes:
+        for bar in axis.artists:
+            if isinstance(bar, AnchoredSizeBar):
+                label = bar.txt_label._text
+                stroke = [patheffects.withStroke(linewidth=.1 * label.get_fontsize(), foreground="black")]
+                for artist in (*bar.size_bar.get_children(), label):
+                    artist.set_path_effects(stroke)
 
 
 def masked_sum(data, det_mask) -> np.ndarray:

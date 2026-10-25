@@ -127,7 +127,7 @@ class Calibration:
         """Value, unit and source (recorded, overridden or not recorded) of each calibration.
 
         Rows, units and sources are the one label set of ``io.metadata_display`` that ``metadata_table()`` and
-        ``SSB.calibration_table()`` use too.
+        ``SSB.calibration()`` use too.
         """
         from quantem.gpu.io.metadata_display import calibration_table
 

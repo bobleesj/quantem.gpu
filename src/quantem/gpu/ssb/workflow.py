@@ -656,7 +656,7 @@ class DirectPtycho:
         self._aberrations = validate_aberrations(aberrations, higher_order=True)
         self._aberrations_explicit = aberrations is not None
 
-    def calibration_table(self) -> "pd.DataFrame":
+    def calibration(self, *, to_dict: bool = False) -> "pd.DataFrame | dict[str, dict[str, object]]":
         """Compare loaded file calibration with the settings this session uses.
 
         The table retains the metadata seen at construction and distinguishes
@@ -665,9 +665,15 @@ class DirectPtycho:
         A detector estimate is pending until the first backend preparation.
         ShowPtycho displays this table automatically when first shown.
 
+        Parameters
+        ----------
+        to_dict : bool, optional
+            Return ``{row: {"File value", "File unit", "Value used", "Unit used", "Source"}}``
+            instead of the DataFrame, the same rows and values, for saving or comparing in code.
+
         Returns
         -------
-        pandas.DataFrame
+        pandas.DataFrame or dict
             File value, value used, units and the source of each value used.
             File values are the loader's effective metadata, including saved
             calibration overrides; original source records stay in the dataset.
@@ -679,7 +685,8 @@ class DirectPtycho:
         --------
         >>> data = io.load("scan.qem")
         >>> ptycho = DirectPtycho(data, scan_detector_rotation_deg=12.3)
-        >>> ptycho.calibration_table()
+        >>> ptycho.calibration()
+        >>> ptycho.calibration(to_dict=True)["Scan step (row, col)"]["Value used"]  # doctest: +SKIP
         """
         import pandas as pd
 
@@ -727,6 +734,8 @@ class DirectPtycho:
             "Source": rotation["Source"] if rotation["Source"] != labels.MODIFIED_IN_SESSION else (
                 labels.EXPLICIT_OVERRIDE if "scan_detector_rotation_deg" in self._calibration_supplied else labels.DEFAULT),
         }
+        if to_dict:
+            return rows
         return pd.DataFrame.from_dict(rows, orient="index").rename_axis("SSB launch calibration")
 
     def _decode_resident(self, data, bright_field_center_px, bright_field_radius_px,
@@ -1527,7 +1536,7 @@ class DirectPtycho:
         )
 
     def show(self, view: Literal["interactive", "regularization", "depth", "tilt", "parameters", "focus"] = "interactive", *,
-             size: Literal["small", "medium", "large", "xlarge"] | None = None,
+             size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
              rows: int | None = None, columns: int | None = None,
              cmap: str | None = None, save: str | Path | None = None,
              region: tuple[int, int, int, int] | None = None,
@@ -1560,9 +1569,10 @@ class DirectPtycho:
         view : {"interactive", "depth", "tilt", "parameters", "focus"}, optional
             The existing ShowPtycho widget, the focus-depth landscape, the
             row-column tilt landscape, both landscapes, or reconstructed images.
-        size : {"small", "medium", "large", "xlarge"} or None, optional
-            Plot or focus-gallery panel size only; medium by default. Interactive
-            focus panels use 300, 450, 600 or 900 CSS pixels. Does not change
+        size : {"small", "medium", "large", "xlarge"}, int or None, optional
+            Plot or focus-gallery panel size only; medium by default. Accepts
+            a positive integer width in pixels, or presets corresponding to
+            300, 450, 600 or 900 pixels. Does not change
             data or sampling.
         rows, columns : int, optional
             Images down or across focus and parameter galleries. Set either
@@ -1627,8 +1637,12 @@ class DirectPtycho:
         if view == "focus" and save is not None and mode != "static":
             raise ValueError("save exports a static figure; use ssb.show('focus', mode='static', save='focus.png').")
         if view != "interactive":
-            if size is not None and (size not in ("small", "medium", "large", "xlarge") or options.get("axsize") is not None):
-                raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
+            if size is not None:
+                from quantem.gpu.display._layout import panel_inches
+
+                panel_inches(size)
+                if options.get("axsize") is not None:
+                    raise ValueError("Use size (a preset or pixel width) or axsize=(width, height), not both.")
             result = self._aberration_search
             if result is None:
                 result = self.find_aberrations(search="standard", compare_standard=False,
@@ -1683,7 +1697,7 @@ class DirectPtycho:
 
     def show_trials(self, *, best: int | None = None, last: int | None = None,
                     first: int | None = None, upsampling_factor: int | Literal["auto"] = "auto",
-                    size: Literal["small", "medium", "large", "xlarge"] | None = None,
+                    size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
                     columns: int | None = None, rows: int | None = None,
                     axsize: tuple[float, float] | None = None):
         """Show selected attempts as phase images with a compact parameter table.
@@ -1699,7 +1713,8 @@ class DirectPtycho:
             Output factor of the shown phases, ``"auto"`` by default (``reconstruct``'s rule; the title names it).
             The trials were searched, and their losses measured, on the native grid; this never reruns the search.
         size
-            Per-panel size: small, medium (default), large or xlarge.
+            Per-panel size: small, medium (default), large, xlarge, or a
+            positive integer pixel width such as 900.
         columns, rows
             Images across or down the grid. Default is two columns with rows
             calculated automatically. If both are given, all images must fit.
@@ -1762,6 +1777,9 @@ class DirectPtycho:
         num_trials: int | None = None,
         higher_order: Sequence[str] | None = None,
         show: bool = True,
+        size: Literal["small", "medium", "large", "xlarge"] | int = "medium",
+        columns: int = 3,
+        show_convergence: bool = False,
         on_initial_fit: Callable[[SSBResult], None] | None = None,
     ) -> SSBResult | dict[int, SSBResult]:
         """Fit aberrations, sample tilt and depth with one search interface.
@@ -1773,9 +1791,30 @@ class DirectPtycho:
         initial budget and ``seed`` defaults to 42.
 
         In a live notebook, ``show=True`` displays the initial fit at Auto
-        sampling and updates that same phase view after refinement. Set
-        ``show=False`` to suppress it. Command-line calls do not create plots.
+        sampling. After standard/broad refinement, resident CUDA sessions
+        replace that preview with three methods: conventional SSB, regularized
+        phase-only, and amplitude + phase. All show phase under the same optics,
+        Auto sampling and contrast limits. Regularized previews use the ``run``
+        defaults (0.03 for each applicable regularization strength); these are
+        inspection alternatives, not an automatic quality ranking. MPS and
+        streamed sessions retain the conventional SSB preview.
+        Preparing the two regularized models adds reconstruction time only
+        after fitting. Set ``show=False`` to skip previews and that preparation.
+        Command-line calls do not create plots.
         Display time is recorded separately and excluded from the fit clock.
+        ``size="small"``, ``"medium"`` (default), ``"large"`` or ``"xlarge"``
+        or an integer pixel width such as ``size=900`` controls only the display.
+        Numeric widths use the same 100-DPI reference as the presets.
+        ``columns`` sets methods per row (default
+        3); ``columns=1`` stacks them vertically. Regional comparisons keep
+        full fields above their matching zooms in each row group. These options
+        do not change the fit or reconstruction. ``show_convergence=True`` adds a live chart
+        for standard/broad fifth-order search and refinement, updated at most
+        twice per second from objective values already computed by the solver.
+        This does not enable the separate ``compute_loss`` diagnostic or save
+        files. With ``show=False`` only the requested convergence chart appears.
+        The chart starts with a preparation message; its evaluation axis covers
+        the fifth-order stage, after the initial low-order fit.
         Applications can receive the initial native result through
         ``on_initial_fit(result)``; this callback runs once before fifth-order
         refinement and does not indicate that the final fit is complete.
@@ -1923,6 +1962,13 @@ class DirectPtycho:
         geometry is estimated from the full input unless supplied explicitly.
         The returned phase and rotation diagnostics describe the region;
         ``ssb.run(result)`` applies its parameters to the full scan.
+        For standard/broad fitting, the notebook preview shows the full-field
+        SSB with the fit region boxed and a matching zoom. Both previews apply
+        the regional optics to the full acquisition; only boxed positions
+        contribute to fitting. This adds a full-field reconstruction at the
+        initial and final display, not another fit. Set ``show=False`` to
+        skip this work. This is separate from ``result.show(region=...)``,
+        which only chooses the location of a comparison zoom.
         The region must be square with 128, 256, 512 or 1024 samples per side;
         it is never silently padded or cropped. Large CUDA integer ANS sources
         decode only that region's bright-field crop. Their full reconstruction
@@ -1957,6 +2003,13 @@ class DirectPtycho:
         objective only, and not with ``fixed_aberrations``.
         """
 
+        from quantem.gpu.display._layout import panel_inches, resolve_columns
+
+        panel_inches(size)  # Validate display options before expensive preparation.
+        resolve_columns(3, columns=columns)
+        if show_convergence and search == "primary":
+            raise ValueError("Live convergence requires search='standard' or 'broad'. "
+                             "For a primary fit, use fit.show('convergence') afterwards.")
         if search not in ("standard", "broad", "primary"):
             raise ValueError("search must be 'standard', 'broad' or 'primary'.")
         if check_rotation not in (True, False, "both"):
@@ -1987,7 +2040,8 @@ class DirectPtycho:
                         force=force, verbose=verbose, compare_standard=compare_standard,
                         fixed_aberrations=fixed_aberrations, refine_rotation=refine_rotation,
                         compute_loss=compute_loss, higher_order=higher_order,
-                        show=show, on_initial_fit=on_initial_fit,
+                        show=show, size=size, columns=columns, show_convergence=show_convergence,
+                        on_initial_fit=on_initial_fit,
                     )
             return fits
         if search in ("standard", "broad"):
@@ -2002,10 +2056,18 @@ class DirectPtycho:
                         and side == col_stop - col_start and side in (128, 256, 512, 1024)):
                     raise ValueError(f"scan_region={scan_region} must be inside {rows} × {columns} and square with 128, 256, 512 or 1024 scan pixels per side.")
 
+                from .fit_display import FitDisplay
+
+                preview = FitDisplay(self, enabled=show, size=size, columns=columns,
+                                     scan_region=tuple(scan_region))
+
                 def initial_region(initial):
                     # The application sees parent-relative provenance; the
                     # child keeps its native fit over its own entire region.
-                    on_initial_fit(replace(initial, fit_scan_region=tuple(scan_region)))
+                    marked = replace(initial, fit_scan_region=tuple(scan_region))
+                    if on_initial_fit is not None:
+                        on_initial_fit(marked)
+                    preview.update(marked, final=False)
 
                 with self.select_region(scan_region) as regional:
                     result = regional.find_aberrations(
@@ -2016,14 +2078,20 @@ class DirectPtycho:
                         seed=seed, save_dir=save_dir, force=force, verbose=verbose,
                         compare_standard=compare_standard, fixed_aberrations=fixed_aberrations,
                         refine_rotation=refine_rotation, compute_loss=compute_loss,
-                        higher_order=higher_order, show=show,
-                        on_initial_fit=initial_region if on_initial_fit is not None else None,
+                        higher_order=higher_order, show=False, size=size, columns=columns,
+                        show_convergence=show_convergence,
+                        on_initial_fit=initial_region,
                     )
                     if result.rotation_branches is not None:
                         # Keep the region's Auto panels before its GPU evidence closes.
                         with suppress(ValueError):
                             result.rotation_branches.upsampled_phases()
                     result.fit_scan_region = tuple(scan_region)
+                    final_display_started = time.perf_counter()
+                    preview.update(result, final=True)
+                    display_seconds = time.perf_counter() - final_display_started
+                    result.timings["final_display_s"] = result.timings.get("final_display_s", 0.0) + display_seconds
+                    result.timings["fit_and_display_s"] = result.timings.get("fit_and_display_s", 0.0) + display_seconds
                     if result.saved_path is not None and result.metadata.get("signature"):
                         result = regional._save_result(
                             result, paths=(result.saved_path, result.saved_path.with_suffix(".json")),
@@ -2053,7 +2121,8 @@ class DirectPtycho:
                 primary_options={"check_rotation": check_rotation, "refine_rotation": refine_rotation},
                 refinement="newton" if refinement == "auto" else refinement,
                 compute_loss=False if compute_loss is None else compute_loss,
-                show=show, on_initial_fit=on_initial_fit,
+                show=show, size=size, columns=columns, show_convergence=show_convergence,
+                on_initial_fit=on_initial_fit,
             )
         if on_initial_fit is not None:
             raise ValueError("on_initial_fit is for standard or broad two-stage fits.")
@@ -3358,8 +3427,11 @@ class DirectPtycho:
     def set_rotation(self, scan_detector_rotation_deg: float) -> None:
         """Set the physical scan-to-detector rotation (degrees, kept in [0, 360)) and refresh geometry."""
 
+        rotation = wrap_degrees(scan_detector_rotation_deg, 360.0)
+        if rotation == self.scan_detector_rotation_deg:
+            return
         self._prepared_direct = None
-        self.scan_detector_rotation_deg = wrap_degrees(scan_detector_rotation_deg, 360.0)
+        self.scan_detector_rotation_deg = rotation
         if self._streamed is None or self._compute is not None:
             self._backend().cache_rotation(math.radians(self.scan_detector_rotation_deg))
 

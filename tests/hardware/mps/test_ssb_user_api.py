@@ -42,7 +42,7 @@ def test_omitted_rotation_is_estimated_like_dpc_and_labelled(capsys):
         assert ssb.scan_detector_rotation_deg == pytest.approx((-35.0) % 180.0, abs=1.0)
         assert ssb.scan_detector_rotation_flipped is False
         assert ssb.scan_detector_rotation_source == "estimated"
-        table = ssb.calibration_table()
+        table = ssb.calibration()
         assert table.loc["Scan-detector rotation", "Source"] == "Estimated (centre-of-mass curl)"
         assert table.loc["Rotation flipped", "Value used"] == "no"
     assert "estimated from the centre-of-mass curl" in capsys.readouterr().out
@@ -55,7 +55,7 @@ def test_a_given_rotation_is_used_as_given_without_an_estimate(capsys):
     with SSB(_rotated_gradient_scan(35.0), scan_detector_rotation_deg=200.0, **_options()) as ssb:
         assert ssb.scan_detector_rotation_deg == 200.0
         assert ssb.scan_detector_rotation_flipped is False
-        assert ssb.calibration_table().loc["Scan-detector rotation", "Source"] == "Explicit override"
+        assert ssb.calibration().loc["Scan-detector rotation", "Source"] == "Explicit override"
     assert "centre-of-mass curl" not in capsys.readouterr().out
 
 
@@ -70,7 +70,7 @@ def test_a_recorded_rotation_wins_over_the_estimate():
         assert (ssb.scan_detector_rotation_deg, ssb.scan_detector_rotation_flipped) == (12.0, True)
         assert ssb.scan_detector_rotation_source == "metadata"
         # the launch table states the recorded flip; it read "Not recorded" before 2026-10-20
-        flipped = ssb.calibration_table().loc["Rotation flipped"]
+        flipped = ssb.calibration().loc["Rotation flipped"]
         assert (flipped["File value"], flipped["Value used"], flipped["Source"]) == ("yes", "yes", "Recorded")
     assert data.metadata_table().loc["Rotation flipped", "Value"] == "yes"
 

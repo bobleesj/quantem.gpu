@@ -8,6 +8,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- `DirectPtycho.calibration_table()` is now `ptycho.calibration()`; `ptycho.calibration(to_dict=True)` returns the same rows as a dict (file value, unit, value used and source per parameter). The old name is removed.
 - QuantEM Live screening records export and reopen at their tilt-corrected fit, the default SSB result: `formats.ssb_phase.export_result` takes `computed.ssb_tilt` and `ssb_phase_tilt.npy` when a record also holds an ordinary fit (`--ssb-mode both`), and the pair states the fit's `sample_tilt_mrad` and `depth_spread_nm` (both or neither; schema unchanged, earlier pairs read as before). `series.screen_record_settings` and `open_screen_record` take the same fit, and `open_screen_record` sets the session's sample tilt and depth spread (`series.screen_record_fit`, `series.screen_record_sample`).
 - CUDA tilt-corrected SSB is faster with the same fits (within the cross-backend tolerances): the fused agreement
   kernel keeps its per-set sums in registers and drops three divisions per probe tilt (10.9 ms instead of 25.4 ms

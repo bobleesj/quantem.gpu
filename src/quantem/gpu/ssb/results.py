@@ -1,6 +1,6 @@
 """Backend-neutral SSB fit, source, evaluation, and reconstruction results."""
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import cache
@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Literal, Self
 import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
-from quantem.gpu.display._layout import panel_inches, resolve_columns
+from quantem.gpu.display._layout import panel_figure, panel_inches, resolve_columns, scalebar
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb.probe import model_probe, probe_grid
 
@@ -529,11 +529,14 @@ class SSBResult(Mapping[str, float]):
         return save_calibration(self, path)
 
     def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt", "convergence"] = "phase", *,
-             axsize: tuple[float, float] | None = None, compare: Self | Mapping[object, Self] | None = None,
+             axsize: tuple[float, float] | None = None,
+             compare: Self | Sequence[Self] | Mapping[object, Self] | None = None,
              x: Literal["auto", "time", "evaluations"] = "auto",
              show_parameters: bool = True,
-             size: Literal["small", "medium", "large", "xlarge"] | None = None,
+             interactive: bool = False, show_fft: bool = False,
+             size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
              rows: int | None = None, columns: int | None = None,
+             region: Literal["center", "top-left", "top-right", "bottom-left", "bottom-right"] | None = None,
              cmap: str = "inferno", save: str | Path | None = None):
         """Show phase, probes or fit diagnostics at a named panel size.
 
@@ -566,29 +569,48 @@ class SSBResult(Mapping[str, float]):
             Convergence axis. Auto uses recorded elapsed time when every fit
             has it, otherwise evaluations. Time starts before the primary fit;
             loading and plotting are excluded. Missing times are not estimated.
-        compare : SSBResult or mapping, optional
+        compare : SSBResult, sequence of SSBResult, or mapping, optional
             For convergence, a fit or labeled mapping of fits from the same
             data, calibration, region and objective. The current fit is included
             once. Different refinement methods are supported.
-            For phase, a second phase reconstruction of the same field of view. Shows
-            both full images above matching central crops, with rectangles
-            marking the crop locations. The crop is the central quarter of
-            each dimension, selected on this result's grid. All four panels
+            For phase, one or more reconstructions of the same field of view. Shows
+            all full images above matching zooms, with rectangles marking
+            their locations. Each zoom spans one quarter of each dimension,
+            selected on this result's grid using ``region``. All panels
             share this result's phase_limits; no alignment is performed.
         show_parameters : bool, optional
             Include saved objective slices beside a single phase image by
             default. This only displays recorded values; it runs no fitting
             or GPU evaluations. Use ``view="parameters"`` for the plots alone.
             Measure them first with ``ssb.measure_parameters(result)``.
-        size : {"small", "medium", "large", "xlarge"} or None, optional
+        interactive : bool, optional
+            Inspect saved phase images with QuantEM Show2D instead of Matplotlib.
+            Comparisons retain full fields, marked zooms and optional crop FFTs.
+            Pan, zoom and contrast controls do not rerun reconstruction. Use
+            ``ptycho.show()`` for the live ShowPtycho aberration editor.
+        show_fft : bool, optional
+            Add the Fourier magnitude of each displayed zoom (or full image
+            without a zoom). Mean subtraction and a Hann window reduce edge
+            leakage. Magnitudes share one scale in dB relative to their common
+            maximum and one physical frequency field; they are not FRC curves.
+        size : {"small", "medium", "large", "xlarge"}, int or None, optional
             Per-panel width: small 3, medium 4.5, large 6 or xlarge 9 inches
-            at the static 100-DPI reference. Medium is the default. Plot aspect
+            at the static 100-DPI reference, or a positive integer pixel width
+            such as ``size=750``. Medium is the default. Plot aspect
             ratios are preserved. Changes only display size, never sampling
             or fitted values. Use either ``size`` or an explicit ``axsize``.
         rows, columns : int, optional
             Images down or across phase, probe or parameter galleries. Omit
-            both to retain the view's existing layout. Rotation evidence and
-            ``compare`` keep their fixed scientific comparison layout.
+            both to retain the view's existing layout. Rotation evidence
+            keeps its fixed layout. Phase comparisons keep full fields, zooms
+            and FFTs grouped by method.
+            In phase comparisons, ``columns`` sets methods per row; ``rows``
+            is not used. Interactive comparisons require matching pixel grids.
+        region : {"center", "top-left", "top-right", "bottom-left", "bottom-right"} or None, optional
+            Location of the marked zoom. None uses the center in comparisons
+            and the full field for a single result. All methods show the same
+            physical region below their full fields. This is a display
+            selection, not a scan crop or refit.
         cmap : str, optional
             Image and landscape colormap, inferno by default.
         save : str or pathlib.Path, optional
@@ -596,7 +618,7 @@ class SSBResult(Mapping[str, float]):
 
         Returns
         -------
-        matplotlib.figure.Figure
+        matplotlib.figure.Figure or ipywidgets.Widget
             A calibrated figure, closed so a bare notebook expression renders
             once. Phase is in radians; real-space and Fourier-space probe
             scale bars use Å and mrad, respectively. Each probe has unit summed
@@ -608,7 +630,10 @@ class SSBResult(Mapping[str, float]):
         >>> result.show()
         >>> result.show("probe")
         >>> result.show(size="large")
-        >>> result.show(compare=result_4x, size="medium")
+        >>> result.show(compare=result_4x, size="medium", region="top-left")
+        >>> phase_001.show(compare=[phase_003, phase_005], cmap="gray")
+        >>> phase_001.show(compare=[phase_003, phase_005], region="bottom-left",
+        ...                interactive=True, show_fft=True, columns=3, size="large")
         >>> result.show("rotation")
         >>> ssb.measure_parameters(aberrations)
         >>> aberrations.show("parameters")
@@ -619,12 +644,19 @@ class SSBResult(Mapping[str, float]):
         """
         import matplotlib.pyplot as plt
 
+        if (region is not None or interactive or show_fft) and view != "phase":
+            raise ValueError("interactive, show_fft and region apply to phase images; use show(view='phase', ...).")
+        if interactive and (save is not None or axsize is not None):
+            raise ValueError("Use size for an interactive view; use interactive=False with axsize or save for a figure.")
+        if compare is not None and view not in ("phase", "convergence"):
+            raise ValueError("Use compare with phase images or convergence traces.")
         if x != "auto" and view != "convergence":
             raise ValueError("x selects the convergence axis; use show('convergence', x=...).")
         if size is not None and axsize is not None:
-            raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
-        if (compare is not None or view == "rotation") and (rows is not None or columns is not None):
-            raise ValueError("Rotation and compare views have a fixed comparison layout; omit rows and columns.")
+            raise ValueError("Use size (a preset or pixel width) or axsize=(width, height), not both.")
+        if ((compare is not None and rows is not None)
+                or (view == "rotation" and (rows is not None or columns is not None))):
+            raise ValueError("This view has a fixed comparison layout; omit rows. Phase comparisons support columns.")
         if axsize is None:
             width = panel_inches("medium" if size is None else size)
             if view == "convergence":
@@ -638,10 +670,15 @@ class SSBResult(Mapping[str, float]):
             else:
                 panel_size = (12, 12)
             axsize = (width, width * panel_size[1] / panel_size[0])
-        if compare is not None and view != "convergence":
-            if view != "phase" or not isinstance(compare, SSBResult):
-                raise ValueError("Use result.show(compare=other) to compare phase images.")
-            figure = _phase_comparison(self, compare, axsize=axsize, cmap=cmap)
+        if view == "phase" and (compare is not None or region is not None or show_fft or interactive):
+            others = [] if compare is None else ([compare] if isinstance(compare, SSBResult) else compare)
+            if (not isinstance(others, Sequence) or (compare is not None and not others)
+                    or not all(isinstance(result, SSBResult) for result in others)):
+                raise ValueError("Compare phase images with show(compare=other) or show(compare=[second, third]).")
+            figure = _phase_comparison(self, *others, axsize=axsize, cmap=cmap,
+                                       region=("center" if compare is not None else None) if region is None else region,
+                                       show_fft=show_fft, interactive=interactive, size=size or "medium",
+                                       columns=columns, rows=rows)
             if save is not None:
                 figure.savefig(save, dpi="figure", bbox_inches="tight")
             return figure
@@ -673,16 +710,14 @@ class SSBResult(Mapping[str, float]):
         if view == "phase":
             column_sampling = float(self.object_sampling_A[1])
             arrays = host_array(self.phase)
-            titles = f"SSB phase · {self.upsampling_factor}× (rad)"
-            bars = {"sampling": column_sampling, "units": "Å", "fontsize": 13}
+            titles = _phase_title(self)
+            bars = scalebar(column_sampling, "Å", arrays.shape[0], axsize[0])
             panel_size = (12, 12)
         elif view == "probe":
             arrays = [abs(self.probe()) ** 2, abs(self.probe(space="fourier")) ** 2]
             titles = ["Real-space model probe · intensity", "Fourier-space model probe · intensity"]
-            bars = [
-                {"sampling": self.probe_sampling_A[1], "units": "Å", "fontsize": 13},
-                {"sampling": self.probe_sampling_mrad[1], "units": "mrad", "fontsize": 13},
-            ]
+            bars = [scalebar(self.probe_sampling_A[1], "Å", arrays[0].shape[0], axsize[0]),
+                    scalebar(self.probe_sampling_mrad[1], "mrad", arrays[1].shape[0], axsize[0])]
             panel_size = (6, 6)
         else:
             raise ValueError(f"Choose view='phase', 'probe', 'rotation', 'parameters', 'depth', 'tilt' or 'convergence'; "
@@ -703,7 +738,8 @@ class SSBResult(Mapping[str, float]):
             norm=({"interval_type": "manual", "vmin": self.phase_limits[0],
                    "vmax": self.phase_limits[1]} if view == "phase" else "minmax"),
             cmap=cmap, cbar=view == "phase",
-            axsize=panel_size if axsize is None else axsize, title_fontsize=16,
+            axsize=panel_size if axsize is None else axsize,
+            title_fontsize=min(16, max(9, axsize[0] * 2.2)),
             scalebar=bars,
         )
         if save is not None:
@@ -924,53 +960,179 @@ def _format_aberrations(aberrations: dict) -> str:
     return "\n".join(lines)
 
 
-def _phase_comparison(first, second, *, axsize: tuple[float, float], cmap: str = "inferno"):
-    """Show the same central region without notebook-side crop arithmetic."""
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Rectangle
-    from quantem.core.visualization import show_2d
+def _phase_title(result: SSBResult, area: str = "Full field") -> str:
+    """Name the measured channel, reconstruction method and recorded strengths."""
+    method = result.reconstruction_method
+    options = result.reconstruction_options
+    if method == "ssb":
+        heading = "Conventional SSB"
+        detail = "No reconstruction regularization"
+    else:
+        heading = "Regularized phase-only" if method == "phase" else "Amplitude + phase"
+        strength = options.get("phase_regularization")
+        phase = "not recorded" if strength is None else f"{strength:g}"
+        detail = f"Phase regularization {phase}"
+        if method == "complex":
+            strength = options.get("amplitude_regularization")
+            amplitude = "not recorded" if strength is None else f"{strength:g}"
+            detail = f"Regularization: phase {phase}, amplitude {amplitude}"
+    return f"{heading}\n{detail}\n{area} · {result.upsampling_factor}× upsampling · phase (rad)"
 
-    phases = [first.phase, second.phase]
+
+def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "inferno",
+                      region: str | None = "center", show_fft: bool = False,
+                      interactive: bool = False, size: str | int = "medium",
+                      columns: int | None = None, rows: int | None = None):
+    """Show calibrated full fields, matching crops and optionally their spectra."""
+    results = (first, *others)
+    count = len(results)
+    columns = resolve_columns(count, columns=columns, rows=rows, default=count)
+    phases = [host_array(result.phase) for result in results]
     if any(phase.ndim != 2 for phase in phases):
-        raise ValueError("Compare two individual reconstructions, not trial stacks.")
-    sampling = [np.asarray(result.object_sampling_A, dtype=float) for result in (first, second)]
+        raise ValueError("Compare individual reconstructions, not trial stacks.")
+    sampling = [np.asarray(result.object_sampling_A, dtype=float) for result in results]
     shapes = [np.asarray(phase.shape) for phase in phases]
     if not all(np.all(np.isfinite(step) & (step > 0)) for step in sampling):
-        raise ValueError("Both results need positive object_sampling_A in Å per pixel.")
-    if not np.allclose(shapes[0] * sampling[0], shapes[1] * sampling[1]):
+        raise ValueError("All results need positive object_sampling_A in Å per pixel.")
+    if not all(np.allclose(shapes[0] * sampling[0], shape * step)
+               for shape, step in zip(shapes[1:], sampling[1:], strict=True)):
         raise ValueError("Compare results of the same physical scan field; their shape × sampling differs.")
+    if interactive and not all(np.array_equal(shapes[0], shape) for shape in shapes[1:]):
+        raise ValueError("Interactive comparisons need the same pixel grids; use matching upsampling or interactive=False.")
 
-    crop_shape = np.maximum(1, shapes[0] // 4)
-    start = (shapes[0] - crop_shape) // 2
-    bounds = np.stack((start, start + crop_shape))
-    mapped = bounds * (sampling[0] / sampling[1])
-    if not np.allclose(mapped, np.rint(mapped)):
-        raise ValueError("Crop edges do not match the second grid. Call show(compare=...) on the coarser result.")
-    all_bounds = [bounds, np.rint(mapped).astype(int)]
-    crops = [phase[begin[0]:end[0], begin[1]:end[1]]
-             for phase, (begin, end) in zip(phases, all_bounds, strict=True)]
-    titles = [f"{result.upsampling_factor}× phase · full field (rad)" for result in (first, second)]
-    crop_titles = [f"{result.upsampling_factor}× phase · marked crop (rad)" for result in (first, second)]
-    if (first.sample_tilt_mrad is None) != (second.sample_tilt_mrad is None):
-        labels = ["Tilt fixed at zero" if result.sample_tilt_mrad is None else "Tilt-corrected"
-                  for result in (first, second)]
-        titles = [f"{label} · {result.upsampling_factor}× phase (rad)"
-                  for label, result in zip(labels, (first, second), strict=True)]
-        crop_titles = [f"{label} · marked crop (rad)" for label in labels]
-    bars = [{"sampling": step[1], "units": "Å", "fontsize": 13} for step in sampling]
-    figure, axes = plt.subplots(2, 2, figsize=(2 * axsize[0], 2 * axsize[1]))
-    figure.subplots_adjust(left=.015, right=.97, top=.95, bottom=.025, wspace=.18, hspace=.13)
-    show_2d(
-        [phases, crops], title=[titles, crop_titles], figax=(figure, axes),
-        norm={"interval_type": "manual", "vmin": first.phase_limits[0], "vmax": first.phase_limits[1]},
-        cmap=cmap, cbar=True, scalebar=[bars, bars], title_fontsize=16,
-        tight_layout=False,
-    )
-    image_axes = [axis for axis in figure.axes if axis.images]
-    for axis, (begin, end) in zip(image_axes[:2], all_bounds, strict=True):
-        axis.add_patch(Rectangle(
-            (begin[1] - .5, begin[0] - .5), end[1] - begin[1], end[0] - begin[0],
-            fill=False, edgecolor="#00D5FF", linewidth=2,
-        ))
+    all_bounds = []
+    crops = phases
+    if region is not None:
+        crop_shape = np.maximum(1, shapes[0] // 4)
+        anchors = {
+            "center": (.5, .5), "top-left": (0, 0), "top-right": (0, 1),
+            "bottom-left": (1, 0), "bottom-right": (1, 1),
+        }
+        if region not in anchors:
+            raise ValueError(f"Choose region from {', '.join(anchors)}; got {region!r}.")
+        start = ((shapes[0] - crop_shape) * anchors[region]).astype(int)
+        bounds = np.stack((start, start + crop_shape))
+        for step in sampling:
+            mapped = bounds * (sampling[0] / step)
+            if not np.allclose(mapped, np.rint(mapped)):
+                raise ValueError("Crop edges do not match a comparison grid. Call show(compare=...) on the coarser result.")
+            all_bounds.append(np.rint(mapped).astype(int))
+        crops = [phase[begin[0]:end[0], begin[1]:end[1]]
+                 for phase, (begin, end) in zip(phases, all_bounds, strict=True)]
+
+    titles = [_phase_title(result) for result in results]
+    bars = [scalebar(step[1], "Å", phase.shape[0], axsize[0]) for step, phase in zip(sampling, phases, strict=True)]
+    groups = [phases]
+    group_titles = [titles]
+    group_bars = [bars]
+    limits = [first.phase_limits]
+    if region is not None:
+        groups.append(crops)
+        group_titles.append([_phase_title(result, area=f"{region.capitalize()} zoom") for result in results])
+        group_bars.append([scalebar(step[1], "Å", crop.shape[0], axsize[0])
+                           for step, crop in zip(sampling, crops, strict=True)])
+        limits.append(first.phase_limits)
+    if len({result.sample_tilt_mrad is None for result in results}) > 1:
+        for labels in group_titles:
+            for index, result in enumerate(results):
+                labels[index] += "\nTilt fixed at zero" if result.sample_tilt_mrad is None else "\nTilt-corrected"
+    if show_fft:
+        spectra, frequency_sampling = _phase_spectra(crops, sampling)
+        groups.append(spectra)
+        area = "Crop" if region is not None else "Full-field"
+        group_titles.append([
+            "\n".join(_phase_title(result).splitlines()[:2])
+            + f"\n{area} FFT · shared magnitude (dB)" for result in results
+        ])
+        group_bars.append([scalebar(frequency_sampling[1], "1/Å", spectrum.shape[0], axsize[0]) for spectrum in spectra])
+        limits.append((-60., 0.))
+    # Same method and strength read identically; name where each set of optics was fitted.
+    if len({result.fit_scan_region for result in results}) > 1:
+        for labels in group_titles:
+            for index, result in enumerate(results):
+                fitted = result.fit_scan_region
+                labels[index] += ("\nOptics fitted on the full field" if fitted is None else
+                                  f"\nOptics fitted on rows {fitted[0]}:{fitted[1]}, columns {fitted[2]}:{fitted[3]}")
+
+    if interactive:
+        from ipywidgets import VBox
+        from quantem.widget import Show2D
+
+        viewers = []
+        for group, (frames, labels, bar, clim) in enumerate(zip(groups, group_titles, group_bars, limits, strict=True)):
+            overlays = None
+            if group == 0 and all_bounds:
+                overlays = [[{"shape": "rect", "box": [float(value) for value in (begin - .5).tolist() + (end - .5).tolist()],
+                              "color": "#00D5FF", "line_width": 2}]
+                            for begin, end in all_bounds]
+            step = frequency_sampling if show_fft and group == len(groups) - 1 else sampling[0]
+            viewers.append(Show2D(
+                frames, labels=labels, sampling=tuple(step), units=bar[0]["units"],
+                columns=columns, size=size if isinstance(size, str) else "medium",
+                panel_width_px=round(panel_inches(size) * 100),
+                cmap=cmap, vmin=clim[0], vmax=clim[1],
+                auto_contrast=False, link_contrast=True, link_zoom=True, link_pan=True,
+                panel_overlays=overlays, show_panel_titles=True, show_scale_bar=True,
+                controls_collapsed=True, display_bin=1, verbose=False,
+                title="Saved crop FFT · mean removed · Hann window · shared 60 dB range"
+                if show_fft and group == len(groups) - 1 else "Phase comparison · shared contrast (rad)",
+            ))
+        return viewers[0] if len(viewers) == 1 else VBox(viewers)
+
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    from textwrap import fill
+    from quantem.core.visualization import show_2d
+
+    blocks = (count + columns - 1) // columns
+    total_rows = blocks * len(groups)
+    heading = "Phase comparison · shared contrast (rad)"
+    if show_fft:
+        heading += "\nFFT: mean removed · Hann window · shared 60 dB magnitude range"
+    heading = "\n".join(fill(line, width=max(20, int(columns * axsize[0] * 7)))
+                        for line in heading.splitlines())
+    title_lines = max(label.count("\n") + 1 for labels in group_titles for label in labels)
+    figure, axes = panel_figure(total_rows, columns, *axsize, title_lines=title_lines,
+                                top_in=.35 * len(heading.splitlines()) + .2)
+    figure.suptitle(heading, fontsize=16, y=1 - .1 / figure.get_figheight(), va="top")
+    for block, offset in enumerate(range(0, count, columns)):
+        stop = min(offset + columns, count)
+        for group, (frames, labels, bar, clim) in enumerate(zip(groups, group_titles, group_bars, limits, strict=True)):
+            row_axes = axes[block * len(groups) + group]
+            show_2d(
+                frames[offset:stop], title=labels[offset:stop], figax=(figure, row_axes[:stop - offset]),
+                norm={"interval_type": "manual", "vmin": clim[0], "vmax": clim[1]},
+                cmap=cmap, cbar=True, scalebar=bar[offset:stop],
+                title_fontsize=min(14, max(8, axsize[0] * 2.2)), tight_layout=False,
+            )
+            for axis in row_axes[stop - offset:]:
+                axis.set_visible(False)
+            if group == 0 and all_bounds:
+                for axis, (begin, end) in zip(row_axes, all_bounds[offset:stop]):
+                    axis.add_patch(Rectangle(
+                        (begin[1] - .5, begin[0] - .5), end[1] - begin[1], end[0] - begin[0],
+                        fill=False, edgecolor="#00D5FF", linewidth=2,
+                    ))
     plt.close(figure)
     return figure
+
+
+def _phase_spectra(phases: list[np.ndarray], sampling: list[np.ndarray]):
+    """Compare window-normalized FFT magnitudes on the common physical band."""
+    common_shape = np.min([phase.shape for phase in phases], axis=0)
+    spectra = []
+    for phase in phases:
+        if min(phase.shape) < 3:
+            raise ValueError("An FFT crop needs at least 3 pixels per side; use a larger image or omit region.")
+        window = np.outer(np.hanning(phase.shape[0]), np.hanning(phase.shape[1]))
+        spectrum = np.abs(np.fft.fftshift(np.fft.fft2((phase - phase.mean()) * window))) / window.sum()
+        # The physical crop is identical, so frequency bin spacing is identical.
+        # Compare only frequencies sampled by every result, without interpolation.
+        start = np.asarray(phase.shape) // 2 - common_shape // 2
+        stop = start + common_shape
+        spectra.append(spectrum[start[0]:stop[0], start[1]:stop[1]])
+    peak = max(float(spectrum.max()) for spectrum in spectra)
+    peak = peak if peak > 0 else 1.
+    spectra = [20 * np.log10(np.maximum(spectrum / peak, 1e-3)) for spectrum in spectra]
+    frequency_sampling = 1 / (np.asarray(phases[0].shape) * sampling[0])
+    return spectra, frequency_sampling

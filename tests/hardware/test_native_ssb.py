@@ -210,7 +210,7 @@ def test_one_number_is_the_scan_step_on_both_axes_at_every_entry_point(tmp_path,
             with one, two:
                 assert one.scan_sampling_A == two.scan_sampling_A == (0.99, 0.99)
                 assert one.detector_sampling_mrad == two.detector_sampling_mrad == (0.6, 0.6)
-                assert one.calibration_table().loc["Scan step (row, col)", "Value used"] == (0.99, 0.99)
+                assert one.calibration().loc["Scan step (row, col)", "Value used"] == (0.99, 0.99)
                 np.testing.assert_array_equal(one.preview(ABERRATIONS)[0], two.preview(ABERRATIONS)[0])
     with pytest.raises(ValueError, match="one number for both axes or a \\(row, col\\) pair"):
         SSB(counts, **{**scalar, "scan_sampling_A": (0.99, 0.99, 0.99)})
@@ -232,7 +232,7 @@ def test_a_recorded_inverse_angstrom_detector_sampling_is_used(tmp_path, backend
         loaded.calibration.detector_sampling_inv_A = 0.028
         with SSB(loaded, **settings) as recorded, SSB(loaded, **settings, detector_sampling_mrad=expected) as given:
             assert recorded.detector_sampling_mrad == pytest.approx((expected, expected), rel=1e-12)
-            row = recorded.calibration_table().loc["Detector step (row, col)"]
+            row = recorded.calibration().loc["Detector step (row, col)"]
             assert (row["File unit"], row["Unit used"], row["Source"]) == ("1/angstrom per pixel", "mrad per pixel", "Overridden")
             np.testing.assert_array_equal(recorded.preview(ABERRATIONS)[0], given.preview(ABERRATIONS)[0])
 
@@ -268,7 +268,7 @@ def test_ssb_reads_the_recorded_bright_field_fit_and_announces_an_estimate(tmp_p
             assert (recorded.detector_sampling_mrad, recorded.bright_field_center_px,
                     recorded.bright_field_radius_px) == estimated_state
             assert recorded.bright_field_center_px == fit.bright_field_center_px
-            row = recorded.calibration_table().loc["Detector step (row, col)"]
+            row = recorded.calibration().loc["Detector step (row, col)"]
             assert row["Source"] == "Fitted (bright-field disk)"
             np.testing.assert_array_equal(recorded.preview(ABERRATIONS)[0], estimated_phase)
         saved = tmp_path / "fitted.qem"

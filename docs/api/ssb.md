@@ -27,7 +27,18 @@ candidate generation and float64 control run on the CPU.
 See the [matched initialization study and optimization lessons](../performance/ssb/reports/2026-10-22-ssb-initialization-and-refinement.md).
 
 In notebooks, the initial Auto-sampled phase appears while refinement continues.
-The same view updates with the final phase. Use `show=False` to suppress it.
+After standard/broad fitting, resident CUDA sessions replace that view with
+three shared-contrast phase images: conventional SSB, regularized phase-only,
+and amplitude + phase. The regularized alternatives use the `run` defaults
+(strength 0.03 for each applicable channel). Preparation happens after fitting;
+`show=False` skips both the previews and this extra work. MPS and streamed
+sessions retain conventional SSB. See [direct comparisons](direct-ptycho.md).
+Use `columns=1` for a vertical stack, `columns=2` to wrap the methods, or the
+default `columns=3` for a single comparison row. `size` sets each panel's size:
+use a preset (`"small"`, `"medium"`, `"large"`, `"xlarge"`) or a positive integer
+width in pixels, such as `size=750`. `size=900` matches `"xlarge"` at the static
+100-DPI reference. The same sizing applies to result and focus comparisons;
+source sampling and fitted values are unchanged.
 CLI calls create no plots. `fit.timings` separates the initial fit, refinement,
 initial handoff and final display; display work is excluded from the fit clock.
 Applications can pass `on_initial_fit=callback` to receive the initial native fit.
@@ -40,6 +51,7 @@ Keep the returned result to inspect and reuse the fitted model:
 ```python
 fit = ptycho.find_aberrations()
 fit.report()                         # optics, geometry, objective, counts and timing
+fit.report(columns=2)                # two parameter/value groups, less scrolling
 parameters = fit.report(to_dict=True)  # coefficients and geometry as a dictionary
 fit.report(show_convergence=True)    # table plus recorded convergence
 fit.show("probe")                    # model probe intensities
@@ -47,8 +59,12 @@ fit.save_calibration("calibration.json")
 ```
 
 Read just the coefficients from `fit.aberrations`, the existing dictionary.
-In a notebook, a cell ending on `fit` displays the full report vertically.
-Only this display rounds numbers; both report formats retain full precision.
+In a notebook, `fit.report()` displays one row per parameter, with units in
+the row labels. Both the pandas table and dictionary retain full precision.
+A cell ending on `fit` shows the same layout with display-only rounding.
+For a compact table, use `fit.report(columns=2)` or `columns=3`. Read down
+each parameter/value group, then across. All recorded fields remain present;
+the layout does not affect `to_dict=True` exports or series trial tables.
 `parameters["aberrations"]` contains every fitted coefficient with unit-bearing
 names such as `C30_nm` and `phi23_deg`. Geometry is separate:
 `scan_detector_rotation_deg`, and, when present, `sample_tilt_mrad` in
@@ -64,8 +80,8 @@ an evaluation limit is not proof of convergence. Stage times can overlap and
 must not be summed. Unrecorded diagnostics are omitted, not invented.
 
 `fit.report(show_convergence=True)` displays the existing convergence figure
-and returns the same pandas table. In a notebook, append `.T` for a vertical
-table. Plotting uses recorded history only; absent history raises an error
+and returns the same vertical pandas table. Plotting uses recorded history
+only; absent history raises an error
 explaining how to obtain it. Export and plotting are separate calls:
 `to_dict=True` cannot be combined with `show_convergence=True`. Reports add no
 fit callbacks, image transfers or history collection. `find_aberrations(show=False)`
@@ -426,14 +442,15 @@ ptycho.show("tilt", size="medium")         # static row-column tilt landscape
 
 The static calls reuse recorded diagnostics or measure them once on the GPU.
 If no fit exists, the usual joint fit runs first. `size="small"`, `"medium"`
-and `"large"` only change figure dimensions. For explicit dimensions use
+`"large"`, `"xlarge"`, or an integer pixel width such as `size=750` only change
+figure dimensions. For explicit width and height in inches use
 `axsize=(6, 5)` instead. Use `cmap="viridis"` to choose colors and `save="fit.png"` to export
 the complete figure. Returned figures also support `savefig(...)` and render directly as a notebook cell's final expression.
 
 | Argument | Choices | Meaning |
 | --- | --- | --- |
 | `view` | `"depth"`, `"tilt"`, `"parameters"` | Focus versus depth, row versus column tilt, or both landscapes. With no view, `ptycho.show()` opens ShowPtycho. |
-| `size` | `"small"`, `"medium"`, `"large"` | Display size only; the default dimensions match `"medium"`. |
+| `size` | `"small"`, `"medium"`, `"large"`, `"xlarge"`, or a positive integer pixel width | Display size only; defaults to `"medium"`. |
 | `region` | `None` or four scan-pixel bounds | Full field, or an independently fitted selected region. |
 | `axsize` | `(width, height)` in inches | Exact panel dimensions instead of `size`. |
 
@@ -442,7 +459,7 @@ use these expressions in separate notebook cells:
 
 ```python
 ptycho.show("parameters", size="medium", columns=2, cmap="inferno", save="fit.png")
-aberrations.report().T
+aberrations.report()
 ```
 
 Select a region in original scan pixels with exclusive stops:
@@ -665,11 +682,15 @@ result_4x = ptycho.run(aberrations, upsampling_factor=4)
 Show both full fields with a marked, matching crop underneath:
 
 ```python
-result.show(compare=result_4x, axsize=(7, 7))  # per-panel width and height, inches
+result_2x.show(compare=result_4x, region="top-left", size="large")
 ```
 
-The library selects the central quarter of each dimension and outlines it in
-both images. All four panels share the first result's symmetric `phase_limits`.
+The library outlines the same physical zoom in both full images and shows it
+below them. Each zoom spans one quarter of the width and height. Use
+`region="center"` (the default), `"top-left"`, `"top-right"`, `"bottom-left"`,
+or `"bottom-right"`. Method names and regularization are included in the titles;
+upsampling is labeled separately. Region selection changes only the display.
+All four panels share the first result's symmetric `phase_limits`.
 Reconstruction carries those limits from the supplied aberration result, so its
 phase, rotation diagnostics and finer outputs use the same linear mapping. The
 results must cover the same physical field; this view does not align images.
@@ -696,6 +717,11 @@ fits the full scan. The detector calibration remains tied to the full input.
 Regional fitting currently requires a dense 4D scan source and a square region
 of 128, 256, 512 or 1024 pixels per side, without implicit padding or cropping.
 The result records `fit_scan_region`, and saved-result matching includes it.
+With `show=True`, standard/broad fits initially display full-field SSB with the
+fit region boxed and a matching close-up. The final resident-CUDA view compares
+three full fields above their matching fit-region zooms. These previews apply regional optics
+to the full acquisition; they do not expand the fitting data. The initial and
+final previews add full-field reconstruction work; `show=False` skips it.
 Its saved search phase and branch comparison describe that region (the
 dark-field columns are located on the region of the full scan's dark field). Applying
 those parameters elsewhere assumes the optics and specimen tilt are shared;
@@ -1020,7 +1046,7 @@ tilted = ptycho.find_aberrations(search="primary")  # + specimen tilt and depth 
 tilted.sample_tilt_mrad   # (row, col) mrad, scan frame
 tilted.depth_spread_nm    # model depth spread, not a measured thickness
 tilted.tilt_fit_gain      # least-squares agreement relative to standard SSB (> 1: tilt explains more)
-pd.concat([standard.report(), tilted.report()])   # one row per fit
+pd.concat([standard.report(), tilted.report()], axis=1)   # one column per fit
 ```
 
 After a tilt fit, `C10_nm` is the defocus at mid-depth, so it can differ from the
@@ -1136,7 +1162,7 @@ independently calibrated angle when the file does not record one:
 
 ```python
 ptycho = DirectPtycho(data, scan_detector_rotation_deg=data.metadata["scan_detector_rotation_deg"])
-ptycho.calibration_table()
+ptycho.calibration()
 ```
 
 The metadata lookup intentionally raises if rotation is missing. Replace it
@@ -1144,7 +1170,7 @@ with your known calibrated angle; do not silently substitute zero. Omitting
 rotation estimates it from the centre-of-mass curl, labelled **Estimated
 (centre-of-mass curl)**, not a measured calibration.
 
-`ptycho.calibration_table()` returns a DataFrame with **File value**, **File unit**,
+`ptycho.calibration()` returns a DataFrame with **File value**, **File unit**,
 **Value used**, **Unit used**, and **Source**, using the session's current values.
 File values include saved calibration overrides. Source labels are **Recorded**,
 **Overridden** (set on `data.calibration`), **Fitted (bright-field disk)** (`data.calibration.fit_detector_sampling()`),

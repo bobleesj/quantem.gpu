@@ -33,7 +33,7 @@ and pixel-correction metadata without decoding detector values. Missing
 rotation is shown as **Not recorded**, not as a measured zero. `data.calibration`
 (and `data.calibration.table()`) shows the four microscope calibrations alone,
 with **Value**, **Unit** and **Source** columns. Every calibration table,
-including `SSB.calibration_table()`, uses one label set
+including `SSB.calibration()`, uses one label set
 (`quantem.gpu.io.metadata_display.CALIBRATION_LABELS`): **Accelerating
 voltage** (kV), **Convergence semiangle** (mrad), **Scan step (row, col)**
 (angstrom), **Detector step (row, col)** (mrad per pixel, or 1/angstrom per

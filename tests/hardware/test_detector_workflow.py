@@ -140,7 +140,7 @@ def test_show_detector_images_and_save_without_changing_intensities(tmp_path):
 
 
 @pytest.mark.parametrize("options", [
-    {"size": "huge"}, {"size": 450}, {"columns": 0},
+    {"size": "huge"}, {"size": 0}, {"size": 450.5}, {"columns": 0},
     {"columns": -1}, {"columns": True}, {"columns": 2.5},
 ])
 def test_show_rejects_invalid_layout_before_reading_data(options):
