@@ -11,7 +11,6 @@ import numpy as np
 from quantem.gpu.ssb.cuda.kernels.common import (
     CustomFFTBase,
     build_cuda_code,
-    corrected_fourier_sum_source,
 )
 
 _TWIDDLE_DECL = '__constant__ float2 TWIDDLE_1024[1024];'
@@ -407,114 +406,6 @@ void ifft1024_rows_fused_pk_split512_t64_packed(
 #undef STORE_SPLIT512_ROW
 }
 
-__global__ void ifft1024_rows_fused_pk_full_t256_mr2_packed(
-    const float* __restrict__ kx_bf,
-    const float* __restrict__ ky_bf,
-    const float* __restrict__ qx_1d,
-    const float* __restrict__ qy_1d,
-    float wavelength,
-    float semiangle_rad,
-    float ang_y_rad,
-    float ang_x_rad,
-    const float* __restrict__ abr_mag_scaled,
-    const float* __restrict__ abr_cm,
-    const float* __restrict__ abr_sm,
-    const float2* __restrict__ pk,
-    const float2* __restrict__ G_qk,
-	    float2* __restrict__ out,
-	    float dc_real,
-	    float dc_imag,
-	    int num_bf,
-	    int gqk_cols
-	) {
-    int bf = blockIdx.z;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int tid = threadIdx.x;
-    if (bf >= num_bf || row >= 1024 || tid >= 256) return;
-
-    size_t base = ((size_t)bf * 1024 + row) * 1024;
-    int pos0 = tid;
-    int pos1 = tid + 256;
-    int pos2 = tid + 512;
-    int pos3 = tid + 768;
-    float2 pkv = pk[bf];
-    float kx = __ldg(&kx_bf[bf]);
-    float ky = __ldg(&ky_bf[bf]);
-    float qx = __ldg(&qx_1d[row]);
-
-	    float2 res0 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos0]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm,
-	        pkv.x, pkv.y, ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos0, 1024u, (unsigned int)gqk_cols));
-	    float2 res1 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos1]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm,
-	        pkv.x, pkv.y, ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos1, 1024u, (unsigned int)gqk_cols));
-	    float2 res2 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos2]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm,
-	        pkv.x, pkv.y, ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos2, 1024u, (unsigned int)gqk_cols));
-	    float2 res3 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos3]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm,
-	        pkv.x, pkv.y, ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos3, 1024u, (unsigned int)gqk_cols));
-
-    if (row == 0 && tid == 0) {
-        res0 = make_float2(dc_real, dc_imag);
-    }
-
-    __shared__ float2 s[1024];
-    float2* srow = s;
-    srow[digit_reverse_1024((unsigned int)pos0)] = res0;
-    srow[digit_reverse_1024((unsigned int)pos1)] = res1;
-    srow[digit_reverse_1024((unsigned int)pos2)] = res2;
-    srow[digit_reverse_1024((unsigned int)pos3)] = res3;
-    __syncthreads();
-
-    for (int m = 4; m <= 1024; m <<= 2) {
-        int quarter = m >> 2;
-        int j = tid % quarter;
-        int k = tid / quarter;
-        int idx0 = k * m + j;
-        int idx1 = idx0 + quarter;
-        int idx2 = idx1 + quarter;
-        int idx3 = idx2 + quarter;
-        int tw = j * (1024 / m);
-        float2 x0 = srow[idx0];
-        float2 x1 = cmul(TWIDDLE_1024[tw], srow[idx1]);
-        float2 x2 = cmul(TWIDDLE_1024[tw * 2], srow[idx2]);
-        float2 x3 = cmul(TWIDDLE_1024[tw * 3], srow[idx3]);
-
-        float2 t0 = cadd(x0, x2);
-        float2 t1 = csub(x0, x2);
-        float2 t2 = cadd(x1, x3);
-        float2 t3 = csub(x1, x3);
-        float2 it3 = cmul_i(t3);
-        srow[idx0] = cadd(t0, t2);
-        srow[idx1] = cadd(t1, it3);
-        srow[idx2] = csub(t0, t2);
-        srow[idx3] = csub(t1, it3);
-        __syncthreads();
-    }
-
-    out[base + pos0] = srow[pos0];
-    out[base + pos1] = srow[pos1];
-    out[base + pos2] = srow[pos2];
-    out[base + pos3] = srow[pos3];
-}
-
 __global__ void ifft1024_cols_t256_mr2(
     float2* __restrict__ data,
     int num_bf,
@@ -694,114 +585,6 @@ void ifft1024_cols_accumulate_split512_t64(
     partial_sum[out_base + (size_t)(j7 + 512) * 1024u + col] = sum15; partial_sumsq[out_base + (size_t)(j7 + 512) * 1024u + col] = sq15;
 }
 
-__global__ __launch_bounds__(64, 8)
-void ifft1024_cols_accumulate_sum_split512_t64(
-    const float2* __restrict__ data,
-    float* __restrict__ partial_sum,
-    int num_bf,
-    int k_bf
-) {
-    int group = blockIdx.z;
-    if (k_bf < 0) k_bf = -k_bf;
-    int col = blockIdx.y;
-    int tid = threadIdx.x;
-    if (col >= 1024 || tid >= 64) return;
-
-    int bf_start = group * k_bf;
-    int bf_end = bf_start + k_bf;
-    if (bf_end > num_bf) bf_end = num_bf;
-
-    int src0 = (int)octal_reverse_512_for_1024((unsigned int)(tid * 8 + 0));
-    int src1 = (int)octal_reverse_512_for_1024((unsigned int)(tid * 8 + 1));
-    int src2 = (int)octal_reverse_512_for_1024((unsigned int)(tid * 8 + 2));
-    int src3 = (int)octal_reverse_512_for_1024((unsigned int)(tid * 8 + 3));
-    int src4 = (int)octal_reverse_512_for_1024((unsigned int)(tid * 8 + 4));
-    int src5 = (int)octal_reverse_512_for_1024((unsigned int)(tid * 8 + 5));
-    int src6 = (int)octal_reverse_512_for_1024((unsigned int)(tid * 8 + 6));
-    int src7 = (int)octal_reverse_512_for_1024((unsigned int)(tid * 8 + 7));
-
-    int j0 = tid;
-    int j1 = tid + 64;
-    int j2 = tid + 128;
-    int j3 = tid + 192;
-    int j4 = tid + 256;
-    int j5 = tid + 320;
-    int j6 = tid + 384;
-    int j7 = tid + 448;
-
-    float sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, sum3 = 0.0f;
-    float sum4 = 0.0f, sum5 = 0.0f, sum6 = 0.0f, sum7 = 0.0f;
-    float sum8 = 0.0f, sum9 = 0.0f, sum10 = 0.0f, sum11 = 0.0f;
-    float sum12 = 0.0f, sum13 = 0.0f, sum14 = 0.0f, sum15 = 0.0f;
-
-    __shared__ float2 se[512];
-    __shared__ float2 so[512];
-    const size_t plane = 1024u * 1024u;
-
-    for (int bf = bf_start; bf < bf_end; ++bf) {
-        size_t base = (size_t)bf * plane + (size_t)col * 1024u;
-        float2 e0 = data[base + (size_t)src0 * 2u];
-        float2 e1 = data[base + (size_t)src1 * 2u];
-        float2 e2 = data[base + (size_t)src2 * 2u];
-        float2 e3 = data[base + (size_t)src3 * 2u];
-        float2 e4 = data[base + (size_t)src4 * 2u];
-        float2 e5 = data[base + (size_t)src5 * 2u];
-        float2 e6 = data[base + (size_t)src6 * 2u];
-        float2 e7 = data[base + (size_t)src7 * 2u];
-        float2 o0 = data[base + (size_t)src0 * 2u + 1u];
-        float2 o1 = data[base + (size_t)src1 * 2u + 1u];
-        float2 o2 = data[base + (size_t)src2 * 2u + 1u];
-        float2 o3 = data[base + (size_t)src3 * 2u + 1u];
-        float2 o4 = data[base + (size_t)src4 * 2u + 1u];
-        float2 o5 = data[base + (size_t)src5 * 2u + 1u];
-        float2 o6 = data[base + (size_t)src6 * 2u + 1u];
-        float2 o7 = data[base + (size_t)src7 * 2u + 1u];
-
-        ifft512_radix8_apply_t64_1024tw(e0, e1, e2, e3, e4, e5, e6, e7, tid, se);
-        ifft512_radix8_apply_t64_1024tw(o0, o1, o2, o3, o4, o5, o6, o7, tid, so);
-
-#define ACCUM_SUM_SPLIT512(J, E, O, SUM_LO, SUM_HI) \
-        { \
-            float2 tw = TWIDDLE_1024[(J) & 1023]; \
-            float2 to = cmul(tw, (O)); \
-            float2 lo = cadd((E), to); \
-            float2 hi = csub((E), to); \
-            SUM_LO += atan2f(lo.y, lo.x); \
-            SUM_HI += atan2f(hi.y, hi.x); \
-        }
-        ACCUM_SUM_SPLIT512(j0, e0, o0, sum0, sum8);
-        ACCUM_SUM_SPLIT512(j1, e1, o1, sum1, sum9);
-        ACCUM_SUM_SPLIT512(j2, e2, o2, sum2, sum10);
-        ACCUM_SUM_SPLIT512(j3, e3, o3, sum3, sum11);
-        ACCUM_SUM_SPLIT512(j4, e4, o4, sum4, sum12);
-        ACCUM_SUM_SPLIT512(j5, e5, o5, sum5, sum13);
-        ACCUM_SUM_SPLIT512(j6, e6, o6, sum6, sum14);
-        ACCUM_SUM_SPLIT512(j7, e7, o7, sum7, sum15);
-#undef ACCUM_SUM_SPLIT512
-        __syncthreads();
-    }
-
-    size_t out_base = (size_t)group * plane;
-    partial_sum[out_base + (size_t)j0 * 1024u + col] = sum0;
-    partial_sum[out_base + (size_t)j1 * 1024u + col] = sum1;
-    partial_sum[out_base + (size_t)j2 * 1024u + col] = sum2;
-    partial_sum[out_base + (size_t)j3 * 1024u + col] = sum3;
-    partial_sum[out_base + (size_t)j4 * 1024u + col] = sum4;
-    partial_sum[out_base + (size_t)j5 * 1024u + col] = sum5;
-    partial_sum[out_base + (size_t)j6 * 1024u + col] = sum6;
-    partial_sum[out_base + (size_t)j7 * 1024u + col] = sum7;
-    partial_sum[out_base + (size_t)(j0 + 512) * 1024u + col] = sum8;
-    partial_sum[out_base + (size_t)(j1 + 512) * 1024u + col] = sum9;
-    partial_sum[out_base + (size_t)(j2 + 512) * 1024u + col] = sum10;
-    partial_sum[out_base + (size_t)(j3 + 512) * 1024u + col] = sum11;
-    partial_sum[out_base + (size_t)(j4 + 512) * 1024u + col] = sum12;
-    partial_sum[out_base + (size_t)(j5 + 512) * 1024u + col] = sum13;
-    partial_sum[out_base + (size_t)(j6 + 512) * 1024u + col] = sum14;
-    partial_sum[out_base + (size_t)(j7 + 512) * 1024u + col] = sum15;
-}
-
-''' + corrected_fourier_sum_source(1024) + r'''
-
 '''
 
 
@@ -815,7 +598,6 @@ class CustomFFT1024(CustomFFTBase):
             rows="ifft1024_rows_fused_pk_t256_mr2_packed",
             cols="ifft1024_cols_t256_mr2",
             cols_accumulate=None,
-            rows_full="ifft1024_rows_fused_pk_full_t256_mr2_packed",
             twiddle_name="TWIDDLE_1024",
             rows_block=(256, 1, 1),
             rows_grid_y=1024,
@@ -824,9 +606,6 @@ class CustomFFT1024(CustomFFTBase):
         )
         self._cols_accumulate_split512 = self._module.get_function(
             "ifft1024_cols_accumulate_split512_t64"
-        )
-        self._cols_accumulate_sum_split512 = self._module.get_function(
-            "ifft1024_cols_accumulate_sum_split512_t64"
         )
         self._rows_fused_pk_split512 = self._module.get_function(
             "ifft1024_rows_fused_pk_split512_t64_packed"
@@ -900,33 +679,4 @@ class CustomFFT1024(CustomFFTBase):
             grid_cols,
             self._cols_split512_block,
             (data, partial_sum, partial_sumsq, np.int32(num_bright_field_pixels), np.int32(-k_bf)),
-        )
-
-    def ifft2_fused_pk_col_accumulate_sum(
-        self,
-        data: cp.ndarray,
-        G_qk: cp.ndarray,
-        cache: dict,
-        pk: cp.ndarray,
-        C10: float,
-        C12: float,
-        cos2phi12: float,
-        sin2phi12: float,
-        factor: float,
-        dc_value: complex,
-        partial_sum: cp.ndarray,
-        k_bf: int = 32,
-    ) -> None:
-        """Row FFT + fused column IFFT with phase-sum accumulation only."""
-        N = self._size
-        num_bright_field_pixels, gqk_cols = self._plane_counts(data, G_qk, pk)
-        n_groups = (num_bright_field_pixels + k_bf - 1) // k_bf
-        if partial_sum.shape != (n_groups, N, N):
-            raise ValueError(f"partial_sum must have shape ({n_groups}, {N}, {N})")
-        self._rows_split512(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bright_field_pixels, gqk_cols)
-        grid_cols = (1, self._cols_grid_y, n_groups)
-        self._cols_accumulate_sum_split512(
-            grid_cols,
-            self._cols_split512_block,
-            (data, partial_sum, np.int32(num_bright_field_pixels), np.int32(-k_bf)),
         )

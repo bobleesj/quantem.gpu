@@ -20,12 +20,9 @@ from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.contract import SSBExportState
 from quantem.gpu.ssb.cuda.kernels import get_fft_kernel
-from quantem.gpu.ssb.cuda.kernels.common import pack_aberration_coefs
 from quantem.gpu.ssb.cuda.kernels.engine import (
     accumulate_phase_moments,
-    mean_phase_kernel,
     pk_kernel,
-    pk_kernel_full,
     sum_sumsq_phase_kernel,
 )
 from quantem.gpu.ssb.cuda.thick import ThickSample
@@ -202,7 +199,6 @@ class SSBEngine:
         self._sumsq_buffer = None
         self._partial_sum = None
         self._partial_sumsq = None
-        self._fourier_partial_buffer = None
         # Custom FFT (initialized in cache_rotation)
         self._custom_fft = None
         self._bf_source_path: pathlib.Path | None = None
@@ -444,20 +440,6 @@ class SSBEngine:
         )
         return cos2phi12, sin2phi12
 
-    def _fill_probe_full(self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray) -> None:
-        """``_fill_probe`` for all 14 Krivanek aberrations (the higher-order preview path).
-
-        The Chebyshev-ready coefficient arrays are packed on the host once per call.
-        """
-        cache = self._cache
-        probe = self._probe_buffer(int(cache["num_bright_field_pixels"]))
-        abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(magnitudes_A, angles_rad)
-        kfactor = cp.float32(2.0 * math.pi / cache["wavelength"])
-        pk_kernel_full(
-            cache["kx_bf"], cache["ky_bf"], cache["aperture_k_1d"], cp.float32(cache["wavelength"]), kfactor,
-            abr_mag_scaled, abr_cm, abr_sm, probe,
-        )
-
     def _run_correction_pipeline(self, C10: float, C12: float, phi12: float) -> None:
         """Run the aberration-correction pipeline, populating _corrected_buffer."""
         self._size_result_buffer(*self._bf_grid())
@@ -476,270 +458,6 @@ class SSBEngine:
         )
         self._corrected_buffer = self._result_buffer
 
-    def _run_correction_pipeline_chunked(
-        self, C10: float, C12: float, phi12: float, chunk_bf: int,
-    ) -> cp.ndarray:
-        """Chunked reconstruct: processes BF pixels in groups of ``chunk_bf``,
-        accumulating the running mean. Avoids ever materializing the full
-        ``(num_bright_field_pixels, ny, nx)`` result buffer (~19 GB for 9070 BF × 512 × 512).
-
-        Peak transient buffer is ``chunk_bf × ny × nx × 8`` bytes, e.g.
-        ``chunk_bf=1024`` at 512×512 = ~2 GB. For held-out dataset 512 this cuts
-        reconstruct peak by 18 GB with negligible speed cost (~1 ms of extra
-        kernel-launch overhead across the chunks).
-
-        Returns the mean complex object directly, shape (ny, nx).
-        """
-        num_bright_field_pixels, ny, nx = self._bf_grid()
-        # Compute the full pk buffer once (small: num_bright_field_pixels × 8 bytes).
-        cos2phi12, sin2phi12 = self._fill_probe(C10, C12, phi12)
-
-        # Small work buffer reused across chunks. Release the huge one if cached.
-        self._size_result_buffer(chunk_bf, ny, nx)
-
-        accumulator = cp.zeros((ny, nx), dtype=cp.complex64)
-        for bf_start in range(0, num_bright_field_pixels, chunk_bf):
-            bf_end = min(bf_start + chunk_bf, num_bright_field_pixels)
-            chunk_planes = self._result_buffer[:bf_end - bf_start]
-            self._custom_fft.ifft2_inplace_fused_pk(
-                chunk_planes,
-                self.G_qk[bf_start:bf_end],
-                self._chunk_cache(bf_start, bf_end),
-                self._pk_buffer[bf_start:bf_end],
-                C10,
-                C12,
-                cos2phi12,
-                sin2phi12,
-                self._factor,
-                self._dc_value_host,
-            )
-            accumulator += chunk_planes.sum(axis=0)
-        return accumulator / num_bright_field_pixels
-
-    def _reconstruct_object_fourier_sum(
-        self,
-        C10: float,
-        C12: float,
-        phi12: float,
-    ) -> cp.ndarray:
-        """Exact object reconstruction via Fourier-domain BF summation.
-
-        This uses IFFT linearity:
-        ``mean_bf(ifft2(corrected_bf)) == ifft2(mean_bf(corrected_bf))``.
-        It preserves the final SSB object definition while avoiding one 2D
-        inverse FFT per BF pixel.
-        """
-        num_bright_field_pixels, ny, nx = self._bf_grid()
-        cos2phi12, sin2phi12 = self._fill_probe(C10, C12, phi12)
-
-        k_bf = self._colvar_group
-        n_groups = (num_bright_field_pixels + k_bf - 1) // k_bf
-        partial_shape = (n_groups, ny, nx)
-        if (
-            self._fourier_partial_buffer is None
-            or self._fourier_partial_buffer.shape != partial_shape
-        ):
-            self._fourier_partial_buffer = cp.empty(partial_shape, dtype=cp.complex64)
-
-        self._custom_fft.corrected_fourier_partial_sum(
-            self._fourier_partial_buffer,
-            self.G_qk,
-            self._cache,
-            self._pk_buffer,
-            C10,
-            C12,
-            cos2phi12,
-            sin2phi12,
-            self._factor,
-            self._dc_value_host,
-            k_bf,
-        )
-        corrected_mean = self._fourier_partial_buffer.sum(axis=0) / float(num_bright_field_pixels)
-        return cp.fft.ifft2(corrected_mean)
-
-    def reconstruct_object(self, C10: float, C12: float, phi12: float) -> cp.ndarray:
-        """Reconstruct complex transmission function.
-
-        Returns the mean of the corrected complex BF images. For large scans
-        (num_bright_field_pixels × scan_row × scan_col × 8 bytes > 6 GB), uses a chunked path
-        that keeps peak transient VRAM at ~4 GB instead of the full ~19 GB
-        staging buffer.
-
-        Returns
-        -------
-        cp.ndarray
-            Complex object (scan_row, scan_col), complex64, stays on GPU.
-        """
-        num_bright_field_pixels, ny, nx = self._bf_grid()
-        full_bytes = num_bright_field_pixels * ny * nx * 8
-        # The 128 Fourier-sum microkernel is reference-checked for small BF
-        # sets, but high-BF synthetic stress leaves the CUDA context in an
-        # illegal-address state. The full fused-IFFT path is exact and
-        # small enough at 128x128, so keep large-BF user workflows stable
-        # while the 128 Fourier-sum kernel is investigated separately.
-        if not (ny == 128 and nx == 128 and num_bright_field_pixels > 1024):
-            return self._reconstruct_object_fourier_sum(C10, C12, phi12)
-        if full_bytes > _STAGING_LIMIT_BYTES:
-            # Target ~2 GB chunk transient. Speed is flat from 64 to 9070 BF
-            # per chunk (launch overhead negligible), so the smaller chunk keeps
-            # the most memory free. Reference agreement is at the float32
-            # summation-order floor (~1e-5 max|Δ|).
-            chunk_bf = max(1, _CHUNK_TARGET_BYTES // (ny * nx * 8))
-            return self._run_correction_pipeline_chunked(C10, C12, phi12, chunk_bf)
-        self._run_correction_pipeline(C10, C12, phi12)
-        return self._corrected_buffer.mean(axis=0)
-
-    def reconstruct(self, C10: float, C12: float, phi12: float) -> cp.ndarray:
-        """Reconstruct mean phase image.
-
-        Computes ``mean_bf(angle(corrected[b]))`` - the average of the
-        per-BF-pixel phase images. For large scans (>6 GB full staging
-        buffer) the BF axis is chunked to bound the transient memory;
-        mathematically equivalent via sum-then-divide.
-
-        Returns
-        -------
-        cp.ndarray
-            Mean phase image (ny, nx), stays on GPU.
-        """
-        num_bright_field_pixels, ny, nx = self._bf_grid()
-        if num_bright_field_pixels * ny * nx * 8 > _STAGING_LIMIT_BYTES:
-            # the fused column-IFFT phase accumulation, shared with reconstruct_with_loss, so both give the same phase
-            return self._fused_chunked_core(C10, C12, phi12, compute_loss=False)
-        self._run_correction_pipeline(C10, C12, phi12)
-        return self._mean_phase_of_corrected(num_bright_field_pixels, ny, nx)
-
-    # =====================================================================
-    #  Full-aberration reconstruct (14 Krivanek coefficients)
-    # =====================================================================
-
-    def _run_correction_pipeline_full(
-        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
-    ) -> None:
-        """Full-aberration correction pipeline.  Mirrors
-        :meth:`_run_correction_pipeline` but evaluates ``chi_full`` with all
-        14 Krivanek coefficients instead of the 2-term C10/C12 formula.
-        Result lands in ``self._corrected_buffer``.
-        """
-        self._size_result_buffer(*self._bf_grid())
-        self._fill_probe_full(magnitudes_A, angles_rad)
-        self._custom_fft.ifft2_inplace_fused_pk_full(
-            self._result_buffer,
-            self.G_qk,
-            self._cache,
-            self._pk_buffer,
-            magnitudes_A, angles_rad,
-            self._dc_value_host,
-        )
-        self._corrected_buffer = self._result_buffer
-
-    def reconstruct_full(
-        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
-    ) -> cp.ndarray:
-        """Reconstruct mean phase with all 14 Krivanek aberrations.
-
-        Parameters
-        ----------
-        magnitudes_A : cp.ndarray
-            Aberration magnitudes in Angstrom, shape (14,), float32.
-            Order: C10, C12, C21, C23, C30, C32, C34, C41, C43, C45,
-            C50, C52, C54, C56.
-        angles_rad : cp.ndarray
-            Orientation angles (radians), shape (14,), float32.
-
-        Returns
-        -------
-        cp.ndarray
-            Mean phase image (ny, nx), float32, stays on GPU.
-
-        Notes
-        -----
-        For scans with full staging buffer >6 GB (e.g. held-out dataset 512²), falls
-        back to a chunked BF-axis loop.  The col-accumulate optimization used
-        in the two-term chunked path is 2-term-only, so this path always
-        materializes each chunk before phase reduction.
-        """
-        magnitudes_A = cp.asarray(magnitudes_A, dtype=cp.float32)
-        angles_rad = cp.asarray(angles_rad, dtype=cp.float32)
-        num_bright_field_pixels, ny, nx = self._bf_grid()
-        if self._custom_fft._size == 128:
-            raise NotImplementedError(
-                "128x128 CUDA SSB currently supports C10/C12/phi12 only; "
-                "higher-order reconstruction needs a size-specific full-aberration path."
-            )
-        if num_bright_field_pixels * ny * nx * 8 > _STAGING_LIMIT_BYTES:
-            return self._reconstruct_full_chunked(magnitudes_A, angles_rad, compute_loss=False)
-        self._run_correction_pipeline_full(magnitudes_A, angles_rad)
-        return self._mean_phase_of_corrected(num_bright_field_pixels, ny, nx)
-
-    def reconstruct_full_with_loss(
-        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
-    ) -> tuple[cp.ndarray, float]:
-        """Full-aberration reconstruct + variance loss in a single pass.
-
-        Mirrors :meth:`reconstruct_with_loss` but on the 14-coef kernel
-        path.  The loss metric is the same BF-pixel phase variance the
-        3-param optimizer minimizes, so it is directly comparable to
-        ``auto_loss`` / ``reconstruct_with_loss``'s return value:
-
-            mean phase = mean_bf(angle(corrected))
-            var/pix    = mean_bf(angle²) - mean²
-            loss       = mean over pixels of var/pix
-
-        Falls back to a chunked path for scans whose full staging buffer is
-        larger than 6 GB.
-        """
-        magnitudes_A = cp.asarray(magnitudes_A, dtype=cp.float32)
-        angles_rad = cp.asarray(angles_rad, dtype=cp.float32)
-        num_bright_field_pixels, ny, nx = self._bf_grid()
-        if self._custom_fft._size == 128:
-            raise NotImplementedError(
-                "128x128 CUDA SSB currently supports C10/C12/phi12 only; "
-                "higher-order loss needs a size-specific full-aberration path."
-            )
-        if num_bright_field_pixels * ny * nx * 8 > _STAGING_LIMIT_BYTES:
-            return self._reconstruct_full_chunked(magnitudes_A, angles_rad, compute_loss=True)
-        self._run_correction_pipeline_full(magnitudes_A, angles_rad)
-        return self._mean_phase_and_loss_of_corrected(num_bright_field_pixels, ny, nx)
-
-    def _reconstruct_full_chunked(
-        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray, *, compute_loss: bool,
-    ):
-        """Chunked full-aberration mean phase (and loss) for scans whose corrected planes exceed 6 GB.
-
-        Processes BF pixels in groups that keep the staging buffer under ~2 GB and pools the phase sum (and sum of
-        squares) over the groups, so mean and variance equal the single-pass definitions. There is no fused
-        column-accumulate kernel for the 14-coefficient path, so each chunk is materialized before its phase reduction.
-        Returns the mean phase, or (mean phase, loss) when ``compute_loss``.
-        """
-        num_bright_field_pixels, ny, nx = self._bf_grid()
-        self._fill_probe_full(magnitudes_A, angles_rad)
-        chunk_bf = max(1, _CHUNK_TARGET_BYTES // (ny * nx * 8))
-        self._size_result_buffer(chunk_bf, ny, nx)
-        phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
-        phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32) if compute_loss else None
-        for bf_start in range(0, num_bright_field_pixels, chunk_bf):
-            bf_end = min(bf_start + chunk_bf, num_bright_field_pixels)
-            chunk_planes = self._result_buffer[:bf_end - bf_start]
-            self._custom_fft.ifft2_inplace_fused_pk_full(
-                chunk_planes,
-                self.G_qk[bf_start:bf_end],
-                self._chunk_cache(bf_start, bf_end),
-                self._pk_buffer[bf_start:bf_end],
-                magnitudes_A, angles_rad,
-                self._dc_value_host,
-            )
-            angles_chunk = cp.angle(chunk_planes)
-            phase_sum += angles_chunk.sum(axis=0)
-            if compute_loss:
-                phase_sumsq += (angles_chunk ** 2).sum(axis=0)
-        mean_phase = phase_sum / float(num_bright_field_pixels)
-        if not compute_loss:
-            return mean_phase
-        var_per_pixel = phase_sumsq / float(num_bright_field_pixels) - mean_phase ** 2
-        loss = float(cp.mean(var_per_pixel))
-        return mean_phase, loss
-
     # =====================================================================
     #  Fused reconstruct + variance loss (single pipeline pass)
     # =====================================================================
@@ -752,7 +470,7 @@ class SSBEngine:
         """
         num_bright_field_pixels, ny, nx = self._bf_grid()
         if num_bright_field_pixels * ny * nx * 8 > _STAGING_LIMIT_BYTES:
-            return self._fused_chunked_core(C10, C12, phi12, compute_loss=True)
+            return self._fused_chunked_core(C10, C12, phi12)
         self._run_correction_pipeline(C10, C12, phi12)
         return self._mean_phase_and_loss_of_corrected(num_bright_field_pixels, ny, nx)
 
@@ -760,15 +478,12 @@ class SSBEngine:
         self,
         C10: float, C12: float, phi12: float,
         *,
-        compute_loss: bool = False,
         chunk_bf: int | None = None,
-    ):
-        """Shared chunked core using fused col-FFT + phase accumulate.
+    ) -> tuple[cp.ndarray, float]:
+        """``reconstruct_with_loss`` of a large scan by chunks, with the fused col-FFT + phase accumulate.
 
-        When *compute_loss* is False, returns ``cp.ndarray`` (mean phase).
-        When True, returns ``(cp.ndarray, float)`` (mean phase, loss).
-        Every chunk writes one partial plane per 32-BF group and the planes are summed in a fixed order, so the
-        result does not depend on the order the device runs the groups in (atomic accumulation would).
+        Returns (mean phase, loss). Every chunk writes one partial plane per 32-BF group and the planes are summed in a
+        fixed order, so the result does not depend on the order the device runs the groups in (atomic accumulation would).
         ``chunk_bf`` (BF pixels per chunk) is chosen from the scan size and free memory unless given.
         """
         num_bright_field_pixels, ny, nx = self._bf_grid()
@@ -801,16 +516,11 @@ class SSBEngine:
         partial_shape = (max_groups, ny, nx)
         if self._partial_sum is None or self._partial_sum.shape != partial_shape:
             self._partial_sum = cp.empty(partial_shape, dtype=cp.float32)
-
-        fft_size = self._custom_fft._size
-        use_sum_only = not compute_loss and fft_size in (512, 1024)
-        if not use_sum_only and (
-            self._partial_sumsq is None or self._partial_sumsq.shape != partial_shape
-        ):
+        if self._partial_sumsq is None or self._partial_sumsq.shape != partial_shape:
             self._partial_sumsq = cp.empty(partial_shape, dtype=cp.float32)
 
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
-        phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32) if compute_loss else None
+        phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
 
         for bf_start in range(0, num_bright_field_pixels, chunk_bf):
             bf_end = min(bf_start + chunk_bf, num_bright_field_pixels)
@@ -818,30 +528,18 @@ class SSBEngine:
             chunk_cache = self._chunk_cache(bf_start, bf_end)
             chunk_planes = self._result_buffer[:chunk]
             n_groups = (chunk + k_bf - 1) // k_bf
-            if use_sum_only:
-                self._custom_fft.ifft2_fused_pk_col_accumulate_sum(
-                    chunk_planes,
-                    self.G_qk[bf_start:bf_end],
-                    chunk_cache,
-                    self._pk_buffer[bf_start:bf_end],
-                    C10, C12, cos2phi12, sin2phi12,
-                    self._factor, self._dc_value_host,
-                    self._partial_sum[:n_groups],
-                    k_bf,
-                )
-            else:
-                self._custom_fft.ifft2_fused_pk_col_accumulate(
-                    chunk_planes,
-                    self.G_qk[bf_start:bf_end],
-                    chunk_cache,
-                    self._pk_buffer[bf_start:bf_end],
-                    C10, C12, cos2phi12, sin2phi12,
-                    self._factor, self._dc_value_host,
-                    self._partial_sum[:n_groups],
-                    self._partial_sumsq[:n_groups],
-                    k_bf,
-                )
-            if compute_loss and n_groups <= 2:
+            self._custom_fft.ifft2_fused_pk_col_accumulate(
+                chunk_planes,
+                self.G_qk[bf_start:bf_end],
+                chunk_cache,
+                self._pk_buffer[bf_start:bf_end],
+                C10, C12, cos2phi12, sin2phi12,
+                self._factor, self._dc_value_host,
+                self._partial_sum[:n_groups],
+                self._partial_sumsq[:n_groups],
+                k_bf,
+            )
+            if n_groups <= 2:
                 accumulate_phase_moments(
                     self._partial_sum, self._partial_sumsq,
                     np.int32(n_groups), np.int32(ny * nx),
@@ -849,23 +547,19 @@ class SSBEngine:
                 )
             else:
                 phase_sum += self._partial_sum[:n_groups].sum(axis=0)
-                if compute_loss:
-                    phase_sumsq += self._partial_sumsq[:n_groups].sum(axis=0)
+                phase_sumsq += self._partial_sumsq[:n_groups].sum(axis=0)
 
         mean_phase = phase_sum / float(num_bright_field_pixels)
-
-        if compute_loss:
-            var_per_pixel = phase_sumsq / float(num_bright_field_pixels) - mean_phase ** 2
-            loss = float(cp.mean(var_per_pixel))
-            return self._row_col_phase(mean_phase), loss
-        return self._row_col_phase(mean_phase)
+        var_per_pixel = phase_sumsq / float(num_bright_field_pixels) - mean_phase ** 2
+        loss = float(cp.mean(var_per_pixel))
+        return self._row_col_phase(mean_phase), loss
 
     def _row_col_phase(self, mean_phase: cp.ndarray) -> cp.ndarray:
         """Return a chunked-core phase image in the public (row, col) scan order.
 
         The 512 fused column-IFFT kernels accumulate each pixel at ``col * 512 + row``, so
-        their summed plane is the transpose of the scan-frame image that ``reconstruct_object``, the small-scan pipeline,
-        the thick-sample path and the 128/256/1024 kernels return. The loss is a mean over pixels and does not depend on
+        their summed plane is the transpose of the scan-frame image that the small-scan pipeline, the thick-sample path
+        and the 128/256/1024 kernels return. The loss is a mean over pixels and does not depend on
         the order, so only the phase image is transposed back. Without this, previews of 512 x 512 scans appear transposed
         next to the fitted result.
         """
@@ -912,21 +606,6 @@ class SSBEngine:
         """
         cache = self._cache
         return {**cache, "kx_bf": cache["kx_bf"][bf_start:bf_end], "ky_bf": cache["ky_bf"][bf_start:bf_end]}
-
-    def _mean_phase_of_corrected(self, num_bright_field_pixels: int, ny: int, nx: int) -> cp.ndarray:
-        """Mean over bright-field pixels of the phase of ``_corrected_buffer``, mean_bf(angle(corrected[b])).
-
-        One thread per scan pixel walks the BF axis, so the (num_bright_field_pixels, ny, nx) phase stack is never materialized.
-        """
-        if self._mean_phase_buffer is None:
-            self._mean_phase_buffer = cp.empty((ny, nx), dtype=cp.float32)
-        block = 256
-        grid = (ny * nx + block - 1) // block
-        mean_phase_kernel(
-            (grid,), (block,),
-            (self._corrected_buffer, self._mean_phase_buffer, np.int32(num_bright_field_pixels), np.int32(ny), np.int32(nx)),
-        )
-        return self._mean_phase_buffer
 
     def _mean_phase_and_loss_of_corrected(self, num_bright_field_pixels: int, ny: int, nx: int) -> tuple[cp.ndarray, float]:
         """Mean phase and phase-variance loss of ``_corrected_buffer`` from one pass over the BF axis.

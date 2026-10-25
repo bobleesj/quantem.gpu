@@ -11,7 +11,6 @@ import numpy as np
 from quantem.gpu.ssb.cuda.kernels.common import (
     CustomFFTBase,
     build_cuda_code,
-    corrected_fourier_sum_source,
 )
 
 _TWIDDLE_DECL = '__constant__ float2 TWIDDLE_512[512];'
@@ -156,148 +155,6 @@ __global__ void ifft512_rows_fused_pk_t128_mr4_packed(
 	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
 	        C10, C12, cos2phi12, sin2phi12, factor,
 	        pk_re, pk_im, ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos3, 512u, (unsigned int)gqk_cols));
-
-    if (row == 0 && tid == 0) {
-        res0 = make_float2(dc_real, dc_imag);
-    }
-
-    __shared__ float2 s[4][512];
-    float2* srow = s[threadIdx.y];
-    srow[digit_reverse_512((unsigned int)pos0)] = res0;
-    srow[digit_reverse_512((unsigned int)pos1)] = res1;
-    srow[digit_reverse_512((unsigned int)pos2)] = res2;
-    srow[digit_reverse_512((unsigned int)pos3)] = res3;
-    __syncthreads();
-
-    for (int m = 4; m <= 256; m <<= 2) {
-        int quarter = m >> 2;
-        int butterfly = tid;
-        int j = butterfly % quarter;
-        int k = butterfly / quarter;
-        int idx0s = k * m + j;
-        int idx1s = idx0s + quarter;
-        int idx2s = idx1s + quarter;
-        int idx3s = idx2s + quarter;
-        int tw = j * (512 / m);
-        float2 x0 = srow[idx0s];
-        float2 x1 = cmul(TWIDDLE_512[tw], srow[idx1s]);
-        float2 x2 = cmul(TWIDDLE_512[tw * 2], srow[idx2s]);
-        float2 x3 = cmul(TWIDDLE_512[tw * 3], srow[idx3s]);
-
-        float2 t0 = cadd(x0, x2);
-        float2 t1 = csub(x0, x2);
-        float2 t2 = cadd(x1, x3);
-        float2 t3 = csub(x1, x3);
-        float2 y0 = cadd(t0, t2);
-        float2 y2 = csub(t0, t2);
-        float2 it3 = cmul_i(t3);
-        float2 y1 = cadd(t1, it3);
-        float2 y3 = csub(t1, it3);
-
-        srow[idx0s] = y0;
-        srow[idx1s] = y1;
-        srow[idx2s] = y2;
-        srow[idx3s] = y3;
-        __syncthreads();
-    }
-
-    // Radix-2 final stage (512 = 4^4 x 2)
-    {
-        int j0 = tid;
-        int j1 = tid + 128;
-        float2 w0 = TWIDDLE_512[j0];
-        float2 w1 = TWIDDLE_512[j1];
-        float2 a0 = srow[j0], b0 = cmul(w0, srow[j0 + 256]);
-        float2 a1 = srow[j1], b1 = cmul(w1, srow[j1 + 256]);
-        srow[j0] = cadd(a0, b0);
-        srow[j0 + 256] = csub(a0, b0);
-        srow[j1] = cadd(a1, b1);
-        srow[j1 + 256] = csub(a1, b1);
-        __syncthreads();
-    }
-
-    out[idx0] = srow[pos0];
-    out[idx1] = srow[pos1];
-    out[idx2] = srow[pos2];
-    out[idx3] = srow[pos3];
-}
-
-// Full-aberration variant of ifft512_rows_fused_pk_t128_mr4_packed.
-// Structurally identical but calls gamma_mul_pk_onthefly_full with the
-// host-precomputed Chebyshev-ready coefficient arrays (see chi_full docs
-// in kernels/common.py) instead of raw (mags, angles).  Three-parameter kernel is
-// preserved for the Optuna 3-param hot path.
-__global__ void ifft512_rows_fused_pk_full_t128_mr4_packed(
-    const float* __restrict__ kx_bf,
-    const float* __restrict__ ky_bf,
-    const float* __restrict__ qx_1d,
-    const float* __restrict__ qy_1d,
-    float wavelength,
-    float semiangle_rad,
-    float ang_y_rad,
-    float ang_x_rad,
-    const float* __restrict__ abr_mag_scaled,
-    const float* __restrict__ abr_cm,
-    const float* __restrict__ abr_sm,
-    const float2* __restrict__ pk,
-    const float2* __restrict__ G_qk,
-	    float2* __restrict__ out,
-	    float dc_real,
-	    float dc_imag,
-	    int num_bf,
-	    int gqk_cols
-	) {
-    int bf = blockIdx.z;
-    int row = blockIdx.y * 4 + threadIdx.y;
-    int tid = threadIdx.x;
-    if (bf >= num_bf || row >= 512 || tid >= 128) {
-        return;
-    }
-    size_t base = ((size_t)bf * 512 + row) * 512;
-    int pos0 = tid;
-    int pos1 = tid + 128;
-    int pos2 = tid + 256;
-    int pos3 = tid + 384;
-    size_t idx0 = base + pos0;
-    size_t idx1 = base + pos1;
-    size_t idx2 = base + pos2;
-    size_t idx3 = base + pos3;
-    float2 pkv = pk[bf];
-    float pk_re = pkv.x;
-    float pk_im = pkv.y;
-
-    float kx = __ldg(&kx_bf[bf]);
-    float ky = __ldg(&ky_bf[bf]);
-    float qx = __ldg(&qx_1d[row]);
-
-	    float2 res0 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos0]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm, pk_re, pk_im,
-	        ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos0, 512u, (unsigned int)gqk_cols));
-	    float2 res1 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos1]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm, pk_re, pk_im,
-	        ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos1, 512u, (unsigned int)gqk_cols));
-	    float2 res2 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos2]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm, pk_re, pk_im,
-	        ld_gqk_maybe_herm(
-	            G_qk, (unsigned long long)bf, (unsigned int)row,
-	            (unsigned int)pos2, 512u, (unsigned int)gqk_cols));
-	    float2 res3 = gamma_mul_pk_onthefly_full(
-	        qx, __ldg(&qy_1d[pos3]), kx, ky,
-	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-	        abr_mag_scaled, abr_cm, abr_sm, pk_re, pk_im,
-	        ld_gqk_maybe_herm(
 	            G_qk, (unsigned long long)bf, (unsigned int)row,
 	            (unsigned int)pos3, 512u, (unsigned int)gqk_cols));
 
@@ -696,7 +553,6 @@ __global__ void ifft512_cols_t128_mr4(float2* __restrict__ data,
     data[base + pos3 * 512] = out3;
 }
 
-''' + corrected_fourier_sum_source(512) + r'''
 
 // Radix-8 variance kernel: 64 threads × 8 elements/thread. 3 FFT stages
 // (m=8 in-register, m=64 smem, m=512 smem) instead of 5 radix-4 stages.
@@ -1028,7 +884,6 @@ class CustomFFT512(CustomFFTBase):
             rows="ifft512_rows_fused_pk_t128_mr4_packed",
             cols="ifft512_cols_t128_mr4",
             cols_accumulate=None,
-            rows_full="ifft512_rows_fused_pk_full_t128_mr4_packed",
             twiddle_name="TWIDDLE_512",
             rows_block=(128, 4, 1),
             rows_grid_y=128,
@@ -1038,7 +893,6 @@ class CustomFFT512(CustomFFTBase):
         self._rows_fused_pk_r8 = self._module.get_function(
             "ifft512_rows_fused_pk_radix8_t64_packed"
         )
-        self._phase_sum_dummy_sumsq = None
         # column variance pass of the column-accumulate paths, one block per 32-BF group
         self._rows_var_batch = self._module.get_function("ifft512_rows_var_radix8_t64")
         self._rows_var_block = (64, 1, 1)
@@ -1118,48 +972,6 @@ class CustomFFT512(CustomFFTBase):
                 data,
                 partial_sum,
                 partial_sumsq,
-                np.int32(num_bright_field_pixels),
-                np.int32(1),
-                np.float32(1.0 / (N * N)),
-                np.int32(1),
-            ),
-        )
-
-    def ifft2_fused_pk_col_accumulate_sum(
-        self,
-        data: cp.ndarray,
-        G_qk: cp.ndarray,
-        cache: dict,
-        pk: cp.ndarray,
-        C10: float,
-        C12: float,
-        cos2phi12: float,
-        sin2phi12: float,
-        factor: float,
-        dc_value: complex,
-        partial_sum: cp.ndarray,
-        k_bf: int = 32,
-    ) -> None:
-        """Row FFT + fused column IFFT with phase-sum accumulation only, one partial plane per ``k_bf`` = 32 BF.
-
-        The variance kernel also writes the squared sums, into a scratch buffer that is never read.
-        """
-        N = self._size
-        num_bright_field_pixels, gqk_cols = self._plane_counts(data, G_qk, pk)
-        n_groups = (num_bright_field_pixels + k_bf - 1) // k_bf
-        if partial_sum.shape != (n_groups, N, N):
-            raise ValueError(f"partial_sum must have shape ({n_groups}, {N}, {N})")
-        self._rows_radix8(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bright_field_pixels, gqk_cols)
-        if self._phase_sum_dummy_sumsq is None or self._phase_sum_dummy_sumsq.shape != partial_sum.shape:
-            self._phase_sum_dummy_sumsq = cp.empty_like(partial_sum)
-        grid_cols = (1, self._rows_var_grid_y, n_groups)
-        self._rows_var_batch(
-            grid_cols,
-            self._rows_var_block,
-            (
-                data,
-                partial_sum,
-                self._phase_sum_dummy_sumsq[:n_groups],
                 np.int32(num_bright_field_pixels),
                 np.int32(1),
                 np.float32(1.0 / (N * N)),

@@ -361,10 +361,6 @@ def test_cuda_1024_engine_matches_explicit_cupy_reference() -> None:
     assert float(cp.percentile(phase_abs_err, 99.9)) < 3e-4
     assert loss == pytest.approx(ref_loss, rel=1e-4, abs=1e-4)
 
-    phase_sum_only = engine._fused_chunked_core(c10, c12, phi12, compute_loss=False)
-    sum_only_abs_err = cp.abs(phase_sum_only - ref_phase)
-    assert float(cp.percentile(sum_only_abs_err, 99.9)) < 3e-4
-
 
 def test_cuda_512_subpixel_bf_center_matches_explicit_reference() -> None:
     cp = _cupy()
@@ -385,7 +381,7 @@ def test_cuda_512_chunked_odd_bf_count_matches_explicit_reference() -> None:
     engine = _make_engine(size=512, num_bright_field_pixels=5, bright_field_center_px=(15.3, 15.7))
 
     c10, c12, phi12 = -120.0, 55.0, math.radians(17.0)
-    _phase, loss = engine._fused_chunked_core(c10, c12, phi12, compute_loss=True)
+    _phase, loss = engine._fused_chunked_core(c10, c12, phi12)
     _ref_phase, ref_loss = _reference_phase_loss_chunked(
         engine, c10, c12, phi12, chunk_bf=2
     )
@@ -404,7 +400,7 @@ def test_cuda_optimizer_chunk_reduction_is_repeatable() -> None:
     phases = []
     losses = []
     for _ in range(4):
-        phase, loss = engine._fused_chunked_core(*args, compute_loss=True, chunk_bf=5)
+        phase, loss = engine._fused_chunked_core(*args, chunk_bf=5)
         phases.append(cp.asnumpy(phase))
         losses.append(loss)
 
@@ -424,13 +420,10 @@ def test_cuda_512_chunked_preview_is_repeatable() -> None:
     engine = _make_engine(size=512, num_bright_field_pixels=256, bright_field_center_px=(15.3, 15.7))
     args = (-120.0, 55.0, math.radians(17.0))
 
-    phase_only = [cp.asnumpy(engine._fused_chunked_core(*args)) for _ in range(5)]
-    with_loss = [engine._fused_chunked_core(*args, compute_loss=True) for _ in range(5)]
-
-    for phase in phase_only[1:]:
-        np.testing.assert_array_equal(phase, phase_only[0])
+    with_loss = [engine._fused_chunked_core(*args) for _ in range(5)]
+    first = cp.asnumpy(with_loss[0][0])
     for phase, loss in with_loss:
-        np.testing.assert_array_equal(cp.asnumpy(phase), phase_only[0])
+        np.testing.assert_array_equal(cp.asnumpy(phase), first)
         assert loss == with_loss[0][1]
 
 
@@ -485,9 +478,7 @@ def test_cuda_512_chunked_calibration_matches_unfused_gpu_reference() -> None:
         )
         first_phase = first_loss = None
         for _ in range(3):
-            phase, loss = engine._fused_chunked_core(
-                *args, compute_loss=True,
-            )
+            phase, loss = engine._fused_chunked_core(*args)
             cp.testing.assert_allclose(
                 phase, expected_phase, rtol=PHASE_RTOL, atol=PHASE_ATOL,
             )
@@ -497,53 +488,6 @@ def test_cuda_512_chunked_calibration_matches_unfused_gpu_reference() -> None:
             else:
                 cp.testing.assert_array_equal(phase, first_phase)
                 assert loss == first_loss
-
-
-@pytest.mark.parametrize("size,num_bright_field_pixels", [(128, 7), (256, 5), (512, 5), (1024, 3)])
-def test_cuda_fourier_sum_object_matches_chunked_ifft(size: int, num_bright_field_pixels: int) -> None:
-    cp = _cupy()
-    engine = _make_engine(size=size, num_bright_field_pixels=num_bright_field_pixels)
-
-    c10, c12, phi12 = -120.0, 55.0, math.radians(17.0)
-    old_obj = engine._run_correction_pipeline_chunked(c10, c12, phi12, chunk_bf=1)
-    new_obj = engine._reconstruct_object_fourier_sum(c10, c12, phi12)
-
-    abs_err = cp.abs(old_obj - new_obj)
-    rel_err = abs_err / cp.maximum(cp.abs(old_obj), cp.float32(1e-6))
-    assert float(cp.percentile(abs_err, 99.9)) < 5e-9
-    assert float(cp.percentile(rel_err, 99.9)) < 1e-4
-
-
-@pytest.mark.parametrize("size,num_bright_field_pixels", [(128, 7), (256, 5), (512, 5), (1024, 3)])
-def test_cuda_fourier_sum_object_accepts_hermitian_gqk(size: int, num_bright_field_pixels: int) -> None:
-    cp = _cupy()
-    rng = np.random.default_rng(4321)
-    real_stack = cp.asarray(
-        rng.standard_normal((num_bright_field_pixels, size, size), dtype=np.float32),
-        dtype=cp.float32,
-    )
-    full_gqk = cp.fft.fft2(real_stack).astype(cp.complex64, copy=False)
-    herm_gqk = cp.ascontiguousarray(full_gqk[:, :, : size // 2 + 1])
-    sym_full_gqk = _expand_hermitian_cp(herm_gqk)
-    full_engine = _make_engine(size=size, num_bright_field_pixels=num_bright_field_pixels, g_qk=sym_full_gqk)
-    herm_engine = _make_engine(size=size, num_bright_field_pixels=num_bright_field_pixels, g_qk=herm_gqk)
-
-    assert herm_engine.G_qk.shape == (num_bright_field_pixels, size, size // 2 + 1)
-    assert herm_engine.G_qk.nbytes < full_engine.G_qk.nbytes
-
-    c10, c12, phi12 = -120.0, 55.0, math.radians(17.0)
-    full_obj = full_engine._reconstruct_object_fourier_sum(c10, c12, phi12)
-    herm_obj = herm_engine._reconstruct_object_fourier_sum(c10, c12, phi12)
-
-    abs_err = cp.abs(full_obj - herm_obj)
-    rel_err = abs_err / cp.maximum(cp.abs(full_obj), cp.float32(1e-6))
-    assert float(cp.percentile(abs_err, 99.9)) < 5e-9
-    assert float(cp.percentile(rel_err, 99.9)) < 1e-4
-
-    full_phase = full_engine.reconstruct(c10, c12, phi12)
-    herm_phase = herm_engine.reconstruct(c10, c12, phi12)
-    phase_abs_err = cp.abs(full_phase - herm_phase)
-    assert float(cp.percentile(phase_abs_err, 99.9)) < 3e-4
 
 
 def test_extract_gqk_hermitian_storage_keeps_nonredundant_columns() -> None:
@@ -681,7 +625,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
 
     herm = CudaSSBBackend(cp.asarray(data), **kwargs)
     accel = herm._get_accelerator()
-    herm_phase = accel.reconstruct(-120.0, 55.0, math.radians(17.0))
+    herm_phase, _ = accel.reconstruct_with_loss(-120.0, 55.0, math.radians(17.0))
     full_engine = _make_engine(
         size=128,
         num_bright_field_pixels=len(herm.bf_inds_row),
@@ -699,7 +643,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
     full_engine.angular_sampling = herm.angular_sampling
     full_engine._factor = accel._factor
     full_engine.cache_rotation(herm._scan_detector_rotation_rad, force=True)
-    full_phase = full_engine.reconstruct(-120.0, 55.0, math.radians(17.0))
+    full_phase, _ = full_engine.reconstruct_with_loss(-120.0, 55.0, math.radians(17.0))
 
     assert herm.G_qk.shape[2] == 65
     phase_abs_err = cp.abs(herm_phase - full_phase)
@@ -824,8 +768,7 @@ def test_ssb_refuses_to_crop_a_scan_larger_than_1024() -> None:
 
 
 @pytest.mark.parametrize(("size", "num_bright_field_pixels"), [(128, 40), (256, 20), (512, 8), (1024, 3)])
-@pytest.mark.parametrize("compute_loss", [True, False])
-def test_cuda_chunked_phase_is_in_row_col_order(size: int, num_bright_field_pixels: int, compute_loss: bool) -> None:
+def test_cuda_chunked_phase_is_in_row_col_order(size: int, num_bright_field_pixels: int) -> None:
     """The large-scan chunked core returns the phase in (row, col) order for every kernel size.
 
     The 512 kernels accumulate column-major; before 2026-09-26 their phase came back transposed (99th-percentile error
@@ -835,7 +778,6 @@ def test_cuda_chunked_phase_is_in_row_col_order(size: int, num_bright_field_pixe
     engine = _make_engine(size=size, num_bright_field_pixels=num_bright_field_pixels)
     c10, c12, phi12 = -120.0, 55.0, math.radians(17.0)
     ref_phase, _ = _reference_phase_loss_chunked(engine, c10, c12, phi12, chunk_bf=1)
-    output = engine._fused_chunked_core(c10, c12, phi12, compute_loss=compute_loss)
-    phase = output[0] if compute_loss else output
+    phase, _ = engine._fused_chunked_core(c10, c12, phi12)
     # a few pixels can cross the atan2 branch cut differently; the 99th percentile is the orientation-sensitive check
     assert float(cp.percentile(cp.abs(phase - ref_phase), 99)) < 3e-4
