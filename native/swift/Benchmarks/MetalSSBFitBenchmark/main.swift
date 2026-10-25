@@ -10,6 +10,16 @@ import Native4DSTEMIO
 //
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --scan-step A [--kv 300] [--semiangle 30]
 //     [--index DIR] [--max-order 5] [--trials 200] [--repeats 1] [--output RESULT.json]
+//     [--compare-standard] [--dark-field DARK.f32] [--verify-branches] [--check-maximum]
+//   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --export-dark-field DARK.f32
+//
+// --max-order 1 stops after the low-order branch fits and the branch test. --dark-field passes a float32
+// scan-shaped dark-field image to the branch test (written by --export-dark-field from the original HDF5 with
+// the app's mask: valid detector pixels at or beyond 1.1 BF radii). --verify-branches also searches the
+// branch that was mapped from the fitted one, and reports both points' agreements and phases and the branch
+// decision taken with the searched fit instead. --check-maximum evaluates the kept low-order fit's neighbours
+// one stencil-Newton tolerance away along each Newton coordinate (C10, C12 x/y, tilt row/column, depth), and
+// with --baseline RESULT.json the same for that run's kept low-order fit.
 
 struct Options {
   var input: URL?
@@ -26,7 +36,14 @@ struct Options {
   var detectorSampling: Double?
   var center: (Double, Double)?
   var radius: Double?
-  var darkField = true
+  /// Use the case's exported `dark_field.f32` for the branch test unless `--no-dark-field`.
+  var caseDarkField = true
+  var compareStandard = false
+  var darkField: URL?
+  var exportDarkField: URL?
+  var verifyBranches = false
+  var checkMaximum = false
+  var baseline: URL?
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -55,7 +72,13 @@ struct Options {
         guard parts.count == 2 else { throw failure("--center takes ROW,COLUMN") }
         center = (parts[0], parts[1])
       case "--radius": radius = Double(try value(flag))
-      case "--no-dark-field": darkField = false
+      case "--no-dark-field": caseDarkField = false
+      case "--compare-standard": compareStandard = true
+      case "--dark-field": darkField = URL(fileURLWithPath: try value(flag))
+      case "--export-dark-field": exportDarkField = URL(fileURLWithPath: try value(flag))
+      case "--verify-branches": verifyBranches = true
+      case "--check-maximum": checkMaximum = true
+      case "--baseline": baseline = URL(fileURLWithPath: try value(flag))
       default: throw failure("Unknown argument \(flag)")
       }
     }
@@ -287,6 +310,40 @@ func export(options: Options, device: MTLDevice) throws {
   )
 }
 
+/// The app's branch-test dark field (`SSBMeasuredEvidence.darkFieldMask`): exact counts of the valid detector
+/// pixels at or beyond 1.1 BF radii from the calibrated centre, per scan position, as float32.
+func exportDarkField(options: Options, record: CaseRecord, to url: URL, device: MTLDevice) throws {
+  guard let input = options.input else { throw failure("--export-dark-field needs --input MASTER.h5") }
+  let started = Date()
+  let index = options.index ?? options.cache.appendingPathComponent("index", isDirectory: true)
+  let catalog = try Native4DSTEMCatalogBuilder(cacheDirectory: index).prepare(input: input)
+  guard let dataset = catalog.datasets.first else { throw failure("No acquisition in \(input.path)") }
+  let resident = try MetalCompactH5Loader.load(
+    source: try Native4DSTEMIndexedSource.open(dataset: dataset), device: device)
+  defer { resident.releaseResidentStorage() }
+  let metadata = resident.metadata
+  guard metadata.scanRows == record.scanRows, metadata.scanColumns == record.scanColumns,
+    metadata.detectorRows == record.detectorRows, metadata.detectorColumns == record.detectorColumns
+  else { throw failure("\(input.path) is not the acquisition of \(options.cache.path)") }
+  let calibration = record.calibration
+  let radius =
+    calibration.semiangleMrad
+    / min(calibration.detectorSamplingRowMrad, calibration.detectorSamplingColumnMrad)
+  let inner = Float(SSBRotationBranches.darkFieldInnerRadius * radius)
+  let excluded = Set(record.excludedPixels)
+  let mask = (0..<(record.detectorRows * record.detectorColumns)).map { pixel -> UInt8 in
+    let dr = Float(pixel / record.detectorColumns) - Float(calibration.brightfieldCenterRowPixels)
+    let dc = Float(pixel % record.detectorColumns) - Float(calibration.brightfieldCenterColumnPixels)
+    return (dr * dr + dc * dc).squareRoot() >= inner && !excluded.contains(pixel) ? 1 : 0
+  }
+  try resident.updateVirtualDetector(mask: mask)
+  let values = try resident.virtualDetectorValues64().map { Float($0) }
+  try values.withUnsafeBytes { Data($0) }.write(to: url)
+  log(
+    "exported dark field (\(mask.reduce(0) { $0 + Int($1) }) detector pixels, inner radius \(inner) px) in \(String(format: "%.1f", Date().timeIntervalSince(started))) s"
+  )
+}
+
 func mapped(_ url: URL, device: MTLDevice) throws -> MTLBuffer {
   let handle = open(url.path, O_RDONLY)
   guard handle >= 0 else { throw failure("Cannot open \(url.path)") }
@@ -320,6 +377,14 @@ func record(_ fit: SSBFit) -> [String: Any] {
     },
   ]
   if let agreement = fit.sampleAgreement { values["sample_agreement"] = agreement }
+  if let starts = fit.newtonStarts {
+    values["newton_starts"] = starts.map {
+      ["iterations": $0.iterations, "evaluations": $0.evaluations, "converged": $0.converged]
+        as [String: Any]
+    }
+    values["newton_evaluations"] = starts.reduce(0) { $0 + $1.evaluations }
+  }
+  if let source = fit.mappedFromBranch { values["mapped_from_branch"] = source }
   if let normalization = fit.higherOrderNormalization {
     values["higher_order_normalization"] = normalization
   }
@@ -332,6 +397,81 @@ func record(_ fit: SSBFit) -> [String: Any] {
     ] as [String: Any]
   }
   return values
+}
+
+func branchRecord(_ branch: SSBRotationBranches.Branch) -> [String: Any] {
+  var values: [String: Any] = [
+    "rotation_deg": branch.scanDetectorRotationDegrees, "phase_skewness": branch.phaseSkewness,
+  ]
+  if let column = branch.column {
+    values["column_count"] = column.count
+    if let z = column.z { values["column_z"] = z }
+    if let effect = column.effect { values["column_effect"] = effect }
+    if let positive = column.positiveFraction { values["column_positive_fraction"] = positive }
+  }
+  return values
+}
+
+func phaseValues(_ phase: MetalSSBJointPhase) -> [Float] {
+  Array(
+    UnsafeBufferPointer(
+      start: phase.phase.contents().assumingMemoryBound(to: Float.self),
+      count: phase.rows * phase.columns))
+}
+
+/// Search every mapped branch at its own rotation with the same primary options and compare: the agreement of
+/// both points there, the largest phase difference, and the branch decision made with the searched fit. The
+/// model is left at the kept rotation.
+func verifyBranches(
+  _ fitted: SSBBranchedFit, model: MetalSSBJointModel, engine: MetalSSBEngine, darkField: [Float]?,
+  sampling: (Double, Double), trials: Int
+) throws -> [String: Any] {
+  var report: [String: Any] = [:]
+  var phases: [[Float]] = []
+  var size = 0
+  var searchedFits = fitted.fits
+  for (index, fit) in fitted.fits.enumerated() {
+    try model.retarget(scanDetectorRotationDegrees: fit.scanDetectorRotationDegrees)
+    let phase = try model.reconstruct(fit.point, upsamplingFactor: 1)
+    size = phase.rows
+    guard let source = fit.mappedFromBranch else {
+      phases.append(phaseValues(phase))
+      continue
+    }
+    let started = Date()
+    let searched = try SSBModelFit.fit(
+      model: model, engine: engine,
+      options: SSBFitOptions(trials: trials, compareStandard: false, maximumOrder: 1))
+    let seconds = Date().timeIntervalSince(started)
+    searchedFits[index] = searched
+    let agreements = try model.agreements([fit.point, searched.point])
+    let searchedPhase = phaseValues(try model.reconstruct(searched.point, upsamplingFactor: 1))
+    let mappedPhase = phaseValues(phase)
+    let largest = zip(mappedPhase, searchedPhase).reduce(Float(0)) { max($0, abs($1.0 - $1.1)) }
+    phases.append(searchedPhase)
+    // The source point's agreement at its own rotation, against its image here.
+    try model.retarget(scanDetectorRotationDegrees: fitted.fits[source].scanDetectorRotationDegrees)
+    let sourceAgreement = try model.agreements([fitted.fits[source].point])[0]
+    report["branch_\(index)"] = [
+      "mapped_from": source, "mapped": record(fit), "searched": record(searched),
+      "searched_s": seconds, "mapped_agreement": agreements[0], "searched_agreement": agreements[1],
+      "source_agreement_at_source_rotation": sourceAgreement,
+      "mapped_minus_source_relative": (agreements[0] - sourceAgreement) / sourceAgreement,
+      "searched_minus_mapped_relative": (agreements[1] - agreements[0]) / agreements[0],
+      "max_abs_phase_difference_rad": Double(largest),
+    ] as [String: Any]
+  }
+  let decision = SSBRotationBranches.compare(
+    phases: phases, rotations: fitted.fits.map(\.scanDetectorRotationDegrees), rows: size,
+    columns: size, darkField: darkField, scanSampling: sampling)
+  report["searched_decision"] = [
+    "kept": decision.kept, "chosen": decision.chosen, "decided_by": decision.decidedBy.rawValue,
+    "columns": decision.columns, "branch_tests": decision.branches.map(branchRecord),
+  ] as [String: Any]
+  report["decision_unchanged"] =
+    decision.kept == fitted.kept && decision.decidedBy == fitted.decidedBy
+  try model.retarget(scanDetectorRotationDegrees: fitted.fits[fitted.kept].scanDetectorRotationDegrees)
+  return report
 }
 
 /// The exact objective inputs at the kept rotation, with the baseline start and result, for an independent
@@ -363,6 +503,22 @@ if !FileManager.default.fileExists(atPath: caseURL.path) {
 }
 let loadStarted = Date()
 let caseRecord = try JSONDecoder().decode(CaseRecord.self, from: Data(contentsOf: caseURL))
+if let target = options.exportDarkField {
+  try exportDarkField(options: options, record: caseRecord, to: target, device: device)
+  exit(0)
+}
+let caseDarkFieldURL = options.cache.appendingPathComponent("dark_field.f32")
+let darkFieldURL =
+  options.darkField
+  ?? (options.caseDarkField && FileManager.default.fileExists(atPath: caseDarkFieldURL.path)
+    ? caseDarkFieldURL : nil)
+let darkField: [Float]? = try darkFieldURL.map { url in
+  let values = try Data(contentsOf: url).withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+  guard values.count == caseRecord.scanRows * caseRecord.scanColumns else {
+    throw failure("\(url.path) is not a \(caseRecord.scanRows)x\(caseRecord.scanColumns) float32 image")
+  }
+  return values
+}
 let detectorSum = try Data(contentsOf: options.cache.appendingPathComponent("detector_sum.u64"))
   .withUnsafeBytes { Array($0.bindMemory(to: UInt64.self)) }
 let setup = try caseRecord.calibration.geometry(
@@ -374,10 +530,6 @@ let counts = try mapped(options.cache.appendingPathComponent("counts.bin"), devi
 guard let countType = MetalSSBCountType(rawValue: caseRecord.countType) else {
   throw failure("Unknown count type")
 }
-let darkFieldURL = options.cache.appendingPathComponent("dark_field.f32")
-let darkField: [Float]? =
-  options.darkField && FileManager.default.fileExists(atPath: darkFieldURL.path)
-  ? try Data(contentsOf: darkFieldURL).withUnsafeBytes { Array($0.bindMemory(to: Float.self)) } : nil
 var results: [[String: Any]] = []
 for repeatIndex in 0..<options.repeats {
   try autoreleasepool {
@@ -392,14 +544,16 @@ for repeatIndex in 0..<options.repeats {
     var lastStage = ""
     let fitStarted = Date()
     var initialSeconds = 0.0
-    let options5 = SSBFitOptions(trials: options.trials, maximumOrder: options.maximumOrder)
+    let options5 = SSBFitOptions(
+      trials: options.trials, compareStandard: options.compareStandard,
+      maximumOrder: options.maximumOrder)
+    let sampling = (
+      caseRecord.calibration.scanSamplingRowAngstroms,
+      caseRecord.calibration.scanSamplingColumnAngstroms
+    )
     let fitted = try SSBModelFit.findAberrations(
       model: model, engine: engine, rotationDegrees: caseRecord.rotationEstimateDegrees,
-      darkField: darkField,
-      scanSampling: (
-        caseRecord.calibration.scanSamplingRowAngstroms,
-        caseRecord.calibration.scanSamplingColumnAngstroms
-      ), options: options5,
+      darkField: darkField, scanSampling: sampling, options: options5,
       progress: { stage, _, _ in
         if stage != lastStage {
           stages.append((stage, Date().timeIntervalSince(fitStarted)))
@@ -421,6 +575,57 @@ for repeatIndex in 0..<options.repeats {
     ]
     if let initial = fitted.refinedFit == nil ? nil : fitted.fits[fitted.kept] as SSBFit? {
       result["initial"] = record(initial)
+    }
+    result["branch_tests"] = fitted.branches.map(branchRecord)
+    result["column_count"] = fitted.columnCount
+    func neighbours(_ p: SSBModelPoint, rotation: Double) throws -> [String: Any] {
+      try model.retarget(scanDetectorRotationDegrees: rotation)
+      let z = [
+        p.c10Angstroms, p.c12Angstroms * cos(2 * p.phi12Radians),
+        p.c12Angstroms * sin(2 * p.phi12Radians), p.sampleTiltMrad[0], p.sampleTiltMrad[1],
+        p.depthSpreadAngstroms,
+      ]
+      let delta = [0.05, 0.05, 0.05, 0.005, 0.005, 0.5]
+      var points = [p]
+      for d in 0..<6 {
+        for sign in [1.0, -1.0] {
+          var shifted = z
+          shifted[d] += sign * delta[d]
+          points.append(
+            SSBModelPoint(
+              c10Angstroms: shifted[0], c12Angstroms: hypot(shifted[1], shifted[2]),
+              phi12Radians: atan2(shifted[2], shifted[1]) / 2,
+              sampleTiltMrad: [shifted[3], shifted[4]], depthSpreadAngstroms: shifted[5]))
+        }
+      }
+      let values = try model.agreements(points)
+      return [
+        "agreement": values[0], "delta": delta, "rotation_deg": rotation,
+        "neighbour_relative": values.dropFirst().map { ($0 - values[0]) / values[0] },
+      ]
+    }
+    if options.checkMaximum {
+      let kept = fitted.fits[fitted.kept]
+      result["maximum_check"] = try neighbours(
+        kept.point, rotation: kept.scanDetectorRotationDegrees)
+      if let baseline = options.baseline {
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: baseline)) as! [String: Any]
+        let run = (json["results"] as! [[String: Any]])[0]
+        let branch = (run["branches"] as! [[String: Any]])[run["kept"] as! Int]
+        let point = SSBModelPoint(
+          c10Nanometers: branch["C10_nm"] as! Double, c12Nanometers: branch["C12_nm"] as! Double,
+          phi12Degrees: branch["phi12_deg"] as! Double,
+          sampleTiltMrad: branch["sample_tilt_mrad"] as! [Double],
+          depthSpreadNanometers: branch["depth_spread_nm"] as! Double)
+        result["baseline_maximum_check"] = try neighbours(
+          point, rotation: branch["rotation_deg"] as! Double)
+      }
+      try model.retarget(scanDetectorRotationDegrees: kept.scanDetectorRotationDegrees)
+    }
+    if options.verifyBranches {
+      result["verification"] = try verifyBranches(
+        fitted, model: model, engine: engine, darkField: darkField, sampling: sampling,
+        trials: options.trials)
     }
     results.append(result)
     if repeatIndex == 0, let dump = options.dump {

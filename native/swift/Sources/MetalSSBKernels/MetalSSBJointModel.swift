@@ -126,6 +126,7 @@ public final class MetalSSBJointModel {
   private var batchPower: MTLBuffer?
   private var coherent: SSBCoherentReconstruction
   private var fifthOrder: SSBFifthOrderAgreement?
+  private var lowOrder: SSBLowOrderDerivatives?
 
   public var wavelengthAngstroms: Double {
     geometry.modelWavelengthAngstroms ?? Double(geometry.wavelengthAngstroms)
@@ -159,7 +160,7 @@ public final class MetalSSBJointModel {
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
-        "ssb_redraw",
+        "ssb_redraw", "ssb_low_order",
       ]),
       options: options)
     self.library = library
@@ -405,6 +406,24 @@ public final class MetalSSBJointModel {
     return try fifthOrder!.evaluate(
       rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
       probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
+      isCancelled: isCancelled)
+  }
+
+  /// The low-order agreement with its exact gradient and Hessian at each row of Newton coordinates
+  /// (C10, C12 cos 2 phi12, C12 sin 2 phi12 [A], tilt row, tilt column [mrad], depth spread [A]).
+  func lowOrderDerivatives(_ rows: [[Double]], isCancelled: () -> Bool = { false }) throws
+    -> [SSBLowOrderDerivatives.Result]
+  {
+    try validatePreparation()
+    if lowOrder == nil {
+      lowOrder = try SSBLowOrderDerivatives(device: device, queue: queue, library: library)
+    }
+    var p = grid
+    let bytes = withUnsafeBytes(of: &p) { Array($0) }
+    return try lowOrder!.evaluate(
+      rows: rows, grid: bytes, bandCount: bandCount, count: activeIndices.count,
+      chunks: Int(grid.chunks), band: bandG, k: kBuffer, q: qBuffer, weights: weights,
+      probeGeometry: probeGeometry, neighbour: neighbourBuffer, rowStep: rowStep,
       isCancelled: isCancelled)
   }
 

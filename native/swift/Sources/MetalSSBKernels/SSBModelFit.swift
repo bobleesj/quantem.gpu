@@ -112,7 +112,12 @@ public struct SSBFit: Codable, Sendable {
   /// The phase variance at the fit (phase-variance objective).
   public let phaseVarianceLoss: Double?
   public let trialCount: Int
-  public let timings: [String: Double]
+  public var timings: [String: Double]
+  /// The trust-region Newton starts of the primary fit (iterations, objective evaluations, convergence).
+  public var newtonStarts: [SSBAgreementSearch.NewtonStart]? = nil
+  /// The branch whose fit this one is the exact 180-degree image of (`SSBRotationBranches.oppositeBranch`);
+  /// nil for a fit searched at its own rotation.
+  public var mappedFromBranch: Int? = nil
   /// The bounded fifth-order Newton trajectory; nil for a primary-only fit.
   /// Agreements in this trace are divided by `higherOrderNormalization`.
   public var higherOrderRefinement: SSBFifthOrderSearch.Result? = nil
@@ -164,8 +169,12 @@ public enum SSBModelFit {
     try options.validate()
     var count = 0
     let total = options.trials
+    // Wall time of the search's objective evaluations; the rest of the search is the host's proposals.
+    var searchObjectiveSeconds = 0.0
     func evaluate(_ points: [[Double]]) throws -> [Double] {
       if isCancelled() { throw CancellationError() }
+      let started = Date()
+      defer { if count <= total { searchObjectiveSeconds += Date().timeIntervalSince(started) } }
       let values = try model.agreements(
         points.map {
           SSBModelPoint(
@@ -175,6 +184,16 @@ public enum SSBModelFit {
       count += points.count
       progress(count <= total ? "Search trials" : "Newton refinement", min(count, total), total)
       return values
+    }
+    // The Newton climbs on the exact gradient and Hessian of the same objective.
+    func derivatives(_ rows: [[Double]]) throws -> [SSBAgreementSearch.Derivatives] {
+      if isCancelled() { throw CancellationError() }
+      let values = try model.lowOrderDerivatives(rows, isCancelled: isCancelled)
+      count += rows.count
+      progress("Newton refinement", total, total)
+      return values.map {
+        SSBAgreementSearch.Derivatives(value: $0.value, gradient: $0.gradient, hessian: $0.hessian)
+      }
     }
     var timings: [String: Double] = [:]
     let rotation = model.scanDetectorRotationDegrees
@@ -187,14 +206,18 @@ public enum SSBModelFit {
           evaluate, seed: options.seed, isCancelled: isCancelled)
         timings["standard_comparison_s"] = Date().timeIntervalSince(started)
         count = 0
+        searchObjectiveSeconds = 0
       }
-      let result = try SSBAgreementSearch.fitTilt(
-        evaluate, trials: options.trials, seed: options.seed, tiltLimitMrad: options.tiltLimitMrad,
-        isCancelled: isCancelled)
+      let result = try withoutActuallyEscaping(derivatives) { exact in
+        try SSBAgreementSearch.fitTilt(
+          evaluate, trials: options.trials, seed: options.seed,
+          tiltLimitMrad: options.tiltLimitMrad, derivatives: exact, isCancelled: isCancelled)
+      }
       timings["coarse_search_s"] = result.searchSeconds
+      timings["coarse_search_objective_s"] = searchObjectiveSeconds
       timings["refinement_s"] = result.refinementSeconds
       let p = result.point
-      return SSBFit(
+      var fit = SSBFit(
         scanDetectorRotationDegrees: rotation,
         point: SSBModelPoint(
           c10Angstroms: p[0], c12Angstroms: p[1], phi12Radians: p[2], sampleTiltMrad: [p[3], p[4]],
@@ -202,18 +225,26 @@ public enum SSBModelFit {
         options: options, sampleAgreement: result.agreement, standardAgreement: standard?.agreement,
         tiltFitGain: standard.map { result.agreement / $0.agreement }, phaseVarianceLoss: nil,
         trialCount: options.trials, timings: timings)
+      fit.newtonStarts = result.newtonStarts
+      return fit
     case (false, .agreement):
-      let result = try SSBAgreementSearch.fitStandard(
-        evaluate, trials: options.trials, seed: options.seed, isCancelled: isCancelled)
+      let result = try withoutActuallyEscaping(derivatives) { exact in
+        try SSBAgreementSearch.fitStandard(
+          evaluate, trials: options.trials, seed: options.seed, derivatives: exact,
+          isCancelled: isCancelled)
+      }
       timings["coarse_search_s"] = result.searchSeconds
+      timings["coarse_search_objective_s"] = searchObjectiveSeconds
       timings["refinement_s"] = result.refinementSeconds
       let p = result.point
-      return SSBFit(
+      var fit = SSBFit(
         scanDetectorRotationDegrees: rotation,
         point: SSBModelPoint(c10Angstroms: p[0], c12Angstroms: p[1], phi12Radians: p[2]),
         options: options, sampleAgreement: result.agreement, standardAgreement: nil,
         tiltFitGain: nil,
         phaseVarianceLoss: nil, trialCount: options.trials, timings: timings)
+      fit.newtonStarts = result.newtonStarts
+      return fit
     case (false, .phaseVariance):
       // The native phase-variance search (seeded TPE and Nelder-Mead); its proposals are its own.
       let started = Date()
@@ -236,11 +267,16 @@ public enum SSBModelFit {
     }
   }
 
-  /// Fit `rotation` and the opposite branch independently with the same options, reconstruct each fit's
-  /// phase at the native sampling and keep the branch the dark-field column test (else the phase tail)
-  /// selects. The model is left at the kept rotation. The standard comparison, which only measures
-  /// `tiltFitGain` and depends on the rotation and seed alone, runs once, for the kept branch, after the
-  /// decision (Python `_measure_tilt_fit_gain`).
+  /// Fit `rotation`, give the opposite branch its fit, reconstruct each fit's phase at the native sampling
+  /// and keep the branch the dark-field column test (else the phase tail) selects. The model is left at the
+  /// kept rotation. The standard comparison, which only measures `tiltFitGain` and depends on the rotation
+  /// and seed alone, runs once, for the kept branch, after the decision (Python `_measure_tilt_fit_gain`).
+  ///
+  /// The agreement objective is exactly symmetric between the branches
+  /// (`SSBRotationBranches.oppositeBranch`): every point of one branch has an equal-agreement point on the
+  /// other, so the opposite branch's fit is the mapped fit of `rotation` (`mappedFromBranch` 0), its
+  /// agreement evaluated at its own rotation, not a second search. The phase-variance objective has no such
+  /// map, and both of its branches are searched.
   ///
   /// `checkRotation: false` fits `rotation` alone (Python `check_rotation=False`), the standard comparison
   /// included.
@@ -266,30 +302,39 @@ public enum SSBModelFit {
     var size = 0
     var branchOptions = options
     branchOptions.compareStandard = false
+    let mapped = options.objective == .agreement
     for (index, rotation) in rotations.enumerated() {
       try model.retarget(scanDetectorRotationDegrees: rotation)
-      let fitted = try fitPrimary(
-        model: model, engine: engine, options: branchOptions,
-        progress: { stage, completed, total in
-          progress("Branch \(index + 1)/2 · \(stage)", completed, total)
-        }, isCancelled: isCancelled)
+      let fitted: SSBFit
+      if mapped && index == 1 {
+        let started = Date()
+        let point = SSBRotationBranches.oppositeBranch(fits[0].point)
+        let agreement = try model.agreements([point], isCancelled: isCancelled)[0]
+        var opposite = SSBFit(
+          scanDetectorRotationDegrees: rotation, point: point, options: branchOptions,
+          sampleAgreement: agreement, standardAgreement: nil, tiltFitGain: nil,
+          phaseVarianceLoss: nil, trialCount: fits[0].trialCount,
+          timings: ["mapped_agreement_s": Date().timeIntervalSince(started)])
+        opposite.mappedFromBranch = 0
+        fitted = opposite
+      } else {
+        fitted = try fitPrimary(
+          model: model, engine: engine, options: branchOptions,
+          progress: { stage, completed, total in
+            progress(mapped ? stage : "Branch \(index + 1)/2 · \(stage)", completed, total)
+          }, isCancelled: isCancelled)
+      }
       let started = Date()
       let phase = try model.reconstruct(fitted.point, upsamplingFactor: 1, isCancelled: isCancelled)
-      var timings = fitted.timings
-      timings["native_phase_s"] = Date().timeIntervalSince(started)
+      var branchFit = fitted
+      branchFit.timings["native_phase_s"] = Date().timeIntervalSince(started)
       size = phase.rows
       phases.append(
         Array(
           UnsafeBufferPointer(
             start: phase.phase.contents().assumingMemoryBound(to: Float.self),
             count: phase.rows * phase.columns)))
-      fits.append(
-        SSBFit(
-          scanDetectorRotationDegrees: fitted.scanDetectorRotationDegrees, point: fitted.point,
-          options: fitted.options, sampleAgreement: fitted.sampleAgreement,
-          standardAgreement: fitted.standardAgreement, tiltFitGain: fitted.tiltFitGain,
-          phaseVarianceLoss: fitted.phaseVarianceLoss, trialCount: fitted.trialCount,
-          timings: timings))
+      fits.append(branchFit)
     }
     let decision = SSBRotationBranches.compare(
       phases: phases, rotations: rotations, rows: size, columns: size, darkField: darkField,
@@ -314,6 +359,8 @@ public enum SSBModelFit {
         sampleAgreement: agreement, standardAgreement: standard.agreement,
         tiltFitGain: standard.agreement > 0 ? agreement / standard.agreement : .nan,
         phaseVarianceLoss: nil, trialCount: kept.trialCount, timings: timings)
+      fits[decision.kept].newtonStarts = kept.newtonStarts
+      fits[decision.kept].mappedFromBranch = kept.mappedFromBranch
     }
     var result = SSBBranchedFit(
       fits: fits, branches: decision.branches, chosen: decision.chosen, kept: decision.kept,

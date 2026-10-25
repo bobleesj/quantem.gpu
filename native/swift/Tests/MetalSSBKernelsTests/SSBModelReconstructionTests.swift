@@ -260,6 +260,227 @@ final class SSBModelReconstructionTests: XCTestCase {
     XCTAssertEqual(try fresh.agreements(points), try points.flatMap { try fresh.agreements([$0]) })
   }
 
+  /// The 180-degree map: a point and its opposite-branch image have the same agreement, for the low-order
+  /// model with tilt and depth and for the fifth-order model, the image of the image is the point, and the
+  /// branched fit gives the opposite branch the mapped fit of the first.
+  func testOppositeBranchPointHasTheSameAgreement() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try Self.scene()
+    let input = try XCTUnwrap(
+      s.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let rotation = 17.25
+    let opposite = SSBRotationBranches.opposite(rotation)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
+    let higher = [
+      SSBModelHigherOrder(order: 2, symmetry: 1, magnitudeAngstroms: 900, angleRadians: 0.4),
+      SSBModelHigherOrder(order: 2, symmetry: 3, magnitudeAngstroms: 600, angleRadians: -0.9),
+      SSBModelHigherOrder(order: 3, symmetry: 0, magnitudeAngstroms: -30_000),
+      SSBModelHigherOrder(order: 3, symmetry: 2, magnitudeAngstroms: 20_000, angleRadians: 1.2),
+      SSBModelHigherOrder(order: 3, symmetry: 4, magnitudeAngstroms: 9_000, angleRadians: -0.3),
+      SSBModelHigherOrder(order: 4, symmetry: 3, magnitudeAngstroms: 400_000, angleRadians: 0.2),
+      SSBModelHigherOrder(order: 5, symmetry: 0, magnitudeAngstroms: 2e6),
+      SSBModelHigherOrder(order: 5, symmetry: 6, magnitudeAngstroms: 5e6, angleRadians: 0.45),
+    ]
+    let points = [
+      SSBModelPoint(c10Angstroms: 61, c12Angstroms: 14, phi12Radians: 0.7),
+      SSBModelPoint(
+        c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -1.4, sampleTiltMrad: [2.5, -4],
+        depthSpreadAngstroms: 140),
+      SSBModelPoint(
+        c10Angstroms: 45, c12Angstroms: 12, phi12Radians: 0.3, sampleTiltMrad: [-1.5, 3],
+        depthSpreadAngstroms: 90, higherOrder: higher),
+    ]
+    for point in points {
+      let image = SSBRotationBranches.oppositeBranch(point)
+      XCTAssertEqual(image.c10Angstroms, -point.c10Angstroms)
+      XCTAssertEqual(image.c12Angstroms, point.c12Angstroms)
+      XCTAssertEqual(image.sampleTiltMrad, point.sampleTiltMrad.map { -$0 })
+      XCTAssertEqual(image.depthSpreadAngstroms, point.depthSpreadAngstroms)
+      XCTAssertLessThan(image.phi12Radians, Double.pi / 2)
+      XCTAssertGreaterThanOrEqual(image.phi12Radians, -Double.pi / 2)
+      let back = SSBRotationBranches.oppositeBranch(image)
+      XCTAssertEqual(back.c10Angstroms, point.c10Angstroms)
+      XCTAssertEqual(back.phi12Radians, point.phi12Radians, accuracy: 1e-14)
+      for (a, b) in zip(back.higherOrder, point.higherOrder) {
+        XCTAssertEqual(a.magnitudeAngstroms, b.magnitudeAngstroms)
+        XCTAssertEqual(a.angleRadians, b.angleRadians, accuracy: 1e-14)
+      }
+      try model.retarget(scanDetectorRotationDegrees: rotation)
+      let here = try model.agreements([point])[0]
+      let phase = try model.reconstruct(point)
+      let forward = Array(
+        UnsafeBufferPointer(
+          start: phase.phase.contents().assumingMemoryBound(to: Float.self),
+          count: phase.rows * phase.columns))
+      try model.retarget(scanDetectorRotationDegrees: opposite)
+      let there = try model.agreements([image])[0]
+      // On the other branch the same point is not an image: the symmetry is a property of the pair.
+      let unmapped = try model.agreements([point])[0]
+      print(
+        String(
+          format: "OPPOSITE_BRANCH higher %d agreement %.9e image %.9e (rel %.2e) unmapped %.9e",
+          point.hasHigherOrder ? 1 : 0, here, there, (there - here) / here, unmapped))
+      XCTAssertEqual(there, here, accuracy: 1e-6 * here)
+      XCTAssertGreaterThan(abs(unmapped - here), 1e-3 * here)
+      // The image's phase has the opposite contrast, which is what the branch test reads.
+      let mirrored = try model.reconstruct(image)
+      let backward = Array(
+        UnsafeBufferPointer(
+          start: mirrored.phase.contents().assumingMemoryBound(to: Float.self),
+          count: mirrored.rows * mirrored.columns))
+      func centred(_ values: [Float]) -> [Double] {
+        let mean = values.reduce(0.0) { $0 + Double($1) } / Double(values.count)
+        return values.map { Double($0) - mean }
+      }
+      let a = centred(forward)
+      let b = centred(backward)
+      let correlation =
+        zip(a, b).reduce(0.0) { $0 + $1.0 * $1.1 }
+        / sqrt(a.reduce(0.0) { $0 + $1 * $1 } * b.reduce(0.0) { $0 + $1 * $1 })
+      print(String(format: "OPPOSITE_BRANCH phase correlation %.6f", correlation))
+      XCTAssertLessThan(correlation, -0.99)
+    }
+    // The branched fit searches the first branch only and maps it.
+    let fitted = try SSBModelFit.findAberrations(
+      model: model, engine: engine, rotationDegrees: rotation, darkField: nil,
+      scanSampling: (0.4, 0.4),
+      options: SSBFitOptions(trials: 40, compareStandard: false, maximumOrder: 1))
+    XCTAssertNil(fitted.fits[0].mappedFromBranch)
+    XCTAssertEqual(fitted.fits[1].mappedFromBranch, 0)
+    XCTAssertEqual(fitted.fits[1].scanDetectorRotationDegrees, opposite)
+    XCTAssertEqual(fitted.fits[1].point, SSBRotationBranches.oppositeBranch(fitted.fits[0].point))
+    let first = try XCTUnwrap(fitted.fits[0].sampleAgreement)
+    XCTAssertEqual(try XCTUnwrap(fitted.fits[1].sampleAgreement), first, accuracy: 1e-6 * first)
+    XCTAssertEqual(
+      model.scanDetectorRotationDegrees, fitted.fits[fitted.kept].scanDetectorRotationDegrees)
+  }
+
+  /// The tilt fit and the tilt-0 fit climb on the exact derivatives to a maximum: no small step in any
+  /// fitted coordinate raises the agreement beyond float32 noise.
+  func testExactNewtonFitsEndAtAMaximum() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try Self.scene()
+    let input = try XCTUnwrap(
+      s.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+    for tilt in [true, false] {
+      let fit = try SSBModelFit.fit(
+        model: model, engine: engine,
+        options: SSBFitOptions(tilt: tilt, trials: 40, compareStandard: false, maximumOrder: 1))
+      let agreement = try XCTUnwrap(fit.sampleAgreement)
+      let p = fit.point
+      let z = SSBAgreementSearch.encode([
+        p.c10Angstroms, p.c12Angstroms, p.phi12Radians, p.sampleTiltMrad[0], p.sampleTiltMrad[1],
+        p.depthSpreadAngstroms,
+      ])
+      let dimensions = tilt ? 6 : 3
+      var neighbours: [SSBModelPoint] = []
+      for d in 0..<dimensions {
+        for sign in [1.0, -1.0] {
+          var shifted = z
+          shifted[d] += sign * [0.2, 0.2, 0.2, 0.02, 0.02, 0.5][d]
+          let q = SSBAgreementSearch.decode(shifted)
+          neighbours.append(
+            SSBModelPoint(
+              c10Angstroms: q[0], c12Angstroms: q[1], phi12Radians: q[2],
+              sampleTiltMrad: [q[3], q[4]], depthSpreadAngstroms: q[5]))
+        }
+      }
+      let best = try model.agreements(neighbours).max()!
+      print(
+        String(
+          format: "EXACT_FIT tilt %d agreement %.9e best neighbour %.9e (rel %.2e) centers %d", tilt ? 1 : 0,
+          agreement, best, (best - agreement) / agreement,
+          fit.newtonStarts?.reduce(0) { $0 + $1.evaluations } ?? -1))
+      XCTAssertLessThan(best, agreement * (1 + 1e-6))
+      if !tilt {
+        XCTAssertEqual(p.sampleTiltMrad, [0, 0])
+        XCTAssertEqual(p.depthSpreadAngstroms, 0)
+      }
+    }
+  }
+
+  /// The exact low-order gradient and Hessian against Richardson-extrapolated central differences of the
+  /// value and of the gradient, at points with and without tilt and depth spread; the value against the
+  /// agreement objective.
+  func testLowOrderDerivativesMatchFiniteDifferences() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try Self.scene()
+    let input = try XCTUnwrap(
+      s.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+    let points = [
+      SSBModelPoint(c10Angstroms: 61, c12Angstroms: 14, phi12Radians: 0.7),
+      SSBModelPoint(
+        c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -1.4, sampleTiltMrad: [2.5, -4],
+        depthSpreadAngstroms: 140),
+      SSBModelPoint(
+        c10Angstroms: 12, c12Angstroms: 30, phi12Radians: 0.2, sampleTiltMrad: [-7, 1.5],
+        depthSpreadAngstroms: 420),
+    ]
+    let steps = [2.0, 2.0, 2.0, 0.25, 0.25, 8.0]
+    for point in points {
+      let z = SSBAgreementSearch.encode([
+        point.c10Angstroms, point.c12Angstroms, point.phi12Radians, point.sampleTiltMrad[0],
+        point.sampleTiltMrad[1], point.depthSpreadAngstroms,
+      ])
+      var rows = [z]
+      for d in 0..<6 {
+        for scale in [1.0, 0.5] {
+          for sign in [1.0, -1.0] {
+            var shifted = z
+            shifted[d] += sign * scale * steps[d]
+            rows.append(shifted)
+          }
+        }
+      }
+      let results = try model.lowOrderDerivatives(rows)
+      let exact = results[0]
+      let agreement = try model.agreements([point])[0]
+      XCTAssertEqual(exact.value, agreement, accuracy: 2e-6 * agreement)
+      func richardson(_ d: Int, _ f: (SSBLowOrderDerivatives.Result) -> Double) -> Double {
+        let r = results[1 + 4 * d..<5 + 4 * d].map(f)
+        let coarse = (r[0] - r[1]) / (2 * steps[d])
+        let fine = (r[2] - r[3]) / steps[d]
+        return (4 * fine - coarse) / 3
+      }
+      // Scales: the change of the value and of each gradient component over one step.
+      let valueScale = (0..<6).map { abs(exact.gradient[$0]) * steps[$0] }.max()! + 1e-6 * agreement
+      var worstGradient = 0.0
+      var worstHessian = 0.0
+      for d in 0..<6 {
+        let numeric = richardson(d) { $0.value }
+        worstGradient = max(worstGradient, abs(numeric - exact.gradient[d]) * steps[d] / valueScale)
+        for e in 0..<6 {
+          let mixed = richardson(d) { $0.gradient[e] }
+          let scale = (0..<6).map { abs(exact.hessian[e][$0]) * steps[$0] * steps[e] }.max()! + 1e-6
+            * valueScale
+          worstHessian = max(
+            worstHessian, abs(mixed - exact.hessian[d][e]) * steps[d] * steps[e] / scale)
+        }
+      }
+      print(
+        String(
+          format: "LOW_ORDER_DERIVATIVES depth %.0f value rel %.2e gradient rel %.2e hessian rel %.2e",
+          point.depthSpreadAngstroms, (exact.value - agreement) / agreement, worstGradient,
+          worstHessian))
+      XCTAssertLessThan(worstGradient, 2e-3)
+      XCTAssertLessThan(worstHessian, 2e-3)
+    }
+  }
+
   func testCurlRotationRecoversAKnownAngle() {
     let (rows, columns) = (64, 80)
     func potential(_ r: Int, _ c: Int) -> Double {
