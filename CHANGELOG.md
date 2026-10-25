@@ -8,6 +8,16 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- Python MPS: drag windows for the regularized `phase` and `complex` methods (`ssb.mps.direct.DragWindow`), the CUDA
+  `DragWindow` design. `direct_workflow.drag`, `prepare` and `advance` now serve MPS slider frames from a Chebyshev
+  series of the prepared normal equations along the dragged control (29 exact preparations over C10 +-6.8 nm or
+  C12 +-3.4 nm at 300 kV and 30 mrad, one per `advance`), evaluated in float64 on CPU threads and solved as
+  `PreparedDirect.solve`. On two measured 512 x 512 acquisitions at 3x on an Apple M5 Max (4 CPU threads) a frame
+  takes 25-43 ms (phase) and 60-81 ms (complex) against 0.33-0.63 s for an exact preparation, and agrees with the
+  exact image within 1.0e-6 of its largest phase (log-amplitude within 6e-7); a window takes 11-16 s to build and
+  holds 0.96 GB (phase) or 2.9 GB (complex). Previews come only from `drag`; `run`, `preview` and saved results stay
+  exact. The window rule (reach, truncation, order, width, nodes) moves to `ssb.chebyshev`, shared with CUDA.
+
 - Python MPS: the regularized `phase` and `complex` reconstructions, `DirectPtycho.run(method=...)` and
   `preview(method=...)`, on Apple GPUs (`ssb.mps.direct`), with CUDA's model, layout and regularization. MLX Metal
   kernels accumulate the normal equations from the retained G(q, k) (float32 per bright-field pixel, float-float across
@@ -16,7 +26,7 @@ new `rcN` heading when that rc is published to TestPyPI.
   456 images) the images agree with CUDA and with a float64 evaluation within 2x CUDA's own float32 error (rms;
   within 10x at the maximum): phase 2e-8 to 1.5e-7 rad rms, amplitude 0.8e-7 to 1.4e-7 of its mean. On an Apple
   M5 Max an optics change takes about 0.3-0.5 s at 3x and 0.6-0.9 s at 4x, a damping change 11-20 ms at 3x and
-  26-60 ms at 4x. Drag windows and the post-fit three-method comparison remain CUDA-only.
+  26-60 ms at 4x. The post-fit three-method comparison remains CUDA-only.
 - Native (Metal) SSB fifth-order fit: the higher-order box is wide by default. `SSBFitOptions.higherOrderLimit`
   bounds each of the 22 higher-order coordinates (C21 through C56) to ±20 rad of probe phase at the aperture edge
   (`wideHigherOrderLimit`, the default, which no longer binds) or ±2 (`standardHigherOrderLimit`, the earlier box,
@@ -230,6 +240,16 @@ new `rcN` heading when that rc is published to TestPyPI.
   360 degrees.
 
 ### Fixed
+
+- Python MPS SSB: the bright-field frequencies k are formed in float64 and rounded once to float32
+  (`ssb.mps.prepared.bright_field_frequencies`, used at preparation and on a rotation change, and by the direct
+  methods). They were formed from a float32-rounded disk centre, which shifts every k by the same amount. Fits move by
+  at most 1.1e-3 nm in C10. On five measured 512 x 512 acquisitions (24 SSB images, 1x, 2x and Auto) the mean rms
+  error against a float64 evaluation drops from 1.32 to 1.11 times CUDA's own float32 error (against CUDA: 1.26 to
+  1.24); the direct methods are unchanged. Another float32 rounding of k of the same size moves the SSB phase of a
+  fifth-order probe by 1 to 1.6 times CUDA's own error (rms), so any one SSB image sits at that floor: one 1x image of
+  a thick crystal moves from 1.77 to 2.21 times CUDA's error against CUDA (2.03 against float64), and four random
+  roundings of its k of that size give 1.33 to 2.17.
 
 - Native (Metal) SSB redraw (`ssb-redraw` v0.3, replaces v0.2): the lowest scan frequencies, where the two
   sidebands nearly cancel, are resolved by evaluating chi(k +- q) - chi(k) as polynomials expanded about each BF
