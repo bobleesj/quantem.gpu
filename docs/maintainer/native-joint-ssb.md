@@ -90,6 +90,8 @@ swift test -c release -Xswiftc -enable-testing --filter MetalSSBKernelsTests
 PYTHONPATH=src python scripts/ssb_agreement_gate.py        # Python and native draw the same trials
 SSB_PARITY_FIXTURE=... SSB_PARITY_REFERENCE=... swift test -c release -Xswiftc -enable-testing \
   --filter MetalSSBMeasuredParityTests                     # a measured acquisition, kept outside this repository
+SSB_DIRECT_FIXTURE=... [SSB_DIRECT_ALL=1] swift test -c release -Xswiftc -enable-testing \
+  --filter SSBDirectMeasuredParityTests                    # ssb, phase and complex against CUDA arrays of the same optics
 ```
 
 The joint fixtures (`SSB_JOINT_REFERENCE`, `SSB_JOINT_CALIBRATED_REFERENCE`) gate the objective (loss relative
