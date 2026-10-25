@@ -7,6 +7,8 @@ import time
 from contextlib import nullcontext
 from functools import wraps
 
+import numpy as np
+
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.ssb.persistence import load_result, result_paths
 from quantem.gpu.ssb.results import SSBResult
@@ -82,17 +84,18 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
     One prepared system per method is kept for the current data and optics, so
     switching phase -> complex -> phase prepares each once (about 92 + 170 MB on
     the 512 x 512 test field). Any change to the optics, sampling or prior drops
-    both.
+    both. CUDA prepares and solves on the session's GPU (``ssb.cuda.direct``);
+    MPS prepares on the Apple GPU and solves in float64 on the CPU
+    (``ssb.mps.direct``), from the same model and layout.
     """
-    if session.backend != "cuda":
-        raise NotImplementedError(
-            "Regularized direct reconstruction currently requires CUDA; use method='ssb' on MPS."
-        )
     if session._streamed is not None:
         raise NotImplementedError(
             "Regularized direct reconstruction needs a resident region; use select_region(...) first."
         )
-    from quantem.gpu.ssb.cuda.direct import PreparedDirect
+    if session.backend == "cuda":
+        from quantem.gpu.ssb.cuda.direct import PreparedDirect
+    else:
+        from quantem.gpu.ssb.mps.direct import PreparedDirect
 
     engine, optics, key = _inputs(session, coefs, tilt, depth, factor, policy)
     cached = getattr(session, "_prepared_direct", None)
@@ -161,7 +164,7 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
         return window.phase(value)
     wave, _ = window.solve(value, policy["phase_regularization"], policy.get("amplitude_regularization"),
                            complex_object=method == "complex")
-    return cp.angle(wave).astype(cp.float32)
+    return _phase(session, wave)
 
 
 @_on_scan_gpu
@@ -251,12 +254,28 @@ def _exact(session, coefs, tilt, depth, factor, policy):
                                    depth_spread_nm=depth or 0.0, output="native")
         return phase
     wave, _ = solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
-    return cp.angle(wave).astype(cp.float32)
+    return _phase(session, wave)
+
+
+def _phase(session, wave):
+    """The float32 phase of a direct wave: on the device for CUDA, a NumPy array for MPS."""
+    if session.backend == "cuda":
+        return cp.angle(wave).astype(cp.float32)
+    return np.angle(wave).astype(np.float32)
 
 
 def _inputs(session, coefs, tilt, depth, factor, policy):
-    """The engine, the optics and the key of every input a prepared system depends on."""
-    engine = session._backend()._get_accelerator()
+    """The engine, the optics and the key of every input a prepared system depends on.
+
+    The engine is the CUDA accelerator, or the MPS backend with its G(q, k) prepared at the session's rotation.
+    """
+    if session.backend == "cuda":
+        engine = session._backend()._get_accelerator()
+        spectra = engine.G_qk
+    else:
+        engine = session._backend()
+        engine.cache_rotation(math.radians(session.scan_detector_rotation_deg))
+        spectra = engine._prepared.g_qk
     optics = {
         "aberrations": coefs,
         "sample_tilt_mrad": tilt or (0.0, 0.0),
@@ -264,7 +283,7 @@ def _inputs(session, coefs, tilt, depth, factor, policy):
     }
     key = (
         id(engine),
-        id(engine.G_qk),
+        id(spectra),
         session.scan_detector_rotation_deg,
         tuple(sorted(coefs.items())),
         tuple(optics["sample_tilt_mrad"]),
@@ -289,10 +308,6 @@ def run(
     verbose,
 ):
     """Apply one regularized method with explicit provenance and saved reuse."""
-    if session.backend != "cuda":
-        raise NotImplementedError(
-            "Regularized direct reconstruction currently requires CUDA; use method='ssb' on MPS."
-        )
     if parameters is not None and not isinstance(parameters, SSBResult):
         raise TypeError(
             "Pass the result of find_aberrations(), or coefficients through aberrations={...}."
@@ -349,7 +364,8 @@ def run(
         compute_loss=compute_loss,
         force=force,
     )
-    cp.cuda.get_current_stream().synchronize()
+    if session.backend == "cuda":
+        cp.cuda.get_current_stream().synchronize()
     result = SSBResult(
         object_wave=wave,
         backend=session.backend,

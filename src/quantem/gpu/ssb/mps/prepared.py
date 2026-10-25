@@ -75,6 +75,8 @@ class PreparedMpsSSB:
     row_steps: tuple | None = None
     # Trial-independent detector geometry used by the resident joint objective.
     fit_probe_geometry: object | None = None
+    # the regularized direct methods' optics-free layout (``direct._layout``) and its key
+    direct_layout: tuple | None = None
 
 
 def prepare_selection(
