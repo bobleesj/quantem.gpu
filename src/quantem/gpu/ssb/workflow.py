@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import replace
-from functools import wraps
+from functools import partial, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Self
 
@@ -73,6 +73,11 @@ from quantem.gpu.ssb.units import (
     search_ranges_to_engine,
     validate_aberrations,
 )
+
+
+# find_aberrations gives the opposite 180-degree branch of a joint agreement fit the exact image of the first
+# branch's fit (DirectPtycho._mapped_branch); False searches both branches, the earlier reference.
+MAP_OPPOSITE_BRANCH = True
 
 
 def _counted_electrons(dtype: str | None) -> bool:
@@ -1282,16 +1287,18 @@ class DirectPtycho:
         return self._accept_result(result)
 
     def _fit_both_branches(self, fit: Callable[[], SSBResult], *, keep_first: bool,
-                           measure_gain: bool = False) -> SSBResult:
-        """Fit the session's rotation and that rotation plus 180 degrees independently, then keep one branch.
+                           measure_gain: bool = False,
+                           mapped: Callable[[SSBResult], SSBResult] | None = None) -> SSBResult:
+        """Fit the session's rotation and that rotation plus 180 degrees, then keep one branch.
 
         Each branch runs ``fit`` from the same start (the session's aberrations, tilt and depth spread before the
-        first fit) with the same settings, and its phase is reconstructed at the native scan sampling. The branch
-        is chosen by ``branches.compare_branches``: positive phase at the dark-field atomic columns, else the larger
-        phase tail. ``keep_first`` keeps the session's rotation (a given one) and records what the evidence selects.
-        The kept fit carries the comparison as ``rotation_branches`` and both searches' trials.
-        ``measure_gain`` (joint fits whose branches skipped the standard comparison) measures the kept fit's
-        ``tilt_fit_gain`` once, at its rotation, after the decision.
+        first fit) with the same settings, and its phase is reconstructed at the native scan sampling. ``mapped``
+        gives the second branch its fit from the first one instead (``_mapped_branch``: the exact image of a joint
+        agreement fit). The branch is chosen by ``branches.compare_branches``: positive phase at the dark-field
+        atomic columns, else the larger phase tail. ``keep_first`` keeps the session's rotation (a given one) and
+        records what the evidence selects. The kept fit carries the comparison as ``rotation_branches`` and the
+        searches' trials. ``measure_gain`` (joint fits whose branches skipped the standard comparison) measures
+        the kept fit's ``tilt_fit_gain`` once, at its rotation, after the decision.
         """
         start = (self._aberrations, self._aberrations_explicit, self.sample_tilt_mrad, self.depth_spread_nm)
         first_rotation = self.scan_detector_rotation_deg
@@ -1299,7 +1306,7 @@ class DirectPtycho:
         for search, rotation in enumerate((first_rotation, opposite_rotation_deg(first_rotation))):
             self._aberrations, self._aberrations_explicit, self.sample_tilt_mrad, self.depth_spread_nm = start
             self.set_rotation(rotation)
-            result = fit()
+            result = fit() if search == 0 or mapped is None else mapped(fits[0])
             label_trials(result, search=search)
             fits.append(self._finish_fit(result))
         branches = compare_branches(fits, dark_field=self._dark_field_image(), scan_sampling_A=self.scan_sampling_A,
@@ -1315,6 +1322,39 @@ class DirectPtycho:
         if measure_gain:
             self._measure_tilt_fit_gain(kept)
         return self._accept_result(kept)
+
+    def _mapped_branch(self, first: SSBResult, *, compute_loss: bool) -> SSBResult:
+        """The opposite 180-degree branch's fit as the exact image of the joint agreement fit ``first``.
+
+        Rotating the bright-field coordinates by 180 degrees maps every point of the joint agreement to an
+        equal-agreement point of the other branch: C10 and C12 change sign (phi12 moves by 90 degrees), the sample
+        tilt changes sign and the depth spread is kept. So the branch at the session's (opposite) rotation needs no
+        search of its own; its agreement and phase are evaluated at its own rotation, as a searched branch's are.
+        """
+        started = time.perf_counter()
+        aberrations = dict(first.aberrations)
+        aberrations["C10_nm"] = -float(aberrations["C10_nm"])
+        aberrations["phi12_deg"] = (float(aberrations["phi12_deg"]) + 180.0) % 180.0 - 90.0
+        sample_tilt_mrad = tuple(-float(value) for value in first.sample_tilt_mrad)
+        depth_spread_nm = float(first.depth_spread_nm)
+        engine = aberrations_to_engine(aberrations)
+        row = np.array([[engine["C10"], engine["C12"], engine["phi12"], *sample_tilt_mrad,
+                         depth_spread_nm * ENGINE_PER_NM]])
+        agreement = float(self._backend().sample_agreement(row, (0.2, 0.9))[0])
+        estimator = "mean_phase" if compute_loss else _default_phase_estimator(aberrations)
+        phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
+                                  phase_estimator=estimator, compute_loss=compute_loss)
+        elapsed_s = time.perf_counter() - started
+        return replace(
+            first, object_wave=self._unit_wave(phase), aberrations=aberrations,
+            sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
+            scan_detector_rotation_deg=self.scan_detector_rotation_deg, sample_agreement=agreement,
+            loss=None if loss is None else float(loss), phase_estimator=estimator, phase_clim=None,
+            amplitude_estimated=False, trial_records=[], tilt_fit_gain=None, elapsed_s=elapsed_s,
+            timings={"mapped_branch_s": elapsed_s}, refine_nfev=0, refine_elapsed_s=0.0,
+            optimizer={**dict(first.optimizer or {}),
+                       "mapped_from_rotation_deg": float(first.scan_detector_rotation_deg)},
+        )
 
     def _measure_tilt_fit_gain(self, result: SSBResult) -> None:
         """Set a joint fit's ``tilt_fit_gain``: its agreement over the best standard-SSB agreement.
@@ -1761,7 +1801,7 @@ class DirectPtycho:
         objective: FitObjective = "agreement",
         scan_region: tuple[int, int, int, int] | None = None,
         trials: int | Sequence[int] | None = None,
-        refinement: RefineMethod | Literal["auto"] = "auto",
+        refinement: RefineMethod | Literal["auto", "bfgs"] = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         refine_lock: list[str] | None = None,
         tilt_limit_mrad: float = 25.0,
@@ -1786,9 +1826,19 @@ class DirectPtycho:
 
         ``search="standard"`` (default) uses 200 TPE trials for the initial
         low-order optics/tilt/depth fit, including its Newton polish, then
-        jointly refines all terms through fifth order with bounded Newton.
-        No extra higher-order TPE search is performed. ``trials`` changes the
-        initial budget and ``seed`` defaults to 42.
+        jointly refines all terms through fifth order. No extra higher-order
+        TPE search is performed. ``trials`` changes the initial budget and
+        ``seed`` defaults to 42.
+
+        On CUDA both refinements use exact derivatives of the agreement: the
+        low-order Newton its exact gradient and Hessian, the fifth-order
+        refinement (``refinement="auto"``, i.e. ``"bfgs"``) a bounded
+        trust-region quasi-Newton on exact gradients, started from a Hessian
+        of every 64th bright-field pixel, first on every 8th pixel and then
+        converged on all of them; steps are accepted on the full objective
+        summed in float64. ``refinement="newton"`` keeps the earlier
+        finite-difference fifth-order Newton as the reference trajectory; MPS
+        uses it by default.
 
         In a live notebook, ``show=True`` displays the initial fit at Auto
         sampling. After standard/broad refinement, resident CUDA sessions
@@ -1827,8 +1877,9 @@ class DirectPtycho:
         ``trials`` changes this additional budget; its seed defaults to 17.
         ``refinement="nelder-mead"`` selects the same bounded simplex path in
         either fifth-order strategy. Newton has a 5000-evaluation ceiling;
-        Nelder-Mead has 3000. Both may stop earlier; a budget cap does not
-        establish convergence or a global optimum.
+        Nelder-Mead has 3000; the exact-gradient refinement 400 full-data
+        objectives. All may stop earlier; a budget cap does not establish
+        convergence or a global optimum.
 
         Both fifth-order strategies use the selected CUDA or MPS device. They share the
         ``broad_fifth_agreement`` model, bounds, precision and reconstruction.
@@ -2105,7 +2156,7 @@ class DirectPtycho:
             if (not tilt or objective != "agreement"
                     or search_ranges is not None or refine_lock is not None
                     or fixed_aberrations is not None or higher_order is not None
-                    or refinement not in ("auto", "newton", "nelder-mead") or tilt_limit_mrad != 25.0):
+                    or refinement not in ("auto", "bfgs", "newton", "nelder-mead") or tilt_limit_mrad != 25.0):
                 raise ValueError(
                     "Fifth-order search uses its joint model and bounds. "
                     "Use search='primary' for custom ranges, "
@@ -2119,7 +2170,7 @@ class DirectPtycho:
                 seed=(17 if search == "broad" else 42) if seed is None else seed,
                 save_dir=save_dir, force=force, verbose=verbose,
                 primary_options={"check_rotation": check_rotation, "refine_rotation": refine_rotation},
-                refinement="newton" if refinement == "auto" else refinement,
+                refinement=refinement,
                 compute_loss=False if compute_loss is None else compute_loss,
                 show=show, size=size, columns=columns, show_convergence=show_convergence,
                 on_initial_fit=on_initial_fit,
@@ -2507,6 +2558,14 @@ class DirectPtycho:
         if gain_once:
             self._compare_standard = False
 
+        # The joint agreement is exactly symmetric between the 180-degree branches: with a search box that the map
+        # leaves unchanged (C10 range symmetric), the second branch's fit is the image of the first, not a second search.
+        c10_range = tilt_bounds.get("c10_range")
+        mapped = (partial(self._mapped_branch, compute_loss=compute_loss)
+                  if MAP_OPPOSITE_BRANCH and tilt and objective == "agreement" and refinement == "newton"
+                  and fixed_aberrations is None and int(num_trials) > 0
+                  and (c10_range is None or c10_range[0] == -c10_range[1]) else None)
+
         def fit(trials: int = int(num_trials)) -> SSBResult:
             """One fit at the session's rotation, from the session's aberrations (searched when none are known)."""
             if tilt:
@@ -2535,7 +2594,8 @@ class DirectPtycho:
                 result = self._finish_fit(result)
             else:
                 try:
-                    result = self._fit_both_branches(fit, keep_first=branches == "keep", measure_gain=gain_once)
+                    result = self._fit_both_branches(fit, keep_first=branches == "keep", measure_gain=gain_once,
+                                                     mapped=mapped)
                 finally:
                     if gain_once:
                         self._compare_standard = True
