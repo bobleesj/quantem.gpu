@@ -194,15 +194,24 @@ public enum SSBModelFit {
     }
     // The Newton climbs on the exact gradient and Hessian of the same objective, asking for the derivatives
     // only at the centers whose step it uses.
-    func values(_ rows: [[Double]]) throws -> [Double] {
+    // Newton centers by pass: fused value and derivatives, value only, and derivatives after a value-only pass.
+    var fusedCenters = 0
+    var valueCenters = 0
+    var derivativeCenters = 0
+    var latestFused = false
+    func values(_ rows: [[Double]], withDerivatives: Bool) throws -> [Double] {
       if isCancelled() { throw CancellationError() }
-      let values = try model.lowOrderValues(rows, isCancelled: isCancelled)
+      if withDerivatives { fusedCenters += rows.count } else { valueCenters += rows.count }
+      latestFused = withDerivatives
+      let values = try model.lowOrderValues(
+        rows, withDerivatives: withDerivatives, isCancelled: isCancelled)
       count += rows.count
       progress("Newton refinement", total, total)
       return values
     }
     func derivatives(_ indices: [Int]) throws -> [SSBAgreementSearch.Derivatives] {
       if isCancelled() { throw CancellationError() }
+      if !latestFused { derivativeCenters += indices.count }
       return try model.lowOrderDerivatives(at: indices, isCancelled: isCancelled).map {
         SSBAgreementSearch.Derivatives(value: $0.value, gradient: $0.gradient, hessian: $0.hessian)
       }
@@ -232,6 +241,9 @@ public enum SSBModelFit {
       timings["coarse_search_s"] = result.searchSeconds
       timings["coarse_search_objective_s"] = searchObjectiveSeconds
       timings["refinement_s"] = result.refinementSeconds
+      timings["newton_fused_centers"] = Double(fusedCenters)
+      timings["newton_value_only_centers"] = Double(valueCenters)
+      timings["newton_derivative_only_centers"] = Double(derivativeCenters)
       let p = result.point
       var fit = SSBFit(
         scanDetectorRotationDegrees: rotation,
@@ -255,6 +267,9 @@ public enum SSBModelFit {
       timings["coarse_search_s"] = result.searchSeconds
       timings["coarse_search_objective_s"] = searchObjectiveSeconds
       timings["refinement_s"] = result.refinementSeconds
+      timings["newton_fused_centers"] = Double(fusedCenters)
+      timings["newton_value_only_centers"] = Double(valueCenters)
+      timings["newton_derivative_only_centers"] = Double(derivativeCenters)
       let p = result.point
       var fit = SSBFit(
         scanDetectorRotationDegrees: rotation,

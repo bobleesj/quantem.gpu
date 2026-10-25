@@ -147,19 +147,22 @@ func objectiveBenchmark(
       p.sampleTiltMrad[0], p.sampleTiltMrad[1], p.depthSpreadAngstroms,
     ]
   }
-  let derivativeSets: [(String, [[Double]])] = [
-    ("derivatives initial", [newtonZ(start)]),
-    ("derivatives random3", lowRandom.prefix(3).map(newtonZ)),
+  // The fused pass (Newton centers whose derivatives it uses) and the value pass followed by the derivative pass.
+  let derivativeSets: [(String, [[Double]], Bool)] = [
+    ("derivatives initial", [newtonZ(start)], false),
+    ("derivatives random3", lowRandom.prefix(3).map(newtonZ), false),
+    ("two-stage initial", [newtonZ(start)], true),
+    ("two-stage random3", lowRandom.prefix(3).map(newtonZ), true),
   ]
-  for (name, rows) in derivativeSets {
-    _ = try model.lowOrderAgreementDerivatives(rows)
+  for (name, rows, twoStage) in derivativeSets {
+    _ = try model.lowOrderAgreementDerivatives(rows, twoStage: twoStage)
     var gpu: [Double] = []
     var valueGPU: [Double] = []
     var wall: [Double] = []
     var results: [SSBAgreementSearch.Derivatives] = []
     for _ in 0..<max(1, repeats) {
       let started = Date()
-      results = try model.lowOrderAgreementDerivatives(rows)
+      results = try model.lowOrderAgreementDerivatives(rows, twoStage: twoStage)
       wall.append(Date().timeIntervalSince(started))
       gpu.append(model.lastLowOrderGPUSeconds)
       valueGPU.append(model.lastLowOrderValueGPUSeconds)

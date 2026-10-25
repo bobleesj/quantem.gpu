@@ -9,8 +9,9 @@ import Metal
 /// An evaluation has two stages. `values` makes one pass over every (band frequency, BF pixel) for the objective's
 /// sums and keeps them; `derivatives(at:)` then makes, for any of those rows, the pass with N known per band
 /// frequency that forms the k-sums of its first and second derivatives. The Newton asks for derivatives only
-/// where it uses them. Each band frequency's terms are formed in float32 on the GPU from float32 BF sums; the band
-/// is summed on the host in double precision, as the objective's band power.
+/// where it uses them; where it will use every row's, `values(withDerivatives: true)` makes one fused pass for
+/// both (the same value sums, bitwise). Each band frequency's terms are formed in float32 on the GPU from float32
+/// BF sums; the band is summed on the host in double precision, as the objective's band power.
 final class SSBLowOrderDerivatives {
   struct Result {
     let value: Double
@@ -33,6 +34,7 @@ final class SSBLowOrderDerivatives {
   /// BF pixels per pass-2 chunk; the pass-2 partials hold `fields` floats per (chunk, band frequency).
   static let derivativeChunk = 2048
   static let fields = 29
+  static let fusedFields = 43
   /// The value, the six first derivatives and the 21 distinct second derivatives.
   static let outputs = 28
   static let referenceFields = 51
@@ -47,12 +49,15 @@ final class SSBLowOrderDerivatives {
 
   private let device: MTLDevice
   private let queue: MTLCommandQueue
-  private let valueSums, valueReduce, gradientSums, gradientCombine: MTLComputePipelineState
+  private let valueSums, valueReduce, gradientSums, gradientCombine, fusedSums, fusedCombine:
+    MTLComputePipelineState
   private let referenceSums, referenceReduce, referenceDerivativeSums, referenceCombine:
     MTLComputePipelineState
   private var workspaces: [String: MTLBuffer] = [:]
   /// The rows, trial buffer and inputs of the latest `values` call, whose sums `derivatives(at:)` reads.
   private var staged: (rows: [[Double]], trial: MTLBuffer, inputs: Inputs)?
+  /// Every row's derivatives when the latest `values` call was fused.
+  private var fusedResults: [Result]?
 
   init(device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary) throws {
     self.device = device
@@ -67,6 +72,8 @@ final class SSBLowOrderDerivatives {
     valueReduce = try pipeline("low_order_value_reduce")
     gradientSums = try pipeline("low_order_gradient_sums")
     gradientCombine = try pipeline("low_order_gradient_combine")
+    fusedSums = try pipeline("low_order_fused_sums")
+    fusedCombine = try pipeline("low_order_fused_combine")
     referenceSums = try pipeline("low_order_sums")
     referenceReduce = try pipeline("low_order_reduce_sums")
     referenceDerivativeSums = try pipeline("low_order_derivative_sums")
@@ -115,10 +122,17 @@ final class SSBLowOrderDerivatives {
     return result
   }
 
-  /// The agreement at each row; keeps the rows' sums for `derivatives(at:)`.
-  func values(rows: [[Double]], inputs: Inputs, isCancelled: () -> Bool) throws -> [Double] {
+  /// The agreement at each row; keeps the rows' sums for `derivatives(at:)`. `withDerivatives` forms every row's
+  /// derivatives in the same pass.
+  func values(
+    rows: [[Double]], inputs: Inputs, withDerivatives: Bool = false, isCancelled: () -> Bool
+  ) throws -> [Double] {
+    if withDerivatives {
+      return try fused(rows: rows, inputs: inputs, isCancelled: isCancelled).map(\.value)
+    }
     lastGPUSeconds = 0
     staged = nil
+    fusedResults = nil
     guard !rows.isEmpty else { return [] }
     if isCancelled() { throw CancellationError() }
     let trial = try trialBuffer(rows)
@@ -183,6 +197,7 @@ final class SSBLowOrderDerivatives {
     guard let staged, indices.allSatisfy({ staged.rows.indices.contains($0) }) else {
       throw MetalSSBError.invalidGeometry("Evaluate the low-order values before their derivatives.")
     }
+    if let fusedResults { return indices.map { fusedResults[$0] } }
     if isCancelled() { throw CancellationError() }
     let inputs = staged.inputs
     let n = inputs.bandCount
@@ -244,25 +259,138 @@ final class SSBLowOrderDerivatives {
       var totals = [Double](repeating: 0, count: Self.outputs)
       for i in 0..<n { totals[0] += Double(terms[candidate * n + i]) }
       for field in 1..<Self.outputs {
-        let start = (slot * (Self.outputs - 1) + field - 1) * n
-        var sum = 0.0
-        for i in 0..<n { sum += Double(derivatives[start + i]) }
-        totals[field] = sum
+        totals[field] = Self.sum(derivatives + (slot * (Self.outputs - 1) + field - 1) * n, n)
       }
       return try Self.result(totals, depth: staged.rows[candidate][5])
     }
   }
 
-  /// Value, gradient and Hessian at every row.
-  func evaluate(rows: [[Double]], inputs: Inputs, isCancelled: () -> Bool) throws -> [Result] {
+  /// Value, gradient and Hessian at every row: the fused pass, or with `twoStage` the value pass and then the
+  /// derivative pass (the Newton's path for rows whose derivatives it may not use).
+  func evaluate(rows: [[Double]], inputs: Inputs, twoStage: Bool = false, isCancelled: () -> Bool) throws
+    -> [Result]
+  {
     lastValueGPUSeconds = 0
     if reference { return try evaluateReference(rows: rows, inputs: inputs, isCancelled: isCancelled) }
+    guard twoStage else { return try fused(rows: rows, inputs: inputs, isCancelled: isCancelled) }
     _ = try values(rows: rows, inputs: inputs, isCancelled: isCancelled)
     let valueSeconds = lastGPUSeconds
     lastValueGPUSeconds = valueSeconds
     let results = try derivatives(at: Array(rows.indices), isCancelled: isCancelled)
     lastGPUSeconds += valueSeconds
     return results
+  }
+
+  /// One pass for the value sums and the derivative sums that do not need N, then the value reduction and the
+  /// combine (which projects on conj N) in the same command buffer.
+  private func fused(rows: [[Double]], inputs: Inputs, isCancelled: () -> Bool) throws -> [Result] {
+    lastGPUSeconds = 0
+    staged = nil
+    fusedResults = nil
+    guard !rows.isEmpty else { return [] }
+    if isCancelled() { throw CancellationError() }
+    let trial = try trialBuffer(rows)
+    let n = inputs.bandCount
+    let derivativeChunks = (inputs.count + Self.derivativeChunk - 1) / Self.derivativeChunk
+    let partialAB = try workspace("partial_ab", bytes: rows.count * inputs.chunks * n * 16)
+    let partialSS = try workspace("partial_ss", bytes: rows.count * inputs.chunks * n * 8)
+    let ab = try workspace("ab", bytes: rows.count * n * 16)
+    let ss = try workspace("ss", bytes: rows.count * n * 8)
+    let value = try workspace("value", bytes: rows.count * n * 4, shared: true)
+    let partial = try workspace(
+      "fused_partial", bytes: rows.count * derivativeChunks * Self.fusedFields * n * 4)
+    let output = try workspace(
+      "output", bytes: rows.count * (Self.outputs - 1) * n * 4, shared: true)
+    var total = UInt32(rows.count)
+    var step = inputs.rowStep
+    var chunkSize = UInt32(Self.derivativeChunk)
+    var chunkCount = UInt32(derivativeChunks)
+    try run { commands in
+      try inputs.grid.withUnsafeBytes { grid in
+        try inputs.extra.withUnsafeBytes { extra in
+          let first = try Self.encoder(commands, fusedSums)
+          for (index, buffer) in [inputs.band, inputs.k, inputs.q, partial].enumerated() {
+            first.setBuffer(buffer, offset: 0, index: index)
+          }
+          first.setBytes(grid.baseAddress!, length: grid.count, index: 4)
+          first.setBuffer(trial, offset: 0, index: 5)
+          first.setBytes(&total, length: 4, index: 6)
+          first.setBuffer(inputs.probeGeometry, offset: 0, index: 7)
+          first.setBuffer(inputs.neighbour, offset: 0, index: 8)
+          first.setBytes(&step, length: 8, index: 9)
+          first.setBuffer(partialAB, offset: 0, index: 10)
+          first.setBuffer(partialSS, offset: 0, index: 11)
+          first.setBytes(&chunkSize, length: 4, index: 12)
+          first.setBytes(&chunkCount, length: 4, index: 13)
+          first.setBytes(extra.baseAddress!, length: extra.count, index: 14)
+          first.dispatchThreads(
+            MTLSize(width: n, height: derivativeChunks, depth: rows.count),
+            threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+          first.endEncoding()
+          let reduction = try Self.encoder(commands, valueReduce)
+          for (index, buffer) in [partialAB, partialSS, ab, ss, value, inputs.q, inputs.weights]
+            .enumerated()
+          {
+            reduction.setBuffer(buffer, offset: 0, index: index)
+          }
+          reduction.setBytes(grid.baseAddress!, length: grid.count, index: 7)
+          reduction.setBuffer(trial, offset: 0, index: 8)
+          reduction.setBytes(&total, length: 4, index: 9)
+          reduction.dispatchThreads(
+            MTLSize(width: n, height: rows.count, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+          reduction.endEncoding()
+          let last = try Self.encoder(commands, fusedCombine)
+          for (index, buffer) in [partial, ab, ss, inputs.q, inputs.weights, output].enumerated() {
+            last.setBuffer(buffer, offset: 0, index: index)
+          }
+          last.setBytes(grid.baseAddress!, length: grid.count, index: 6)
+          last.setBuffer(trial, offset: 0, index: 7)
+          last.setBytes(&total, length: 4, index: 8)
+          last.setBytes(&chunkCount, length: 4, index: 9)
+          last.dispatchThreads(
+            MTLSize(width: n, height: rows.count, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+          last.endEncoding()
+        }
+      }
+    }
+    if isCancelled() { throw CancellationError() }
+    let terms = value.contents().assumingMemoryBound(to: Float.self)
+    let derivatives = output.contents().assumingMemoryBound(to: Float.self)
+    let results = try rows.indices.map { candidate in
+      var totals = [Double](repeating: 0, count: Self.outputs)
+      for i in 0..<n { totals[0] += Double(terms[candidate * n + i]) }
+      for field in 1..<Self.outputs {
+        totals[field] = Self.sum(derivatives + (candidate * (Self.outputs - 1) + field - 1) * n, n)
+      }
+      return try Self.result(totals, depth: rows[candidate][5])
+    }
+    staged = (rows, trial, inputs)
+    fusedResults = results
+    return results
+  }
+
+  /// A derivative field's band sum in double precision with four interleaved partial sums (the value keeps the
+  /// sequential order of the objective's band power).
+  private static func sum(_ terms: UnsafePointer<Float>, _ n: Int) -> Double {
+    var a = 0.0
+    var b = 0.0
+    var c = 0.0
+    var d = 0.0
+    var i = 0
+    while i + 4 <= n {
+      a += Double(terms[i])
+      b += Double(terms[i + 1])
+      c += Double(terms[i + 2])
+      d += Double(terms[i + 3])
+      i += 4
+    }
+    while i < n {
+      a += Double(terms[i])
+      i += 1
+    }
+    return (a + b) + (c + d)
   }
 
   /// Field sums to the Newton's derivatives; d|z5|/dz5 = sign(z5).
@@ -291,6 +419,7 @@ final class SSBLowOrderDerivatives {
   {
     lastGPUSeconds = 0
     staged = nil
+    fusedResults = nil
     guard !rows.isEmpty else { return [] }
     if isCancelled() { throw CancellationError() }
     let n = inputs.bandCount

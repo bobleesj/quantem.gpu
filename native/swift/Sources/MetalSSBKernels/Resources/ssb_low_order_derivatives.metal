@@ -55,18 +55,17 @@ inline LowOrderV2Setup low_order_v2_setup(float qx, float qy, device const float
     return s;
 }
 
-// sinc(x) = sin x / x and its first two derivatives, by their series below |x| = 1 (v0.1's expressions; the
-// reciprocal is the correctly rounded one).
+// sinc(x) = sin x / x and its first two derivatives. Below |x| = 1 by series: sinc and g = j1(x) / x, with
+// sinc' = -x g and sinc'' = 2 g - sinc (the same coefficients as v0.1's three series); above it from sin x, cos x
+// and the correctly rounded reciprocal.
 inline float3 low_order_v2_sinc(float x, float sx, float cx) {
     float x2 = x * x;
     if (metal::abs(x) < 1.0f) {
         float s0 = 1.0f - x2 * (1.0f / 6.0f) * (1.0f - x2 * (1.0f / 20.0f) * (1.0f - x2 * (1.0f / 42.0f)
                  * (1.0f - x2 * (1.0f / 72.0f) * (1.0f - x2 * (1.0f / 110.0f)))));
-        float s1 = x * (-1.0f / 3.0f + x2 * (1.0f / 30.0f + x2 * (-1.0f / 840.0f + x2 * (1.0f / 45360.0f
-                 + x2 * (-1.0f / 3991680.0f)))));
-        float s2 = -1.0f / 3.0f + x2 * (1.0f / 10.0f + x2 * (-1.0f / 168.0f + x2 * (1.0f / 6480.0f
-                 + x2 * (-1.0f / 443520.0f))));
-        return float3(s0, s1, s2);
+        float g = 1.0f / 3.0f + x2 * (-1.0f / 30.0f + x2 * (1.0f / 840.0f + x2 * (-1.0f / 45360.0f
+                + x2 * (1.0f / 3991680.0f))));
+        return float3(s0, -x * g, 2.0f * g - s0);
     }
     float inv = metal::fast::divide(1.0f, x);
     float s0 = sx * inv;
@@ -292,34 +291,15 @@ kernel void low_order_gradient_sums(device const float2* g [[buffer(0)]],
     for (uint i = 0; i < LOW_V2_FIELDS; ++i) partial[(base + i) * p.bandCount + qi] = acc[i];
 }
 
-// Reduce pass 2 in chunk order, expand the 29 sums to v0.1's 51 and form w (dS_q/dz, d2S_q/dz2) for each band
-// frequency: 27 floats, the six first derivatives and the upper triangle of the Hessian row by row (the value is
-// `low_order_value_reduce`'s).
-kernel void low_order_gradient_combine(device const float* partial [[buffer(0)]],
-    device const float4* ab [[buffer(1)]], device const float2* ss [[buffer(2)]],
-    device const float2* q [[buffer(3)]], device const float* weights [[buffer(4)]],
-    device float* output [[buffer(5)]], constant JointGrid& p [[buffer(6)]],
-    device const float* trial [[buffer(7)]], constant uint& TOTAL [[buffer(8)]],
-    constant uint& chunks [[buffer(9)]], device const uint* selected [[buffer(10)]],
-    uint2 tid [[thread_position_in_grid]]) {
-    uint qi = tid.x, slot = tid.y;
-    if (qi >= p.bandCount || slot >= TOTAL) return;
-    uint candidate = selected[slot];
-    size_t out = (size_t)slot * (LOW_V2_OUTPUTS - 1);
-    float b[29];
-    for (uint i = 0; i < LOW_V2_FIELDS; ++i) b[i] = 0.0f;
-    for (uint c = 0; c < chunks; ++c) {
-        size_t base = ((size_t)slot * chunks + c) * LOW_V2_FIELDS;
-        for (uint i = 0; i < LOW_V2_FIELDS; ++i) b[i] += partial[(base + i) * p.bandCount + qi];
-    }
-    device const float* t = trial + candidate * 6;
+// w (dS_q/dz, d2S_q/dz2) of one band frequency from its 29 sums (projected on conj N): v0.1's 51 fields, then
+// v0.1's combine. 27 floats, the six first derivatives and the upper triangle of the Hessian row by row.
+inline void low_order_v2_outputs(thread float* b, float qx, float qy, device const float* t, float4 sums,
+                                 float2 sq, float w, constant JointGrid& p, device float* output, size_t out,
+                                 uint qi) {
     float f = p.factor * p.wl * p.wl;
-    float qx = q[qi].x, qy = q[qi].y;
     float m00 = f * (t[0] + t[1]), m01 = f * t[2], m11 = f * (t[0] - t[1]);
     float psi = qx * (m00 * qx + m01 * qy) + qy * (m01 * qx + m11 * qy);
     float cpsi, spsi = metal::fast::sincos(psi, cpsi);
-    float4 sums = ab[(size_t)candidate * p.bandCount + qi];
-    float2 sq = ss[(size_t)candidate * p.bandCount + qi];
     float D = cpsi * cpsi * sq.x + spsi * spsi * sq.y;
     if (!(D > 0.0f)) {
         for (uint i = 0; i < LOW_V2_OUTPUTS - 1; ++i) output[(out + i) * p.bandCount + qi] = 0.0f;
@@ -378,7 +358,6 @@ kernel void low_order_gradient_combine(device const float* partial [[buffer(0)]]
     }
     float Ed[6];
     for (int i = 0; i < 6; ++i) Ed[i] = 2.0f * (nx * Nre[i] + ny * Nim[i]);
-    float w = weights[qi];
     float inv = 1.0f / D;
     for (int i = 0; i < 6; ++i)
         output[(out + i) * p.bandCount + qi] = w * (Ed[i] - E * Dd[i] * inv) * inv;
@@ -409,4 +388,236 @@ kernel void low_order_gradient_combine(device const float* partial [[buffer(0)]]
             ++field;
         }
     }
+}
+
+// Reduce pass 2 in chunk order and form w (dS_q/dz, d2S_q/dz2) for each band frequency (the value is
+// `low_order_value_reduce`'s).
+kernel void low_order_gradient_combine(device const float* partial [[buffer(0)]],
+    device const float4* ab [[buffer(1)]], device const float2* ss [[buffer(2)]],
+    device const float2* q [[buffer(3)]], device const float* weights [[buffer(4)]],
+    device float* output [[buffer(5)]], constant JointGrid& p [[buffer(6)]],
+    device const float* trial [[buffer(7)]], constant uint& TOTAL [[buffer(8)]],
+    constant uint& chunks [[buffer(9)]], device const uint* selected [[buffer(10)]],
+    uint2 tid [[thread_position_in_grid]]) {
+    uint qi = tid.x, slot = tid.y;
+    if (qi >= p.bandCount || slot >= TOTAL) return;
+    uint candidate = selected[slot];
+    float b[29];
+    for (uint i = 0; i < LOW_V2_FIELDS; ++i) b[i] = 0.0f;
+    for (uint c = 0; c < chunks; ++c) {
+        size_t base = ((size_t)slot * chunks + c) * LOW_V2_FIELDS;
+        for (uint i = 0; i < LOW_V2_FIELDS; ++i) b[i] += partial[(base + i) * p.bandCount + qi];
+    }
+    size_t index = (size_t)candidate * p.bandCount + qi;
+    low_order_v2_outputs(b, q[qi].x, q[qi].y, trial + candidate * 6, ab[index], ss[index], weights[qi], p, output,
+                         (size_t)slot * (LOW_V2_OUTPUTS - 1), qi);
+}
+
+// The fused pass for centers whose derivatives the Newton will use: `low_order_value_sums`'s 256-pixel partials
+// (bitwise: the same per-pixel terms and chunks) and, per chunk of `chunk_size` pixels (a multiple of 256), 43
+// k-sums that do not need N: pass 2's fields 0-14 and the complex sums whose projections on conj N are its
+// fields 15-28:
+//   15-18 sum kx m_k, sum ky m_k; 19-24 sum kx kx, kx ky, ky ky n_k; 25-28 sum m_k,tau, sum m_k,t;
+//   29-36 sum kx n_k,tau, ky n_k,tau, kx n_k,t, ky n_k,t; 37-42 sum n_k,tau tau, n_k,tau t, n_k,t t (complex).
+constant uint LOW_V2_FUSED_FIELDS = 43;
+
+// sinc and its x-derivatives as `low_order_v2_sinc`, with sinc above |x| = 1 the IEEE quotient sin x / x of
+// `joint_agreement_sinc` (the value pass's weight).
+inline float3 low_order_v2_fused_sinc(float x, float sx, float cx) {
+    float x2 = x * x;
+    if (metal::abs(x) < 1.0f) {
+        float s0 = 1.0f - x2 * (1.0f / 6.0f) * (1.0f - x2 * (1.0f / 20.0f) * (1.0f - x2 * (1.0f / 42.0f)
+                 * (1.0f - x2 * (1.0f / 72.0f) * (1.0f - x2 * (1.0f / 110.0f)))));
+        float g = 1.0f / 3.0f + x2 * (-1.0f / 30.0f + x2 * (1.0f / 840.0f + x2 * (-1.0f / 45360.0f
+                + x2 * (1.0f / 3991680.0f))));
+        return float3(s0, -x * g, 2.0f * g - s0);
+    }
+    float inv = metal::fast::divide(1.0f, x);
+    float q0 = sx * inv;
+    float s0 = metal::fma(metal::fma(-x, q0, sx), inv, q0);
+    float s1 = (cx - s0) * inv;
+    float s2 = -(s0 + 2.0f * s1 * inv);
+    return float3(s0, s1, s2);
+}
+
+kernel void low_order_fused_sums(device const float2* g [[buffer(0)]], device const float2* k [[buffer(1)]],
+    device const float2* q [[buffer(2)]], device float* partial [[buffer(3)]], constant JointGrid& p [[buffer(4)]],
+    device const float* trial [[buffer(5)]], constant uint& TOTAL [[buffer(6)]],
+    device const float4* probe_geometry [[buffer(7)]], device const float* neighbour [[buffer(8)]],
+    constant float2& step_k [[buffer(9)]], device float4* partial_ab [[buffer(10)]],
+    device float2* partial_ss [[buffer(11)]], constant uint& chunk_size [[buffer(12)]],
+    constant uint& chunks [[buffer(13)]], constant JointAgreementExtra& extra [[buffer(14)]],
+    uint3 tid [[thread_position_in_grid]]) {
+    uint qi = tid.x, chunk = tid.y, candidate = tid.z;
+    if (qi >= p.bandCount || chunk >= chunks || candidate >= TOTAL) return;
+    float f = p.factor * p.wl * p.wl;
+    device const float* t = trial + candidate * 6;
+    LowOrderV2Setup s = low_order_v2_setup(q[qi].x, q[qi].y, t, p, step_k);
+    float cpsi, spsi = metal::fast::sincos(s.psi, cpsi);
+    float c2 = cpsi * cpsi, s2 = spsi * spsi;
+    float qx = s.qx, qy = s.qy;
+    float p_rate = 0.5f * f * (qx * qx + qy * qy);
+    float tilt_y = -3.141592653589793f * (qx * t[4] + qy * t[5]);
+    float acc[43];
+    for (uint i = 0; i < LOW_V2_FUSED_FIELDS; ++i) acc[i] = 0.0f;
+    float2 eu = float2(1.0f, 0.0f), ey = float2(1.0f, 0.0f);
+    uint k0 = chunk * chunk_size;
+    uint k1 = metal::min(p.totalBF, k0 + chunk_size);
+    for (uint v0 = k0; v0 < k1; v0 += 256u) {
+        uint v1 = metal::min(k1, v0 + 256u);
+        float2 a_sum = 0.0f, b_sum = 0.0f;
+        float sd = 0.0f, ss = 0.0f;
+        for (uint kk = v0; kk < v1; ++kk) {
+            float kxv = k[kk].x, kyv = k[kk].y;
+            bool anchor = kk == k0 || neighbour[kk] == 0.0f || (kk - k0) % LOW_V2_ANCHOR == 0;
+            JOINT_UNIFORM_IF(anchor) {
+                float c, sn = metal::fast::sincos(s.ux * kxv + s.uy * kyv, c);
+                eu = float2(c, sn);
+                sn = metal::fast::sincos(s.c_q + (s.bx * kxv + s.by * kyv), c);
+                ey = float2(c, sn);
+            }
+            if (!anchor) {
+                eu = float2(eu.x * s.su_step.x - eu.y * s.su_step.y, eu.x * s.su_step.y + eu.y * s.su_step.x);
+                ey = float2(ey.x * s.sy_step.x - ey.y * s.sy_step.y, ey.x * s.sy_step.y + ey.y * s.sy_step.x);
+            }
+            float4 gk = probe_geometry[kk];
+            float2 e = low_order_v2_aperture(qx, qy, kxv, kyv, p, extra);
+            float a1 = e.x * gk.w, a2 = e.y * gk.w;
+            if (a1 == 0.0f && a2 == 0.0f) continue;
+            float2 value = g[(size_t)kk * p.bandCount + qi];
+            float2 h = float2(value.x * eu.x + value.y * eu.y, value.y * eu.x - value.x * eu.y);
+            float hx = h.x, hy = h.y;
+            float y = s.c_q + (s.bx * kxv + s.by * kyv);
+            float sy = ey.y, cy = ey.x;
+            float3 za = low_order_v2_fused_sinc(y - s.p_q, sy * s.cos_p - cy * s.sin_p, cy * s.cos_p + sy * s.sin_p);
+            float3 zb = low_order_v2_fused_sinc(y + s.p_q, sy * s.cos_p + cy * s.sin_p, cy * s.cos_p - sy * s.sin_p);
+            float wa = a1 * za.x, wb = a2 * zb.x;
+            float d = wa - wb, sm = wa + wb;
+            a_sum += d * h;
+            b_sum += sm * h;
+            sd += d * d;
+            ss += sm * sm;
+            float qk = qx * kxv + qy * kyv;
+            float y_rate = tilt_y + f * qk;
+            float ra = y_rate - p_rate, rb = y_rate + p_rate;
+            float w1a = a1 * za.y, w1b = a2 * zb.y;
+            float w2a = a1 * za.z, w2b = a2 * zb.z;
+            float d_u = w1a - w1b, s_u = w1a + w1b;
+            float w1ar = w1a * ra, w1br = w1b * rb;
+            float d_t = w1ar - w1br, s_t = w1ar + w1br;
+            float d_uu = w2a - w2b, s_uu = w2a + w2b;
+            float w2ar = w2a * ra, w2br = w2b * rb;
+            float d_ut = w2ar - w2br, s_ut = w2ar + w2br;
+            float w2arr = w2ar * ra, w2brr = w2br * rb;
+            float d_tt = w2arr - w2brr, s_tt = w2arr + w2brr;
+            float cd = cpsi * d, ssm = spsi * sm;
+            float n_re = cd * hx - ssm * hy, n_im = cd * hy + ssm * hx;
+            acc[0] += kxv * n_re;
+            acc[1] += kxv * n_im;
+            acc[2] += kyv * n_re;
+            acc[3] += kyv * n_im;
+            float sdd = spsi * d, csm = cpsi * sm;
+            float m_re = -sdd * hx - csm * hy, m_im = csm * hx - sdd * hy;
+            acc[15] += kxv * m_re;
+            acc[16] += kxv * m_im;
+            acc[17] += kyv * m_re;
+            acc[18] += kyv * m_im;
+            float kn_re = kxv * n_re, kn_im = kxv * n_im;
+            acc[19] += kxv * kn_re;
+            acc[20] += kxv * kn_im;
+            acc[21] += kyv * kn_re;
+            acc[22] += kyv * kn_im;
+            acc[23] += kyv * (kyv * n_re);
+            acc[24] += kyv * (kyv * n_im);
+            float cdu = cpsi * d_u, ssu = spsi * s_u;
+            float nu_re = cdu * hx - ssu * hy, nu_im = cdu * hy + ssu * hx;
+            acc[4] += nu_re;
+            acc[5] += nu_im;
+            acc[8] += c2 * d * d_u + s2 * sm * s_u;
+            acc[10] += sm * s_u - d * d_u;
+            float sdu = spsi * d_u, csu = cpsi * s_u;
+            acc[25] += -sdu * hx - csu * hy;
+            acc[26] += csu * hx - sdu * hy;
+            acc[29] += kxv * nu_re;
+            acc[30] += kxv * nu_im;
+            acc[31] += kyv * nu_re;
+            acc[32] += kyv * nu_im;
+            float cdt = cpsi * d_t, sst = spsi * s_t;
+            float nt_re = cdt * hx - sst * hy, nt_im = cdt * hy + sst * hx;
+            acc[6] += nt_re;
+            acc[7] += nt_im;
+            acc[9] += c2 * d * d_t + s2 * sm * s_t;
+            acc[11] += sm * s_t - d * d_t;
+            float sdt = spsi * d_t, cst = cpsi * s_t;
+            acc[27] += -sdt * hx - cst * hy;
+            acc[28] += cst * hx - sdt * hy;
+            acc[33] += kxv * nt_re;
+            acc[34] += kxv * nt_im;
+            acc[35] += kyv * nt_re;
+            acc[36] += kyv * nt_im;
+            acc[12] += c2 * (d_u * d_u + d * d_uu) + s2 * (s_u * s_u + sm * s_uu);
+            acc[13] += c2 * (d_u * d_t + d * d_ut) + s2 * (s_u * s_t + sm * s_ut);
+            acc[14] += c2 * (d_t * d_t + d * d_tt) + s2 * (s_t * s_t + sm * s_tt);
+            float cuu = cpsi * d_uu, suu = spsi * s_uu;
+            acc[37] += cuu * hx - suu * hy;
+            acc[38] += cuu * hy + suu * hx;
+            float cut = cpsi * d_ut, sut = spsi * s_ut;
+            acc[39] += cut * hx - sut * hy;
+            acc[40] += cut * hy + sut * hx;
+            float ctt = cpsi * d_tt, stt = spsi * s_tt;
+            acc[41] += ctt * hx - stt * hy;
+            acc[42] += ctt * hy + stt * hx;
+        }
+        size_t index = ((size_t)candidate * p.chunks + v0 / 256u) * p.bandCount + qi;
+        partial_ab[index] = float4(a_sum, b_sum);
+        partial_ss[index] = float2(sd, ss);
+    }
+    size_t base = ((size_t)candidate * chunks + chunk) * LOW_V2_FUSED_FIELDS;
+    for (uint i = 0; i < LOW_V2_FUSED_FIELDS; ++i) partial[(base + i) * p.bandCount + qi] = acc[i];
+}
+
+// Reduce the fused pass in chunk order, project its complex sums on conj N (N from `low_order_value_reduce`) and
+// form the 27 derivative outputs of each band frequency as `low_order_gradient_combine`.
+kernel void low_order_fused_combine(device const float* partial [[buffer(0)]],
+    device const float4* ab [[buffer(1)]], device const float2* ss [[buffer(2)]],
+    device const float2* q [[buffer(3)]], device const float* weights [[buffer(4)]],
+    device float* output [[buffer(5)]], constant JointGrid& p [[buffer(6)]],
+    device const float* trial [[buffer(7)]], constant uint& TOTAL [[buffer(8)]],
+    constant uint& chunks [[buffer(9)]], uint2 tid [[thread_position_in_grid]]) {
+    uint qi = tid.x, candidate = tid.y;
+    if (qi >= p.bandCount || candidate >= TOTAL) return;
+    float F[43];
+    for (uint i = 0; i < LOW_V2_FUSED_FIELDS; ++i) F[i] = 0.0f;
+    for (uint c = 0; c < chunks; ++c) {
+        size_t base = ((size_t)candidate * chunks + c) * LOW_V2_FUSED_FIELDS;
+        for (uint i = 0; i < LOW_V2_FUSED_FIELDS; ++i) F[i] += partial[(base + i) * p.bandCount + qi];
+    }
+    device const float* t = trial + candidate * 6;
+    float f = p.factor * p.wl * p.wl;
+    float qx = q[qi].x, qy = q[qi].y;
+    float m00 = f * (t[0] + t[1]), m01 = f * t[2], m11 = f * (t[0] - t[1]);
+    float psi = qx * (m00 * qx + m01 * qy) + qy * (m01 * qx + m11 * qy);
+    float cpsi, spsi = metal::fast::sincos(psi, cpsi);
+    size_t index = (size_t)candidate * p.bandCount + qi;
+    float4 sums = ab[index];
+    float nx = cpsi * sums.x - spsi * sums.w, ny = cpsi * sums.y + spsi * sums.z;
+    float b[29];
+    for (uint i = 0; i < 15; ++i) b[i] = F[i];
+    // Re(conj N z) = nx z.re + ny z.im, Im(conj N z) = nx z.im - ny z.re.
+    b[15] = nx * F[16] - ny * F[15];
+    b[16] = nx * F[18] - ny * F[17];
+    b[17] = nx * F[19] + ny * F[20];
+    b[18] = nx * F[21] + ny * F[22];
+    b[19] = nx * F[23] + ny * F[24];
+    b[20] = nx * F[25] + ny * F[26];
+    b[21] = nx * F[27] + ny * F[28];
+    b[22] = nx * F[30] - ny * F[29];
+    b[23] = nx * F[32] - ny * F[31];
+    b[24] = nx * F[34] - ny * F[33];
+    b[25] = nx * F[36] - ny * F[35];
+    b[26] = nx * F[37] + ny * F[38];
+    b[27] = nx * F[39] + ny * F[40];
+    b[28] = nx * F[41] + ny * F[42];
+    low_order_v2_outputs(b, qx, qy, t, sums, ss[index], weights[qi], p, output,
+                         (size_t)candidate * (LOW_V2_OUTPUTS - 1), qi);
 }

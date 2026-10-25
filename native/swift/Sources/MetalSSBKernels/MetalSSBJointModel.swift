@@ -527,22 +527,27 @@ public final class MetalSSBJointModel {
 
   /// The low-order agreement with its exact gradient and Hessian at each row of Newton coordinates
   /// (C10, C12 cos 2 phi12, C12 sin 2 phi12 [A], tilt row, tilt column [mrad], depth spread [A]).
-  func lowOrderDerivatives(_ rows: [[Double]], isCancelled: () -> Bool = { false }) throws
-    -> [SSBLowOrderDerivatives.Result]
-  {
+  func lowOrderDerivatives(
+    _ rows: [[Double]], twoStage: Bool = false, isCancelled: () -> Bool = { false }
+  ) throws -> [SSBLowOrderDerivatives.Result] {
     let (evaluator, inputs) = try lowOrderEvaluator()
     evaluator.reference = referenceLowOrderDerivatives
-    let results = try evaluator.evaluate(rows: rows, inputs: inputs, isCancelled: isCancelled)
+    let results = try evaluator.evaluate(
+      rows: rows, inputs: inputs, twoStage: twoStage, isCancelled: isCancelled)
     lastLowOrderGPUSeconds = evaluator.lastGPUSeconds
     lastLowOrderValueGPUSeconds = evaluator.lastValueGPUSeconds
     return results
   }
 
   /// The first stage of `lowOrderDerivatives`: the agreement at each row of Newton coordinates, keeping the sums
-  /// that `lowOrderDerivatives(at:)` needs for any of those rows.
-  func lowOrderValues(_ rows: [[Double]], isCancelled: () -> Bool = { false }) throws -> [Double] {
+  /// that `lowOrderDerivatives(at:)` needs for any of those rows (`withDerivatives`: forming every row's
+  /// derivatives in the same pass).
+  func lowOrderValues(
+    _ rows: [[Double]], withDerivatives: Bool = false, isCancelled: () -> Bool = { false }
+  ) throws -> [Double] {
     let (evaluator, inputs) = try lowOrderEvaluator()
-    let values = try evaluator.values(rows: rows, inputs: inputs, isCancelled: isCancelled)
+    let values = try evaluator.values(
+      rows: rows, inputs: inputs, withDerivatives: withDerivatives, isCancelled: isCancelled)
     lastLowOrderGPUSeconds = evaluator.lastGPUSeconds
     return values
   }
@@ -572,9 +577,11 @@ public final class MetalSSBJointModel {
     return (lowOrder!, inputs)
   }
 
-  /// Benchmarks: `lowOrderDerivatives` as the search's derivative type.
-  public func lowOrderAgreementDerivatives(_ rows: [[Double]]) throws -> [SSBAgreementSearch.Derivatives] {
-    try lowOrderDerivatives(rows).map {
+  /// Benchmarks: `lowOrderDerivatives` (the fused pass, or `twoStage`) as the search's derivative type.
+  public func lowOrderAgreementDerivatives(_ rows: [[Double]], twoStage: Bool = false) throws
+    -> [SSBAgreementSearch.Derivatives]
+  {
+    try lowOrderDerivatives(rows, twoStage: twoStage).map {
       SSBAgreementSearch.Derivatives(value: $0.value, gradient: $0.gradient, hessian: $0.hessian)
     }
   }

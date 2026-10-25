@@ -30,12 +30,13 @@ public enum SSBAgreementSearch {
   /// The exact objective in two stages: `values` at rows of z, then `derivatives` (value, gradient and Hessian)
   /// at some of those rows, by their indices in the latest `values` call. The Newton asks for derivatives only
   /// where it uses them: not at a rejected step, which keeps the previous center's, and not at the starts that the
-  /// second iteration's pruning stops.
+  /// second iteration's pruning stops. The flag of `values` says that the Newton expects to use every row's
+  /// derivatives (every iteration but the pruned second), so the objective may form them in the same pass.
   public struct StagedDerivatives {
-    public let values: ([[Double]]) throws -> [Double]
+    public let values: ([[Double]], Bool) throws -> [Double]
     public let derivatives: ([Int]) throws -> [Derivatives]
     public init(
-      values: @escaping ([[Double]]) throws -> [Double],
+      values: @escaping ([[Double]], Bool) throws -> [Double],
       derivatives: @escaping ([Int]) throws -> [Derivatives]
     ) {
       self.values = values
@@ -48,7 +49,7 @@ public enum SSBAgreementSearch {
     final class Latest { var rows: [Derivatives] = [] }
     let latest = Latest()
     return StagedDerivatives(
-      values: { rows in
+      values: { rows, _ in
         latest.rows = try evaluate(rows)
         return latest.rows.map(\.value)
       },
@@ -561,7 +562,8 @@ public enum SSBAgreementSearch {
         for (position, at) in zip(positions, results) { exact[position] = at }
       }
       if let staged {
-        values = try staged.values(active.map { state[$0].center })
+        let pruning = prune && iteration == 1 && active.count > 1
+        values = try staged.values(active.map { state[$0].center }, !pruning)
         guard values.count == active.count, values.allSatisfy(\.isFinite) else {
           throw SSBOptimizationError.nonFiniteLoss
         }
@@ -580,7 +582,7 @@ public enum SSBAgreementSearch {
         // The second iteration's pruning keeps only the highest active start. When it is strictly highest, above
         // every stopped start too, no near-or-heading test can stop it, so it is kept unless it converges now; the
         // others' derivatives are fetched only in that case.
-        if prune && iteration == 1 && active.count > 1 {
+        if pruning {
           let best = kept.indices.max { kept[$0] < kept[$1] }!
           let unique = kept.indices.allSatisfy { $0 == best || kept[$0] < kept[best] }
           let above = state.indices.allSatisfy { j in
