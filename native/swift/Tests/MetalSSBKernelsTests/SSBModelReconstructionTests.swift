@@ -359,6 +359,55 @@ final class SSBModelReconstructionTests: XCTestCase {
       model.scanDetectorRotationDegrees, fitted.fits[fitted.kept].scanDetectorRotationDegrees)
   }
 
+  /// The tilt fit and the tilt-0 fit climb on the exact derivatives to a maximum: no small step in any
+  /// fitted coordinate raises the agreement beyond float32 noise.
+  func testExactNewtonFitsEndAtAMaximum() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try Self.scene()
+    let input = try XCTUnwrap(
+      s.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+    for tilt in [true, false] {
+      let fit = try SSBModelFit.fit(
+        model: model, engine: engine,
+        options: SSBFitOptions(tilt: tilt, trials: 40, compareStandard: false, maximumOrder: 1))
+      let agreement = try XCTUnwrap(fit.sampleAgreement)
+      let p = fit.point
+      let z = SSBAgreementSearch.encode([
+        p.c10Angstroms, p.c12Angstroms, p.phi12Radians, p.sampleTiltMrad[0], p.sampleTiltMrad[1],
+        p.depthSpreadAngstroms,
+      ])
+      let dimensions = tilt ? 6 : 3
+      var neighbours: [SSBModelPoint] = []
+      for d in 0..<dimensions {
+        for sign in [1.0, -1.0] {
+          var shifted = z
+          shifted[d] += sign * [0.2, 0.2, 0.2, 0.02, 0.02, 0.5][d]
+          let q = SSBAgreementSearch.decode(shifted)
+          neighbours.append(
+            SSBModelPoint(
+              c10Angstroms: q[0], c12Angstroms: q[1], phi12Radians: q[2],
+              sampleTiltMrad: [q[3], q[4]], depthSpreadAngstroms: q[5]))
+        }
+      }
+      let best = try model.agreements(neighbours).max()!
+      print(
+        String(
+          format: "EXACT_FIT tilt %d agreement %.9e best neighbour %.9e (rel %.2e) centers %d", tilt ? 1 : 0,
+          agreement, best, (best - agreement) / agreement,
+          fit.newtonStarts?.reduce(0) { $0 + $1.evaluations } ?? -1))
+      XCTAssertLessThan(best, agreement * (1 + 1e-6))
+      if !tilt {
+        XCTAssertEqual(p.sampleTiltMrad, [0, 0])
+        XCTAssertEqual(p.depthSpreadAngstroms, 0)
+      }
+    }
+  }
+
   /// The exact low-order gradient and Hessian against Richardson-extrapolated central differences of the
   /// value and of the gradient, at points with and without tilt and depth spread; the value against the
   /// agreement objective.

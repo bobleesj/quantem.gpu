@@ -234,14 +234,17 @@ public enum SSBModelFit {
           isCancelled: isCancelled)
       }
       timings["coarse_search_s"] = result.searchSeconds
+      timings["coarse_search_objective_s"] = searchObjectiveSeconds
       timings["refinement_s"] = result.refinementSeconds
       let p = result.point
-      return SSBFit(
+      var fit = SSBFit(
         scanDetectorRotationDegrees: rotation,
         point: SSBModelPoint(c10Angstroms: p[0], c12Angstroms: p[1], phi12Radians: p[2]),
         options: options, sampleAgreement: result.agreement, standardAgreement: nil,
         tiltFitGain: nil,
         phaseVarianceLoss: nil, trialCount: options.trials, timings: timings)
+      fit.newtonStarts = result.newtonStarts
+      return fit
     case (false, .phaseVariance):
       // The native phase-variance search (seeded TPE and Nelder-Mead); its proposals are its own.
       let started = Date()

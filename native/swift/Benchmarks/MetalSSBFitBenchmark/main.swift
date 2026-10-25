@@ -10,14 +10,16 @@ import Native4DSTEMIO
 //
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --scan-step A [--kv 300] [--semiangle 30]
 //     [--index DIR] [--max-order 5] [--trials 200] [--repeats 1] [--output RESULT.json]
-//     [--compare-standard] [--dark-field DARK.f32] [--verify-branches]
+//     [--compare-standard] [--dark-field DARK.f32] [--verify-branches] [--check-maximum]
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --export-dark-field DARK.f32
 //
 // --max-order 1 stops after the low-order branch fits and the branch test. --dark-field passes a float32
 // scan-shaped dark-field image to the branch test (written by --export-dark-field from the original HDF5 with
 // the app's mask: valid detector pixels at or beyond 1.1 BF radii). --verify-branches also searches the
 // branch that was mapped from the fitted one, and reports both points' agreements and phases and the branch
-// decision taken with the searched fit instead.
+// decision taken with the searched fit instead. --check-maximum evaluates the kept low-order fit's neighbours
+// one stencil-Newton tolerance away along each Newton coordinate (C10, C12 x/y, tilt row/column, depth), and
+// with --baseline RESULT.json the same for that run's kept low-order fit.
 
 struct Options {
   var input: URL?
@@ -35,6 +37,8 @@ struct Options {
   var darkField: URL?
   var exportDarkField: URL?
   var verifyBranches = false
+  var checkMaximum = false
+  var baseline: URL?
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -61,6 +65,8 @@ struct Options {
       case "--dark-field": darkField = URL(fileURLWithPath: try value(flag))
       case "--export-dark-field": exportDarkField = URL(fileURLWithPath: try value(flag))
       case "--verify-branches": verifyBranches = true
+      case "--check-maximum": checkMaximum = true
+      case "--baseline": baseline = URL(fileURLWithPath: try value(flag))
       default: throw failure("Unknown argument \(flag)")
       }
     }
@@ -480,6 +486,50 @@ for repeatIndex in 0..<options.repeats {
     }
     result["branch_tests"] = fitted.branches.map(branchRecord)
     result["column_count"] = fitted.columnCount
+    func neighbours(_ p: SSBModelPoint, rotation: Double) throws -> [String: Any] {
+      try model.retarget(scanDetectorRotationDegrees: rotation)
+      let z = [
+        p.c10Angstroms, p.c12Angstroms * cos(2 * p.phi12Radians),
+        p.c12Angstroms * sin(2 * p.phi12Radians), p.sampleTiltMrad[0], p.sampleTiltMrad[1],
+        p.depthSpreadAngstroms,
+      ]
+      let delta = [0.05, 0.05, 0.05, 0.005, 0.005, 0.5]
+      var points = [p]
+      for d in 0..<6 {
+        for sign in [1.0, -1.0] {
+          var shifted = z
+          shifted[d] += sign * delta[d]
+          points.append(
+            SSBModelPoint(
+              c10Angstroms: shifted[0], c12Angstroms: hypot(shifted[1], shifted[2]),
+              phi12Radians: atan2(shifted[2], shifted[1]) / 2,
+              sampleTiltMrad: [shifted[3], shifted[4]], depthSpreadAngstroms: shifted[5]))
+        }
+      }
+      let values = try model.agreements(points)
+      return [
+        "agreement": values[0], "delta": delta, "rotation_deg": rotation,
+        "neighbour_relative": values.dropFirst().map { ($0 - values[0]) / values[0] },
+      ]
+    }
+    if options.checkMaximum {
+      let kept = fitted.fits[fitted.kept]
+      result["maximum_check"] = try neighbours(
+        kept.point, rotation: kept.scanDetectorRotationDegrees)
+      if let baseline = options.baseline {
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: baseline)) as! [String: Any]
+        let run = (json["results"] as! [[String: Any]])[0]
+        let branch = (run["branches"] as! [[String: Any]])[run["kept"] as! Int]
+        let point = SSBModelPoint(
+          c10Nanometers: branch["C10_nm"] as! Double, c12Nanometers: branch["C12_nm"] as! Double,
+          phi12Degrees: branch["phi12_deg"] as! Double,
+          sampleTiltMrad: branch["sample_tilt_mrad"] as! [Double],
+          depthSpreadNanometers: branch["depth_spread_nm"] as! Double)
+        result["baseline_maximum_check"] = try neighbours(
+          point, rotation: branch["rotation_deg"] as! Double)
+      }
+      try model.retarget(scanDetectorRotationDegrees: kept.scanDetectorRotationDegrees)
+    }
     if options.verifyBranches {
       result["verification"] = try verifyBranches(
         fitted, model: model, engine: engine, darkField: darkField, sampling: sampling,
