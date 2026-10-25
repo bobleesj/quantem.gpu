@@ -7,10 +7,11 @@ import XCTest
 /// The interactive redraw kernel (`ssb_redraw.metal`) against the per-term coherent kernel it replaces at 1x-4x,
 /// and against an independent double-precision definition with every higher-order term.
 ///
-/// Stated tolerance: the redraw evaluates chi as a row-collapsed polynomial, mirrors the anti-Hermitian half,
-/// and uses fast trigonometry, so it differs from the per-term kernel by float32 rounding only. Phases (radians,
-/// wrapped) agree within 1e-5 maximum and 1e-6 RMS (observed: about 5e-8); against the double-precision
-/// definition within 2e-4, the bound the existing coherent test uses (observed: about 8e-8).
+/// Stated tolerance: the redraw evaluates chi(k +- q) - chi(k) as row-collapsed polynomials expanded about each BF
+/// pixel, mirrors the anti-Hermitian half, and uses fast trigonometry, so it differs from the per-term kernel by
+/// float32 rounding only. Phases (radians, wrapped) agree within 1e-5 maximum and 1e-6 RMS (observed: at most
+/// 1.4e-7 and 5.7e-8); against the double-precision definition within 2e-4, the bound the existing coherent test
+/// uses (observed: at most 1.2e-7), and within 1e-6 maximum and 2e-7 RMS where the sidebands nearly cancel.
 final class SSBRedrawReconstructionTests: XCTestCase {
   static let fifthOrder: [SSBModelHigherOrder] = zip(
     SSBModelHigherOrder.supported,
@@ -118,6 +119,81 @@ final class SSBRedrawReconstructionTests: XCTestCase {
           XCTAssertLessThan(maximum, 2e-4)
         }
       }
+    }
+  }
+
+  /// The synthetic scene's geometry with strong contrast at the first scan frequencies (one period across the
+  /// scan, a different phase per detector pixel), where the two sidebands nearly coincide.
+  static func slowScene() throws -> SSBModelReconstructionTests.Scene {
+    let base = try SSBModelReconstructionTests.scene(scan: 128)
+    let scan = base.scan
+    let detector = base.detector
+    var sums = [UInt64](repeating: 0, count: detector * detector)
+    var planes: [[UInt16]] = []
+    for pixel in 0..<(detector * detector) {
+      let dr = Double(pixel / detector) - 5.4
+      let dc = Double(pixel % detector) - 5.7
+      var plane = [UInt16](repeating: 0, count: scan * scan)
+      for r in 0..<scan {
+        for c in 0..<scan {
+          let x = 2 * Double.pi * Double(r) / Double(scan)
+          let y = 2 * Double.pi * Double(c) / Double(scan)
+          let value =
+            400 + 60 * cos(x + 0.4 * dr - 0.3 * dc) + 45 * sin(y + 0.2 * dr + 0.5 * dc)
+            + 25 * cos(x + y + 0.1 * dr * dc) + Double((r * 31 + c * 17 + pixel * 7) % 13)
+          plane[r * scan + c] = UInt16(value.rounded())
+          sums[pixel] += UInt64(plane[r * scan + c])
+        }
+      }
+      planes.append(plane)
+    }
+    let setup = try base.calibration.geometry(
+      detectorRows: detector, detectorColumns: detector, detectorSum: sums, scanRows: scan, scanColumns: scan)
+    return SSBModelReconstructionTests.Scene(
+      calibration: base.calibration, scan: scan, counts: setup.pixels.flatMap { planes[$0] },
+      pixels: setup.pixels, geometry: setup.geometry)
+  }
+
+  /// Nearly cancelling sidebands at the lowest scan frequency. C10 and C12 balance along the scan rows (phi12 =
+  /// 90 degrees, C12 = C10 - 0.5 A), so at the first row frequency the second difference
+  /// chi(k + q) + chi(k - q) - 2 chi(k) is about 2e-5 rad while chi itself reaches about 100 rad; the sign of that
+  /// second difference decides each pair's correction, and |gamma| is about 2e-5. Differences of separately rounded
+  /// float32 chi values cannot resolve it (ssb-redraw v0.2: 4.5e-3 / 5.3e-3 rad RMS against the definition); the
+  /// expansion of chi about each BF pixel and gamma in half-sum / half-difference form (v0.3) do (observed: 3.7e-8 /
+  /// 2.3e-8 rad RMS, 1.2e-7 / 8.1e-8 maximum, without / with small fifth-order terms).
+  func testRedrawResolvesNearlyCancellingSidebands() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try Self.slowScene()
+    let input = try XCTUnwrap(
+      s.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+    let small = Self.fifthOrder.map { term -> SSBModelHigherOrder in
+      var term = term
+      term.magnitudeAngstroms *= 1e-3
+      return term
+    }
+    for higherOrder in [[], small] {
+      let point = SSBModelPoint(
+        c10Angstroms: 400, c12Angstroms: 399.5, phi12Radians: .pi / 2, higherOrder: higherOrder)
+      let expected = Self.referencePhase(s, point: point, rotation: 17.25, factor: 1)
+      let phase = try model.reconstruct(point, upsamplingFactor: 1)
+      let actual = phase.phase.contents().assumingMemoryBound(to: Float.self)
+      var maximum = 0.0
+      var squares = 0.0
+      for i in expected.indices {
+        var d = Double(actual[i]) - expected[i]
+        d -= 2 * .pi * (d / (2 * .pi)).rounded()
+        maximum = max(maximum, abs(d))
+        squares += d * d
+      }
+      let rms = sqrt(squares / Double(expected.count))
+      print("REDRAW CANCELLING higher \(point.hasHigherOrder) max \(maximum) rms \(rms)")
+      XCTAssertLessThan(rms, 2e-7)
+      XCTAssertLessThan(maximum, 1e-6)
     }
   }
 

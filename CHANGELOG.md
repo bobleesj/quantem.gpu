@@ -169,6 +169,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- Native (Metal) SSB redraw (`ssb-redraw` v0.3, replaces v0.2): the lowest scan frequencies, where the two
+  sidebands nearly cancel, are resolved by evaluating chi(k +- q) - chi(k) as polynomials expanded about each BF
+  pixel and forming gamma from their half sum and half difference. On five measured 512 x 512 acquisitions, 1x, 2x
+  and Auto, the native phase is now within 1.08x of CUDA's own float32 error against a float64 definition (v0.2:
+  up to 2.45x at 1x on 0.525 A scans); the 512 x 512 fifth-order 3x redraw keeps its speed (30.8 ms per frame on
+  an Apple M5 Max).
 - `find_aberrations(search_ranges=...)` searches every coefficient the ranges
   leave out over its default range on CUDA and MPS (it was held at the start).
   On MPS, pinning C12 at 0 no longer returns C10 = C12 = phi12 = 0: the start

@@ -23,7 +23,7 @@ public struct MetalKernelIdentity: Codable, Equatable, Hashable, Sendable {
     fingerprint = Self.sha256(Data("\(sourceSHA256)\n\(variant)".utf8))
   }
 
-  /// "ssb-redraw v0.2 · 3f2a9c… (factor=3 degree=6 depth=on)" for status lines.
+  /// "ssb-redraw v0.3 · 3f2a9c… (factor=3 degree=6 depth=on)" for status lines.
   public var label: String { "\(name) v\(version) · \(fingerprint.prefix(12)) (\(variant))" }
 
   static func sha256(_ data: Data) -> String {
@@ -42,10 +42,13 @@ enum SSBKernelRegistry {
     let registeredSourceSHA256: String
   }
 
-  /// SSB (`phase_of_mean`) at 1x-4x: the only production path there.
+  /// SSB (`phase_of_mean`) at 1x-4x: the only production path there. v0.3 evaluates chi(k +- q) - chi(k) as
+  /// polynomials expanded about each BF pixel and forms gamma from the half sum and half difference of the two
+  /// phase differences, which resolves nearly cancelling sidebands at the lowest scan frequencies; v0.2 (differences
+  /// of separately rounded chi values) is retired.
   static let redraw = Entry(
-    name: "ssb-redraw", version: "0.2", files: ["ssb_redraw"],
-    registeredSourceSHA256: "b20d7914811d0fb2941d59907ba6e15607829f0988b08498f262d9942a3a5e34")
+    name: "ssb-redraw", version: "0.3", files: ["ssb_redraw"],
+    registeredSourceSHA256: "73dc413569c7e0519267b51f04dc414088141fb4b01afe983fd40e49513e2cbc")
   /// The earlier per-term / separable coherent kernels: explicit 8x only, and the 1x-4x parity reference in tests.
   /// v0.2 is v0.1 without the retired `complex_wave` amplitude kernel (`model_wave_amplitude`); the per-term
   /// kernels are unchanged.
