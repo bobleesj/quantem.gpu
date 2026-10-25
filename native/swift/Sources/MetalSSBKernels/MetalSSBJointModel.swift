@@ -136,6 +136,9 @@ public final class MetalSSBJointModel {
   private var lowOrder: SSBLowOrderDerivatives?
   private var fifthOrderGradient: SSBFifthOrderGradient?
 
+  /// The number of active bright-field pixels of the objective.
+  var brightFieldPixelCount: Int { activeIndices.count }
+
   public var wavelengthAngstroms: Double {
     geometry.modelWavelengthAngstroms ?? Double(geometry.wavelengthAngstroms)
   }
@@ -168,7 +171,7 @@ public final class MetalSSBJointModel {
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
-        "ssb_fifth_order_gradient", "ssb_redraw", "ssb_low_order", "ssb_fifth_agreement",
+        "ssb_redraw", "ssb_low_order", "ssb_fifth_agreement", "ssb_fifth_order_gradient",
         "ssb_joint_agreement",
       ]),
       options: options)
@@ -429,7 +432,7 @@ public final class MetalSSBJointModel {
   }
 
   /// Tests only: `fifthOrderAgreements` through the retired per-term kernel `fifth_agreement`, the parity reference
-  /// of ssb-fifth-agreement v0.2.
+  /// of ssb-fifth-agreement v0.3.
   func fifthOrderAgreementsReference(_ points: [SSBModelPoint], packedCoefficients: [[Float]]? = nil)
     throws -> [Double]
   {
@@ -445,13 +448,11 @@ public final class MetalSSBJointModel {
   /// with respect to the objective row [depth (A), tilt row (rad), tilt column (rad), 28 packed coefficients (A)].
   /// `agreement64` sums the same float32 per-frequency powers in Double (finer than the float32 total).
   /// Per-term arithmetic is float32 on Metal; the gradient partials are reduced in Double.
-  /// A `qStride` above 1 returns the agreement over every qStride-th band frequency and its gradient, both scaled
-  /// by the ratio of the full to the subsampled band weight: a cheap steering model, never the objective.
   /// `gradients: false` returns the agreements alone (empty gradients) and keeps their projections, so
   /// `fifthOrderRetainedGradients` of the same candidates adds only the gradient pass.
   /// A `kStride` above 1 uses every kStride-th BF pixel only (unscaled): a steering model, never the objective.
   func fifthOrderAgreementsAndGradients(
-    _ points: [SSBModelPoint], packedCoefficients: [[Float]], qStride: Int = 1, kStride: Int = 1,
+    _ points: [SSBModelPoint], packedCoefficients: [[Float]], kStride: Int = 1,
     gradients: Bool = true, isCancelled: () -> Bool = { false }
   ) throws -> [(agreement: Double, agreement64: Double, gradient: [Double])] {
     try validatePreparation()
@@ -464,57 +465,38 @@ public final class MetalSSBJointModel {
     }
     if isCancelled() { throw CancellationError() }
     if points.isEmpty { return [] }
+    let rows = try fifthOrderRows(points, packedCoefficients)
     if fifthOrderGradient == nil {
-      fifthOrderGradient = try SSBFifthOrderGradient(device: device, queue: queue, library: library)
+      fifthOrderGradient = try SSBFifthOrderGradient(
+        device: device, queue: queue, library: library, objective: fifthOrder!)
     }
-    let rows = zip(points, packedCoefficients).map { point, packed in
-      [
-        Float(point.depthSpreadAngstroms), Float(point.sampleTiltMrad[0] * 1e-3),
-        Float(point.sampleTiltMrad[1] * 1e-3),
-      ] + packed
-    }
-    let ratio = bandWeightRatio(qStride: qStride)
-    return try fifthOrderGradient!.evaluate(
+    let values = try fifthOrderGradient!.evaluate(
       rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
       probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
-      qStride: qStride, kStride: kStride, gradients: gradients, isCancelled: isCancelled
-    ).map { ($0.agreement * ratio, $0.agreement64 * ratio, $0.gradient.map { $0 * ratio }) }
+      kStride: kStride, gradients: gradients, isCancelled: isCancelled)
+    lastAgreementGPUSeconds = fifthOrderGradient!.lastGPUSeconds
+    return values.map { ($0.agreement, $0.agreement64, $0.gradient) }
   }
 
   /// The agreements and gradients of the candidates of the last value-only
   /// `fifthOrderAgreementsAndGradients(gradients: false)`, reusing its objective pass; other candidates are
   /// evaluated in full.
   func fifthOrderRetainedGradients(
-    _ points: [SSBModelPoint], packedCoefficients: [[Float]], qStride: Int = 1, kStride: Int = 1,
+    _ points: [SSBModelPoint], packedCoefficients: [[Float]], kStride: Int = 1,
     isCancelled: () -> Bool = { false }
   ) throws -> [(agreement: Double, agreement64: Double, gradient: [Double])] {
     try validatePreparation()
     guard let fifthOrderGradient else {
       return try fifthOrderAgreementsAndGradients(
-        points, packedCoefficients: packedCoefficients, qStride: qStride, kStride: kStride,
-        isCancelled: isCancelled)
+        points, packedCoefficients: packedCoefficients, kStride: kStride, isCancelled: isCancelled)
     }
-    let rows = zip(points, packedCoefficients).map { point, packed in
-      [
-        Float(point.depthSpreadAngstroms), Float(point.sampleTiltMrad[0] * 1e-3),
-        Float(point.sampleTiltMrad[1] * 1e-3),
-      ] + packed
-    }
-    let ratio = bandWeightRatio(qStride: qStride)
-    return try fifthOrderGradient.retainedGradients(
+    let rows = try fifthOrderRows(points, packedCoefficients)
+    let values = try fifthOrderGradient.retainedGradients(
       rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
       probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
-      qStride: qStride, kStride: kStride, isCancelled: isCancelled
-    ).map { ($0.agreement * ratio, $0.agreement64 * ratio, $0.gradient.map { $0 * ratio }) }
-  }
-
-  /// The full band weight over the weight of every qStride-th band frequency.
-  private func bandWeightRatio(qStride: Int) -> Double {
-    guard qStride > 1 else { return 1 }
-    let w = UnsafeBufferPointer(
-      start: weights.contents().assumingMemoryBound(to: Float.self), count: bandCount)
-    let sub = stride(from: 0, to: bandCount, by: qStride).reduce(0.0) { $0 + Double(w[$1]) }
-    return w.reduce(0.0) { $0 + Double($1) } / sub
+      kStride: kStride, isCancelled: isCancelled)
+    lastAgreementGPUSeconds = fifthOrderGradient.lastGPUSeconds
+    return values.map { ($0.agreement, $0.agreement64, $0.gradient) }
   }
 
   /// The low-order agreement with its exact gradient and Hessian at each row of Newton coordinates
