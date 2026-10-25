@@ -267,7 +267,7 @@ kernel void original_packing_values_planes_checkpoints(
     originalPackCountsAsPlanes(source, headers, payload, errors, s, index);
 }
 
-// The original-file first-load contract is uint16 for the film sources. This
+// The original-file first-load contract is uint16 for the reference sources. This
 // entry point keeps the same checked packing algorithm and layout, but makes
 // the source width a compile-time constant so the hot count loop does not
 // carry a per-sample source-width branch.
@@ -734,7 +734,7 @@ kernel void original_packing_bitshuffle_planes_vector4_unchecked_summary(
 
 // Diagnostic width-aware variant. Persisted layout headers already state the
 // exact width of each detector tile. This kernel still rejects any nonzero bit
-// above that width, but masks those planes before the butterfly so narrow film
+// above that width, but masks those planes before the butterfly so narrow reference
 // tiles do not pay for 16 full transposes.
 kernel void original_packing_bitshuffle_planes_vector4_widthaware_summary(
     const device uchar *source [[buffer(0)]], const device uint *headers [[buffer(1)]],
@@ -747,7 +747,7 @@ kernel void original_packing_bitshuffle_planes_vector4_widthaware_summary(
         errors, s, partialSums, partialMaximums, index, lane, simdWidth, groupThreads);
 }
 
-// Exact diagnostic specialization for uint8 film working values. The source
+// Exact diagnostic specialization for uint8 reference working values. The source
 // remains uint16 and all high planes are checked before the low-plane
 // transpose; no source information is silently discarded.
 kernel void original_packing_bitshuffle_planes_vector4_low8_summary(

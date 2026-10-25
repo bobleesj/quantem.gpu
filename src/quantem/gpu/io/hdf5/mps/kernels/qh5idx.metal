@@ -2166,7 +2166,7 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
     uint inputIndex = 0u, outputIndex = 0u;
     while (inputIndex < compressedLength) {
         uchar token = compressed[inputIndex++];
-        // film contains a large common case with no literals and a non-extended
+        // The reference data contains a large common case with no literals and a non-extended
         // short match. Keep this branch in a diagnostic template so the
         // retained checked kernel has its original code shape. The fast path
         // still validates every boundary and distance before writing output.
@@ -2281,7 +2281,7 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
                 }
             }
             // The diagnostic short variant tests the crossover on the real
-            // film distribution without changing parsing, bounds checks, or
+            // reference distribution without changing parsing, bounds checks, or
             // byte order. The default remains the retained 64-byte gate.
             if (alignedRepeatFill && matchLength >= (shortRepeatFill ? 32u : 64u)) {
                 // Blocks are 8192-byte aligned. Preserve the two-byte phase
@@ -2422,7 +2422,7 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
 }
 
 // Diagnostic fast path for an already validated BSLZ4 stream. The indexed
-// film source has fixed 8192-byte expanded blocks and independently validated
+// reference source has fixed 8192-byte expanded blocks and independently validated
 // metadata, so this variant removes the per-token bounds/error branches from
 // the hot decoder loop. It is never selected by the release defaults; the
 // caller must still run the independent full-count oracle before retaining it.

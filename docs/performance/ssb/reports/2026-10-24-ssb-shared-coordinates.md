@@ -83,6 +83,6 @@ The previous kernel file SHA-256 is
 `3197bf5fd16049d8876d412bbae2d5375aa9eca4019b6dd3da64054e3fe64bb5`.
 The candidate SHA-256 is
 `68819da1e42d95d808c17510ee2d56398c632ba551097959bb9f91facc648c0d`.
-Raw evidence is archived privately as `20261024-ssb-thick-shared-coordinates`.
+Raw evidence is archived privately.
 This is a local source change, not a package release. MPS and fitting paths
 were not modified or requalified by this experiment.
