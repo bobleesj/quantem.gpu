@@ -1,9 +1,10 @@
-# Redraw at slider speed: q, -q symmetry for SSB and a drag window for regularized methods (2026-10-24)
+# Redraw at slider speed: q, -q symmetry and drag windows for SSB and regularized methods (2026-10-24)
 
 ## Questions
 
 1. Can the 3x SSB redraw with a 14-term fit get closer to 30 fps without changing the model?
 2. Can the regularized `phase` and `complex` methods redraw while one aberration slider is dragged in a few ms, at float32-level precision?
+3. Can an SSB drag do the same, although its correction gamma / |gamma| is not analytic in the optics?
 
 **1. Yes, 56 -> 30 ms.** Every term of the SSB sum obeys F(-q) = -conj F(q) for any aberration order, so the fine-grid kernel now sums each pair q, -q once with the 14-term probe too. Images differ from the full-plane sum by at most 3.0e-8 rad (one float32 ulp of the largest phase).
 
@@ -15,7 +16,7 @@
 - GPU 0 only (RTX PRO 6000 Blackwell Workstation, 600 W), confirmed by name; GPU 1 (Max-Q) is never compared with it.
 - Timing: device-synchronized wall clock; SSB 8 calls with C10 changed each call, first two dropped; drag window 5 calls after one warm-up, median.
 - Strengths 0.03 / 0.03, smoothness 1 1/A, uniform weights.
-- Source: quantem.gpu `oct-24-direct-iterative-api` at `f1cbe8aa` before, commits `953f9370` (drag window) and `c5b17d86` (SSB pairing) after.
+- Source: quantem.gpu `oct-24-direct-iterative-api` at `f1cbe8aa` before; commits `953f9370` (regularized drag window), `c5b17d86` (SSB pairing), `bc438e85` (SSB drag window), `9fdd3c4d` (triple-overlap list).
 
 ## 1. SSB: the q, -q symmetry
 
@@ -90,13 +91,36 @@ A complex window holds the phase statistics as its lower-right block (phase from
 
 How it is used (`ssb/direct_workflow.py`): `drag(session, control, ...)` serves a frame from the prepared system when the optics are those already prepared (a strength drag), from the window when it is complete and covers the value, and otherwise exactly. It starts a new window, centred on the current value, when the dragged control changes, a held input changes, or the value leaves the window. `advance(session)` adds one node and is meant to run between frames, so a drag shows exact frames for its first 13 steps and window frames after. `run()`, the public `preview()` and committed frames never use the window; saved results remain the exact model. Tests: `tests/hardware/cuda/test_direct_drag_window.py` (nodes at 1e-6, between nodes at 2e-6 of the largest phase, phase from a complex window, and the drag/rebuild sequence).
 
+## 3. SSB drags: interpolate the single-sideband terms, sum the triple overlap
+
+Serves: SSB drags of C10, C12, phi12 (or any term) with the 14-term fit held, 3x, full field.
+
+A term (q, k) has one of three supports: neither sideband aperture open (zero), one open, or both open (triple overlap). With one open, gamma = w1 t1 alone and gamma / |gamma| = sign(w1) exp(-i (chi(k - q) - chi(k))): the sinc weight does not depend on the aberrations, so this term is an entire function of the control, like the regularized statistics. With both open, |gamma| depends on the optics and vanishes on the real axis where the two terms cancel, so no polynomial in the control fits it. The kernel now takes a class switch (`SSB_WAVE_PAIRS` 1 = one sideband, 2 = both); their sum is the full spectrum to 1.2e-18 of its largest value (float64 summation order). The scan mean is counted in class 1 only.
+
+`WaveWindow` (`ssb/cuda/thick.py`) keeps the class-1 spectrum as a Chebyshev series (N = 12, the same h as section 2) and sums class 2 exactly every frame. On the test field class 2 holds 3.3e8 of the 2.2e9 nonzero terms (15 %), all at |q| <= R (136k of the 543k frequencies in the support).
+
+| GPU 0, 3x, 14-term fit | exact preview | drag frame | build (13 nodes) | memory |
+|---|---|---|---|---|
+| C10 | 34.5 ms | **6.5-7.0 ms** | 0.41 s | 0.25 GB |
+| C12, phi12, C21, C30 (before the triple list below) | 34.5-35.2 ms | 10.0-10.4 ms | 0.42-0.43 s | 0.25 GB |
+
+Window frame against the exact preview, max |difference| over the largest phase, both edges, centre, node and three points between: 1.5-2.6e-7 for every control. For scale, the float32 probe phase itself puts the exact SSB image 1.7e-5 from the same kernel with chi in float64 (measured here; gamma / |gamma| amplifies chi rounding where the two sidebands nearly cancel).
+
+The class-2 sum first took 9.3 ms of the 10 ms frame. ncu showed DRAM 57 % busy: each of its 10 launches wrote, and then reduced, 16 partial planes of the whole 1536 x 769 stored plane (302 MB) for 136k useful frequencies. Running class 2 over a list of the |q| <= R frequencies (`SSB_WAVE_QLIST`), with BF pixels in compact cells of a quarter BF radius (`SSB_WAVE_ORDER`, 64 per group) and 64 groups per launch: 9.2 -> 5.8 ms, frame 10.2 -> 6.5 ms. Tests: `tests/hardware/cuda/test_direct_drag_window.py` (`test_ssb_window_matches_exact_preview`: first frame bit-identical to the preview, nodes at 1e-6, between nodes at 2e-6 of the largest phase).
+
+A block whose frequencies all miss its BF group now returns before the per-tile BF setup (`__syncthreads_or`): bit-identical, 12.7 -> 12.3 ms of class 2 on GPU 1, kept.
+
 ## Rejected or deferred
 
-- **Chebyshev window for SSB.** gamma / |gamma| is not analytic in c: in triple-overlap regions where the two sideband terms have equal weight, gamma = a e^{i c u1} - b e^{i c u2} has zeros on the real axis, so the correction is discontinuous there and a polynomial in c cannot reach 1e-6.
+- **Horner chi for the 14-term SSB kernel** (28 Cartesian monomials, 27 FMAs): chi itself is closer to float64 (rms 6.2e-7 vs 1.4e-6 rad over the aperture), but the image is not (max 3.9e-5 vs 1.7e-5 of the largest phase against a float64-chi kernel, rms equal), and the redraw gained only 13 % (46.7 -> 40.5 ms, GPU 1). Ablation on GPU 1: chi is 15.5 ms of 46.4, the depth sinc 7.5 ms, sincos about 0; the kernel is compute-bound (75.6 % issue slots, IPC 3.0, 76 registers, 40 % occupancy).
+- **Compact BF cells for the exact SSB sum**: would cut evaluated pairs 3.9e9 -> 3.0e9 (culling efficiency 0.57 -> 0.73), but culled-in pairs with both apertures closed cost only the two geometries; for class 2 alone the cells gave 9.3 -> 9.2 ms. Not pursued for the exact path.
+- **Frequency list for the exact fine-grid sum** (support |q| <= 2R, 46 % of the stored plane): bit-identical, no measurable change (31.4 ms); the exact kernel is compute-bound. Reverted.
+
+- **Chebyshev window over the whole SSB spectrum.** gamma / |gamma| is not analytic in c: in triple-overlap regions where the two sideband terms have equal weight, gamma = a e^{i c u1} - b e^{i c u2} has zeros on the real axis, so the correction is discontinuous there and a polynomial in c cannot reach 1e-6. Section 3 interpolates only the single-sideband class.
 - **FFT correlation for the Gram, optics-free diagonal split, Taylor series, interpolating the image, one window over the full slider range**: see the regularized-method math notes of the same day (the diagonal split leaves the transfer evaluation for the right side, 40-50 ms; a full-range C10 window needs N about 65 and 10 GB for complex).
 - **Fused regularized preparation** (a parallel prototype on the SSB kernel structure, 19.5 ms phase / 35.5 ms complex with fast transcendentals): not merged here; it would cut the exact frames during a window build and the build itself.
 
 ## Next
 
 - End-to-end frames per second in ShowPtycho per control, once the transport path delivers one float32 image per update.
-- SSB: a cheaper 14-term chi (Horner form) for the remaining 7 ms.
+- SSB exact frames (shown while a window builds, and on release) remain 30-35 ms; the depth sinc (16 % of the kernel) is the next ablation-backed target.
