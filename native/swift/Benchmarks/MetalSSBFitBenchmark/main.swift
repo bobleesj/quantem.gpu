@@ -42,6 +42,7 @@ struct Options {
   var gradientSettings = SSBFifthOrderGradientSearch.Settings()
   var verbose = false
   var curvature = false
+  var score: URL?
   var detectorSampling: Double?
   var center: (Double, Double)?
   var radius: Double?
@@ -96,6 +97,7 @@ struct Options {
         gradientSettings.update = SSBFifthOrderGradientSearch.Update(rawValue: try value(flag)) ?? .bfgs
       case "--verbose": verbose = true
       case "--curvature": curvature = true
+      case "--score": score = URL(fileURLWithPath: try value(flag))
       case "--detector-sampling": detectorSampling = Double(try value(flag))
       case "--center":
         let parts = try value(flag).split(separator: ",").compactMap { Double($0) }

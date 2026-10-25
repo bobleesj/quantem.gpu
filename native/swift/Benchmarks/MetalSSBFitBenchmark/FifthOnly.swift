@@ -34,7 +34,25 @@ func fifthOnly(
         "bf_pixels": setup.pixels.count, "band_count": model.bandCount,
         "search": options.search.rawValue,
       ]
-      if options.gradientCheck {
+      if let scoreURL = options.score {
+        // Double-summed agreement of another run's fifth-order point and of the baseline's, at this rotation.
+        guard
+          let other = try JSONSerialization.jsonObject(with: Data(contentsOf: scoreURL)) as? [String: Any],
+          let otherFit = (other["results"] as? [[String: Any]])?.first?["fit"] as? [String: Any],
+          let otherRotation = otherFit["rotation_deg"] as? Double,
+          let otherZ = (otherFit["refinement"] as? [String: Any])?["coordinates"] as? [Double],
+          let baseZ = (fit["refinement"] as? [String: Any])?["coordinates"] as? [Double]
+        else { throw failure("\(scoreURL.path) has no fifth-order point") }
+        guard otherRotation == rotation else { throw failure("rotation differs from the baseline") }
+        let a = try SSBModelFit.fifthOrderAgreement64(model: model, z: otherZ)
+        let b = try SSBModelFit.fifthOrderAgreement64(model: model, z: baseZ)
+        result["score_agreement64"] = a
+        result["baseline_agreement64"] = b
+        result["relative"] = a / b - 1
+        result["max_abs_dz"] = zip(otherZ, baseZ).map { abs($0 - $1) }.max() ?? 0
+        log(String(format: "%@: Double-summed agreement %.9e vs baseline %.9e, rel %+.3e, max |dz| %.3e",
+          scoreURL.lastPathComponent, a, b, a / b - 1, result["max_abs_dz"] as! Double))
+      } else if options.gradientCheck {
         let start =
           [
             point.c10Angstroms / 100, point.c12Angstroms / 100 * cos(2 * point.phi12Radians),
