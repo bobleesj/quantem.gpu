@@ -179,7 +179,7 @@ def prepare(session, controls, coefs, tilt, depth, factor, policy):
 @_on_scan_gpu
 def advance(session) -> bool:
     """Add one node to the first incomplete window (the one dragged last first); True when none is left."""
-    windows = [tile for _, tiles in getattr(session, "_direct_windows", {}).values() for tile in tiles]
+    windows = [tile for _, tiles, _ in getattr(session, "_direct_windows", {}).values() for tile in tiles]
     pending = [window for window in windows if not window.series.ready]
     if pending:
         pending[0].step()
@@ -199,7 +199,7 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
     """The session's window along ``control`` covering its value, new (unbuilt) unless a valid one exists.
 
     Windows of one control are tiles on a fixed grid, centred at
-    c0 + 2 h k from the first one, so a drag that crosses a tile edge and
+    c0 + 2 h k from the first one (c0 kept while the held inputs are), so a drag that crosses a tile edge and
     comes back reuses both instead of building a window per crossing; the
     `TILES` most recently used are kept. Windows whose held inputs no longer
     match these are dropped first: a complex one holds about 4 GB on the test
@@ -211,19 +211,19 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
     windows = getattr(session, "_direct_windows", None)
     if windows is None:
         windows = session._direct_windows = {}
-    for name, (held, _) in list(windows.items()):
+    for name, (held, *_) in list(windows.items()):
         if held != (kind, *_inputs(session, {**coefs, name: None}, tilt, depth, factor, policy)[2]):
             del windows[name]
     held = (kind, *_inputs(session, {**coefs, control: None}, tilt, depth, factor, policy)[2])
     value = float(coefs.get(control, 0.0))
-    tiles = windows.get(control, (held, []))[1]
+    _, tiles, anchor = windows.get(control, (held, [], value))
     if complex_object and tiles and not tiles[0].complex_object:
-        tiles = []
+        tiles, anchor = [], value
     window = next((tile for tile in tiles if tile.series.covers(value)), None)
     if window is None:
         center = value
         if tiles and not math.isinf(tiles[0].series.half_width):
-            anchor, width = tiles[0].series.center, 2 * tiles[0].series.half_width
+            width = 2 * tiles[0].series.half_width
             center = anchor + width * round((value - anchor) / width)
         tile_coefs = {**coefs, control: center}
         engine = session._backend()._get_accelerator()
@@ -237,7 +237,7 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
             window = DragWindow(engine, _inputs(session, tile_coefs, tilt, depth, factor, policy)[1], control, factor,
                                 complex_object=complex_object, smoothness_inv_A=policy["smoothness_inv_A"],
                                 detector_weighting=policy["detector_weighting"])
-    windows[control] = held, [window] + [tile for tile in tiles if tile is not window][:TILES - 1]
+    windows[control] = held, [window] + [tile for tile in tiles if tile is not window][:TILES - 1], anchor
     if first:
         session._direct_windows = {control: windows[control], **{name: other for name, other in windows.items() if name != control}}
     return window
