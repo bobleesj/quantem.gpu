@@ -134,12 +134,13 @@ def handoff(monkeypatch):
     ))
 
     def run(session=None, **options):
+        # the finite-difference Newton refinement, which this fixture replaces with a bounded stub
         return fifth_order_fit.fit_fifth_order(
             Session() if session is None else session,
             search="standard", trials=200, seed=42,
             save_dir=options.pop("save_dir", None), force=False, verbose=False,
             primary_options={"check_rotation": False, "refine_rotation": False},
-            **options,
+            refinement=options.pop("refinement", "newton"), **options,
         )
 
     return SimpleNamespace(

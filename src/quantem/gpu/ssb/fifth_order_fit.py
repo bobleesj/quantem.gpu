@@ -5,6 +5,7 @@ objective evaluation and reconstruction run on the selected GPU. This is a hybri
 """
 
 import copy
+import math
 import time
 
 import numpy as np
@@ -12,14 +13,23 @@ import optuna
 
 from ._broad_nelder_mead import nelder_mead
 from ._broad_newton import BudgetReached, Tracker, newton
+from ._gradient_refinement import Settings as GradientSettings
+from ._gradient_refinement import refine as gradient_refine
 from ._tpe_independent import make_independent_sampler
 from .persistence import load_result, result_paths
 
 
-def _objective(ssb):
-    """Use the same coordinates and model on the session's physical backend."""
+def _objective(ssb, gradients=False):
+    """Use the same coordinates and model on the session's physical backend.
+
+    ``gradients=True`` returns the same objective with exact gradients (CUDA and MPS).
+    """
     backend = ssb._backend()
     if ssb.backend == "cuda":
+        if gradients:
+            from .cuda.exact_derivatives import FifthOrderGradients
+
+            return FifthOrderGradients(backend._get_accelerator())
         from .cuda.broad_batch import Objective
 
         return Objective(backend._get_accelerator())
@@ -27,16 +37,85 @@ def _objective(ssb):
         from .mps.fifth_order import Objective
 
         backend.cache_rotation(np.deg2rad(ssb.scan_detector_rotation_deg))
+        if gradients:
+            from .mps.exact_derivatives import FifthOrderGradients
+
+            return FifthOrderGradients(backend._prepared)
         return Objective(backend._prepared)
     raise NotImplementedError("Fifth-order fitting requires a CUDA or MPS session.")
 
 
+def _exact_gradients(ssb) -> bool:
+    """Whether the session's backend serves exact fifth-order gradients."""
+    return ssb.backend in ("cuda", "mps")
+
+
+def _refine_with_gradients(objective, start, bounds, norm, cap, *, on_progress=None):
+    """``_gradient_refinement.refine`` on the objective's exact gradients, normalized by ``norm``.
+
+    A BF subsample steers only while its agreement depends on the coordinates (that of a single pixel is
+    constant): it keeps at least 32 pixels, so a small bright field uses all of them.
+    """
+    settings = GradientSettings()
+    usable = max(1, objective.num_bright_field_pixels // 32)
+    settings.hessian_bf_stride = min(settings.hessian_bf_stride, usable)
+    settings.coarse_bf_stride = min(settings.coarse_bf_stride, usable)
+    settings.max_objectives = min(settings.max_objectives, cap)
+    last = {}
+
+    def evaluate(points, kind, stride):
+        if kind == "gradient":
+            return last["values"], objective.gradients(points, stride) / norm
+        values = objective.values(points, stride) / norm
+        last["values"] = values
+        return values, (None if kind == "value" else objective.gradients(points, stride) / norm)
+
+    start_value = float(objective.values(start, 1)[0]) / norm
+    return gradient_refine(evaluate, start, bounds, start_value=start_value, settings=settings,
+                           progress=on_progress)
+
+
+HIGHER_ORDER_LIMITS = {2.0: "standard", 20.0: "wide"}
+
+
+def validate_higher_order_limit(limit) -> float:
+    """The box of the 22 higher-order coordinates: 2 (standard) or 20 (wide) rad of phase at the aperture edge."""
+    try:
+        value = float(limit)
+    except (TypeError, ValueError):
+        value = math.nan
+    if value not in HIGHER_ORDER_LIMITS:
+        raise ValueError(
+            f"higher_order_limit is 2 (standard) or 20 (wide): the largest phase, in rad at the aperture edge, of "
+            f"each higher-order Cartesian component; got {limit!r}.")
+    return value
+
+
+def fifth_order_bounds(higher_order_limit=2.0) -> np.ndarray:
+    """Bounds of the 28 coordinates: C10, the C12 pair, tilt, depth spread, then +-limit for the higher orders."""
+    limit = validate_higher_order_limit(higher_order_limit)
+    return np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-limit, limit)] * 22)
+
+
 def fit_fifth_order(
     ssb, *, search, trials, seed, save_dir, force, verbose,
-    primary_options, refinement="newton", compute_loss=False,
+    primary_options, refinement="auto", compute_loss=False,
     show=True, on_initial_fit=None, size="medium", columns=3, show_convergence=False,
+    higher_order_limit=2.0,
 ):
-    """Fit the fifth-order model; standard skips additional higher-order TPE."""
+    """Fit the fifth-order model; standard skips additional higher-order TPE.
+
+    ``refinement="auto"`` refines with exact gradients (``"bfgs"``) where the backend has them, else with the
+    finite-difference Newton (``"newton"``), which stays available as the trajectory reference.
+    ``higher_order_limit`` bounds each higher-order Cartesian coordinate at +-2 (standard) or +-20 (wide) rad of
+    phase at the aperture edge.
+    """
+    higher_order_limit = validate_higher_order_limit(higher_order_limit)
+    if refinement == "auto":
+        refinement = "bfgs" if _exact_gradients(ssb) else "newton"
+    if refinement == "bfgs" and not _exact_gradients(ssb):
+        raise ValueError("refinement='bfgs' needs exact fifth-order gradients, which this backend does not have; "
+                         "use refinement='newton' or 'nelder-mead'.")
     if trials < 1:
         raise ValueError(
             "Fifth-order fitting requires trials >= 1; use search='primary' for zero-trial refinement."
@@ -50,7 +129,7 @@ def fit_fifth_order(
     primary_trials = trials if search == "standard" else 200
     primary_seed = seed if search == "standard" else 42
     exploration_trials = trials if search == "broad" else 0
-    refinement_cap = 5000 if refinement == "newton" else 3000
+    refinement_cap = {"newton": 5000, "bfgs": 400}.get(refinement, 3000)
     settings = {
         "refinement": refinement,
         "search": search,
@@ -61,6 +140,7 @@ def fit_fifth_order(
         "primary_seed": primary_seed,
         "newton_cap": refinement_cap,
         "fit_band_inv_A": [0.2, 0.9],
+        "higher_order_limit": higher_order_limit,
         "primary_options": primary_options,
         "compute_loss": bool(compute_loss),
     }
@@ -100,10 +180,8 @@ def fit_fifth_order(
     initial_handoff_s = time.perf_counter() - handoff_started
     # Keep plotting/caller work out of the numerical fit and convergence clocks.
     started += initial_handoff_s
-    objective = _objective(ssb)
-    bounds = np.array(
-        [(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-2, 2)] * 22
-    )
+    objective = _objective(ssb, gradients=True) if refinement == "bfgs" else _objective(ssb)
+    bounds = fifth_order_bounds(higher_order_limit)
     norm = float(objective.evaluate(vector(primary, 1), 1)[0])
     if not np.isfinite(norm) or norm <= 0:
         raise ValueError(
@@ -173,22 +251,39 @@ def fit_fifth_order(
         display.progress(exploration_trials + count, max(prior, best), stage="Joint fifth-order refinement")
         started += time.perf_counter() - before
 
-    tracker = Tracker(evaluate, start, bounds, refinement_cap,
-                      on_progress=refinement_progress if show_convergence else None)
-    refinement_start_s = tracker.started - started
-    try:
-        tracker(start)
-        polish = newton if refinement == "newton" else nelder_mead
-        _, stop = polish(tracker, start, bounds)
-    except BudgetReached:
-        stop = "evaluation cap"
-    aberrations, tilt, depth = public_params(objective, tracker.best_z, 5)
+    gradient_record = None
+    if refinement == "bfgs":
+        refinement_started = time.perf_counter()
+        refinement_start_s = refinement_started - started
+        gradient_record = _refine_with_gradients(
+            objective, start, bounds, norm, refinement_cap,
+            on_progress=refinement_progress if show_convergence else None)
+        best_z = gradient_record["coordinates"]
+        stop = gradient_record["stop"]
+        nfev = gradient_record["objectives"]
+        trace = gradient_record["trace"]
+        # The reported agreement is the search objective's float32 score, as the other refinements report it.
+        best_score = float(objective.evaluate(best_z, 5)[0])
+        refine_elapsed_s = time.perf_counter() - refinement_started
+    else:
+        tracker = Tracker(evaluate, start, bounds, refinement_cap,
+                          on_progress=refinement_progress if show_convergence else None)
+        refinement_start_s = tracker.started - started
+        try:
+            tracker(start)
+            polish = newton if refinement == "newton" else nelder_mead
+            _, stop = polish(tracker, start, bounds)
+        except BudgetReached:
+            stop = "evaluation cap"
+        best_z, best_score, nfev, trace = tracker.best_z, tracker.best * norm, tracker.nfev, tracker.trace
+        refine_elapsed_s = time.perf_counter() - tracker.started
+    aberrations, tilt, depth = public_params(objective, best_z, 5)
     chosen = copy.copy(primary)
     chosen.aberrations = aberrations
     chosen.sample_tilt_mrad = tilt
     chosen.depth_spread_nm = depth
     chosen.objective = "broad_fifth_agreement"
-    chosen.sample_agreement = float(tracker.best * norm)
+    chosen.sample_agreement = float(best_score)
     chosen.tilt_fit_gain = None
     chosen.parameter_slices = None
     chosen.rotation_branches = primary.rotation_branches
@@ -208,12 +303,13 @@ def fit_fifth_order(
         "trials": trials,
         "newton_cap": refinement_cap,
         "stop": stop,
-        "executed_objectives": len(cache),
-        "normalized_agreement": tracker.best,
+        "executed_objectives": len(cache) if gradient_record is None else nfev,
+        "normalized_agreement": float(best_score / norm),
         "normalization": norm,
         "fit_band_inv_A": [0.2, 0.9],
+        "higher_order_limit": higher_order_limit,
         "bounds": bounds.tolist(),
-        "coordinates": tracker.best_z.tolist(),
+        "coordinates": np.asarray(best_z).tolist(),
         "proposals": proposals,
         "coarse_scores": coarse_scores,
         "coarse_elapsed_s": coarse_elapsed_s,
@@ -221,16 +317,23 @@ def fit_fifth_order(
         "convergence_clock": "fit_start",
         "refinement": refinement,
         "refinement_cap": refinement_cap,
-        "refinement_trace": tracker.trace,
-        f"{refinement.replace('-', '_')}_trace": tracker.trace,
+        "refinement_trace": trace,
+        f"{refinement.replace('-', '_')}_trace": trace,
         "rotation_policy": "initial fit selection; fifth-order refinement holds that rotation",
     }
+    if gradient_record is not None:
+        # Values and gradients of the agreement summed in float64; subsamples steer only.
+        chosen.optimizer["exact_gradients"] = {
+            key: gradient_record[key] for key in (
+                "agreement", "objectives", "gradients", "subsampled", "iterations", "hessian_bf_stride",
+                "coarse_bf_stride")
+        }
     chosen.num_trials = trials
     if refinement != "newton":
         chosen.optimizer.pop("newton_cap")
     chosen.refinement = refinement
-    chosen.refine_nfev = tracker.nfev
-    chosen.refine_elapsed_s = time.perf_counter() - tracker.started
+    chosen.refine_nfev = nfev
+    chosen.refine_elapsed_s = refine_elapsed_s
     reconstruction_started = time.perf_counter()
     result = ssb.run(
         chosen, upsampling_factor=1, compute_loss=compute_loss, force=True
@@ -259,7 +362,7 @@ def fit_fifth_order(
         "reconstruction_s": time.perf_counter() - reconstruction_started,
     }
     final_handoff_started = time.perf_counter()
-    display.progress(exploration_trials + tracker.nfev, tracker.best,
+    display.progress(exploration_trials + nfev, float(best_score / norm),
                      stage=f"Fit complete · {stop}", final=True)
     display.update(result, final=True)
     result.timings["final_display_s"] = time.perf_counter() - final_handoff_started

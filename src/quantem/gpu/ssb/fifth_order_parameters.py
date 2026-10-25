@@ -1,12 +1,83 @@
 """Shared dimensionless coordinates for fifth-order SSB fitting."""
 
+import math
+
 import numpy as np
 
 from .higher_order import ORDERS
 
 
+def monomial_map(wavelength: float) -> np.ndarray:
+    """(25, 28): d agreement / d packed coefficient from the monomial sums T_a, 2 <= |a| <= 6, in float64.
+
+    chi(row, col) = (2 pi / wl) sum_i (x^2 + y^2)^p (Re (x + iy)^m c_2i + Im (x + iy)^m c_2i+1) with (x, y) = wl (row,
+    col) (``higher_order.CHI_SOURCE``), so d phi / d c_p = 2 pi wl^n_i [P_p(k -+ q) - P_p(k)] with P_p the term's
+    monomials row^a col^c. T_a is stored at index (a + c)(a + c + 1) / 2 + c - 3.
+    """
+    def times(a, b):
+        out = {}
+        for (i, j), u in a.items():
+            for (k, l), v in b.items():
+                out[(i + k, j + l)] = out.get((i + k, j + l), 0) + u * v
+        return out
+
+    mapping = np.zeros((25, 28))
+    for term, (n, m) in enumerate(ORDERS):
+        radial = {(0, 0): 1.0}
+        for _ in range((n + 1 - m) // 2):
+            radial = times(radial, {(2, 0): 1.0, (0, 2): 1.0})
+        real, imag = {(0, 0): 1.0}, {}
+        for _ in range(m):
+            # (re + i im)(x + i y) = (re x - im y) + i (im x + re y)
+            new_re, new_im = {}, {}
+            for (i, j), v in real.items():
+                new_re[(i + 1, j)] = new_re.get((i + 1, j), 0) + v
+                new_im[(i, j + 1)] = new_im.get((i, j + 1), 0) + v
+            for (i, j), v in imag.items():
+                new_re[(i, j + 1)] = new_re.get((i, j + 1), 0) - v
+                new_im[(i + 1, j)] = new_im.get((i + 1, j), 0) + v
+            real, imag = new_re, new_im
+        factor = 2 * math.pi * wavelength ** n
+        for part, polynomial in ((0, times(radial, real)), (1, times(radial, imag))):
+            for (a, c), value in polynomial.items():
+                if value:
+                    d = a + c
+                    mapping[d * (d + 1) // 2 + c - 3, 2 * term + part] += factor * value
+    return mapping
+
+
 class Coordinates:
     """Encode physical aberrations without changing backend arithmetic."""
+
+    def gradient(self, raw):
+        """d agreement / dz from a gradient pass's 28 sums per candidate.
+
+        ``raw`` rows are [d/d depth spread (A), d/d tilt row, d/d tilt column (rad), T_a for 2 <= |a| <= 6]: the
+        exact-gradient kernels' outputs (``cuda.exact_derivatives``), mapped through ``encode``'s scales.
+        """
+        raw = np.atleast_2d(np.asarray(raw, dtype=np.float64))
+        mapping = getattr(self, "_monomial_map", None)
+        if mapping is None:
+            mapping = self._monomial_map = monomial_map(float(self.p.wavelength))
+        packed = raw[:, 3:] @ mapping
+        gradient = np.zeros((len(raw), 28))
+        gradient[:, 0] = 50 * packed[:, 0]
+        gradient[:, 1] = 50 * packed[:, 2]
+        gradient[:, 2] = 50 * packed[:, 3]
+        gradient[:, 3] = 5e-3 * raw[:, 1]
+        gradient[:, 4] = 5e-3 * raw[:, 2]
+        gradient[:, 5] = 100 * raw[:, 0]
+        j = 6
+        for i, (n, m) in enumerate(ORDERS):
+            if n < 2:
+                continue
+            scale = self.p.wavelength / (2 * np.pi * self.p.semiangle_rad ** (n + 1))
+            gradient[:, j] = scale * packed[:, 2 * i]
+            j += 1
+            if m:
+                gradient[:, j] = scale * packed[:, 2 * i + 1]
+                j += 1
+        return gradient
 
     def encode(self, z, order):
         z = np.asarray(z)
