@@ -50,52 +50,56 @@ enum SSBKernelRegistry {
     name: "ssb-redraw", version: "0.3", files: ["ssb_redraw"],
     registeredSourceSHA256: "73dc413569c7e0519267b51f04dc414088141fb4b01afe983fd40e49513e2cbc")
   /// The earlier per-term / separable coherent kernels: explicit 8x only, and the 1x-4x parity reference in tests.
-  /// v0.2 is v0.1 without the retired `complex_wave` amplitude kernel (`model_wave_amplitude`); the per-term
-  /// kernels are unchanged.
+  /// v0.2 is v0.1 without the retired `complex_wave` amplitude kernel (`model_wave_amplitude`); v0.3 is v0.2 without
+  /// the deleted objective kernel `fifth_agreement` in `ssb_fifth_order`. The reconstruction kernels are unchanged.
   static let perTerm = Entry(
-    name: "ssb-per-term", version: "0.2", files: ["ssb_model", "ssb_fifth_order", "ssb_separable"],
-    registeredSourceSHA256: "05177e0c2cde4620094e8f2a7aeaa816daadeaaaed1384a20bdd5103dc68114c")
+    name: "ssb-per-term", version: "0.3", files: ["ssb_model", "ssb_fifth_order", "ssb_separable"],
+    registeredSourceSHA256: "886e139608e3951b4436115f65171c926f3a3c48c1dbae7e7fae7a8331de855a")
   /// The fifth-order agreement objective of the fit (`fifth_agreement_rows` with the `fifth_probe`, `fifth_power`
   /// and `fifth_score` passes) on all BF pixels or every n-th: the only production objective kernel there, also the
-  /// value pass of `fifthGradient`. v0.3 added the BF stride to v0.2 (same per-pair terms). v0.1 was
-  /// `fifth_agreement` in `ssb_fifth_order` (ssb-per-term), now the parity reference of the tests.
+  /// value pass of `fifthGradient`. v0.3 added the BF stride to v0.2 (same per-pair terms); v0.4 is v0.3 with v0.1,
+  /// `fifth_agreement` in `ssb_fifth_order`, deleted (2026-10-25), the kernels unchanged.
   static let fifthAgreement = Entry(
-    name: "ssb-fifth-agreement", version: "0.3", files: ["ssb_fifth_order", "ssb_fifth_agreement"],
-    registeredSourceSHA256: "2d385e96d9c44dfaba4b5e67c1180bbc3830009d529b1aebac68e969c299c152")
+    name: "ssb-fifth-agreement", version: "0.4", files: ["ssb_fifth_order", "ssb_fifth_agreement"],
+    registeredSourceSHA256: "1c42b235b1d7ad0ba6b7db33753e331b7735f711b9550fca9a30f510ea846d30")
   /// The low-order agreement objective with angle-sum phases (`joint_agreement_angle_sums`), used by the primary
-  /// fit's search trials: the only production `.angleSums` kernel. v0.1 was `joint_objective_angle_sums` in
-  /// `ssb_joint`, now the parity reference of the tests. v0.3 is v0.2 with the retired `mean_phase` kernels removed
-  /// from `ssb_joint`; the agreement kernels are unchanged.
+  /// fit's search trials, the only low-order agreement kernel. v0.3 is v0.2 with the retired `mean_phase` kernels
+  /// removed from `ssb_joint`; v0.4 is v0.3 with v0.1 (`joint_objective_angle_sums`) and the per-term agreement
+  /// (`joint_objective_batch`, `joint_trial_probe`) deleted from `ssb_joint` (2026-10-25). The agreement kernels are
+  /// unchanged.
   static let jointAgreement = Entry(
-    name: "ssb-joint-agreement", version: "0.3", files: ["ssb_joint", "ssb_joint_agreement"],
-    registeredSourceSHA256: "6283577c146ab5a92b5643b5b696d10c3985585a590ff7ed67569d46d7035aa1")
+    name: "ssb-joint-agreement", version: "0.4", files: ["ssb_joint", "ssb_joint_agreement"],
+    registeredSourceSHA256: "f0192e7d0589c720a575cb67e85f141452c485559065107865443790a5b88763")
 
   /// The primary fit's exact low-order value, gradient and Hessian (trust-region Newton), `SSBLowOrderDerivatives`:
   /// the value pass, the derivative pass and the fused pass of `ssb_low_order_derivatives` (with the aperture and
   /// quotient helpers of `ssb_joint_agreement`). v0.3 is v0.2 with the retired `mean_phase` kernels removed from
-  /// `ssb_joint`; the derivative kernels are unchanged. v0.1 (`ssb_low_order`) was deleted on 2026-10-25.
+  /// `ssb_joint`; v0.4 is v0.3 with the deleted agreement kernels removed from `ssb_joint` (2026-10-25). The
+  /// derivative kernels are unchanged. v0.1 (`ssb_low_order`) was deleted on 2026-10-25.
   static let lowOrderDerivatives = Entry(
-    name: "ssb-low-order-derivatives", version: "0.3",
+    name: "ssb-low-order-derivatives", version: "0.4",
     files: ["ssb_joint", "ssb_joint_agreement", "ssb_low_order_derivatives"],
-    registeredSourceSHA256: "0158114dc4138747c7faed27019542d6ffec91c4f2b101109bfa6f015887f215")
+    registeredSourceSHA256: "bd5adb61d4b7fa1cb4d1a80ccd51cc54cb1ed21122599026f7554369e7c3690c")
 
   /// The exact fifth-order agreement gradient on all BF pixels or every n-th (`fifth_gradient_scale`,
   /// `fifth_gradient_rows`) after the `fifthAgreement` value pass (fitting, not reconstruction). v0.1
-  /// (`fifth_gradient` with its strided copy of the per-term objective) is retired.
+  /// (`fifth_gradient` with its strided copy of the per-term objective) is retired; v0.3 is v0.2 with
+  /// `fifth_agreement` deleted from `ssb_fifth_order` (2026-10-25), the kernels unchanged.
   static let fifthGradient = Entry(
-    name: "ssb-fifth-gradient", version: "0.2",
+    name: "ssb-fifth-gradient", version: "0.3",
     files: ["ssb_fifth_order", "ssb_fifth_agreement", "ssb_fifth_order_gradient"],
-    registeredSourceSHA256: "9a751b5a12baee7e35949fa73fddc266e1b59c3d0614cefe09e064bbff04f8d8")
+    registeredSourceSHA256: "16e118d89846c09437c6b507fc8e7d54280a65e6ad6c07dfc8054ce21e57d4da")
 
   /// The regularized direct reconstructions (`phase`, `complex`): the k-only pixel terms, the normal equations of every
   /// scan frequency with its supported aliases (float32 per BF pixel, float-float across batches;
   /// `direct_normal_tiled`, one thread per frequency and alias, for complex systems of two or more aliases,
   /// `direct_normal_equations` otherwise), the drag windows' Chebyshev coefficients and their evaluation
   /// (`direct_window_*`), and the wave of the solved spectrum; the systems are solved in float64 on the CPU. v0.1
-  /// (`direct_normal_equations` alone, no drag windows) is retired.
+  /// (`direct_normal_equations` alone, no drag windows) is retired. v0.3 is v0.2 with the deleted agreement kernels
+  /// removed from the shared `ssb_joint` and `ssb_fifth_order` (2026-10-25); the direct kernels are unchanged.
   static let direct = Entry(
-    name: "ssb-direct", version: "0.2", files: ["ssb_joint", "ssb_fifth_order", "ssb_direct"],
-    registeredSourceSHA256: "4e0355f889a5a05586c198b7f18f19e5a53c25911bb0a6b02802d115b70cc70e")
+    name: "ssb-direct", version: "0.3", files: ["ssb_joint", "ssb_fifth_order", "ssb_direct"],
+    registeredSourceSHA256: "5ab966bbda82a13f5765b82c8d528089188671246ec3403a06bc7e88554a9681")
 
   /// SHA-256 of an entry's shipped source files, concatenated in order.
   static func sourceSHA256(_ entry: Entry) throws -> String {

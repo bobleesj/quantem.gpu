@@ -61,10 +61,10 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
       try model.fifthOrderAgreements([higher]), try fresh.fifthOrderAgreements([higher]))
   }
 
-  /// ssb-fifth-agreement v0.3 against its parity reference, the retired per-term kernel `fifth_agreement`, at fixed
-  /// candidates: shared and distinct depth/tilt (the shared depth-sinc path), zero depth, every remainder of the
-  /// four-candidate groups, and batch invariance.
-  func testRowsKernelMatchesPerTermReference() throws {
+  /// ssb-fifth-agreement against the objective in double precision (`doubleAgreements`) at fixed candidates: shared
+  /// and distinct depth/tilt (the shared depth-sinc path), zero depth, every remainder of the four-candidate groups,
+  /// and batch invariance.
+  func testRowsKernelMatchesDoublePrecisionDefinition() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let scene = try SSBModelReconstructionTests.scene()
     let input = try SSBCoherentReconstruction.buffer(device, scene.counts)
@@ -86,21 +86,14 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
       }
       return point
     }
-    let reference = try model.fifthOrderAgreementsReference(points)
     let exact = try Self.doubleAgreements(model: model, points: points)
     let all = try model.fifthOrderAgreements(points)
-    // Both are float32 objectives about 1e-6 from the float64 one on this 40-pixel scene (on the measured
-    // acquisitions v0.3 and the per-term kernel agree within 3e-7); v0.3 must be no less accurate.
-    var squares = (new: 0.0, old: 0.0)
+    // A float32 objective about 1e-6 from the float64 one on this 40-pixel scene.
     for i in points.indices {
-      let new = abs(all[i] / exact[i] - 1), old = abs(reference[i] / exact[i] - 1)
-      print(String(format: "candidate %2d: v0.3 %.3e, per-term %.3e from float64; v0.3 vs per-term %.3e",
-        i, new, old, abs(all[i] / reference[i] - 1)))
-      XCTAssertLessThan(new, 2e-6)
-      squares.new += new * new
-      squares.old += old * old
+      let error = abs(all[i] / exact[i] - 1)
+      print(String(format: "candidate %2d: %.3e from float64", i, error))
+      XCTAssertLessThan(error, 2e-6)
     }
-    XCTAssertLessThan(squares.new, 1.5 * 1.5 * squares.old)
     for count in [1, 2, 3, 4, 5] {
       XCTAssertEqual(Array(all.prefix(count)), try model.fifthOrderAgreements(Array(points.prefix(count))))
     }
@@ -108,10 +101,10 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
     XCTAssertEqual(all, try model.fifthOrderAgreements(points.reversed()).reversed())
   }
 
-  /// ssb-joint-agreement v0.2 (`joint_agreement_angle_sums`) against its parity reference v0.1
-  /// (`joint_objective_angle_sums`): thick and thin candidates, every remainder of the four-candidate groups, more
-  /// than one group of eight, and batch invariance.
-  func testLowOrderAngleSumsMatchReference() throws {
+  /// ssb-joint-agreement (`joint_agreement_angle_sums`) against the objective in double precision
+  /// (`doubleAgreements`, the fifth-order definition at zero higher orders): thick and thin candidates, every
+  /// remainder of the four-candidate groups, more than one group of eight, and batch invariance.
+  func testLowOrderAngleSumsMatchDoublePrecisionDefinition() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let scene = try SSBModelReconstructionTests.scene()
     let input = try SSBCoherentReconstruction.buffer(device, scene.counts)
@@ -126,22 +119,20 @@ final class SSBFifthOrderNumericsTests: XCTestCase {
         c10Angstroms: -38 + 7 * x, c12Angstroms: 9 - 0.5 * x, phi12Radians: -0.4 + 0.3 * x,
         sampleTiltMrad: tilt, depthSpreadAngstroms: depth)
     }
-    model.referenceAngleSums = true
-    let reference = try model.agreements(points)
-    model.referenceAngleSums = false
+    let exact = try Self.doubleAgreements(model: model, points: points)
     let all = try model.agreements(points)
-    for (value, expected) in zip(all, reference) {
-      XCTAssertLessThan(abs(value / expected - 1), 1e-7)
-    }
-    print("ssb-joint-agreement v0.2 vs v0.1 maximum relative difference",
-      zip(all, reference).map { abs($0 / $1 - 1) }.max()!)
+    // The float32 phasors advance along detector rows between anchors, so this kernel sits farther from the float64
+    // objective than the per-pair fifth-order one: at most 4.7e-6 on these candidates (2026-10-25).
+    let errors = zip(all, exact).map { abs($0 / $1 - 1) }
+    print("ssb-joint-agreement maximum relative difference from float64", errors.max()!)
+    for error in errors { XCTAssertLessThan(error, 1e-5) }
     for count in [1, 2, 3, 5, 8] {
       XCTAssertEqual(Array(all.prefix(count)), try model.agreements(Array(points.prefix(count))))
     }
     XCTAssertEqual(all, try points.map { try model.agreements([$0])[0] })
   }
 
-  /// The agreement objective of `fifth_agreement` with every term and sum in double precision, from the model's
+  /// The fifth-order agreement objective with every term and sum in double precision, from the model's
   /// float32 inputs (k, q, weights, probe geometry, evidence) and the float32 packed coefficients.
   static func doubleAgreements(model: MetalSSBJointModel, points: [SSBModelPoint]) throws -> [Double] {
     let arrays = try model.objectiveArrays()

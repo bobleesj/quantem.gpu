@@ -33,57 +33,6 @@ kernel void fifth_probe(device const float2* k [[buffer(0)]], device const float
     chi[(size_t)tid.x * p.batch + tid.y] = ssb_chi_full(k[tid.x].x, k[tid.x].y, p.wl,
                                                               trial + tid.y * 31 + 3);
 }
-kernel void fifth_agreement(device const float2* g [[buffer(0)]], device const float2* k [[buffer(1)]],
-    device const float2* q [[buffer(2)]], device float4* partial [[buffer(3)]],
-    constant FifthGrid& p [[buffer(4)]], device const float* trial [[buffer(5)]],
-    device const float4* geometry [[buffer(6)]], device const float* chi [[buffer(7)]],
-    uint3 tid [[thread_position_in_grid]]) {
-    constexpr int B = 4;
-    uint qi = tid.x, chunk = tid.y, base = tid.z * B;
-    if (qi >= p.bandCount || chunk >= p.chunks || base >= p.batch) return;
-    float qx = q[qi].x, qy = q[qi].y;
-    float nr[B], ni[B], dd[B];
-    for (int b = 0; b < B; ++b) { nr[b] = 0.0f; ni[b] = 0.0f; dd[b] = 0.0f; }
-    uint k1 = metal::min(p.count, chunk * 256u + 256u);
-    for (uint kk = chunk * 256u; kk < k1; ++kk) {
-        float kxv = k[kk].x, kyv = k[kk].y;
-        float4 gk = geometry[kk];
-        float4 gm = joint_geometry_xy(qx-kxv, qy-kyv, p.wl, p.semiangle, p.angularRow, p.angularColumn);
-        float4 gp = joint_geometry_xy(qx+kxv, qy+kyv, p.wl, p.semiangle, p.angularRow, p.angularColumn);
-        float a1 = gm.w * gk.w, a2 = gp.w * gk.w;
-        if (a1 == 0.0f && a2 == 0.0f) continue;
-        float2 value = g[(size_t)kk * p.bandCount + qi];
-        float gre = value.x, gim = value.y;
-        for (int b = 0; b < B; ++b) {
-            if (base + b >= p.batch) break;
-            device const float* row = trial + (base + b) * 31;
-            float t = row[0], thr = row[1], thc = row[2];
-            float chi_k = chi[(size_t)kk * p.batch + base + b];
-            float b1 = 0.0f, b2 = 0.0f, c1 = 0.0f, cp = 0.0f, s1 = 0.0f, sp = 0.0f;
-            bool thick = t != 0.0f;
-            float shift = 6.283185307179586f * (qx * thr + qy * thc);
-            if (a1 != 0.0f) {
-                float chi_m = ssb_chi_full(kxv-qx, kyv-qy, p.wl, row + 3);
-                s1 = metal::precise::sincos(chi_m-chi_k, c1);
-                b1 = thick ? joint_sinc(0.5f*t*(-p.factor*(gm.x-gk.x)-shift))*a1 : a1;
-            }
-            if (a2 != 0.0f) {
-                float chi_p = ssb_chi_full(qx+kxv, qy+kyv, p.wl, row + 3);
-                sp = metal::precise::sincos(chi_p-chi_k, cp);
-                b2 = thick ? joint_sinc(0.5f*t*(p.factor*(gp.x-gk.x)-shift))*a2 : a2;
-            }
-            float gr = b1*c1-b2*cp;
-            float gi = -b1*s1-b2*sp;
-            nr[b] += gre*gr+gim*gi;
-            ni[b] += gim*gr-gre*gi;
-            dd[b] += gr*gr+gi*gi;
-        }
-    }
-    for (int b = 0; b < B; ++b) {
-        if (base + b >= p.batch) break;
-        partial[((size_t)chunk*p.batch+base+b)*p.bandCount+qi] = float4(nr[b], ni[b], dd[b], 0.0f);
-    }
-}
 // Float32 chunk and weighted-band reduction stays on the GPU. The host reads one score per candidate.
 kernel void fifth_power(device const float4* partial [[buffer(0)]], device const float* weight [[buffer(1)]],
     device float* power [[buffer(2)]], constant FifthGrid& p [[buffer(3)]], uint2 tid [[thread_position_in_grid]]) {

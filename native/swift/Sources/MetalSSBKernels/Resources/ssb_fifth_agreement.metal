@@ -1,16 +1,16 @@
 #include <metal_stdlib>
 using namespace metal;
-// The fifth-order agreement objective (ssb-fifth-agreement v0.3): per band frequency q and candidate,
+// The fifth-order agreement objective (ssb-fifth-agreement since v0.3): per band frequency q and candidate,
 // N = sum_k G conj(gamma), D = sum_k |gamma|^2 over the BF pixels k in chunks of 256, written as the chunk partials
 // that fifth_power and fifth_score (ssb_fifth_order.metal) reduce. kStride > 1 restricts the sums to every
 // kStride-th BF pixel (the coarse steering objective of the exact-gradient search); chunks then count used pixels.
-// Each per-pair term is the one of the reference kernel fifth_agreement (ssb_fifth_order.metal), reorganized:
+// Each per-pair term is the one of v0.1's per-term kernel fifth_agreement (deleted 2026-10-25), reorganized:
 //
 // 1. A threadgroup owns up to 128 consecutive band frequencies spanning at most two band rows. For one BF pixel and
 //    one band row, chi(k -/+ q) is a degree <= 6 polynomial in the column of q whose coefficients the threadgroup
 //    collapses once from the bivariate chi polynomial (SSBRedrawPolynomial, double precision on the host from the
 //    same packed float32 terms) and shares, so each sideband costs one Horner evaluation instead of the 14-term
-//    harmonic sum. chi(k) is the reference fifth_probe value. This reassociation is the only change of rounding.
+//    harmonic sum. chi(k) is the fifth_probe value. This reassociation is the only change of rounding.
 // 2. The soft aperture of joint_geometry_xy is 1 inside and 0 outside conservatively rounded radii exactly, so the
 //    full expression runs only for SIMD groups with a lane in the one-pixel edge ring. 1/r and the edge quotient
 //    use the correctly rounded reciprocal with a Markstein correction, which reproduces IEEE division.
@@ -125,7 +125,7 @@ kernel void fifth_agreement_rows(device const float2* g [[buffer(0)]], device co
             bool open_m = a1 != 0.0f, open_p = a2 != 0.0f;
             if (!open_m && !open_p) continue;
             // alpha^2 rounded on its own, and each depth-sinc argument as one expression, as in joint_geometry_xy and
-            // fifth_agreement (fp contraction stays within an expression).
+            // v0.1's fifth_agreement (fp contraction stays within an expression).
             float alpha2m = am * am;
             float alpha2p = ap * ap;
             float2 value = g[(size_t)kk * p.bandCount + qi];

@@ -69,14 +69,6 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public var preview: SSBDragPreview? = nil
 }
 
-/// How the agreement objective evaluates its phases.
-public enum SSBAgreementKernel: String, Codable, Sendable {
-  /// Angle sums advanced along detector rows (the Python MPS fit's kernel), the default.
-  case angleSums = "angle_sums"
-  /// Two precise sincos and two sines per (band frequency, BF pixel, candidate): the reference definition.
-  case perTerm = "per_term"
-}
-
 /// Serial native Metal implementation of QuantEM's joint tilt/depth SSB model.
 /// Search uses the original scan grid and all selected BF pixels. The band is
 /// an explicit part of the least-squares objective, in inverse Angstrom.
@@ -104,7 +96,7 @@ public final class MetalSSBJointModel {
   private let activeIndices: [Int]
   private let library: MTLLibrary
   private let gather: MTLComputePipelineState
-  private let objectiveBatch, reduceBatch, objectiveAngleSums: MTLComputePipelineState
+  private let reduceBatch: MTLComputePipelineState
   /// Whether reconstructions use the separable kernels (default) or the per-term reference kernel.
   var separableReconstruction: Bool {
     get { coherent.useSeparable }
@@ -116,16 +108,11 @@ public final class MetalSSBJointModel {
     get { !coherent.referenceKernels }
     set { coherent.referenceKernels = !newValue }
   }
-  /// The objective's phase evaluation; both give the same agreement to about 1e-6 relative.
-  public var agreementKernel: SSBAgreementKernel = .angleSums
-  /// Tests only: true evaluates `.angleSums` with `joint_objective_angle_sums` (ssb-joint-agreement v0.1), the
-  /// parity reference of the production `joint_agreement_angle_sums` (v0.3). There is no runtime fallback.
-  var referenceAngleSums = false
   private var angleSumPipelines: [Int: MTLComputePipelineState] = [:]
   private var neighbourBuffer: MTLBuffer
   private var rowStep = SIMD2<Float>(0, 0)
-  private let makeProbeGeometry, trialProbe: MTLComputePipelineState
-  private let probeGeometry, probeChi: MTLBuffer
+  private let makeProbeGeometry: MTLComputePipelineState
+  private let probeGeometry: MTLBuffer
   private var batchPartial: MTLBuffer?
   private var batchPower: MTLBuffer?
   private var coherent: SSBCoherentReconstruction
@@ -191,11 +178,8 @@ public final class MetalSSBJointModel {
       return try device.makeComputePipelineState(function: function)
     }
     gather = try pipeline("joint_gather")
-    objectiveBatch = try pipeline("joint_objective_batch")
     reduceBatch = try pipeline("joint_power_batch")
-    objectiveAngleSums = try pipeline("joint_objective_angle_sums")
     makeProbeGeometry = try pipeline("joint_probe_geometry")
-    trialProbe = try pipeline("joint_trial_probe")
     let n = geometry.qxByRow.count
     var indices: [SIMD2<UInt32>] = []
     var qs: [SIMD2<Float>] = []
@@ -226,7 +210,6 @@ public final class MetalSSBJointModel {
     coherent = try SSBCoherentReconstruction(
       device: device, queue: queue, library: library, geometry: geometry, kBuffer: kBuffer, k: ks)
     probeGeometry = try Self.allocate(device, activeIndices.count * 16)
-    probeChi = try Self.allocate(device, activeIndices.count * 8 * 4)
     qBuffer = try Self.buffer(device, qs)
     indexBuffer = try Self.buffer(device, indices)
     weights = try Self.buffer(device, ws)
@@ -409,19 +392,6 @@ public final class MetalSSBJointModel {
     }
   }
 
-  /// Tests only: `fifthOrderAgreements` through the retired per-term kernel `fifth_agreement`, the parity reference
-  /// of ssb-fifth-agreement v0.3.
-  func fifthOrderAgreementsReference(_ points: [SSBModelPoint], packedCoefficients: [[Float]]? = nil)
-    throws -> [Double]
-  {
-    try validatePreparation()
-    let coefficients = packedCoefficients ?? points.map(\.reconstructionCoefficients)
-    let rows = try fifthOrderRows(points, coefficients)
-    return try fifthOrder!.evaluateReference(
-      rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
-      probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount)
-  }
-
   /// The fifth-order agreement of each candidate (bit-identical to `fifthOrderAgreements`) and its exact gradient
   /// with respect to the objective row [depth (A), tilt row (rad), tilt column (rad), 28 packed coefficients (A)].
   /// `agreement64` sums the same float32 per-frequency powers in Double (finer than the float32 total).
@@ -598,34 +568,14 @@ public final class MetalSSBJointModel {
       let packed = candidates.flatMap { $0 }
       var p = grid
       var batch = UInt32(candidates.count)
-      if agreementKernel == .angleSums && !referenceAngleSums {
-        // Four candidates per thread, then one dispatch for the remaining one to three.
-        let trials = try Self.buffer(device, packed)
-        let full = candidates.count / 4 * 4
-        for (perThread, offset, groups) in [(4, 0, full / 4), (candidates.count - full, full, 1)]
-        where perThread > 0 && groups > 0 {
-          var step = rowStep
-          var extra = angleSumExtra(first: offset)
-          let compute = try encoder(commands, try angleSumPipeline(perThread))
-          for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
-            compute.setBuffer(buffer, offset: 0, index: index)
-          }
-          compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
-          compute.setBuffer(trials, offset: 0, index: 5)
-          compute.setBytes(&batch, length: 4, index: 6)
-          compute.setBuffer(probeGeometry, offset: 0, index: 7)
-          compute.setBuffer(neighbourBuffer, offset: 0, index: 8)
-          compute.setBytes(&step, length: 8, index: 9)
-          compute.setBytes(&extra, length: MemoryLayout<AngleSumExtra>.stride, index: 10)
-          compute.dispatchThreads(
-            MTLSize(width: bandCount, height: Int(p.chunks), depth: groups),
-            threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
-          compute.endEncoding()
-        }
-      } else if agreementKernel == .angleSums {
-        let trials = try Self.buffer(device, packed)
+      // Four candidates per thread, then one dispatch for the remaining one to three.
+      let trials = try Self.buffer(device, packed)
+      let full = candidates.count / 4 * 4
+      for (perThread, offset, groups) in [(4, 0, full / 4), (candidates.count - full, full, 1)]
+      where perThread > 0 && groups > 0 {
         var step = rowStep
-        let compute = try encoder(commands, objectiveAngleSums)
+        var extra = angleSumExtra(first: offset)
+        let compute = try encoder(commands, try angleSumPipeline(perThread))
         for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
           compute.setBuffer(buffer, offset: 0, index: index)
         }
@@ -635,22 +585,11 @@ public final class MetalSSBJointModel {
         compute.setBuffer(probeGeometry, offset: 0, index: 7)
         compute.setBuffer(neighbourBuffer, offset: 0, index: 8)
         compute.setBytes(&step, length: 8, index: 9)
+        compute.setBytes(&extra, length: MemoryLayout<AngleSumExtra>.stride, index: 10)
         compute.dispatchThreads(
-          MTLSize(width: bandCount, height: Int(p.chunks), depth: (candidates.count + 3) / 4),
+          MTLSize(width: bandCount, height: Int(p.chunks), depth: groups),
           threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
         compute.endEncoding()
-      } else {
-        try encodeProbe(commands, parameters: packed, batch: batch)
-        let compute = try encoder(commands, objectiveBatch)
-        for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
-          compute.setBuffer(buffer, offset: 0, index: index)
-        }
-        compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
-        compute.setBytes(packed, length: packed.count * 4, index: 5)
-        compute.setBytes(&batch, length: 4, index: 6)
-        compute.setBuffer(probeGeometry, offset: 0, index: 7)
-        compute.setBuffer(probeChi, offset: 0, index: 8)
-        dispatch(compute, width: bandCount, height: Int(p.chunks))
       }
       let reduction = try encoder(commands, reduceBatch)
       reduction.setBuffer(batchPartial, offset: 0, index: 0)
@@ -709,19 +648,6 @@ public final class MetalSSBJointModel {
     let pipeline = try device.makeComputePipelineState(function: function)
     angleSumPipelines[perThread] = pipeline
     return pipeline
-  }
-
-  private func encodeProbe(_ commands: MTLCommandBuffer, parameters: [Float], batch: UInt32) throws
-  {
-    var p = grid
-    var count = batch
-    let compute = try encoder(commands, trialProbe)
-    compute.setBuffer(probeGeometry, offset: 0, index: 0)
-    compute.setBuffer(probeChi, offset: 0, index: 1)
-    compute.setBytes(parameters, length: parameters.count * 4, index: 2)
-    compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
-    compute.setBytes(&count, length: 4, index: 4)
-    dispatch(compute, width: Int(p.totalBF))
   }
 
   /// SSB (`phase_of_mean`) with all BF pixels: the corrected waves of every bright-field pixel summed before one

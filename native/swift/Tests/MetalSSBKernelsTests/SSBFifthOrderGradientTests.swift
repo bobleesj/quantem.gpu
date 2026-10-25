@@ -146,14 +146,10 @@ final class SSBFifthOrderGradientTests: XCTestCase {
     let z = Self.z
     let exact = try model.fifthOrderAgreementsAndGradients(
       [coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0]
-    // The value pass is the production objective (ssb-fifth-agreement v0.3) bit for bit; the retired per-term
-    // kernel (v0.1) evaluates chi without the row collapse and agrees to float32 rounding.
+    // The value pass is the production objective (ssb-fifth-agreement) bit for bit.
     XCTAssertEqual(
       exact.agreement,
       try model.fifthOrderAgreements([coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0])
-    let perTerm = try model.fifthOrderAgreementsReference(
-      [coordinates.point(z)], packedCoefficients: [coordinates.pack(z)])[0]
-    XCTAssertEqual(perTerm, exact.agreement, accuracy: 2e-6 * exact.agreement)
     let value = reference.agreement(z)
     XCTAssertEqual(exact.agreement, value, accuracy: 1e-5 * value)
     XCTAssertEqual(exact.agreement64, value, accuracy: 1e-5 * value)

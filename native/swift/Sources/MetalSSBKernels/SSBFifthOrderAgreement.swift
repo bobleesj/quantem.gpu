@@ -4,10 +4,8 @@ import Metal
 /// Batched all-BF fifth-order agreement with persistent, bounded GPU partials and GPU score reduction.
 /// The model supplies its already gathered native-grid evidence and reusable probe geometry.
 ///
-/// Production evaluation is `fifth_agreement_rows` (ssb-fifth-agreement v0.3, `ssb_fifth_agreement.metal`), also the
-/// value pass of `SSBFifthOrderGradient` on all or every n-th BF pixel. The earlier `fifth_agreement`
-/// (`ssb_fifth_order.metal`) is kept only as the parity reference of the tests (`evaluateReference`); there is no
-/// runtime fallback.
+/// Evaluation is `fifth_agreement_rows` (ssb-fifth-agreement, `ssb_fifth_agreement.metal`), also the value pass of
+/// `SSBFifthOrderGradient` on all or every n-th BF pixel.
 final class SSBFifthOrderAgreement {
   private struct Grid {
     var count, bandCount, chunks, batch: UInt32
@@ -24,7 +22,7 @@ final class SSBFifthOrderAgreement {
   private let device: MTLDevice
   private let queue: MTLCommandQueue
   private let library: MTLLibrary
-  private let probe, agreement, power, score: MTLComputePipelineState
+  private let probe, power, score: MTLComputePipelineState
   private var rowsPipelines: [Int: MTLComputePipelineState] = [:]
   /// The band tiles of `fifth_agreement_rows`, shared with the gradient pass.
   let tiles: MTLBuffer
@@ -46,7 +44,6 @@ final class SSBFifthOrderAgreement {
       return try device.makeComputePipelineState(function: function)
     }
     probe = try pipeline("fifth_probe")
-    agreement = try pipeline("fifth_agreement")
     power = try pipeline("fifth_power")
     score = try pipeline("fifth_score")
     let table = Self.tiles(q, width: Self.tileWidth)
@@ -283,46 +280,5 @@ final class SSBFifthOrderAgreement {
     for (position, index) in order.enumerated() { result[index] = Double(values[position]) }
     guard result.allSatisfy(\.isFinite) else { throw SSBOptimizationError.nonFiniteLoss }
     return result
-  }
-
-  /// Tests only: the retired per-term kernel `fifth_agreement` (ssb-per-term v0.1), the parity reference of v0.3.
-  func evaluateReference(
-    rows: [[Float]], geometry: MetalSSBGeometry, k: MTLBuffer, q: MTLBuffer,
-    band: MTLBuffer, weights: MTLBuffer, probeGeometry: MTLBuffer,
-    count: Int, bandCount: Int
-  ) throws -> [Double] {
-    guard !rows.isEmpty else { return [] }
-    let chunks = (count + 255) / 256
-    let batchSize = Self.batchSize(count: count, bandCount: bandCount, candidates: rows.count)
-    let chi = try workspace("chi", bytes: count * batchSize * 4)
-    let partial = try workspace("partial", bytes: chunks * bandCount * batchSize * 16)
-    let powers = try workspace("power", bytes: bandCount * batchSize * 4)
-    let scores = try workspace("scores", bytes: rows.count * 4, shared: true)
-    guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
-    for first in stride(from: 0, to: rows.count, by: batchSize) {
-      let batch = min(batchSize, rows.count - first)
-      var grid = grid(geometry: geometry, count: count, bandCount: bandCount, batch: batch)
-      let trials = try SSBCoherentReconstruction.buffer(
-        device, rows[first..<(first + batch)].flatMap { $0 })
-      try encodeProbe(commands, grid: &grid, k: k, trials: trials, chi: chi)
-      try encode(commands, agreement) { encoder in
-        for (index, buffer) in [band, k, q, partial].enumerated() {
-          encoder.setBuffer(buffer, offset: 0, index: index)
-        }
-        encoder.setBytes(&grid, length: MemoryLayout<Grid>.stride, index: 4)
-        encoder.setBuffer(trials, offset: 0, index: 5)
-        encoder.setBuffer(probeGeometry, offset: 0, index: 6)
-        encoder.setBuffer(chi, offset: 0, index: 7)
-        encoder.dispatchThreads(
-          MTLSize(width: bandCount, height: chunks, depth: (batch + 3) / 4),
-          threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
-      }
-      try encodeReduction(
-        commands, grid: &grid, partial: partial, weights: weights, powers: powers, scores: scores,
-        first: first)
-    }
-    try finish(commands)
-    let values = scores.contents().assumingMemoryBound(to: Float.self)
-    return rows.indices.map { Double(values[$0]) }
   }
 }

@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 using namespace metal;
-// The low-order agreement objective with angle-sum phases (ssb-joint-agreement v0.2): the arithmetic of
-// joint_objective_angle_sums (ssb_joint.metal, v0.1) per band frequency, chunk of 256 BF pixels and candidate,
+// The low-order agreement objective with angle-sum phases (ssb-joint-agreement since v0.2): the arithmetic of
+// v0.1's joint_objective_angle_sums (deleted 2026-10-25) per band frequency, chunk of 256 BF pixels and candidate,
 // with
 // 1. the soft aperture of joint_geometry_xy exactly 1 inside and 0 outside conservatively rounded radii, its full
 //    expression only for SIMD groups with a lane in the one-pixel edge ring (the angle sums need no alpha^2, so no

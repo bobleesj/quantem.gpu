@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 using namespace metal;
-// Exact gradient of the fifth-order agreement S = sum_q w_q |N_q|^2 / D_q (ssb-fifth-gradient v0.2), on all BF
+// Exact gradient of the fifth-order agreement S = sum_q w_q |N_q|^2 / D_q (ssb-fifth-gradient since v0.2), on all BF
 // pixels or every kStride-th, after the value pass `fifth_agreement_rows` (ssb_fifth_agreement.metal) of the same
 // candidates: N_q = sum_k G conj(gamma), D_q = sum_k |gamma|^2, gamma = b1 e^{-i phi1} - b2 e^{i phi2},
 // phi1 = chi(k-q) - chi(k), phi2 = chi(k+q) - chi(k). With a_q = N_q / D_q and R = conj(a_q) (G - a_q gamma),

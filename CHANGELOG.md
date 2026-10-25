@@ -39,6 +39,12 @@ new `rcN` heading when that rc is published to TestPyPI.
   `estimator:` argument of `MetalSSBJointModel.reconstruct`, the mean-phase general and fused 1536-point kernels
   (`ssb-mean-phase`) and the complex-wave amplitude path are removed; the native reconstruction choices are
   ShowPtycho's three, `SSBReconstructionMethod` `.ssb`, `.phase` and `.complex`. Python's estimators are unchanged.
+- Native (Metal) SSB: the fit objectives' v0.1 test-reference kernels are deleted (`ssb_low_order.metal`,
+  `joint_objective_angle_sums`, `fifth_agreement`), with `SSBAgreementKernel` and
+  `MetalSSBJointModel.agreementKernel`: the low-order agreement always uses its angle-sum kernel (the per-term
+  option `joint_objective_batch` had no caller). Shared sources changed, so `ssb-joint-agreement` v0.4,
+  `ssb-low-order-derivatives` v0.4, `ssb-fifth-agreement` v0.4, `ssb-fifth-gradient` v0.3, `ssb-per-term` v0.3 and
+  `ssb-direct` v0.3 are registered; every output is bitwise unchanged.
 
 ### Changed
 

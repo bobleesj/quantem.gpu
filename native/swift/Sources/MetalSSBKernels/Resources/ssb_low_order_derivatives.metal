@@ -1,6 +1,6 @@
-// The low-order agreement with its exact gradient and Hessian (ssb-low-order-derivatives v0.2), in the six fit
+// The low-order agreement with its exact gradient and Hessian (ssb-low-order-derivatives since v0.2), in the six fit
 // coordinates z = (C10, a = C12 cos 2 phi12, b = C12 sin 2 phi12 [A], tilt row, tilt column [mrad], depth spread
-// [A]), the arithmetic of `ssb_low_order.metal` (v0.1) with
+// [A]), the arithmetic of v0.1 (`ssb_low_order.metal`, deleted 2026-10-25) with
 // 1. the soft aperture exactly 1 inside and 0 outside conservatively rounded radii, its full expression only for
 //    SIMD groups with a lane in the one-pixel edge ring (`joint_agreement_edge`, bitwise the v0.1 aperture);
 //    fast:: sincos (equal to precise:: with fast math off apart from rare 1-ulp differences near +-pi), the
