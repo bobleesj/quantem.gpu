@@ -10,7 +10,7 @@ import Native4DSTEMIO
 //
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --scan-step A [--kv 300] [--semiangle 30]
 //     [--index DIR] [--max-order 5] [--trials 200] [--repeats 1] [--output RESULT.json]
-//     [--search newton|gradient] [--fifth-only BASELINE.json [--gradient-check]]
+//     [--search newton|gradient] [--fifth-only BASELINE.json [--gradient-check]] [--higher-order-limit 2|20]
 // --fifth-only starts the fifth-order stage at the kept low-order fit and rotation of an earlier result;
 // --gradient-check compares the exact gradient with central differences there and at the earlier optimum.
 //     [--compare-standard] [--dark-field DARK.f32] [--verify-branches] [--check-maximum]
@@ -49,6 +49,7 @@ struct Options {
   var output: URL?
   var dump: URL?
   var search = SSBFitOptions().higherOrderSearch
+  var higherOrderLimit = SSBFitOptions.defaultHigherOrderLimit
   var fifthOnly: URL?
   var gradientCheck = false
   var gradientSettings = SSBFifthOrderGradientSearch.Settings()
@@ -115,6 +116,7 @@ struct Options {
         case let other:
           throw failure("Unknown search \(other); use newton, gradient or gradient-coarse")
         }
+      case "--higher-order-limit": higherOrderLimit = Double(try value(flag)) ?? .nan
       case "--fifth-only": fifthOnly = URL(fileURLWithPath: try value(flag))
       case "--gradient-check": gradientCheck = true
       case "--hessian-stride": gradientSettings.hessianBFStride = Int(try value(flag)) ?? 64
@@ -477,6 +479,12 @@ func record(_ fit: SSBFit) -> [String: Any] {
       "normalized_agreement": refinement.agreement,
       "coordinates": refinement.coordinates,
     ] as [String: Any]
+    values["higher_order_limit"] = fit.options.higherOrderLimit
+  }
+  if let check = fit.higherOrderGuard,
+    let json = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(check))
+  {
+    values["higher_order_guard"] = json
   }
   return values
 }
@@ -689,7 +697,7 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
     var initialSeconds = 0.0
     var options5 = SSBFitOptions(
       trials: options.trials, compareStandard: options.compareStandard,
-      maximumOrder: options.maximumOrder)
+      maximumOrder: options.maximumOrder, higherOrderLimit: options.higherOrderLimit)
     options5.higherOrderSearch = options.search
     let sampling = (
       caseRecord.calibration.scanSamplingRowAngstroms,

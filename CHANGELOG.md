@@ -8,6 +8,17 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- Native (Metal) SSB fifth-order fit: `SSBFitOptions.higherOrderLimit` bounds each of the 22 higher-order
+  coordinates (C21 through C56) to ±2 (the standard box and the default, `defaultHigherOrderLimit`) or ±20 rad of
+  probe phase at the aperture edge (`wideHigherOrderLimit`, which no longer binds); other values are refused, and
+  saved options without it decode as ±2. `SSBModelFit.fifthOrderBounds(higherOrderLimit:)` gives the box, and
+  `refineToFifthOrder` refines an already refined fit again from its kept low-order fit. Every fifth-order fit
+  carries `SSBFit.higherOrderGuard` (`SSBHigherOrderGuard`, Python `higher_order_fit.assess`): the coherence
+  (A - F_A) / (P - F_P) with Poisson noise floors from G(0, k), each term's standard error and edge-phase error from
+  the Hessian covariance, and `trusted` (coherence >= 0.9, every edge-phase error <= 0.1 rad) with the reasons when
+  not. `MetalSSBJointModel.bandPowerSummary()` gives P, the band weight and the noise variance; `onRefinedFit` hands
+  a viewer the fit before the guard's 29 gradient evaluations (0.65-0.9 s on a 512 x 512 scan, Apple M5 Max).
+
 - Native (Metal) drag previews of the regularized `phase` and `complex` reconstructions (`ssb-direct` v0.2):
   `MetalSSBJointModel.buildDragWindow(along:at:upsamplingFactor:method:regularization:nodes:)` builds a Chebyshev
   series of the prepared normal equations along one `SSBDragControl` (Python's CUDA `DragWindow`) and
