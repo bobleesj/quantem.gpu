@@ -113,15 +113,35 @@ def bands(power, sampling_A, layers, band_A, *, notch=(), radius=4.0):
     reach = radius * max(1 / (shape[0] * sampling_A[0]), 1 / (shape[1] * sampling_A[1]))
     masks, taken = [], torch.zeros(shape, dtype=torch.bool, device=power.device)
     for lattice in layers:
-        mask = torch.zeros(shape, dtype=torch.bool, device=power.device)
-        for g in harmonics(lattice):
-            mask |= (q_row - g[0]) ** 2 + (q_col - g[1]) ** 2 < reach**2
+        mask = disks(q_row, q_col, harmonics(lattice), reach, sampling_A)
         masks.append(mask & in_band)
         taken |= mask
-    for g in notch:
-        taken |= (q_row - g[0]) ** 2 + (q_col - g[1]) ** 2 < reach**2
+    taken |= disks(q_row, q_col, notch, reach, sampling_A)
     masks.append(in_band & ~taken)
     return masks
+
+
+def disks(q_row, q_col, centres, reach, sampling_A):
+    """Where (q_row, q_col) lies within reach Å⁻¹ of any of centres (spots, 2) Å⁻¹: every spot's disk
+    at once, each tested only on the window of pixels around it, (q - g)² summed and compared exactly
+    as for one spot over the whole grid, so the mask is the same bit for bit. One frame's spectrum
+    has thousands of notch spots (2860 on a 1536² frame), which one disk at a time over the whole
+    grid took 70 ms a frame; indices wrap, as the unshifted grid does at zero frequency."""
+    rows, cols = q_row.shape[0], q_col.shape[1]
+    mask = torch.zeros((rows, cols), dtype=torch.bool, device=q_row.device)
+    if len(centres) == 0:
+        return mask
+    centres = torch.as_tensor(np.asarray(centres), device=q_row.device).to(q_row.dtype)
+    windows = []
+    for axis, size in enumerate((rows, cols)):
+        step = 1 / (size * sampling_A[axis])
+        half = int(np.ceil(reach / step)) + 1
+        nearest = torch.round(centres[:, axis].double() / step).long()
+        windows.append((nearest[:, None] + torch.arange(-half, half + 1, device=q_row.device)[None, :]) % size)
+    row_index, col_index = windows
+    inside = (q_row[row_index, 0][:, :, None] - centres[:, 0, None, None]) ** 2 + (q_col[0, col_index][:, None, :] - centres[:, 1, None, None]) ** 2 < reach**2
+    mask[row_index[:, :, None].expand_as(inside)[inside], col_index[:, None, :].expand_as(inside)[inside]] = True
+    return mask
 
 
 def harmonics(lattice):
