@@ -54,8 +54,9 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public let provenance: MetalSSBProvenance
   /// Exact Double point used for this phase, independently of the Float UI bridge.
   public var point: SSBModelPoint? = nil
-  /// `complexWave` only: the object wave's amplitude (float32, rows x columns), |inverse FFT of the summed
-  /// corrected spectrum| / BF count, as Python's `object_wave`. Nil for the phase estimators.
+  /// `complexWave`: the object wave's amplitude (float32, rows x columns), |inverse FFT of the summed corrected
+  /// spectrum| / BF count, as Python's `object_wave`. Method `.complex`: the relative amplitude exp(eta) of the
+  /// regularized solve. Nil for the phase estimators and method `.phase`.
   public var amplitude: MTLBuffer? = nil
   /// The estimator that produced this result.
   public var estimator: SSBPhaseEstimator = .phaseOfMean
@@ -64,6 +65,10 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public var outputSampling: SSBOutputSampling? = nil
   /// The registered GPU kernel (name, version, source fingerprint, variant) that produced this result.
   public var kernel: MetalKernelIdentity? = nil
+  /// The reconstruction method: `.ssb` for every estimator path, `.phase` / `.complex` for the direct solves.
+  public var method: SSBReconstructionMethod = .ssb
+  /// The regularization of a `.phase` or `.complex` result; nil for `.ssb`.
+  public var regularization: SSBDirectRegularization? = nil
 }
 
 /// How the agreement objective evaluates its phases.
