@@ -28,6 +28,8 @@ parts:
       - file: api/direct-ptycho
       - file: api/ssb-phase-artifact
         title: Portable SSB results
+    - file: api/drift
+      title: Drift across a time series
     - file: api/movie
     - file: api/core
       title: Devices, optics, parallax, and scan rotation

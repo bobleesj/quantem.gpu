@@ -11,6 +11,7 @@ The examples use one public Python API on supported MPS and CUDA paths.
 | Mean diffraction, BF, ADF, DF | `detector.mean`, `bf`, `adf`, `df` | Reduced NumPy images | [Detectors](images_dpc.md) |
 | CoM and integrated DPC | `dpc.run` | `DPCResult` | [DPC](images_dpc.md) |
 | Find aberrations; reconstruct phase | `SSB.find_aberrations`, `SSB.reconstruct` | `SSBResult` | [SSB](ssb.md) |
+| Measure and correct drift across a series | `drift.drift`, `Drift.show`, `Drift.corrected` | `Drift`; aligned frames and their mean | [Drift](drift.md) |
 | Render a movie | `movie` | Encoded artifact | [Movies](movie.md) |
 
 Use `(row, col)` coordinates. `data.sampling`, `data.units`, and `data.origin`
