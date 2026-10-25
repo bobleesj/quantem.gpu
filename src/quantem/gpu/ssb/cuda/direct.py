@@ -5,6 +5,7 @@ The transfer is the same tilted, finite-depth probe model used by SSB fitting.
 Regularization acts on the solution, never on a rendered image.
 """
 
+import math
 import weakref
 from dataclasses import dataclass
 
@@ -265,6 +266,66 @@ __global__ void direct_eigenbasis(const complex<double>* gram, const complex<dou
 """
 )
 _pixel_terms = cp.RawKernel(_SOURCE, "direct_pixel_terms", options=("-std=c++17",))
+
+# The regularized normal equations (G + diag(p)) x = b of one frequency per
+# thread, Hermitian positive definite for p > 0, so a float64 Cholesky
+# factorization solves them stably (condition below about 1e2 on the test field
+# at strength 0.03). Loops are unrolled for the same NVRTC reason as
+# direct_eigenbasis.
+_CHOLESKY_SOURCE = r"""
+#include <cupy/complex.cuh>
+template <int N>
+__global__ void direct_cholesky(const complex<double>* gram, const complex<double>* rhs,
+                                const double* penalty, int nfrequency, complex<float>* out) {
+    const int f = blockIdx.x * blockDim.x + threadIdx.x;
+    if (f >= nfrequency) return;
+    complex<double> L[N][N], y[N];
+    #pragma unroll
+    for (int i = 0; i < N; ++i) {
+        #pragma unroll
+        for (int j = 0; j < N; ++j) L[i][j] = gram[((long long)f * N + i) * N + j];
+        L[i][i] += penalty[f * N + i];
+        y[i] = rhs[f * N + i];
+    }
+    #pragma unroll
+    for (int j = 0; j < N; ++j) {
+        double d = L[j][j].real();
+        #pragma unroll
+        for (int k = 0; k < j; ++k) d -= norm(L[j][k]);
+        d = sqrt(d);
+        L[j][j] = d;
+        #pragma unroll
+        for (int i = j + 1; i < N; ++i) {
+            complex<double> s = L[i][j];
+            #pragma unroll
+            for (int k = 0; k < j; ++k) s -= L[i][k] * conj(L[j][k]);
+            L[i][j] = s / d;
+        }
+    }
+    #pragma unroll
+    for (int i = 0; i < N; ++i) {
+        complex<double> s = y[i];
+        #pragma unroll
+        for (int k = 0; k < i; ++k) s -= L[i][k] * y[k];
+        y[i] = s / L[i][i].real();
+    }
+    #pragma unroll
+    for (int i = N - 1; i >= 0; --i) {
+        complex<double> s = y[i];
+        #pragma unroll
+        for (int k = i + 1; k < N; ++k) s -= conj(L[k][i]) * y[k];
+        y[i] = s / L[i][i].real();
+        out[f * N + i] = complex<float>(y[i].real(), y[i].imag());
+    }
+}
+"""
+# coefficient row n gains weight[n] * node values: one Chebyshev node of a DragWindow
+_accumulate = cp.ElementwiseKernel(
+    "raw complex128 values, raw float64 weight, int64 size",
+    "complex128 coefficient",
+    "coefficient += weight[i / size] * values[i % size]",
+    "direct_window_accumulate",
+)
 _kernels = {}
 
 
@@ -282,6 +343,15 @@ def _normal_equations(count: int, complex_object: bool):
         module = cp.RawModule(code=_SOURCE, options=("-std=c++17",), name_expressions=[name])
         _kernels[name] = module.get_function(name)
     return _kernels[name], parts
+
+
+def _cholesky(dim: int):
+    """The batched Cholesky solve kernel for regularized systems of one size."""
+    name = f"direct_cholesky<{dim}>"
+    if name not in _kernels:
+        module = cp.RawModule(code=_CHOLESKY_SOURCE, options=("-std=c++17",), name_expressions=[name])
+        _kernels[name] = module.get_function(name)
+    return _kernels[name]
 
 
 def _eigenbasis(count: int):
@@ -455,6 +525,7 @@ class PreparedDirect:
         complex_object: bool,
         smoothness_inv_A: float,
         detector_weighting: str,
+        eigenbasis: bool = True,
     ):
         """Build normal equations once; strengths are applied at evaluation.
 
@@ -465,7 +536,8 @@ class PreparedDirect:
         but T depends on the data alone and is kept on the engine
         (`_layout`), so a change of optics costs one kernel per alias count,
         which evaluates T and reduces all three (`_normal_equations`), and for
-        phase one batched eigendecomposition.
+        phase one batched eigendecomposition (skipped with ``eigenbasis=False``
+        by a `DragWindow` node, which solves by Cholesky instead).
         """
         layout = _layout(engine, factor, smoothness_inv_A, detector_weighting)
         cache = engine._cache
@@ -519,8 +591,8 @@ class PreparedDirect:
             power += augmented[:, dim, dim].real.sum() / layout.dose**2
             if not count:
                 continue
-            if complex_object:
-                prior = cp.concatenate((group.prior, group.prior), axis=1)
+            if complex_object or not eigenbasis:
+                prior = cp.concatenate((group.prior, group.prior), axis=1) if complex_object else group.prior
                 basis = eigen = None
             else:
                 prior = group.prior
@@ -543,10 +615,7 @@ class PreparedDirect:
         compute_loss: bool,
     ):
         """Evaluate arbitrary strengths, returning fresh wave and diagnostics."""
-        spectra = [
-            cp.zeros(self.shape, cp.complex64),
-            cp.zeros(self.shape, cp.complex64),
-        ]
+        spectra = [cp.zeros(self.shape, cp.complex64), cp.zeros(self.shape, cp.complex64)]
         residual = self.signal_power.copy()
         for group in self.groups:
             count = group.rows.shape[1]
@@ -576,29 +645,8 @@ class PreparedDirect:
                     (precise.conj() * prediction).real
                     - 2 * (precise.conj() * group.rhs).real
                 )
-            channels = [(spectra[1], coefficients[:, -count:])]
-            if self.complex_object:
-                channels.append((spectra[0], coefficients[:, :count]))
-            for spectrum, values in channels:
-                values = values * self.factor**2
-                spectrum[group.rows, group.cols] = values
-                spectrum[
-                    (-group.rows) % self.shape[0], (-group.cols) % self.shape[1]
-                ] = values.conj()
-        amplitude, phase = [
-            cp.fft.ifft2(spectrum).real.astype(cp.float32) for spectrum in spectra
-        ]
-        wave = cp.exp(amplitude + 1j * phase).astype(cp.complex64)
-        if not bool(cp.isfinite(wave).all()):
-            raise ValueError(
-                'Direct inversion diverged; increase regularization or use method="phase".'
-            )
-        diagnostics = {
-            "model": "T = exp(eta + i phi), linearized about unity",
-            "normalization": "zero mean phase and log-amplitude; relative amplitude only",
-            "frequency_policy": "supported aliases fitted jointly; DC family and even-grid Nyquist axes excluded",
-            "incident_scale": self.incident_scale,
-        }
+            _scatter(spectra, group.rows, group.cols, coefficients, self.complex_object, self.factor)
+        wave, diagnostics = _wave(spectra, self.incident_scale)
         if compute_loss:
             if float(self.signal_power) > 0:
                 diagnostics["training_relative_sse"] = float(
@@ -608,3 +656,145 @@ class PreparedDirect:
                 diagnostics["training_relative_sse"] = None
                 diagnostics["prediction_error_status"] = "undefined: no non-DC signal"
         return wave, diagnostics
+
+
+# ---
+
+
+class DragWindow:
+    """Prepared statistics along one aberration control, for redrawing while it is dragged.
+
+    Along one control c (``C10_nm``, ``phi12_deg``, ...) with everything else
+    fixed, every Gram entry and right side is sum_k f_k exp(i (c - c0) u_k),
+    an entire function of c, so on [c0 - h, c0 + h] its Chebyshev series
+    converges like 2 (z / 2)^(N + 1) / (N + 1)!, z = h max|u|. ``step`` adds
+    one exact preparation at a Chebyshev node x_j = cos(pi (j + 1/2) / (N + 1))
+    to the coefficients c_n = (2 / (N + 1)) sum_j T_n(x_j) F(x_j) (c_0 halved);
+    once all N + 1 are in, ``solve`` evaluates any c in the window as
+    F = sum_n c_n T_n(x), one matrix-vector product, then a float64 Cholesky
+    solve per frequency, instead of evaluating the transfer at every BF pixel.
+
+    max|u| is the spread of d chi / dc over the aperture, as chi enters every
+    product as a difference of two pupil points: for a magnitude C_nm,
+    (2 pi / lambda) alpha^(n+1) / (n + 1), doubled for m > 0 where the
+    derivative changes sign; for an azimuth phi_nm, m C_nm times that, doubled.
+    h = 3 / max|u| with N = 12 keeps the truncation (3.6e-7 of the largest Gram
+    entry on the test field) below the float32 transfer's own error.
+
+    A complex window also holds the phase statistics as its lower-right block,
+    so one build serves both regularized methods.
+    """
+
+    order = 12
+    reach = 3.0
+
+    def __init__(self, engine, optics, control: str, factor: int, *, complex_object: bool,
+                 smoothness_inv_A: float, detector_weighting: str):
+        self.engine, self.optics, self.control, self.factor = engine, optics, control, factor
+        self.complex_object = complex_object
+        self.options = dict(complex_object=complex_object, smoothness_inv_A=smoothness_inv_A,
+                            detector_weighting=detector_weighting, eigenbasis=False)
+        self.center = float(optics["aberrations"].get(control, 0.0))
+        spread = _phase_spread(engine, optics["aberrations"], control)
+        self.half_width = self.reach / spread if spread > 0 else math.inf
+        nodes = np.cos(np.pi * (np.arange(self.order + 1) + 0.5) / (self.order + 1))
+        self.nodes = list(self.center + (0.0 if math.isinf(self.half_width) else self.half_width) * nodes)
+        weights = (2.0 / (self.order + 1)) * np.cos(np.outer(np.arange(self.order + 1), np.arccos(nodes)))
+        weights[0] *= 0.5
+        self.weights = cp.asarray(weights)
+        self.coefficients = None
+        self.added = 0
+
+    @property
+    def ready(self) -> bool:
+        return self.added == self.order + 1
+
+    def covers(self, value: float) -> bool:
+        return abs(value - self.center) <= self.half_width
+
+    def step(self) -> bool:
+        """Add the next node's exact statistics; True once the window is complete."""
+        if self.ready:
+            return True
+        aberrations = {**self.optics["aberrations"], self.control: self.nodes[self.added]}
+        prepared = PreparedDirect.prepare(self.engine, {**self.optics, "aberrations": aberrations},
+                                          self.factor, **self.options)
+        values = cp.concatenate([part.ravel() for group in prepared.groups for part in (group.gram, group.rhs)])
+        if self.coefficients is None:
+            self.coefficients = cp.zeros((self.order + 1, values.size), cp.complex128)
+            self.template = prepared
+        _accumulate(values, self.weights[:, self.added], np.int64(values.size), self.coefficients)
+        self.added += 1
+        return self.ready
+
+    def solve(self, value: float, phase_regularization: float, amplitude_regularization: float | None,
+              *, complex_object: bool):
+        """The wave at control ``value`` (inside the window), as PreparedDirect.solve without the loss."""
+        x = 0.0 if math.isinf(self.half_width) else (value - self.center) / self.half_width
+        basis = cp.asarray(np.cos(np.arange(self.order + 1) * np.arccos(np.clip(x, -1.0, 1.0))))
+        values = basis.astype(cp.complex128) @ self.coefficients
+        template = self.template
+        spectra = [cp.zeros(template.shape, cp.complex64), cp.zeros(template.shape, cp.complex64)]
+        at = 0
+        for group in template.groups:
+            size, dim = group.rhs.shape
+            gram = values[at:at + size * dim * dim].reshape(size, dim, dim)
+            at += gram.size
+            rhs = values[at:at + size * dim].reshape(size, dim)
+            at += rhs.size
+            count = group.rows.shape[1]
+            penalty = group.prior * template.scale
+            if complex_object:
+                penalty = penalty * cp.concatenate((cp.full(count, amplitude_regularization), cp.full(count, phase_regularization)))
+            else:
+                if self.complex_object:
+                    gram, rhs, penalty = gram[:, count:, count:], rhs[:, count:], penalty[:, count:]
+                penalty = penalty * phase_regularization
+            width = rhs.shape[1]
+            coefficients = cp.empty((size, width), cp.complex64)
+            _cholesky(width)(
+                (-(-size // 64),), (64,),
+                (cp.ascontiguousarray(gram), cp.ascontiguousarray(rhs), cp.ascontiguousarray(penalty),
+                 np.int32(size), coefficients),
+            )
+            _scatter(spectra, group.rows, group.cols, coefficients, complex_object, self.factor)
+        return _wave(spectra, template.incident_scale)
+
+
+def _phase_spread(engine, aberrations, control: str) -> float:
+    """max|u| of `DragWindow`: the range of d chi / d control over the aperture, in radians per unit."""
+    digits = control.split("_")[0].lstrip("Cphi")
+    n, m = int(digits[0]), int(digits[1])
+    alpha = engine._cache["semiangle_rad"] + 0.5 * max(engine._cache["ang_y_rad"], engine._cache["ang_x_rad"])
+    per_A = 2 * np.pi / engine.wavelength * alpha ** (n + 1) / (n + 1)
+    if control.startswith("phi"):
+        return 2 * m * per_A * 10 * abs(aberrations.get(f"C{n}{m}_nm", 0.0)) * np.pi / 180
+    return (2 if m else 1) * per_A * 10
+
+
+def _scatter(spectra, rows, cols, coefficients, complex_object, factor):
+    """Place one group's alias coefficients (log-amplitude first, then phase) and their Hermitian mirrors."""
+    count = rows.shape[1]
+    shape = spectra[0].shape
+    channels = [(spectra[1], coefficients[:, -count:])]
+    if complex_object:
+        channels.append((spectra[0], coefficients[:, :count]))
+    for spectrum, values in channels:
+        values = values * factor**2
+        spectrum[rows, cols] = values
+        spectrum[(-rows) % shape[0], (-cols) % shape[1]] = values.conj()
+
+
+def _wave(spectra, incident_scale):
+    """exp(eta + i phi) from the log-amplitude and phase spectra, and the model's description."""
+    amplitude, phase = [cp.fft.ifft2(spectrum).real.astype(cp.float32) for spectrum in spectra]
+    wave = cp.exp(amplitude + 1j * phase).astype(cp.complex64)
+    if not bool(cp.isfinite(wave).all()):
+        raise ValueError('Direct inversion diverged; increase regularization or use method="phase".')
+    diagnostics = {
+        "model": "T = exp(eta + i phi), linearized about unity",
+        "normalization": "zero mean phase and log-amplitude; relative amplitude only",
+        "frequency_policy": "supported aliases fitted jointly; DC family and even-grid Nyquist axes excluded",
+        "incident_scale": incident_scale,
+    }
+    return wave, diagnostics

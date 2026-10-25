@@ -89,23 +89,7 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
         )
     from quantem.gpu.ssb.cuda.direct import PreparedDirect
 
-    engine = session._backend()._get_accelerator()
-    optics = {
-        "aberrations": coefs,
-        "sample_tilt_mrad": tilt or (0.0, 0.0),
-        "depth_spread_nm": depth or 0.0,
-    }
-    key = (
-        id(engine),
-        id(engine.G_qk),
-        session.scan_detector_rotation_deg,
-        tuple(sorted(coefs.items())),
-        tuple(optics["sample_tilt_mrad"]),
-        optics["depth_spread_nm"],
-        factor,
-        policy["smoothness_inv_A"],
-        policy["detector_weighting"],
-    )
+    engine, optics, key = _inputs(session, coefs, tilt, depth, factor, policy)
     cached = getattr(session, "_prepared_direct", None)
     if cached is None or cached[0] != key:
         # Retain the current optics only, so exploring changed optics cannot grow memory without bound.
@@ -128,6 +112,71 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
         policy.get("amplitude_regularization"),
         compute_loss=compute_loss,
     )
+
+
+def drag(session, control, coefs, tilt, depth, factor, policy):
+    """The wave while ``control`` is dragged, every other input held.
+
+    Served from the session's `DragWindow` along that control when it is
+    complete and covers the value, from the prepared system when the optics
+    are those already prepared (a strength drag), and otherwise exactly by
+    `solve`. A window for another control, other fixed inputs, or a value
+    outside it is replaced by a new one centred on this value; `advance` then
+    builds it one node at a time between frames. Committed frames and saved
+    results always use `solve`, so they remain the exact model.
+    """
+    from quantem.gpu.ssb.cuda.direct import DragWindow
+
+    if session.backend != "cuda" or session._streamed is not None:
+        return solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
+    engine, optics, key = _inputs(session, coefs, tilt, depth, factor, policy)
+    cached = getattr(session, "_prepared_direct", None)
+    if cached is not None and cached[0] == key and policy["method"] in cached[1]:
+        return solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
+    held = _inputs(session, {**coefs, control: None}, tilt, depth, factor, policy)[2]
+    complex_object = policy["method"] == "complex"
+    window = getattr(session, "_direct_window", None)
+    value = float(coefs.get(control, 0.0))
+    if (window is None or window[0] != held or window[1].control != control
+            or not window[1].covers(value) or (complex_object and not window[1].complex_object)):
+        # drop the old window first: a complex one holds about 2 GB on the test field
+        session._direct_window = None
+        window = session._direct_window = held, DragWindow(
+            engine, optics, control, factor, complex_object=complex_object,
+            smoothness_inv_A=policy["smoothness_inv_A"], detector_weighting=policy["detector_weighting"],
+        )
+    if window[1].ready:
+        return window[1].solve(value, policy["phase_regularization"], policy.get("amplitude_regularization"),
+                               complex_object=complex_object)
+    return solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
+
+
+def advance(session) -> bool:
+    """Add one node to the pending drag window; True when there is nothing left to build."""
+    window = getattr(session, "_direct_window", None)
+    return window is None or window[1].step()
+
+
+def _inputs(session, coefs, tilt, depth, factor, policy):
+    """The engine, the optics and the key of every input a prepared system depends on."""
+    engine = session._backend()._get_accelerator()
+    optics = {
+        "aberrations": coefs,
+        "sample_tilt_mrad": tilt or (0.0, 0.0),
+        "depth_spread_nm": depth or 0.0,
+    }
+    key = (
+        id(engine),
+        id(engine.G_qk),
+        session.scan_detector_rotation_deg,
+        tuple(sorted(coefs.items())),
+        tuple(optics["sample_tilt_mrad"]),
+        optics["depth_spread_nm"],
+        factor,
+        policy["smoothness_inv_A"],
+        policy["detector_weighting"],
+    )
+    return engine, optics, key
 
 
 def run(
