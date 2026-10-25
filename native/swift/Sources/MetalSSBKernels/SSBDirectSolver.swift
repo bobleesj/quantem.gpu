@@ -34,10 +34,16 @@ import MetalPerformanceShadersGraph
 }
 
 final class SSBDirectSolver {
-  struct LayoutKey: Equatable {
+  struct LayoutKey: Hashable {
     var factor: Int
     var smoothness: Double
     var weighting: SSBDetectorWeighting
+
+    init(factor: Int, regularization: SSBDirectRegularization) {
+      self.factor = factor
+      smoothness = regularization.smoothnessInverseAngstroms
+      weighting = regularization.detectorWeighting
+    }
   }
   struct PreparedKey: Equatable {
     var layout: LayoutKey
@@ -98,7 +104,7 @@ final class SSBDirectSolver {
   }
 
 
-  private struct Grid {
+  struct Grid {
     var frequencies, count, bfOffset, planeStride, gCols: UInt32
     var wl, semiangle, angularRow, angularColumn, factor, depth, tiltRow, tiltColumn, outer2: Float
   }
@@ -108,19 +114,23 @@ final class SSBDirectSolver {
   static let maximumAliases = 16
   static let batch = 512
 
-  private let device: MTLDevice
-  private let queue: MTLCommandQueue
-  private let library: MTLLibrary
-  private let geometry: MetalSSBGeometry
+  let device: MTLDevice
+  let queue: MTLCommandQueue
+  let library: MTLLibrary
+  let geometry: MetalSSBGeometry
   private let activeIndices: [Int]
-  private let n: Int
+  let n: Int
   private let pixelPipeline, dcPipeline, wavePipeline: MTLComputePipelineState
-  private var pipelines: [String: MTLComputePipelineState] = [:]
-  private var layout: Layout?
+  private var pipelines: [Kernel: MTLComputePipelineState] = [:]
+  var layout: Layout?
   /// The prepared systems of the current optics, phase (false) and complex (true).
   private var prepared: [Bool: Prepared] = [:]
+  /// Drag windows (tiles) per control, most recently used first (`SSBDirectDragWindow.swift`).
+  var windows: [SSBDragControl: [DragWindow]] = [:]
+  var useCounter = 0
+  private var windowPipelines: [String: MTLComputePipelineState] = [:]
   private var fft: [Int: (MPSGraph, MPSGraphTensor, MPSGraphTensor)] = [:]
-  private(set) var lastTiming = SSBDirectTiming()
+  var lastTiming = SSBDirectTiming()
   let sourceSHA256: String
 
   init(
@@ -152,47 +162,72 @@ final class SSBDirectSolver {
     return (outputs, stride(from: 0, to: outputs, by: share).map { $0..<min($0 + share, outputs) })
   }
 
-  private func normalEquations(count: Int, complex: Bool, range: Range<Int>) throws -> MTLComputePipelineState {
-    let key = "\(count)-\(complex)-\(range.lowerBound)-\(range.upperBound)"
-    if let pipeline = pipelines[key] { return pipeline }
+  /// One specialized normal-equations dispatch: `direct_normal_tiled` (one thread per frequency and alias) for complex
+  /// systems of two or more aliases, `direct_normal_equations` (one thread per frequency, entries split into parts)
+  /// otherwise; each is the faster one there on the M5 Max.
+  struct Kernel: Hashable {
+    var count: Int
+    var complex: Bool
+    /// Entries of this part (`direct_normal_equations`); every entry for the tiled kernel.
+    var range: Range<Int>
+    var tiled: Bool
+    var name: String { tiled ? "direct_normal_tiled" : "direct_normal_equations" }
+  }
+
+  static func kernels(count: Int, complex: Bool) -> [Kernel] {
+    if complex && count >= 2 {
+      return [Kernel(count: count, complex: true, range: 0..<parts(count: count, complex: true).outputs, tiled: true)]
+    }
+    return parts(count: count, complex: complex).ranges.map {
+      Kernel(count: count, complex: complex, range: $0, tiled: false)
+    }
+  }
+
+  /// Blocks of 32 frequencies per threadgroup of the tiled kernel: at least 128 threads.
+  static func blocks(count: Int) -> Int { max(1, 4 / count) }
+  /// BF pixels per threadgroup tile of the tiled kernel: the tile's columns take about 16 KB.
+  static func tile(count: Int, complex: Bool) -> Int {
+    max(1, min(32, 16384 / (256 * count * (complex ? 2 : 1) * blocks(count: count))))
+  }
+
+  private func makePipeline(_ kernel: Kernel) throws -> MTLComputePipelineState {
     let constants = MTLFunctionConstantValues()
-    var c = UInt32(count), x = complex, first = UInt32(range.lowerBound), last = UInt32(range.upperBound)
+    var c = UInt32(kernel.count), x = kernel.complex
+    var first = UInt32(kernel.range.lowerBound), last = UInt32(kernel.range.upperBound)
+    var tile = UInt32(Self.tile(count: kernel.count, complex: kernel.complex))
+    var blocks = UInt32(Self.blocks(count: kernel.count))
     constants.setConstantValue(&c, type: .uint, index: 60)
     constants.setConstantValue(&x, type: .bool, index: 61)
     constants.setConstantValue(&first, type: .uint, index: 62)
     constants.setConstantValue(&last, type: .uint, index: 63)
-    let function = try library.makeFunction(name: "direct_normal_equations", constantValues: constants)
+    constants.setConstantValue(&tile, type: .uint, index: 64)
+    constants.setConstantValue(&blocks, type: .uint, index: 65)
+    let function = try library.makeFunction(name: kernel.name, constantValues: constants)
+    return try device.makeComputePipelineState(function: function)
+  }
+
+  /// A drag-window kernel (`direct_window_accumulate`, `_finalize`, `_evaluate`).
+  func windowPipeline(_ name: String) throws -> MTLComputePipelineState {
+    if let pipeline = windowPipelines[name] { return pipeline }
+    guard let function = library.makeFunction(name: name) else { throw MetalSSBError.missingFunction(name) }
     let pipeline = try device.makeComputePipelineState(function: function)
-    pipelines[key] = pipeline
+    windowPipelines[name] = pipeline
     return pipeline
   }
 
   /// Specialize every pipeline a layout needs, in parallel (the cold cost of a new alias count).
   private func warmPipelines(_ layout: Layout, complex: Bool) throws {
-    var needed: [(Int, Bool, Range<Int>)] = []
-    for group in layout.groups {
-      for range in Self.parts(count: group.count, complex: complex).ranges
-      where pipelines["\(group.count)-\(complex)-\(range.lowerBound)-\(range.upperBound)"] == nil {
-        needed.append((group.count, complex, range))
-      }
-    }
+    let needed = layout.groups.flatMap { Self.kernels(count: $0.count, complex: complex) }
+      .filter { pipelines[$0] == nil }
     if needed.isEmpty { return }
     let lock = NSLock()
     nonisolated(unsafe) var failure: Error?
-    nonisolated(unsafe) var made: [String: MTLComputePipelineState] = [:]
+    nonisolated(unsafe) var made: [Kernel: MTLComputePipelineState] = [:]
     DispatchQueue.concurrentPerform(iterations: needed.count) { index in
-      let (count, complex, range) = needed[index]
       do {
-        let constants = MTLFunctionConstantValues()
-        var c = UInt32(count), x = complex, first = UInt32(range.lowerBound), last = UInt32(range.upperBound)
-        constants.setConstantValue(&c, type: .uint, index: 60)
-        constants.setConstantValue(&x, type: .bool, index: 61)
-        constants.setConstantValue(&first, type: .uint, index: 62)
-        constants.setConstantValue(&last, type: .uint, index: 63)
-        let function = try library.makeFunction(name: "direct_normal_equations", constantValues: constants)
-        let pipeline = try device.makeComputePipelineState(function: function)
+        let pipeline = try makePipeline(needed[index])
         lock.lock()
-        made["\(count)-\(complex)-\(range.lowerBound)-\(range.upperBound)"] = pipeline
+        made[needed[index]] = pipeline
         lock.unlock()
       } catch {
         lock.lock()
@@ -202,6 +237,27 @@ final class SSBDirectSolver {
     }
     if let failure { throw failure }
     pipelines.merge(made) { first, _ in first }
+  }
+
+  /// Encode one alias group's normal equations for one batch of BF pixels (buffers and grid already bound).
+  private func encodeNormalEquations(_ compute: MTLComputeCommandEncoder, group: Group, complex: Bool) throws {
+    for kernel in Self.kernels(count: group.count, complex: complex) {
+      guard let pipeline = pipelines[kernel] else { throw MetalSSBError.missingFunction(kernel.name) }
+      compute.setComputePipelineState(pipeline)
+      if kernel.tiled {
+        let blocks = Self.blocks(count: group.count), tile = Self.tile(count: group.count, complex: complex)
+        let columns = blocks * tile * group.count * 32 * (complex ? 2 : 1) * 8
+        compute.setThreadgroupMemoryLength((columns + 15) / 16 * 16, index: 0)
+        compute.setThreadgroupMemoryLength((blocks * tile * 32 * 8 + 15) / 16 * 16, index: 1)
+        compute.dispatchThreadgroups(
+          MTLSize(width: (group.size + 32 * blocks - 1) / (32 * blocks), height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: 32 * group.count * blocks, height: 1, depth: 1))
+      } else {
+        compute.dispatchThreads(
+          MTLSize(width: group.size, height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+      }
+    }
   }
 
   // MARK: - Layout
@@ -345,7 +401,7 @@ final class SSBDirectSolver {
 
   // MARK: - Prepared normal equations
 
-  private func prepare(
+  func prepare(
     _ key: PreparedKey, complex: Bool, layout: Layout, k: MTLBuffer, visit: MetalSSBJointModel.VisitSpectra,
     isCancelled: () -> Bool
   ) throws -> (Prepared, Double) {
@@ -403,13 +459,7 @@ final class SSBDirectSolver {
           compute.setBuffer(group.alias, offset: 0, index: 2)
           compute.setBuffer(sums[index], offset: 0, index: 5)
           compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 6)
-          for range in Self.parts(count: group.count, complex: complex).ranges {
-            compute.setComputePipelineState(
-              try normalEquations(count: group.count, complex: complex, range: range))
-            compute.dispatchThreads(
-              MTLSize(width: group.size, height: 1, depth: 1),
-              threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
-          }
+          try encodeNormalEquations(compute, group: group, complex: complex)
         }
         compute.endEncoding()
         if half {
@@ -437,15 +487,8 @@ final class SSBDirectSolver {
   ) throws -> (phase: MTLBuffer, amplitude: MTLBuffer?, n: Int) {
     var timing = SSBDirectTiming()
     var started = Date()
-    let layoutKey = LayoutKey(
-      factor: factor, smoothness: regularization.smoothnessInverseAngstroms,
-      weighting: regularization.detectorWeighting)
-    if layout?.key != layoutKey {
-      layout = nil
-      prepared = [:]
-      layout = try makeLayout(layoutKey, visit: visit, isCancelled: isCancelled)
-    }
-    let layout = layout!
+    let layoutKey = LayoutKey(factor: factor, regularization: regularization)
+    let layout = try currentLayout(layoutKey, visit: visit, isCancelled: isCancelled)
     timing.layoutSeconds = Date().timeIntervalSince(started)
     started = Date()
     let key = PreparedKey(layout: layoutKey, point: point, rotation: rotation)
@@ -465,7 +508,31 @@ final class SSBDirectSolver {
     timing.prepareSeconds = Date().timeIntervalSince(started)
     lastTiming = timing
     if isCancelled() { throw CancellationError() }
-    started = Date()
+    let result = try solveAndWave(
+      system, layout: layout, complex: complex, regularization: regularization, timing: &timing)
+    lastTiming = timing
+    return result
+  }
+
+  /// The layout of these settings, made again (and every prepared system and drag window dropped) when they change.
+  func currentLayout(_ key: LayoutKey, visit: MetalSSBJointModel.VisitSpectra, isCancelled: () -> Bool) throws
+    -> Layout
+  {
+    if let layout, layout.key == key { return layout }
+    layout = nil
+    prepared = [:]
+    windows = [:]
+    let made = try makeLayout(key, visit: visit, isCancelled: isCancelled)
+    layout = made
+    return made
+  }
+
+  /// The regularized solves of a prepared (or window-evaluated) system, the scatter and the wave.
+  func solveAndWave(
+    _ system: Prepared, layout: Layout, complex: Bool, regularization: SSBDirectRegularization,
+    timing: inout SSBDirectTiming
+  ) throws -> (phase: MTLBuffer, amplitude: MTLBuffer?, n: Int) {
+    var started = Date()
     let outputN = layout.outputN
     let spectrum = try Self.allocate(device, outputN * outputN * 8, shared: true)
     memset(spectrum.contents(), 0, spectrum.length)
@@ -476,13 +543,12 @@ final class SSBDirectSolver {
     started = Date()
     let result = try wave(spectrum: spectrum, n: outputN, amplitude: complex)
     timing.waveSeconds = Date().timeIntervalSince(started)
-    lastTiming = timing
     return (result.phase, result.amplitude, outputN)
   }
 
   /// Solve every frequency's regularized system in float64 and place its aliases (times factor^2, and the
   /// Hermitian mirrors) in the packed spectrum eta + i phi.
-  private func solve(
+  func solve(
     _ system: Prepared, layout: Layout, complex: Bool, regularization: SSBDirectRegularization,
     spectrum: UnsafeMutablePointer<SIMD2<Float>>
   ) throws {
@@ -604,7 +670,7 @@ final class SSBDirectSolver {
   }
 
   /// Inverse FFT of the packed spectrum, then the phase and (complex) amplitude of exp(eta + i phi).
-  private func wave(spectrum: MTLBuffer, n: Int, amplitude: Bool) throws -> (phase: MTLBuffer, amplitude: MTLBuffer?) {
+  func wave(spectrum: MTLBuffer, n: Int, amplitude: Bool) throws -> (phase: MTLBuffer, amplitude: MTLBuffer?) {
     let field = try Self.allocate(device, n * n * 8)
     let shape: [NSNumber] = [NSNumber(value: n), NSNumber(value: n)]
     if fft[n] == nil {
@@ -647,23 +713,23 @@ final class SSBDirectSolver {
 
   // MARK: - Metal helpers
 
-  private func command() throws -> MTLCommandBuffer {
+  func command() throws -> MTLCommandBuffer {
     guard let command = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
     return command
   }
-  private func encoder(_ command: MTLCommandBuffer, _ pipeline: MTLComputePipelineState) throws
+  func encoder(_ command: MTLCommandBuffer, _ pipeline: MTLComputePipelineState) throws
     -> MTLComputeCommandEncoder
   {
     guard let encoder = command.makeComputeCommandEncoder() else { throw MetalSSBError.commandQueue }
     encoder.setComputePipelineState(pipeline)
     return encoder
   }
-  private func dispatch(_ encoder: MTLComputeCommandEncoder, width: Int) {
+  func dispatch(_ encoder: MTLComputeCommandEncoder, width: Int) {
     encoder.dispatchThreads(
       MTLSize(width: width, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
     encoder.endEncoding()
   }
-  private func finish(_ command: MTLCommandBuffer) throws {
+  func finish(_ command: MTLCommandBuffer) throws {
     command.commit()
     command.waitUntilCompleted()
     if let error = command.error { throw MetalSSBError.commandExecution(error.localizedDescription) }

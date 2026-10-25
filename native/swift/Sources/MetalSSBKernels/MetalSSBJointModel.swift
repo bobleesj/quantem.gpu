@@ -64,6 +64,9 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public var method: SSBReconstructionMethod = .ssb
   /// The regularization of a `.phase` or `.complex` result; nil for `.ssb`.
   public var regularization: SSBDirectRegularization? = nil
+  /// Set when this is a drag preview (`dragPreview`), evaluated from a drag window rather than solved at its own
+  /// optics; nil for every exact result. Previews are for display while dragging, never saved or exported.
+  public var preview: SSBDragPreview? = nil
 }
 
 /// How the agreement objective evaluates its phases.
@@ -794,6 +797,94 @@ public final class MetalSSBJointModel {
     result.method = complex ? .complex : .phase
     result.regularization = regularization
     return result
+  }
+
+  // MARK: - Drag previews of the regularized reconstructions
+
+  /// Add up to `nodes` exact preparations to the drag window of `.phase` or `.complex` along `control` that covers
+  /// `point` (starting a new one when none does), and return its state.
+  ///
+  /// A window is a Chebyshev series, in one control with every other input held, of the prepared normal
+  /// equations (Python's CUDA `DragWindow`): it needs order + 1 exact preparations (29 for a magnitude, tilt or
+  /// depth, 50 for an azimuth), each as costly as an optics change of `reconstruct`. Build one node per call
+  /// between interactive frames, or several while idle. A complex window also serves `.phase`. Windows whose held
+  /// inputs no longer match `point` are dropped; at most three tiles per control and a quarter of the device's
+  /// recommended working set are kept.
+  public func buildDragWindow(
+    along control: SSBDragControl, at point: SSBModelPoint, upsamplingFactor: Int, method: SSBReconstructionMethod,
+    regularization: SSBDirectRegularization = .init(), nodes: Int = 1, isCancelled: () -> Bool = { false }
+  ) throws -> SSBDragWindowState {
+    let solver = try directSolver(method: method, regularization: regularization, factor: upsamplingFactor, point)
+    return try solver.buildWindow(
+      along: control, at: point, factor: upsamplingFactor, complex: method == .complex,
+      regularization: regularization, rotation: scanDetectorRotationDegrees, k: kBuffer, nodes: nodes, visit: visit,
+      isCancelled: isCancelled)
+  }
+
+  /// The state of the drag window along `control` covering `point`, or nil when there is none.
+  public func dragWindowState(
+    along control: SSBDragControl, at point: SSBModelPoint, upsamplingFactor: Int, method: SSBReconstructionMethod,
+    regularization: SSBDirectRegularization = .init()
+  ) -> SSBDragWindowState? {
+    guard method != .ssb else { return nil }
+    return directSolver?.windowState(
+      along: control, at: point, factor: upsamplingFactor, complex: method == .complex,
+      regularization: regularization, rotation: scanDetectorRotationDegrees)
+  }
+
+  /// A drag preview of `.phase` or `.complex` at `point` from a complete window along `control`, or nil when no
+  /// window covers it (then reconstruct exactly, and build the window).
+  ///
+  /// Inside its window a preview agrees with `reconstruct` at the same point to the float32 level (the series is
+  /// truncated at 1e-10 of its terms' bound; coefficients are rounded to float32), but it is not the exact solve:
+  /// the result's `preview` is set, and it must not be saved or exported. Settle on `reconstruct` when the drag ends.
+  public func dragPreview(
+    _ point: SSBModelPoint, along control: SSBDragControl, upsamplingFactor: Int, method: SSBReconstructionMethod,
+    regularization: SSBDirectRegularization = .init()
+  ) throws -> MetalSSBJointPhase? {
+    guard method != .ssb, let solver = directSolver else { return nil }
+    try regularization.validate(for: method)
+    try point.validate()
+    try validatePreparation()
+    let started = Date()
+    guard
+      let (phase, amplitude, n, window) = try solver.preview(
+        point, along: control, factor: upsamplingFactor, complex: method == .complex,
+        regularization: regularization, rotation: scanDetectorRotationDegrees)
+    else { return nil }
+    var result = MetalSSBJointPhase(
+      phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
+      wallSeconds: Date().timeIntervalSince(started), parameters: point.jointParameters,
+      scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
+      point: point, amplitude: method == .complex ? amplitude : nil,
+      kernel: MetalKernelIdentity(
+        name: SSBKernelRegistry.direct.name, version: SSBKernelRegistry.direct.version,
+        sourceSHA256: solver.sourceSHA256,
+        variant: "\(method == .complex ? "complex" : "phase") factor=\(upsamplingFactor) drag-window order=\(window.order)"))
+    result.method = method
+    result.regularization = regularization
+    result.preview = window
+    return result
+  }
+
+  /// Release every drag window (their memory).
+  public func releaseDragWindows() { directSolver?.releaseWindows() }
+
+  private func directSolver(
+    method: SSBReconstructionMethod, regularization: SSBDirectRegularization, factor: Int, _ point: SSBModelPoint
+  ) throws -> SSBDirectSolver {
+    guard method != .ssb else {
+      throw MetalSSBError.invalidGeometry("Drag windows serve the regularized methods phase and complex.")
+    }
+    try regularization.validate(for: method)
+    guard (1...4).contains(factor) else { throw SSBDirectError.unsupportedSampling(factor) }
+    try point.validate()
+    try validatePreparation()
+    if directSolver == nil {
+      directSolver = try SSBDirectSolver(
+        device: device, queue: queue, library: library, geometry: geometry, activeIndices: activeIndices)
+    }
+    return directSolver!
   }
 
   /// Stage times of the latest `.phase` / `.complex` reconstruction (benchmarks).
