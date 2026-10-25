@@ -59,7 +59,14 @@ The first call of a process adds the layout (3–7 ms) and kernel specialization
 
 | Kernel | Status | Source digest | Serves | Validated | Optics change 1× / 2× / 3× (0.373 Å) | Optics change 4× (0.525 Å) | Damping change | Parity | Replaced by | Retired |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `ssb-direct` v0.1 | **active** | `8d1237658f22` | methods `phase` and `complex`, 1–4× | 2026-10-25 | phase 53 / 128–148 / 175–183 (GPU 170); complex 54–57 / 204–210 / 280–287 (GPU 272–278) | phase 468 (GPU 450); complex 1228 (GPU 1201) | phase 0.7–4.7, complex 0.9–7.0 at 1–4×; 15 at 4× complex | five measured acquisitions × their optics × 1× and Auto × 5–7 regularization presets against CUDA (182 reconstructions): phase rms 4e-8–1.8e-7 rad, correlation ≥ 0.9999999999, complex amplitude relative rms ≤ 1.6e-7; against a float64 oracle the same size as CUDA's own error; `SSBDirectReconstructionTests` (synthetic, in-test float64 reference) | — | — |
+| `ssb-direct` v0.2 | **active** | `4e0355f889a5` | methods `phase` and `complex`, 1–4×, and their drag windows | 2026-10-25 | phase 45–50 / 118–123 / 165–175; complex 47–64 / 153–161 / 167–190 (one thread per frequency and alias for complex systems of two or more aliases, `direct_normal_tiled`) | not remeasured (the tiled kernel serves complex) | as v0.1 | as v0.1 on every reconstruction of the five fixtures (see the parity record); drag previews within 1e-6 of the exact image's std inside their window (`SSBDirectDragWindowTests`, `--direct-drag`) | — | — |
+| `ssb-direct` v0.1 | **retired** (`direct_normal_equations` alone; it still serves phase and 1× complex in v0.2) | `8d1237658f22` | methods `phase` and `complex`, 1–4× | 2026-10-25 | phase 53 / 128–148 / 175–183 (GPU 170); complex 54–57 / 204–210 / 280–287 (GPU 272–278) | phase 468 (GPU 450); complex 1228 (GPU 1201) | phase 0.7–4.7, complex 0.9–7.0 at 1–4×; 15 at 4× complex | five measured acquisitions × their optics × 1× and Auto × 5–7 regularization presets against CUDA (182 reconstructions): phase rms 4e-8–1.8e-7 rad, correlation ≥ 0.9999999999, complex amplitude relative rms ≤ 1.6e-7; against a float64 oracle the same size as CUDA's own error; `SSBDirectReconstructionTests` (synthetic, in-test float64 reference) | `ssb-direct` v0.2 | 2026-10-25 |
+
+Drag previews (v0.2, `buildDragWindow` / `dragPreview`, design note
+`maintainer/2026-10-25-ssb-direct-drag-windows.md`): a Chebyshev series of the prepared entries along the dragged
+control from 29 exact preparations (50 for an azimuth). At 3× a window builds in about 5 s; a preview frame takes
+5–9 ms in the benchmark and, in the app while dragging C10 or C12, 5.4–5.9 ms (phase) and 9.8–10.4 ms (complex) per
+render with a render every 16–21 ms; it agrees with the exact image to about 1e-6 of its standard deviation.
 
 ## Native SSB fit (`MetalSSBKernels`)
 

@@ -29,6 +29,9 @@ import Native4DSTEMIO
 //   metal-ssb-fit-benchmark --cache FIXTURE --fixture-parity FIXTURE [--oracle-dir DIR] [--optics NAME]
 //     [--methods ssb,phase,complex] [--output PARITY.json] [--phase-out DIR]
 //     every reconstruction of a fixture's references.json natively, with per-setting parity and timing.
+//   metal-ssb-fit-benchmark --cache FIXTURE --direct-drag FIXTURE [--optics NAME] [--factors 3] [--steps 30]
+//     [--output DRAG.json]
+//     the per-step cost of phase and complex while C10 is dragged (DirectDrag.swift).
 //   metal-ssb-fit-benchmark --cache DIR --objective-bench RUN.json [--repeats 3] [--output BENCH.json]
 //     [--search-kernels-only]
 //     times the agreement objectives at fixed candidates instead of fitting (ObjectiveBenchmark.swift).
@@ -79,6 +82,9 @@ struct Options {
   var opticsName: String?
   /// `--fixture-parity` only: the reconstruction methods to run (default all).
   var methods: Set<String>?
+  var directDrag: URL?
+  var dragSteps = 30
+  var windowControls: [String] = ["c10"]
 
   init() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -149,6 +155,9 @@ struct Options {
       case "--oracle-dir": oracleDirectory = URL(fileURLWithPath: try value(flag))
       case "--optics": opticsName = try value(flag)
       case "--methods": methods = Set(try value(flag).split(separator: ",").map(String.init))
+      case "--direct-drag": directDrag = URL(fileURLWithPath: try value(flag))
+      case "--steps": dragSteps = Int(try value(flag)) ?? 30
+      case "--windows": windowControls = try value(flag).split(separator: ",").map(String.init)
       case "--factors": directFactors = try value(flag).split(separator: ",").compactMap { Int($0) }
       default: throw failure("Unknown argument \(flag)")
       }
@@ -609,6 +618,26 @@ if let fixture = options.fixtureParity {
     device: device, calibration: caseRecord.calibration, geometry: setup.geometry, counts: counts,
     countType: countType, rotationEstimate: caseRecord.rotationEstimateDegrees, only: options.opticsName,
     methods: options.methods)
+  exit(0)
+}
+if let fixture = options.directDrag {
+  try directDrag(
+    directory: fixture, output: options.output, device: device, calibration: caseRecord.calibration,
+    geometry: setup.geometry, counts: counts, countType: countType,
+    rotationEstimate: caseRecord.rotationEstimateDegrees, only: options.opticsName, factors: options.directFactors,
+    steps: options.dragSteps,
+    windowControls: try options.windowControls.map { name in
+      switch name {
+      case "c10": .c10
+      case "c12": .c12
+      case "phi12": .phi12
+      case "tilt-row": .tiltRow
+      case "tilt-column": .tiltColumn
+      case "depth": .depth
+      case "none": throw failure("none")
+      default: throw failure("Unknown window control \(name)")
+      }
+    })
   exit(0)
 }
 if let sweep = options.directParity {

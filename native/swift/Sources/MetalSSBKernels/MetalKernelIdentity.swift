@@ -92,11 +92,14 @@ enum SSBKernelRegistry {
     registeredSourceSHA256: "9a751b5a12baee7e35949fa73fddc266e1b59c3d0614cefe09e064bbff04f8d8")
 
   /// The regularized direct reconstructions (`phase`, `complex`): the k-only pixel terms, the normal equations of every
-  /// scan frequency with its supported aliases (`direct_normal_equations`, float32 per BF pixel, float-float across
-  /// batches) and the wave of the solved spectrum; the systems are solved in float64 on the CPU.
+  /// scan frequency with its supported aliases (float32 per BF pixel, float-float across batches;
+  /// `direct_normal_tiled`, one thread per frequency and alias, for complex systems of two or more aliases,
+  /// `direct_normal_equations` otherwise), the drag windows' Chebyshev coefficients and their evaluation
+  /// (`direct_window_*`), and the wave of the solved spectrum; the systems are solved in float64 on the CPU. v0.1
+  /// (`direct_normal_equations` alone, no drag windows) is retired.
   static let direct = Entry(
-    name: "ssb-direct", version: "0.1", files: ["ssb_joint", "ssb_fifth_order", "ssb_direct"],
-    registeredSourceSHA256: "8d1237658f22e859004f998cbfcba22ffffa0c0de9f907d21c6bde66bf5672f3")
+    name: "ssb-direct", version: "0.2", files: ["ssb_joint", "ssb_fifth_order", "ssb_direct"],
+    registeredSourceSHA256: "4e0355f889a5a05586c198b7f18f19e5a53c25911bb0a6b02802d115b70cc70e")
 
   /// SHA-256 of an entry's shipped source files, concatenated in order.
   static func sourceSHA256(_ entry: Entry) throws -> String {

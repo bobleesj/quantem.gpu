@@ -8,6 +8,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- Native (Metal) drag previews of the regularized `phase` and `complex` reconstructions (`ssb-direct` v0.2):
+  `MetalSSBJointModel.buildDragWindow(along:at:upsamplingFactor:method:regularization:nodes:)` builds a Chebyshev
+  series of the prepared normal equations along one `SSBDragControl` (Python's CUDA `DragWindow`) and
+  `dragPreview(_:along:upsamplingFactor:method:regularization:)` evaluates it, marked by `MetalSSBJointPhase.preview`.
+  On an Apple M5 Max at 3x a preview takes 5-10 ms against 0.17-0.19 s for an exact optics change and agrees with the
+  exact image to about 1e-6 of its standard deviation; a window takes about 5 s to build. Complex systems of two or
+  more aliases prepare with one thread per frequency and alias (0.28 to about 0.18 s at 3x).
+
 - Native (Metal) regularized direct reconstructions, ShowPtycho's `phase` and `complex` beside `ssb`:
   `MetalSSBJointModel.reconstruct(_:upsamplingFactor:method:regularization:)` with `SSBReconstructionMethod` and
   `SSBDirectRegularization` (phase and amplitude damping, smoothness prior, detector weighting), the same fitted
