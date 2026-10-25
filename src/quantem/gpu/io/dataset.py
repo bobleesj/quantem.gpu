@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from math import prod
 from pathlib import Path
 from typing import TYPE_CHECKING
+from weakref import ref
 
 import numpy as np
 import torch
@@ -150,7 +151,23 @@ def _unknown_calibration(name: str) -> str:
     return f"Calibration has no field {name!r}.{hint} Fields: {', '.join(fields)}."
 
 
-@dataclass(eq=False, frozen=True, slots=True)
+class _Metadata(dict):
+    """Dictionary with a notebook view; never keep detector storage alive."""
+
+    def __init__(self, values=(), dataset=None):
+        super().__init__(values)
+        self._dataset = None if dataset is None else ref(dataset)
+
+    def _repr_html_(self) -> str | None:
+        dataset = None if self._dataset is None else self._dataset()
+        return None if dataset is None else dataset.metadata_table().to_html(escape=True)
+
+    def __reduce_ex__(self, protocol):
+        # Copies and serialization contain metadata only, without a resident owner.
+        return dict, (dict(self),)
+
+
+@dataclass(eq=False, frozen=True, slots=True, weakref_slot=True)
 class Dataset4dstemGPU:
     """Loaded acquisition with metadata and GPU tensor indexing.
 
@@ -163,10 +180,17 @@ class Dataset4dstemGPU:
     backend; algorithm packages may also wrap their own arrays. The
     shape, dtype and size queries therefore read ``metadata`` first and fall
     back to whatever the owner reports.
+
+    ``metadata`` is a dictionary that displays the acquisition table in Jupyter.
+    Its outer mapping is copied on construction; detector storage and nested
+    provenance are not copied. Edit metadata through ``data.metadata``.
     """
 
     data: object
     metadata: dict[str, object]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", _Metadata(self.metadata, self))
 
     def metadata_table(self) -> "pd.DataFrame":
         """Inspect acquisition calibration before choosing an algorithm.
@@ -184,6 +208,8 @@ class Dataset4dstemGPU:
         Examples
         --------
         >>> data = io.load("acquisition.qem")
+        >>> data.metadata
+        >>> data.metadata["voltage_kV"]
         >>> data.metadata_table()
         """
         import pandas as pd

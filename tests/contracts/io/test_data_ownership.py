@@ -28,7 +28,7 @@ def test_acquisition_summary_does_not_materialize_storage(tmp_path):
     }
     data = Dataset4dstemGPU(storage, metadata)
     assert data.data is storage
-    assert data.metadata is metadata
+    assert data.metadata == metadata
     assert not isinstance(data, tuple)
     assert data.shape == storage.shape
     assert len(data) == 512
@@ -45,6 +45,7 @@ def test_acquisition_summary_does_not_materialize_storage(tmp_path):
     assert "uint16" in summary
     assert "Not recorded" in summary
     assert "<table" in data._repr_html_()
+    assert data.metadata._repr_html_() == data._repr_html_()
     with pytest.raises(TypeError, match="Select a bounded region first"):
         np.asarray(data)
 
