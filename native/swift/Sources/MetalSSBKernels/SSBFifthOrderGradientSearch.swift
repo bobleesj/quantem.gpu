@@ -45,6 +45,9 @@ public enum SSBFifthOrderGradientSearch {
     public var maxRadius = 64.0
     /// The smallest normalized full-data gain a step must predict (one float32 agreement resolves about 1e-7).
     public var gainTolerance = 1e-8
+    /// A rejected step that predicted less than this normalized gain ends the stage: the Double-summed float32
+    /// powers vary by a few 1e-8 between nearby points, so such a step cannot be resolved.
+    public var noiseFloor = 5e-8
     public var update = Update.bfgs
     public var maxObjectives = 400
     public var maxIterations = 200
@@ -249,6 +252,10 @@ public enum SSBFifthOrderGradientSearch {
             radius *= 0.5
           }
         } else {
+          if predicted < settings.noiseFloor {
+            log?(String(format: "%3d stride %d: rejected at the noise floor", iterations, stride))
+            return "converged"
+          }
           radius *= 0.25
           if radius < 1e-7 { return "trust radius exhausted" }
         }
