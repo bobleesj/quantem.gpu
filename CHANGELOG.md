@@ -8,6 +8,16 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- Python MPS: the regularized `phase` and `complex` reconstructions, `DirectPtycho.run(method=...)` and
+  `preview(method=...)`, on Apple GPUs (`ssb.mps.direct`), with CUDA's model, layout and regularization. MLX Metal
+  kernels accumulate the normal equations from the retained G(q, k) (float32 per bright-field pixel, float-float across
+  pixel batches); the damped systems are solved in float64 on CPU threads; one inverse FFT of the packed eta + i phi
+  spectrum gives the wave. On five measured 512 x 512 acquisitions (1x, 2x and Auto, every regularization preset,
+  456 images) the images agree with CUDA and with a float64 evaluation within 2x CUDA's own float32 error (rms;
+  within 10x at the maximum): phase 2e-8 to 1.5e-7 rad rms, amplitude 0.8e-7 to 1.4e-7 of its mean. On an Apple
+  M5 Max an optics change takes about 0.3-0.5 s at 3x and 0.6-0.9 s at 4x, a damping change 11-20 ms at 3x and
+  26-60 ms at 4x. Drag windows and the post-fit three-method comparison remain CUDA-only.
+
 - Native (Metal) drag previews of the regularized `phase` and `complex` reconstructions (`ssb-direct` v0.2):
   `MetalSSBJointModel.buildDragWindow(along:at:upsamplingFactor:method:regularization:nodes:)` builds a Chebyshev
   series of the prepared normal equations along one `SSBDragControl` (Python's CUDA `DragWindow`) and
