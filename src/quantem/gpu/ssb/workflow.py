@@ -2142,15 +2142,25 @@ class DirectPtycho:
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         seed: int = 42, tilt: bool = True, verbose: bool = True,
         num_trials: int | None = None,
+        region: str | tuple[int, int, int, int] | None = None,
     ) -> "RotationDefocusComparison":
         """Compare two rotations and both defocus signs without selecting a winner.
 
-        Four independent fits use the session's full field, calibration, valid
+        Four independent fits use the selected scan region, calibration, valid
         BF pixels and detector convention. The session's rotation and fitted
         optics are preserved. Each phase image uses Auto output sampling.
 
         Parameters
         ----------
+        region : str or tuple of int, optional
+            None uses the full scan. ``"center"``, ``"top-left"``,
+            ``"top-right"``, ``"bottom-left"`` and ``"bottom-right"`` select
+            half of each scan axis (rounded down), retaining every detector
+            pixel. For example, center is 256 x 256 on a 512 x 512 scan.
+            Explicit bounds are ``(row_start, row_stop, col_start, col_stop)``
+            in scan pixels, with exclusive stops. The returned ``region`` and
+            report record the exact bounds. This diagnostic never applies a
+            regional fit to the parent session.
         show : bool, optional
             Display the phase images and histograms immediately in a notebook.
             Default False returns the comparison with a pandas-style table
@@ -2187,12 +2197,13 @@ class DirectPtycho:
         --------
         >>> comparison = ptycho.compare_rotation_defocus(show=True)  # doctest: +SKIP
         >>> comparison.report()  # doctest: +SKIP
+        >>> comparison = ssb.compare_rotation_defocus(region="center", show=True)  # doctest: +SKIP
         """
         from quantem.gpu.ssb.rotation_defocus import compare_rotation_defocus
 
         comparison = compare_rotation_defocus(
             self, num_trials=resolve_trial_count(trials, num_trials), refinement=refinement,
-            search_ranges=search_ranges, seed=seed, tilt=tilt, verbose=verbose,
+            search_ranges=search_ranges, seed=seed, tilt=tilt, verbose=verbose, region=region,
         )
         if show:
             from IPython.display import display

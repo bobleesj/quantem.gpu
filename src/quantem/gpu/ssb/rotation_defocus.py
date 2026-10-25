@@ -27,6 +27,9 @@ class RotationDefocusComparison:
         Each fit reconstructed with Auto sampling.
     focus_ranges : tuple of tuple of float
         Negative and positive C10 intervals, in nm, both including zero.
+    region : tuple of int, optional
+        Selected scan bounds (row_start, row_stop, col_start, col_stop), with
+        exclusive stops, relative to the original session.
 
     Examples
     --------
@@ -37,6 +40,7 @@ class RotationDefocusComparison:
     fits: tuple[SSBResult, ...]
     reconstructions: tuple[SSBResult, ...]
     focus_ranges: tuple[tuple[float, float], tuple[float, float]]
+    region: tuple[int, int, int, int] | None = None
 
     @property
     def status(self) -> str:
@@ -71,6 +75,8 @@ class RotationDefocusComparison:
                 "Loss": fit.loss,
                 "At zero boundary": abs(c10) < 1e-6,
             })
+            if self.region is not None:
+                records[-1]["Scan region (rows, cols)"] = self.region
         table = pd.DataFrame(records)
         table.index.name = self.status
         return table
@@ -167,16 +173,50 @@ class RotationDefocusComparison:
             axes[2, col].axvline(0, color="0.6", linewidth=0.8, linestyle=":")
             axes[2, col].legend(frameon=False)
         fig.colorbar(image, ax=axes[:2, :], shrink=0.65, label="Phase − median (rad)")
+        region_label = ""
+        if self.region is not None:
+            row_start, row_stop, col_start, col_stop = self.region
+            region_label = f"\nFit region: rows [{row_start}, {row_stop}), cols [{col_start}, {col_stop})"
         fig.suptitle("Four-case review · unresolved without an independent constraint\n"
-                     "Two rotations × two C₁₀ signs · SSB", fontsize=14)
+                     f"Two rotations × two C₁₀ signs · SSB{region_label}", fontsize=14)
         plt.close(fig)
         return fig
+
+
+def _region_bounds(region: str | tuple[int, int, int, int] | None,
+                   scan_shape: tuple[int, int]) -> tuple[int, int, int, int]:
+    """Resolve scan presets to explicit, exclusive row/column bounds."""
+    rows, cols = map(int, scan_shape)
+    if region is None:
+        return (0, rows, 0, cols)
+    if isinstance(region, str):
+        height, width = max(1, rows // 2), max(1, cols // 2)
+        origins = {
+            "center": ((rows - height) // 2, (cols - width) // 2),
+            "top-left": (0, 0), "top-right": (0, cols - width),
+            "bottom-left": (rows - height, 0),
+            "bottom-right": (rows - height, cols - width),
+        }
+        if region not in origins:
+            raise ValueError(f"Unknown region {region!r}. Choose {', '.join(origins)}, "
+                             "None, or (row_start, row_stop, col_start, col_stop).")
+        row, col = origins[region]
+        return (row, row + height, col, col + width)
+    if (not isinstance(region, tuple) or len(region) != 4
+            or any(type(value) is not int for value in region)):
+        raise ValueError(f"Use four integer scan bounds (row_start, row_stop, col_start, col_stop); got {region!r}.")
+    row_start, row_stop, col_start, col_stop = region
+    if not (0 <= row_start < row_stop <= rows and 0 <= col_start < col_stop <= cols):
+        raise ValueError(f"Region {region!r} is outside the {rows} x {cols} scan. "
+                         "Use increasing bounds with exclusive stops inside the scan.")
+    return region
 
 
 def compare_rotation_defocus(
     session: "DirectPtycho", *, num_trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
     search_ranges: dict[str, tuple[float, float] | float] | None = None,
     seed: int = 42, tilt: bool = True, verbose: bool = True,
+    region: str | tuple[int, int, int, int] | None = None,
 ) -> RotationDefocusComparison:
     """Run four independent searches on shared Fourier data, preserving the session state."""
     ranges = {"C10_nm": (-30.0, 30.0), "C12_nm": (0.0, 20.0)}
@@ -187,16 +227,15 @@ def compare_rotation_defocus(
     focus_ranges = ((float(bounds[0]), 0.0), (0.0, float(bounds[1])))
     angles = sorted((session.scan_detector_rotation_deg % 360,
                      (session.scan_detector_rotation_deg + 180) % 360))
-    rows, cols = session.scan_shape
-    full_field = (0, int(rows), 0, int(cols))
+    bounds = _region_bounds(region, session.input_scan_shape)
     fits, reconstructions = [], []
     from tqdm.auto import tqdm
 
     initial = {"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0}
     with tqdm(total=4, desc="SSB comparison", unit="case", disable=not verbose) as progress:
-        progress.set_postfix_str("Preparing shared full-field evidence")
+        progress.set_postfix_str(f"Preparing scan region {bounds}")
         with session.select_region(
-            full_field, scan_detector_rotation_deg=angles[0], aberrations=initial,
+            bounds, scan_detector_rotation_deg=angles[0], aberrations=initial,
         ) as candidate:
             for angle in angles:
                 if candidate.scan_detector_rotation_deg != angle:
@@ -215,10 +254,10 @@ def compare_rotation_defocus(
                         search_ranges={**ranges, "C10_nm": interval}, seed=seed,
                         check_rotation=False, compare_standard=False, verbose=False,
                     )
-                    progress.set_postfix_str(f"{case} | Reconstructing full field")
+                    progress.set_postfix_str(f"{case} | Reconstructing scan region {bounds}")
                     reconstructed = candidate.run(upsampling_factor="auto")
                     fits.append(fitted)
                     reconstructions.append(reconstructed)
                     progress.update(1)
         progress.set_postfix_str("Complete")
-    return RotationDefocusComparison(tuple(fits), tuple(reconstructions), focus_ranges)
+    return RotationDefocusComparison(tuple(fits), tuple(reconstructions), focus_ranges, bounds)
