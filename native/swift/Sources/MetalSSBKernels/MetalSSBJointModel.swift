@@ -620,6 +620,24 @@ public final class MetalSSBJointModel {
       brightFieldPixelCount: count)
   }
 
+  /// The band frequencies q (1/A, row and column) of the agreement, in the order of its weights.
+  var bandFrequencies: [SIMD2<Float>] {
+    Array(UnsafeBufferPointer(start: qBuffer.contents().assumingMemoryBound(to: SIMD2<Float>.self), count: bandCount))
+  }
+
+  /// Evaluate `body` with the per-frequency agreement weights multiplied by `mask` (0 or 1 per band frequency), as
+  /// for a fit on part of the band; the weights are restored afterwards, also when `body` throws.
+  func withBandMask<T>(_ mask: [Bool], _ body: () throws -> T) throws -> T {
+    guard mask.count == bandCount else {
+      throw MetalSSBError.invalidGeometry("Supply one mask entry per band frequency.")
+    }
+    let target = weights.contents().assumingMemoryBound(to: Float.self)
+    let original = Array(UnsafeBufferPointer(start: target, count: bandCount))
+    for i in 0..<bandCount where !mask[i] { target[i] = 0 }
+    defer { for i in 0..<bandCount { target[i] = original[i] } }
+    return try body()
+  }
+
   func agreements(rows: [[Float]], isCancelled: () -> Bool) throws -> [Double] {
     try validatePreparation()
     if rows.isEmpty { return [] }

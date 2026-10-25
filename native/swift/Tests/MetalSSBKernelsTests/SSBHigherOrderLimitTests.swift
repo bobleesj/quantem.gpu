@@ -4,14 +4,15 @@ import XCTest
 
 @testable import MetalSSBKernels
 
-/// The higher-order box (`SSBFitOptions.higherOrderLimit`) and the guard every fifth-order fit carries
-/// (`SSBHigherOrderGuard`, Python `higher_order_fit.assess`).
+/// The higher-order box (`SSBFitOptions.higherOrderLimit`) and the opt-in guard of a fifth-order fit
+/// (`SSBFitOptions.computeHigherOrderGuard`, `SSBHigherOrderGuard`, Python `higher_order_fit.assess`).
 final class SSBHigherOrderLimitTests: XCTestCase {
   // MARK: Options
 
-  func testLimitDefaultsToStandardAndRefusesOtherValues() throws {
-    XCTAssertEqual(SSBFitOptions.defaultHigherOrderLimit, SSBFitOptions.standardHigherOrderLimit)
-    XCTAssertEqual(SSBFitOptions().higherOrderLimit, 2)
+  func testLimitDefaultsToWideAndRefusesOtherValues() throws {
+    XCTAssertEqual(SSBFitOptions.defaultHigherOrderLimit, SSBFitOptions.wideHigherOrderLimit)
+    XCTAssertEqual(SSBFitOptions().higherOrderLimit, 20)
+    XCTAssertTrue(SSBFitOptions().checkHigherOrderConsistency)
     XCTAssertEqual(SSBFitOptions.higherOrderLimits, [2, 20])
     XCTAssertNoThrow(try SSBFitOptions(higherOrderLimit: 20).validate())
     for limit in [0, 3, 14, 19.5, -2, .infinity, .nan] {
@@ -23,7 +24,7 @@ final class SSBHigherOrderLimitTests: XCTestCase {
       // Also for a primary-only fit: the setting is checked wherever it is given.
       XCTAssertThrowsError(try SSBFitOptions(maximumOrder: 1, higherOrderLimit: limit).validate())
     }
-    // Saved options record the limit; options saved before it decode as the standard box.
+    // Saved options record the limit; options saved before it decode as the standard box, unchecked.
     let wide = SSBFitOptions(higherOrderLimit: 20)
     let encoded = try JSONEncoder().encode(wide)
     XCTAssertEqual(try JSONDecoder().decode(SSBFitOptions.self, from: encoded), wide)
@@ -33,6 +34,15 @@ final class SSBHigherOrderLimitTests: XCTestCase {
     let restored = try JSONDecoder().decode(
       SSBFitOptions.self, from: JSONSerialization.data(withJSONObject: legacy))
     XCTAssertEqual(restored.higherOrderLimit, 2)
+    legacy.removeValue(forKey: "checkHigherOrderConsistency")
+    XCTAssertFalse(
+      try JSONDecoder().decode(SSBFitOptions.self, from: JSONSerialization.data(withJSONObject: legacy))
+        .checkHigherOrderConsistency)
+    // The guard is opt-in; options saved without the key do not compute it.
+    XCTAssertFalse(SSBFitOptions().computeHigherOrderGuard)
+    let guarded = SSBFitOptions(computeHigherOrderGuard: true)
+    XCTAssertEqual(try JSONDecoder().decode(SSBFitOptions.self, from: JSONEncoder().encode(guarded)), guarded)
+    XCTAssertFalse(restored.computeHigherOrderGuard)
   }
 
   func testBoundsKeepTheLowOrderBoxAndScaleTheHigherOrders() {
@@ -43,6 +53,42 @@ final class SSBHigherOrderLimitTests: XCTestCase {
       XCTAssertTrue(bounds.dropFirst(6).allSatisfy { $0 == -limit...limit })
     }
     XCTAssertEqual(SSBModelFit.fifthOrderBounds(higherOrderLimit: 2), SSBFifthOrderSearch.bounds)
+  }
+
+  /// The aperture-phase disagreement of the validation's `common.py` (`rms_piston_free(chi(a) - chi(b))`) on known
+  /// differences: C10 alone gives k sqrt(1/12) with k = (2 pi / lambda) alpha^2 / 2 * 100 A, a C21 component
+  /// r^3 cos(phi) sqrt(1/8), a round C30 r^4 sqrt(4/45); the grid samples the disk to about 1%.
+  func testApertureDisagreementAndRingSplit() {
+    let wavelength = 0.019687
+    let semiangle = 0.03
+    let zero = [Double](repeating: 0, count: 28)
+    func shifted(_ i: Int, _ value: Double) -> [Double] {
+      var z = zero
+      z[i] = value
+      return z
+    }
+    let k = 2 * Double.pi / wavelength * semiangle * semiangle / 2 * 100
+    let c10 = SSBHigherOrderConsistency.apertureDisagreement(
+      shifted(0, 0.1), zero, wavelengthAngstroms: wavelength, semiangleRadians: semiangle)
+    XCTAssertEqual(c10, 0.1 * k * (1.0 / 12).squareRoot(), accuracy: 0.01 * c10)
+    let c21 = SSBHigherOrderConsistency.apertureDisagreement(
+      shifted(6, 1), zero, wavelengthAngstroms: wavelength, semiangleRadians: semiangle)
+    XCTAssertEqual(c21, (1.0 / 8).squareRoot(), accuracy: 0.01 * c21)
+    let c30 = SSBHigherOrderConsistency.apertureDisagreement(
+      shifted(10, 1), zero, wavelengthAngstroms: wavelength, semiangleRadians: semiangle)
+    XCTAssertEqual(c30, (1.0 / 5 - 1.0 / 9).squareRoot(), accuracy: 0.01 * c30)
+    // Tilt and depth do not enter; the difference is symmetric.
+    XCTAssertEqual(
+      SSBHigherOrderConsistency.apertureDisagreement(
+        shifted(3, 2), shifted(5, 3), wavelengthAngstroms: wavelength, semiangleRadians: semiangle), 0)
+    XCTAssertEqual(
+      SSBHigherOrderConsistency.apertureDisagreement(
+        zero, shifted(6, 1), wavelengthAngstroms: wavelength, semiangleRadians: semiangle), c21)
+    // Rings of 0.05 1/A alternate.
+    XCTAssertEqual(SSBHigherOrderConsistency.ringParity(SIMD2(0.21, 0)), 0)
+    XCTAssertEqual(SSBHigherOrderConsistency.ringParity(SIMD2(0.18, 0.18)), 1)
+    XCTAssertEqual(SSBHigherOrderConsistency.ringParity(SIMD2(-0.3, 0.001)), 0)
+    XCTAssertEqual(SSBHigherOrderConsistency.ringParity(SIMD2(0, -0.36)), 1)
   }
 
   func testRefineRefusesAnInvalidLimit() throws {
@@ -166,15 +212,48 @@ final class SSBHigherOrderLimitTests: XCTestCase {
       model: model, rotationDegrees: 0, darkField: nil, scanSampling: (WeakPhaseScene.step, WeakPhaseScene.step),
       options: SSBFitOptions(trials: 60, maximumOrder: 1), checkRotation: false)
     XCTAssertNil(low.fit.higherOrderGuard)
+    // Off by default: the same refinement without the guard.
+    let unguarded = try SSBModelFit.refineToFifthOrder(
+      low, model: model, options: SSBFitOptions(trials: 60, higherOrderLimit: 20))
+    XCTAssertNil(unguarded.fit.higherOrderGuard)
+    XCTAssertNil(unguarded.fit.timings["higher_order_guard_s"])
     var fits: [Double: SSBFit] = [:]
     for limit in SSBFitOptions.higherOrderLimits {
       let refined = try SSBModelFit.refineToFifthOrder(
-        low, model: model, options: SSBFitOptions(trials: 60, higherOrderLimit: limit))
+        low, model: model,
+        options: SSBFitOptions(trials: 60, higherOrderLimit: limit, computeHigherOrderGuard: true))
       XCTAssertEqual(refined.fit.options.higherOrderLimit, limit)
       fits[limit] = refined.fit
     }
     let standard = try XCTUnwrap(fits[2])
     let wide = try XCTUnwrap(fits[20])
+    // The standard box is not checked; the wide fit's ring halves agree on this weak-phase object, so it is shown.
+    XCTAssertNil(standard.higherOrderConsistency)
+    let consistency = try XCTUnwrap(wide.higherOrderConsistency)
+    XCTAssertTrue(consistency.trusted)
+    XCTAssertNil(consistency.reason)
+    XCTAssertEqual(consistency.shownLimit, 20)
+    XCTAssertEqual(wide.options.higherOrderLimit, 20)
+    XCTAssertLessThan(consistency.halfBandRMSRadians, 0.5)
+    XCTAssertEqual(consistency.halves.map(\.ringParity), [0, 1])
+    XCTAssertEqual(consistency.halves.reduce(0) { $0 + $1.frequencies }, model.bandCount)
+    XCTAssertEqual(consistency.checkedCoordinates, wide.higherOrderRefinement?.coordinates)
+    XCTAssertNotNil(wide.timings["higher_order_consistency_s"])
+    // Each half is the same refinement on its ring half of the band, from the same low-order fit.
+    let parities = model.bandFrequencies.map { SSBHigherOrderConsistency.ringParity($0) }
+    for half in consistency.halves {
+      let alone = try model.withBandMask(parities.map { $0 == half.ringParity }) {
+        try SSBModelFit.refineFifthOrder(
+          low.fit.point, model: model, search: .exactGradientCoarseToFine,
+          bounds: SSBModelFit.fifthOrderBounds(higherOrderLimit: 20))
+      }
+      XCTAssertEqual(alone.result.coordinates, half.coordinates)
+    }
+    XCTAssertEqual(
+      consistency.halfBandRMSRadians,
+      SSBHigherOrderConsistency.apertureDisagreement(
+        consistency.halves[0].coordinates, consistency.halves[1].coordinates,
+        wavelengthAngstroms: model.wavelengthAngstroms, semiangleRadians: model.semiangleRadians))
 
     // 20 is a free box here: no coordinate reaches it, and a box of 1000 gives the same search bit for bit.
     let start = low.fit.point
@@ -187,6 +266,7 @@ final class SSBHigherOrderLimitTests: XCTestCase {
     XCTAssertEqual(boxed.result.coordinates, free.result.coordinates)
     XCTAssertEqual(boxed.agreement64, free.agreement64)
     XCTAssertEqual(wide.higherOrderRefinement?.coordinates, free.result.coordinates)
+    XCTAssertEqual(unguarded.fit.point, wide.point)
     XCTAssertTrue(free.result.coordinates.dropFirst(6).allSatisfy { abs($0) < 20 })
     // The standard box holds C30 (the 9th coordinate, z 3.2 rad) at its bound.
     let c30 = 6 + 4
@@ -231,6 +311,7 @@ final class SSBHigherOrderLimitTests: XCTestCase {
       XCTAssertEqual(term.edgePhaseErrorRadians!, expected, accuracy: 0.02 * expected, term.name)
       column += width
     }
+    print("weak-phase halves disagree by \(consistency.halfBandRMSRadians) rad")
     print(
       "weak-phase guard: coherence standard \(standard.higherOrderGuard!.coherence), wide \(check.coherence); "
         + "largest edge-phase error \(check.largestEdgePhaseErrorRadians) rad; C30 wide "
@@ -238,17 +319,44 @@ final class SSBHigherOrderLimitTests: XCTestCase {
   }
 
   /// The lattice of `SSBModelReconstructionTests.scene` is not a probe-object measurement: the model explains little
-  /// of its signal and the guard says so.
-  func testGuardRejectsASceneTheModelDoesNotDescribe() throws {
+  /// of its signal (the opt-in coherence guard) and the ring halves of a wide fit disagree (the default check).
+  func testGuardsRejectASceneTheModelDoesNotDescribe() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let model = try SSBFifthOrderGradientTests.model(device)
+    var primary: SSBModelPoint?
     let fitted = try SSBModelFit.findAberrations(
       model: model, rotationDegrees: 17.25, darkField: nil, scanSampling: (0.5, 0.5),
-      options: SSBFitOptions(trials: 40), checkRotation: false)
+      options: SSBFitOptions(trials: 40, computeHigherOrderGuard: true), checkRotation: false,
+      onInitialFit: { primary = $0.point })
     let check = try XCTUnwrap(fitted.fit.higherOrderGuard)
     XCTAssertFalse(check.trusted)
     XCTAssertLessThan(check.coherence, 0.9)
     XCTAssertTrue(check.reasons[0].hasPrefix("the model explains"))
+    // Its ring halves disagree (8.2 rad), so the fit falls back to the standard box, flagged, and keeps the checked
+    // wide fit in the record.
+    let consistency = try XCTUnwrap(fitted.fit.higherOrderConsistency)
+    print("lattice halves disagree by \(consistency.halfBandRMSRadians) rad")
+    XCTAssertFalse(consistency.trusted)
+    XCTAssertGreaterThan(consistency.halfBandRMSRadians, 0.5)
+    XCTAssertEqual(consistency.shownLimit, 2)
+    XCTAssertEqual(consistency.limit, 20)
+    XCTAssertEqual(fitted.fit.options.higherOrderLimit, 2)
+    XCTAssertEqual(consistency.reason, String(format: "halves disagree by %.2f rad", consistency.halfBandRMSRadians))
+    XCTAssertNotNil(fitted.fit.timings["higher_order_fallback_s"])
+    let low = try XCTUnwrap(primary)
+    for (limit, expected) in [(2.0, fitted.fit.higherOrderRefinement?.coordinates), (20, consistency.checkedCoordinates)] {
+      let direct = try SSBModelFit.refineFifthOrder(
+        low, model: model, search: .exactGradientCoarseToFine,
+        bounds: SSBModelFit.fifthOrderBounds(higherOrderLimit: limit))
+      XCTAssertEqual(direct.result.coordinates, expected, "limit \(limit)")
+    }
+    // The record carries the names Python uses.
+    let record = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(consistency)) as? [String: Any])
+    XCTAssertEqual(record["half_band_rms_rad"] as? Double, consistency.halfBandRMSRadians)
+    XCTAssertEqual(record["trusted"] as? Bool, false)
+    XCTAssertEqual(record["shown_limit"] as? Double, 2)
+    XCTAssertEqual(try JSONDecoder().decode(SSBHigherOrderConsistency.self, from: JSONEncoder().encode(consistency)), consistency)
   }
 
   /// Gauss-Jordan inverse with partial pivoting.
