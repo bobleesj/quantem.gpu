@@ -1,5 +1,7 @@
 # LZ4 read bounds, the bounded chunk walk and the rc15 to rc16 timing comparison - 2026-10-11
 
+> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/ssb.md).
+
 ## Question
 
 1. A bitshuffle+LZ4 chunk with intact framing but damaged LZ4 bytes ended the

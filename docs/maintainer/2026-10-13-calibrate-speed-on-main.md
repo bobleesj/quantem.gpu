@@ -1,5 +1,7 @@
 # Calibration speed-up on main: the tilt fit's Newton polish and resident sessions - 2026-10-13
 
+> **Historical:** describes the code as of 2026-10-13; `refinement="newton"` with finite-difference steps and the Nelder–Mead polish are retired; fits refine on exact derivatives. See the [current fit methods](../api/ssb.md).
+
 ## Question
 
 A ptychography pipeline calibrates each acquisition on its full native scan: beam centre, DPC rotation, then SSB's

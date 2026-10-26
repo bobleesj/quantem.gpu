@@ -1,5 +1,7 @@
 # SSB aberration units (nm) and the thick-sample (tilt + thickness) model - 2026-09-24
 
+> **Historical:** describes the code as of 2026-09-24; the phase-variance search and Nelder–Mead refinement are retired. See the [current fit methods](../api/ssb.md).
+
 ## 1. C10 / C12 were Angstrom under an nm label
 
 **Question.** The API, docs and ShowPtycho label SSB C10 / C12 in nm. Are they?
