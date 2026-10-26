@@ -43,7 +43,7 @@ both the timings and the output hashes the script prints.
 | Full-field and regional Direct Ptycho fits (CUDA or MPS) | `quantem-gpu benchmark-direct-ptycho` | First and warm median/p90 per fit and region, trial counts, Newton diagnostics, source fingerprint and phase hashes ([SSB benchmark](../performance/ssb/joint-fit.md)) |
 | Python MPS Direct Ptycho and detector regression check | `tests/benchmarks/mps_ssb.py run`, then `compare` (`pytest -m benchmark tests/benchmarks`) | p50/p90 of previews, search candidates, the default and standard fits and the detector sums on the public gold scan, with driver memory, against this chip's committed baseline |
 | Native Swift/Metal indexed load | `metal-4dstem-indexed-load-benchmark` | Exact resident volume/products, stage timing, hashes, and Metal/process memory |
-| Native Swift/Metal SSB | `metal-ssb-fit-benchmark`, `metal-ssb-redraw-benchmark` | Joint-model fit stages and fitted parameters; SSB redraw latency |
+| Native Swift/Metal SSB | `metal-direct-ptycho-fit-benchmark`, `metal-direct-ptycho-redraw-benchmark` | Joint-model fit stages and fitted parameters; SSB redraw latency |
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_direct_ptycho.py scan_master.h5 --voltage-kV 300 --semiangle-mrad 30
@@ -238,7 +238,7 @@ xcrun swift-format lint --strict --recursive \
   native/swift/Tests \
   native/swift/Benchmarks
 swift test
-swift test -c release --filter MetalSSBKernelsTests
+swift test -c release --filter MetalDirectPtychoKernelsTests
 ```
 
 Opt-in real-source tests retain their fixture hashes and environment variables.
@@ -253,12 +253,12 @@ the complete-cache timing.
 bash scripts/check_direct_ptycho_parity.sh
 ```
 
-`check_direct_ptycho_parity.sh` checks that the native `SSBAgreementSearch` draws the
+`check_direct_ptycho_parity.sh` checks that the native `DirectPtychoAgreementSearch` draws the
 search trials of the Python resident search and reaches the fits of its
 exact-derivative Newton on a synthetic objective (`scripts/direct_ptycho_agreement_gate.py`). It does
 not run a CPU reconstruction oracle or recapture a baseline. Native
 reconstruction, fit and saved-result checks are XCTest suites
-(`MetalSSBKernelsTests`). Set `QUANTEM_SSB_PARITY_SOURCE` to a local acquisition
+(`MetalDirectPtychoKernelsTests`). Set `QUANTEM_SSB_PARITY_SOURCE` to a local acquisition
 when exporting a new oracle fixture and `QUANTEM_SSB_PARITY_RUNS` to a
 disposable working directory.
 

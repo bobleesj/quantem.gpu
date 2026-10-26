@@ -9,7 +9,7 @@ sidebands, then reconstructs the object directly by SSB, regularized Phase or Co
 |---|---|---|
 | CUDA | [cuda/](cuda/) | NVIDIA GPUs |
 | Python MPS | [mps/](mps/) | Apple GPUs from Python |
-| Native Swift/Metal | [MetalSSBKernels](../../../../native/swift/Sources/MetalSSBKernels/) | Apple GPUs in native apps |
+| Native Swift/Metal | [MetalDirectPtychoKernels](../../../../native/swift/Sources/MetalDirectPtychoKernels/) | Apple GPUs in native apps |
 
 All three implement the same agreement objective, search and reconstruction model.
 Shared, device-free code (parameters, bounds, search control, results) lives in this folder.

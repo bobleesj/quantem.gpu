@@ -22,7 +22,7 @@ WebGPU paths.
 | `MetalDisplayKernels` | range, histogram, transfer function, colormap | `.../MetalDisplayKernels` |
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |
-| `MetalSSBKernels` | native 128×128, 256×256 and 512×512 SSB: Fourier preparation, model-agreement fitting through fifth order, SSB redraw and regularized phase and complex reconstruction | `.../MetalSSBKernels` |
+| `MetalDirectPtychoKernels` | native 128×128, 256×256 and 512×512 SSB: Fourier preparation, model-agreement fitting through fifth order, SSB redraw and regularized phase and complex reconstruction | `.../MetalDirectPtychoKernels` |
 
 The native package does not provide the Python `screening.prepare` cache
 contract. It does provide detector, CoM, DPC/iDPC, display, FFT, load, and SSB
@@ -55,7 +55,7 @@ there.
 | `MetalDisplayKernels` | `display.metal`, packaged colormaps | `MetalDisplayKernelsTests` |
 | `MetalImageFFT` | `fft.metal`, MPS/MPSGraph frameworks | `MetalImageFFTTests` |
 | `MetalImageRuntime` | `MetalDisplayKernels` | `MetalImageRuntimeTests` |
-| `MetalSSBKernels` | custom radix-8 FFT and Hermitian SSB preparation; joint-model fit, SSB redraw and regularized direct reconstruction | `MetalSSBKernelsTests` plus `metal-ssb-fit-benchmark` and `metal-ssb-redraw-benchmark` |
+| `MetalDirectPtychoKernels` | custom radix-8 FFT and Hermitian SSB preparation; joint-model fit, SSB redraw and regularized direct reconstruction | `MetalDirectPtychoKernelsTests` plus `metal-direct-ptycho-fit-benchmark` and `metal-direct-ptycho-redraw-benchmark` |
 
 The package imports no application UI framework. A client owns presentation,
 scheduling, and user-visible memory-policy choices; it must not copy or fork
@@ -102,7 +102,7 @@ See [Verified benchmark results](../performance/results.md) for the physical
 MacBook Pro (M5 Max, 128 GB) and MacBook Air (M2, 8 GB) measurements; this
 platform page does not duplicate them.
 
-`MetalSSBEngine` is intentionally narrower than the Python source loader. It
+`MetalDirectPtychoEngine` is intentionally narrower than the Python source loader. It
 accepts plane-major lossless `uint8`, `uint16` or `uint32` bright-field columns
 with shape `[logical_brightfield, scan_row, scan_column]` for a 128×128,
 256×256 or 512×512 scan. It never
@@ -142,5 +142,5 @@ complete Swift/Metal signoff.
 
 Read [Native 4D-STEM IO](../api/native_4dstem_io.md) and
 [Metal image APIs](../api/metal_image.md) for image and IO types. Read the
-[SSB API](../api/direct_ptycho.md) for `MetalSSBGeometry`, `MetalSSBEngine`, result
+[SSB API](../api/direct_ptycho.md) for `MetalDirectPtychoGeometry`, `MetalDirectPtychoEngine`, result
 provenance, and the application boundary.

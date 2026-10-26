@@ -18,7 +18,7 @@ second manifest in this directory.
 | [MetalDisplayKernels](Sources/MetalDisplayKernels) | Image normalization, colormaps, histograms, and display shaders |
 | [MetalImageFFT](Sources/MetalImageFFT) | Resident `logMagnitude`: `fftshift(log1p(abs(fft2(source))))` |
 | [MetalImageRuntime](Sources/MetalImageRuntime) | Histogram windows, range, and display contracts |
-| [MetalSSBKernels](Sources/MetalSSBKernels) | SSB reconstruction and optimizer kernels |
+| [MetalDirectPtychoKernels](Sources/MetalDirectPtychoKernels) | Direct Ptycho: Fourier preparation, aberration fit, and the SSB, Phase and Complex reconstructions |
 
 ```text
 native/swift/
@@ -68,21 +68,21 @@ memory or performance contract.
 
 ## Staged SSB fitting
 
-`SSBModelFit.findAberrations` runs 200 low-order TPE trials, then a
+`DirectPtychoModelFit.findAberrations` runs 200 low-order TPE trials, then a
 trust-region Newton on the exact gradient and Hessian of the agreement (C10,
 C12, phi12, specimen tilt and depth spread). It then refines the aberrations
 through C56 with the tilt and depth spread together: an exact-gradient
 trust-region BFGS, first on every 8th BF pixel and then on all of them. Each
 of the 22 higher-order coordinates is bounded to ±20 rad of probe phase at the
-aperture edge (`SSBFitOptions.higherOrderLimit`; 2 is the standard box). A ±20
+aperture edge (`DirectPtychoFitOptions.higherOrderLimit`; 2 is the standard box). A ±20
 fit is refitted on two halves of the band frequencies and falls back to ±2
 when the halves disagree (`checkHigherOrderConsistency`). Rotation is selected
 using the low-order fits and held during the fifth-order stage.
-`SSBFitOptions(maximumOrder: 1)` stops after the low-order fit, and
+`DirectPtychoFitOptions(maximumOrder: 1)` stops after the low-order fit, and
 `refineToFifthOrder` refines a shown low-order fit later.
 
 ```swift
-let fit = try SSBModelFit.findAberrations(
+let fit = try DirectPtychoModelFit.findAberrations(
   model: model, rotationDegrees: rotation,
   darkField: darkField, scanSampling: scanSampling,
   onInitialFit: { initial in
@@ -117,7 +117,7 @@ its originating model parameters.
 ```bash
 swift build -c release
 swift test
-swift test -c release --filter MetalSSBKernelsTests
+swift test -c release --filter MetalDirectPtychoKernelsTests
 ```
 
 A `512×512` BF/ADF FFT has a target budget of 8.33 ms for a 120 Hz interaction;

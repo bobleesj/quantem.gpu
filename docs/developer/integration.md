@@ -41,9 +41,9 @@ Native Swift/Metal products for macOS and iOS clients:
   `Metal4DSTEMResidentCacheIO`, and `Metal4DSTEMResidentSummaryIO` for explicit
   native load, resource, resident-cache, and exact prepared-product provenance.
   See [Native 4D-STEM load and cache contract](../api/native_4dstem_io.md).
-- `MetalSSBEngine` and `MetalSSBJointModel` for exact native 128×128, 256×256 and
+- `MetalDirectPtychoEngine` and `MetalDirectPtychoJointModel` for exact native 128×128, 256×256 and
   512×512 SSB: the engine prepares the Fourier evidence, and the joint model fits
-  (`SSBModelFit`) and reconstructs SSB, Phase and Complex. See
+  (`DirectPtychoModelFit`) and reconstructs SSB, Phase and Complex. See
   [native SSB](#native-swift-and-metal).
 
 Native clients call these endpoints directly. They are not a local Python
@@ -64,7 +64,7 @@ from the Python MPS and CUDA backends.
 (native-swift-and-metal)=
 ## Native Swift and Metal
 
-`MetalSSBEngine` consumes exact plane-major BF columns with layout
+`MetalDirectPtychoEngine` consumes exact plane-major BF columns with layout
 `[logical_brightfield, scan_row, scan_column]`, source dtype `uint8` by default
 (`prepare(brightfield:countType:)` also accepts `uint16` and `uint32`), and square
 scan shapes 128×128, 256×256, or 512×512. Geometry must be complete and finite,
@@ -75,10 +75,10 @@ logical BF term in normalization and skips only the proven-zero aperture union.
 
 ```swift
 import Metal
-import MetalSSBKernels
+import MetalDirectPtychoKernels
 
 let device = MTLCreateSystemDefaultDevice()!
-let engine = try MetalSSBEngine(
+let engine = try MetalDirectPtychoEngine(
   device: device,
   geometry: calibratedGeometry,
   cacheBudgetBytes: availableSSBCacheBytes
@@ -86,7 +86,7 @@ let engine = try MetalSSBEngine(
 
 try engine.prepare(brightfield: planeMajorUInt8Buffer)
 let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
-let fit = try SSBModelFit.findAberrations(
+let fit = try DirectPtychoModelFit.findAberrations(
   model: model, rotationDegrees: rotation,
   darkField: darkField, scanSampling: scanSampling)
 let phase = try model.reconstruct(fit.fit.point, upsamplingFactor: autoFactor)
@@ -102,7 +102,7 @@ staged fit is described in `native/swift/README.md`.
 The engine's own non-model reconstruction (`reconstruct(aberrations:)`), its
 phase-variance objective (`phaseVariance`), the seeded TPE and Nelder–Mead search
 over it (`optimize`, `SSBOptimizer`) and its optional BF sampling are retired.
-`SSBFitOptions(objective: .phaseVariance)` still decodes from saved runs and is
+`DirectPtychoFitOptions(objective: .phaseVariance)` still decodes from saved runs and is
 refused as a fit.
 
 `cacheBudgetBytes: nil` requests a complete Hermitian `G(k)` cache. A finite
@@ -114,7 +114,7 @@ plots.
 
 ### Saved native runs
 
-`MetalSSBJointSavedRun` saves a joint-model result: the phase, the exact model
+`MetalDirectPtychoJointSavedRun` saves a joint-model result: the phase, the exact model
 point, calibration, sampling, region and fit record.
 
 `MetalSSBSavedRun` is the format of the retired non-model engine. It records
@@ -127,7 +127,7 @@ SHA-256 checksums for the two image payloads. Runs saved with it still open:
 let previous = try MetalSSBSavedRun.load(
     from: resultURL, matchingSourceIdentity: sourceSHA256)
 let images = try previous.reconstruction(device: device)
-let phase = try MetalSSBEngine(
+let phase = try MetalDirectPtychoEngine(
     device: device, geometry: previous.geometry, cacheBudgetBytes: 0
 ).phase(of: images)
 ```
