@@ -392,8 +392,8 @@ rows deterministically Fourier-crop or zero-pad the frozen prepared
 evidence. They are native-size kernel microscopes, not acquisition benchmarks.
 
 The reproducible harness is
-[`scripts/benchmark_ssb_mps_scaling.py`](../../scripts/benchmark_ssb_mps_scaling.py)
-(the phase-variance search, `find_aberrations(tilt=False, objective="phase_variance")`),
+`scripts/benchmark_ssb_mps_scaling.py` (the phase-variance search,
+`find_aberrations(tilt=False, objective="phase_variance")`; both retired, the script is in git history),
 and the compact machine-readable signoff is
 [`ssb-mps-scaling-2026-08-01.json`](ssb-mps-scaling-2026-08-01.json).
 The harness records the full fit before repeated pair/parity probes. The
