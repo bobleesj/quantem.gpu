@@ -1,6 +1,6 @@
 # Coma, trefoil and spherical aberration in the model-based SSB fit (2026-10-21)
 
-> **Historical:** describes the code as of 2026-10-21; its higher-order polish used finite differences on the CPU, since replaced by the exact-gradient refinement on the GPU. See the [current fit methods](../../../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-21. The `higher_order=` subset fit it describes (a finite-difference Newton on the CPU with its coherence and precision guard) and its CUDA per-term agreement kernel were removed on 2026-10-25: the default fifth-order fit now fits coma, trefoil, C30 and every term through fifth order on exact gradients, with the half-band check, and `higher_order=` prints one line. The MPS per-term kernel remains as the fifth-order objective's reference. See the [current fit methods](../../../api/ssb.md).
 
 ## Question
 

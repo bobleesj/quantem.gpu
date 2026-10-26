@@ -34,10 +34,14 @@ def agreement_objective(objective) -> str:
     raise ValueError(f"objective is retired: every fit maximizes the model agreement; got {objective!r}.")
 
 
-def retired_higher_order(higher_order) -> None:
+def retired_higher_order(higher_order, *, standard: bool = False) -> None:
     """``higher_order`` is retired: the default fifth-order fit fits coma, trefoil, C30 and every term through fifth
-    order on exact gradients, with the half-band check. A subset prints one line; the primary fit holds them at 0."""
-    if higher_order:
+    order on exact gradients, with the half-band check. A subset prints one line: ``standard`` (a plain primary call)
+    says that call runs ``search="standard"`` instead; otherwise the primary fit holds the higher orders at 0."""
+    if higher_order and standard:
+        print("higher_order is retired; running search='standard', the fifth-order fit that fits coma, trefoil, C30 "
+              "and every term through fifth order.")
+    elif higher_order:
         print("higher_order is retired; the default fit (search='standard') fits every term through fifth order, and "
               "this primary fit holds them at 0.")
     return None

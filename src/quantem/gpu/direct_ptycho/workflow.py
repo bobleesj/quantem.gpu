@@ -2036,8 +2036,10 @@ class DirectPtycho:
         refines them with the session's sample tilt and depth spread.
 
         ``higher_order`` is retired: the default fit (``search="standard"``) fits coma, trefoil, C30 and every term
-        through fifth order on exact gradients, with the half-band check. ``higher_order=...`` prints one line and
-        the primary fit holds them at 0.
+        through fifth order on exact gradients, with the half-band check. ``higher_order=...`` prints one line; a
+        ``search="primary"`` call with no primary-only control (``tilt=False``, ranges, locks, fixed coefficients, a
+        tilt limit or ``refinement=None``) then runs ``search="standard"``, and otherwise the primary fit holds the
+        higher orders at 0.
         """
 
         from quantem.gpu.display._layout import panel_inches, resolve_columns
@@ -2045,7 +2047,13 @@ class DirectPtycho:
         panel_inches(size)  # Validate display options before expensive preparation.
         refinement = auto_refinement(refinement)
         objective = agreement_objective(objective)
-        higher_order = retired_higher_order(higher_order)
+        # a plain primary call asking for higher orders (no primary-only control) gets them from the fifth-order fit
+        reroute = bool(higher_order) and (search == "primary" and tilt and search_ranges is None
+                                          and refine_lock is None and fixed_aberrations is None
+                                          and refinement is not None and tilt_limit_mrad == 25.0)
+        higher_order = retired_higher_order(higher_order, standard=reroute)
+        if reroute:
+            search = "standard"
         resolve_columns(3, columns=columns)
         if show_convergence and search == "primary":
             raise ValueError("Live convergence requires search='standard' or 'broad'. "

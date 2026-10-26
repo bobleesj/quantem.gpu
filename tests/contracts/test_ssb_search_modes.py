@@ -205,7 +205,17 @@ def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch):
     assert fit.phase_clim is None
 
 
-def test_higher_order_subsets_are_retired(capsys):
+def test_higher_order_subsets_are_retired(monkeypatch, capsys):
+    """A plain primary call asking for higher orders runs the fifth-order fit; with a primary-only control the
+    primary fit holds them at 0. Either way one line says so."""
+    from quantem.gpu.direct_ptycho import fifth_order_fit
+    run = Mock(return_value="fifth-order fit")
+    monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", run)
+    assert call(object(), search="primary", higher_order=("C21", "C30")) == "fifth-order fit"
+    assert run.call_args.kwargs["search"] == "standard"
+    assert capsys.readouterr().out.splitlines() == [
+        "higher_order is retired; running search='standard', the fifth-order fit that fits coma, trefoil, C30 and "
+        "every term through fifth order."]
     session = SimpleNamespace(_find_aberrations=Mock(return_value="primary fit"))
     assert call(session, search="primary", tilt=False, higher_order=("C21", "C30")) == "primary fit"
     assert "higher_order" not in session._find_aberrations.call_args.kwargs

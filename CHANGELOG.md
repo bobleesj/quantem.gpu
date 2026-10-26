@@ -63,6 +63,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Removed
 
+- Python SSB: a plain `find_aberrations(search="primary", higher_order=...)` (no `tilt=False`, ranges, locks, fixed
+  coefficients, tilt limit or `refinement=None`) runs `search="standard"`, the fifth-order fit with coma, trefoil and
+  C30, and its one printed line says so; with a primary-only control the primary fit still holds them at 0. The MPS
+  per-term agreement kernel, the fifth-order objective's reference, regains its independent float64 check
+  (`tests/hardware/mps/test_ssb_higher_order_agreement.py`).
 - Python SSB: helpers the retired fits left without callers are removed (the MPS row-IFFT and phase-column batch
   loss entry points and their pair kernel, `exact_pair_row_allocation_bf_512`, `_CachedGaussianMixture`,
   `_inverse_log_cdf`, `_counted_electrons`, `COLUMN_SIGN_MIN`), with single-value plumbing: the internal
