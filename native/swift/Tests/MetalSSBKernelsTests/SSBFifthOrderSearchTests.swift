@@ -4,10 +4,6 @@ import XCTest
 @testable import MetalSSBKernels
 
 final class SSBFifthOrderSearchTests: XCTestCase {
-  /// The standard (±2) box of the finite-difference Newton's reference trajectory.
-  static let bounds = SSBModelFit.fifthOrderBounds(
-    higherOrderLimit: SSBFitOptions.standardHigherOrderLimit)
-
   func testStandardDefaultAndLegacySavedOptions() throws {
     let current = SSBFitOptions()
     XCTAssertEqual(current.trials, 200)
@@ -32,11 +28,25 @@ final class SSBFifthOrderSearchTests: XCTestCase {
     var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     legacy.removeValue(forKey: "maximumOrder")
     legacy.removeValue(forKey: "maxHigherOrderEvaluations")
+    legacy.removeValue(forKey: "higherOrderSearch")
     let restored = try JSONDecoder().decode(
       SSBFitOptions.self, from: JSONSerialization.data(withJSONObject: legacy))
     XCTAssertEqual(restored.maximumOrder, 1)
     XCTAssertThrowsError(try SSBFitOptions(tilt: false, maximumOrder: 5).validate())
     XCTAssertThrowsError(try SSBFitOptions(maximumOrder: 3).validate())
+    // Options saved before the exact-gradient search name the retired finite-difference Newton: they decode, a
+    // primary-only fit validates, and a fifth-order fit with it is refused.
+    XCTAssertEqual(current.higherOrderSearch, .exactGradientCoarseToFine)
+    XCTAssertEqual(restored.higherOrderSearch, .finiteDifferenceNewton)
+    XCTAssertNoThrow(try restored.validate())
+    var newton = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    newton["higherOrderSearch"] = "finiteDifferenceNewton"
+    let savedNewton = try JSONDecoder().decode(
+      SSBFitOptions.self, from: JSONSerialization.data(withJSONObject: newton))
+    XCTAssertEqual(savedNewton.maximumOrder, 5)
+    XCTAssertThrowsError(try savedNewton.validate()) { error in
+      XCTAssertTrue(error.localizedDescription.contains("retired"))
+    }
   }
 
   func testCartesianToPublicPolarMatchesFloat32Reference() {
@@ -87,71 +97,5 @@ final class SSBFifthOrderSearchTests: XCTestCase {
       // Float.pi differs by one ULP from Float(Double.pi), changing these public azimuths.
       XCTAssertEqual(actual.angleRadians, reference.degrees * Double.pi / 180)
     }
-  }
-
-  func testStencilStaysInsideBoundsAndFindsCoupledCurvature() throws {
-    let center = [-3.0, 2, -2, -5, 5, 0.2] + Array(repeating: 0.1, count: 22)
-    let h = [0.02, 0.02, 0.02, 0.05, 0.05, 0.05] + Array(repeating: 0.02, count: 22)
-    let design = try SSBFifthOrderSearch.stencil(center, h: h, bounds: Self.bounds, full: true)
-    XCTAssertEqual(design.points.count, 435)
-    for p in design.points {
-      for (value, range) in zip(p, Self.bounds) {
-        XCTAssertTrue(range.contains(value))
-      }
-    }
-    let scores = design.points.map { p in
-      200 - p.reduce(0.0) { $0 + $1 * $1 } + 0.3 * p[0] * p[27]
-    }
-    let local = SSBFifthOrderSearch.model(
-      values: scores, offsets: design.offsets,
-      old: Array(repeating: Array(repeating: 0, count: 28), count: 28))
-    XCTAssertEqual(local.gradient[0], -2 * center[0] + 0.3 * center[27], accuracy: 1e-9)
-    XCTAssertEqual(local.hessian[0][27], 0.3, accuracy: 1e-8)
-    for i in 0..<28 { XCTAssertEqual(local.hessian[i][i], -2, accuracy: 1e-8) }
-  }
-
-  func testBudgetRetainsBestStencilPointAndReusesCenter() throws {
-    var executions = 0
-    let start = [0.0, 0, 0, 0, 0, 1] + Array(repeating: 0, count: 22)
-    let result = try SSBFifthOrderSearch.refine(
-      { points in
-        executions += points.count
-        return points.map { 1 + $0[0] }
-      }, start: start, bounds: Self.bounds, maxEvaluations: 4)
-    XCTAssertEqual(result.evaluations, 4)
-    XCTAssertEqual(result.executedObjectives, 3)
-    XCTAssertEqual(executions, 3)
-    XCTAssertEqual(result.coordinates[0], 0.02)
-    XCTAssertEqual(result.agreement, 1.02)
-    XCTAssertEqual(result.stop, "evaluation cap")
-    XCTAssertEqual(result.trace.count, 4)
-    XCTAssertEqual(result.trace.map(\.agreement), [1, 1, 1.02, 1.02])
-  }
-
-  func testQuadraticFitAndCancellation() throws {
-    let start = [0.0, 0, 0, 0, 0, 1] + Array(repeating: 0, count: 22)
-    let target = [0.4, -0.3, 0.2, 0.1, -0.2, 1.5] + Array(repeating: 0.12, count: 22)
-    let evaluate: SSBFifthOrderSearch.Evaluate = { points in
-      points.map { p -> Double in
-        var residual = 0.0
-        for i in p.indices {
-          let delta = p[i] - target[i]
-          residual += delta * delta
-        }
-        return 100 - residual
-      }
-    }
-    let result = try SSBFifthOrderSearch.refine(evaluate, start: start, bounds: Self.bounds)
-    XCTAssertGreaterThan(result.agreement, 99.999999)
-    XCTAssertLessThan(result.evaluations, 5000)
-    for (p, t) in zip(result.coordinates, target) { XCTAssertEqual(p, t, accuracy: 1e-4) }
-    XCTAssertThrowsError(
-      try SSBFifthOrderSearch.refine(
-        evaluate, start: start, bounds: Self.bounds, isCancelled: { true }))
-    XCTAssertThrowsError(
-      try SSBFifthOrderSearch.refine({ _ in [Double.nan] }, start: start, bounds: Self.bounds))
-    XCTAssertThrowsError(
-      try SSBFifthOrderSearch.refine(
-        evaluate, start: start, bounds: Self.bounds, maxEvaluations: 0))
   }
 }

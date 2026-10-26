@@ -328,7 +328,8 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
     }
   }
 
-  /// The default fit (tilt-corrected, rotation given), the tilt=False model fit and the standard comparison.
+  /// The default fit (tilt-corrected, rotation given) and the tilt=False model fit, polished on the model's exact
+  /// derivatives.
   func testModelFitsMatchMPS() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let fixture = try MeasuredSSBFixture.load(device: device)
@@ -336,8 +337,9 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
     let reference = fixture.expected.default
     let model = try engine.jointModel(scanDetectorRotationDegrees: reference.rotation_deg)
     let evaluate = agreementEvaluator(model)
+    let derivatives = SSBAgreementSearch.staged { try model.lowOrderAgreementDerivatives($0) }
     var started = Date()
-    let tilt = try SSBAgreementSearch.fitTilt(evaluate)
+    let tilt = try SSBAgreementSearch.fitTilt(evaluate, staged: derivatives)
     let tiltSeconds = Date().timeIntervalSince(started)
     let p = tilt.point
     print(
@@ -353,7 +355,7 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
     XCTAssertEqual(p[4], reference.sample_tilt_mrad[1], accuracy: 0.02)
     XCTAssertEqual(p[5] / 10, reference.depth_spread_nm, accuracy: 0.05)
     started = Date()
-    let standard = try SSBAgreementSearch.fitStandard(evaluate)
+    let standard = try SSBAgreementSearch.fitStandard(evaluate, staged: derivatives)
     let s = standard.point
     let control = fixture.expected.model_tilt0
     print(

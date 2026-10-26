@@ -67,6 +67,15 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Removed
 
+- Native (Metal) SSB: the finite-difference Newton is retired, as in Python. The low-order fit's stencil Newton
+  (`SSBAgreementSearch.fitTilt` and `fitStandard` without derivatives) and the fifth-order `SSBFifthOrderSearch`
+  (`SSBModelFit.HigherOrderSearch.finiteDifferenceNewton`, `metal-ssb-fit-benchmark --search newton`) are removed:
+  `fitTilt` and `fitStandard` take `staged:` exact derivatives, and the fifth-order search is always the
+  exact-gradient one. Saved options naming `.finiteDifferenceNewton`, and older ones without the key, still decode;
+  `SSBFitOptions.validate()` and `refineFifthOrder` refuse a fifth-order fit with it. The search record moves to
+  `SSBFifthOrderGradientSearch.Result` (same fields). Fits are unchanged: production already polished on exact
+  derivatives. Tests now pin the 200 search trials to Python's and check the Newton against the analytic maximum
+  of the synthetic objective, and the fifth-order search against a maximum of the Double-summed agreement.
 - Native (Metal) SSB: `SSBFifthOrderSearch.bounds`, the standard ±2 box that the lower-level fifth-order calls
   defaulted to while `SSBFitOptions` defaults to ±20, is removed. `SSBModelFit.refineFifthOrder`,
   `SSBFifthOrderGradientSearch.refine`, `SSBFifthOrderSearch.refine`, `SSBFifthOrderGradientSearch.projectedGradient`

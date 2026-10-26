@@ -4,12 +4,12 @@ import XCTest
 
 @testable import MetalSSBKernels
 
-/// The Swift port of the resident TPE + Newton fit against the Python MPS implementation
-/// (`ssb._resident_search.fit_resident` and `fit_standard_resident`, seed 42, 200 trials) on a synthetic
-/// float32 objective that both sides evaluate from the same float32 trial rows. The digests pin every trial
-/// row Python evaluated (search and Newton), in order; the points are Python's fits. Python keeps the Newton
-/// state in a three-float expansion and this port in double precision (the CUDA build's arithmetic), so the
-/// fitted points agree to about 1e-8 while every float32 trial row is identical.
+/// The Swift port of the resident TPE search against the Python implementation
+/// (`ssb._resident_search.fit_resident` and `fit_standard_resident`, seed 42, 200 trials) on a synthetic float32
+/// objective that both sides evaluate from the same float32 trial rows: the digests pin the 200 search rows Python
+/// evaluated, in order. The trust-region Newton after the search climbs on exact derivatives (Python
+/// `ssb._exact_newton`); here they are the analytic derivatives of the same objective in double precision, whose
+/// maximum is known exactly.
 final class SSBAgreementSearchTests: XCTestCase {
   /// A smooth float32 objective with its maximum at C10 37.25 A, C12 (cos, sin) (30, -12) A, tilt (3.5, -1.25)
   /// mrad and depth 151 A, written as the Python generator writes it.
@@ -26,6 +26,30 @@ final class SSBAgreementSearchTests: XCTestCase {
     return Double(s)
   }
 
+  /// `score` in the Newton coordinates z (C10, C12 cos 2 phi12, C12 sin 2 phi12, tilt row, tilt column, depth
+  /// spread) in double precision, with its analytic gradient and Hessian; `quartic` adds a C10 term that makes some
+  /// steps overshoot and get rejected.
+  static let target = [37.25, 30, -12, 3.5, -1.25, 151]
+  static let curvature = [0.25, 1, 1, 400, 400, 0.01]
+  static func exact(_ z: [Double], quartic: Double = 0) -> SSBAgreementSearch.Derivatives {
+    var value = 1.0e6
+    var gradient = [Double](repeating: 0, count: 6)
+    var hessian = [[Double]](repeating: [Double](repeating: 0, count: 6), count: 6)
+    for d in 0..<6 {
+      let x = d == 5 ? abs(z[d]) : z[d]
+      let r = x - target[d]
+      let q = d == 0 ? quartic : 0
+      value -= curvature[d] * r * r + q * r * r * r * r
+      let slope = -2 * curvature[d] * r - 4 * q * r * r * r
+      gradient[d] = slope * (d == 5 && z[d] < 0 ? -1 : 1)
+      hessian[d][d] = -2 * curvature[d] - 12 * q * r * r
+    }
+    return SSBAgreementSearch.Derivatives(value: value, gradient: gradient, hessian: hessian)
+  }
+  static var derivatives: SSBAgreementSearch.StagedDerivatives {
+    SSBAgreementSearch.staged { rows in rows.map { exact($0) } }
+  }
+
   final class Recorder {
     var rows: [[Float]] = []
     func evaluate(_ points: [[Double]]) -> [Double] {
@@ -38,9 +62,9 @@ final class SSBAgreementSearchTests: XCTestCase {
         return SSBAgreementSearchTests.score(row)
       }
     }
-    var digest: String {
+    func digest(_ count: Int) -> String {
       var bytes = Data()
-      for row in rows { row.withUnsafeBytes { bytes.append(contentsOf: $0) } }
+      for row in rows.prefix(count) { row.withUnsafeBytes { bytes.append(contentsOf: $0) } }
       return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
     }
   }
@@ -49,10 +73,12 @@ final class SSBAgreementSearchTests: XCTestCase {
   /// either side fails without editing the pins below.
   struct Reference: Decodable {
     struct Fit: Decodable {
-      let point: [Double]
-      let agreement: Double
-      let rows: Int
-      let sha256: String
+      let searchRows: Int
+      let searchSHA256: String
+      enum CodingKeys: String, CodingKey {
+        case searchRows = "search_rows"
+        case searchSHA256 = "search_sha256"
+      }
     }
     let tilt: Fit
     let standard: Fit
@@ -67,122 +93,69 @@ final class SSBAgreementSearchTests: XCTestCase {
       Reference.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
     for (name, expected) in [("tilt", reference.tilt), ("standard", reference.standard)] {
       let recorder = Recorder()
-      let fit =
+      _ =
         name == "tilt"
-        ? try SSBAgreementSearch.fitTilt(recorder.evaluate)
-        : try SSBAgreementSearch.fitStandard(recorder.evaluate)
-      XCTAssertEqual(recorder.rows.count, expected.rows, name)
+        ? try SSBAgreementSearch.fitTilt(recorder.evaluate, staged: Self.derivatives)
+        : try SSBAgreementSearch.fitStandard(recorder.evaluate, staged: Self.derivatives)
+      XCTAssertGreaterThan(recorder.rows.count, expected.searchRows, name)
       XCTAssertEqual(
-        recorder.digest, expected.sha256, "\(name): a trial row differs from the Python search")
-      for (actual, value) in zip(fit.point, expected.point) {
-        XCTAssertEqual(actual, value, accuracy: 1e-6, name)
-      }
-      XCTAssertEqual(fit.agreement, expected.agreement, name)
+        recorder.digest(expected.searchRows), expected.searchSHA256,
+        "\(name): a search trial differs from the Python search")
     }
   }
 
-  func testTiltFitMatchesPythonTrialByTrial() throws {
-    let recorder = Recorder()
-    let fit = try SSBAgreementSearch.fitTilt(recorder.evaluate)
-    XCTAssertEqual(recorder.rows.count, 573)
-    XCTAssertEqual(
-      recorder.digest, "d78c322600a4aa4da277fdb39c3c9eee456bca3b547de85ef05fdb5f0a26312c",
-      "a trial row differs from the Python resident search")
-    let expected = [
-      37.267501144443685, 32.30775752459612, -0.19035700659647992, 3.49993612504556,
-      -1.2500771160326833, 150.91333765686667,
-    ]
-    for (actual, value) in zip(fit.point, expected) {
-      XCTAssertEqual(actual, value, accuracy: 1e-6)
-    }
-    XCTAssertEqual(fit.agreement, 1.0e6)
-    XCTAssertEqual(fit.newtonStarts.map(\.evaluations), [125, 41, 41, 97, 69])
-    XCTAssertEqual(fit.newtonStarts.map(\.converged), [true, false, false, true, false])
-  }
-
-  func testStandardFitMatchesPythonTrialByTrial() throws {
-    let recorder = Recorder()
-    let fit = try SSBAgreementSearch.fitStandard(recorder.evaluate)
-    XCTAssertEqual(recorder.rows.count, 244)
-    XCTAssertEqual(
-      recorder.digest, "a645708f9348b0c2c60eb0609f91a2c377bba8c1af084a748cd85511e8b12ca6",
-      "a trial row differs from the Python resident search")
-    let expected = [37.22132425139795, 32.306412714345484, -0.19023146368751864]
-    for (actual, value) in zip(fit.point, expected) {
-      XCTAssertEqual(actual, value, accuracy: 1e-6)
-    }
-    XCTAssertEqual(Array(fit.point[3...]), [0, 0, 0])
-    XCTAssertEqual(fit.agreement, 994247)
-  }
-
-  /// The exact-derivative Newton on the same objective: the same 200 search trials, then a few centers to the
-  /// maximum, which it reaches more closely than the stencil Newton.
-  func testExactNewtonReachesTheMaximumWithTheSameSearch() throws {
-    let stencil = Recorder()
-    let reference = try SSBAgreementSearch.fitTilt(stencil.evaluate)
+  /// The 200 search trials are Python's, then the exact Newton reaches the analytic maximum in a few centers.
+  func testTiltFitSearchesAsPythonAndReachesTheMaximum() throws {
     let recorder = Recorder()
     var centers = 0
-    // The objective in z in double precision: an exact maximum and analytic derivatives.
-    let target = [37.25, 30, -12, 3.5, -1.25, 151]
-    let curvature = [0.25, 1, 1, 400, 400, 0.01]
     let fit = try SSBAgreementSearch.fitTilt(
       recorder.evaluate,
-      derivatives: { rows in
+      staged: SSBAgreementSearch.staged { rows in
         centers += rows.count
-        return rows.map { z in
-          var value = 1.0e6
-          var gradient = [Double](repeating: 0, count: 6)
-          var hessian = [[Double]](repeating: [Double](repeating: 0, count: 6), count: 6)
-          for d in 0..<6 {
-            let x = d == 5 ? abs(z[d]) : z[d]
-            value -= curvature[d] * (x - target[d]) * (x - target[d])
-            gradient[d] = -2 * curvature[d] * (x - target[d]) * (d == 5 && z[d] < 0 ? -1 : 1)
-            hessian[d][d] = -2 * curvature[d]
-          }
-          return SSBAgreementSearch.Derivatives(value: value, gradient: gradient, hessian: hessian)
-        }
+        return rows.map { Self.exact($0) }
       })
-    XCTAssertEqual(Array(recorder.rows.prefix(200)), Array(stencil.rows.prefix(200)))
+    XCTAssertEqual(
+      recorder.digest(200), "d4e7f707fef64321c05c91cd93f89cec09de3df9f9e19ed3a3ea5ab652b100eb",
+      "a search trial differs from the Python search")
     // One more row: the fitted point on the search's own objective.
     XCTAssertEqual(recorder.rows.count, 201)
     XCTAssertEqual(fit.newtonStarts.map(\.evaluations).reduce(0, +), centers)
     XCTAssertLessThan(centers, 30)
     let point = SSBAgreementSearch.encode(fit.point)
     for d in 0..<6 {
-      XCTAssertEqual(point[d], target[d], accuracy: [1e-3, 1e-3, 1e-3, 1e-4, 1e-4, 1e-2][d])
+      XCTAssertEqual(point[d], Self.target[d], accuracy: [1e-3, 1e-3, 1e-3, 1e-4, 1e-4, 1e-2][d])
     }
-    print(
-      "EXACT_NEWTON centers \(centers) (stencil rows \(stencil.rows.count - 200)) agreement \(fit.agreement) (stencil \(reference.agreement))"
-    )
-    XCTAssertGreaterThanOrEqual(fit.agreement, reference.agreement)
+    XCTAssertEqual(fit.agreement, Self.score(recorder.rows[200]))
+    XCTAssertGreaterThanOrEqual(fit.agreement, fit.trials.map(\.agreement).max()!)
+    print("EXACT_NEWTON tilt centers \(centers) point \(fit.point) agreement \(fit.agreement)")
+  }
+
+  /// The tilt=False fit: the same search, tilt and depth spread held at 0, the maximum of C10 and C12 there.
+  func testStandardFitSearchesAsPythonAndReachesTheMaximum() throws {
+    let recorder = Recorder()
+    let fit = try SSBAgreementSearch.fitStandard(recorder.evaluate, staged: Self.derivatives)
+    XCTAssertEqual(
+      recorder.digest(200), "98411fa3934f9832762e50d9881d6209412a7b87bd49b4956ecb75981816f83f",
+      "a search trial differs from the Python search")
+    XCTAssertEqual(recorder.rows.count, 201)
+    XCTAssertEqual(Array(fit.point[3...]), [0, 0, 0])
+    let point = SSBAgreementSearch.encode(fit.point)
+    for d in 0..<3 { XCTAssertEqual(point[d], Self.target[d], accuracy: 1e-3) }
+    XCTAssertEqual(fit.agreement, Self.score(recorder.rows[200]))
+    XCTAssertGreaterThanOrEqual(fit.agreement, fit.trials.map(\.agreement).max()!)
+    print("EXACT_NEWTON standard point \(fit.point) agreement \(fit.agreement)")
   }
 
   /// The staged exact Newton (values first, derivatives only where a step uses them) reaches the same point as
   /// the one-stage exact Newton and asks for fewer derivatives: none at a rejected step or at the starts that the
   /// second iteration's pruning stops.
   func testStagedExactNewtonMatchesOneStage() throws {
-    let target = [37.25, 30, -12, 3.5, -1.25, 151]
-    let curvature = [0.25, 1, 1, 400, 400, 0.01]
-    func exact(_ z: [Double]) -> SSBAgreementSearch.Derivatives {
-      var value = 1.0e6
-      var gradient = [Double](repeating: 0, count: 6)
-      var hessian = [[Double]](repeating: [Double](repeating: 0, count: 6), count: 6)
-      for d in 0..<6 {
-        let x = d == 5 ? abs(z[d]) : z[d]
-        // A quartic term in C10 makes some steps overshoot and get rejected.
-        let r = x - target[d]
-        value -= curvature[d] * r * r + (d == 0 ? 0.002 * r * r * r * r : 0)
-        let slope = -2 * curvature[d] * r - (d == 0 ? 0.008 * r * r * r : 0)
-        gradient[d] = slope * (d == 5 && z[d] < 0 ? -1 : 1)
-        hessian[d][d] = -2 * curvature[d] - (d == 0 ? 0.024 * r * r : 0)
-      }
-      return SSBAgreementSearch.Derivatives(value: value, gradient: gradient, hessian: hessian)
-    }
+    func exact(_ z: [Double]) -> SSBAgreementSearch.Derivatives { Self.exact(z, quartic: 0.002) }
     let oneStage = Recorder()
     var centers = 0
     let reference = try SSBAgreementSearch.fitTilt(
       oneStage.evaluate,
-      derivatives: { rows in
+      staged: SSBAgreementSearch.staged { rows in
         centers += rows.count
         return rows.map(exact)
       })
@@ -232,11 +205,15 @@ final class SSBAgreementSearchTests: XCTestCase {
   func testRefinementFromAStartNeedsNoTrials() throws {
     let recorder = Recorder()
     let start = [37.0, 30.0, -0.2, 3.0, -1.0, 140.0]
-    let fit = try SSBAgreementSearch.fitTilt(recorder.evaluate, trials: 0, start: start)
+    let fit = try SSBAgreementSearch.fitTilt(
+      recorder.evaluate, trials: 0, start: start, staged: Self.derivatives)
     XCTAssertTrue(fit.trials.isEmpty)
-    XCTAssertEqual(fit.point[0], 37.25, accuracy: 0.5)
-    XCTAssertEqual(fit.point[3], 3.5, accuracy: 0.05)
-    XCTAssertThrowsError(try SSBAgreementSearch.fitTilt(recorder.evaluate, trials: 0))
-    XCTAssertThrowsError(try SSBAgreementSearch.fitTilt(recorder.evaluate, isCancelled: { true }))
+    XCTAssertEqual(fit.point[0], 37.25, accuracy: 1e-3)
+    XCTAssertEqual(fit.point[3], 3.5, accuracy: 1e-4)
+    XCTAssertThrowsError(
+      try SSBAgreementSearch.fitTilt(recorder.evaluate, trials: 0, staged: Self.derivatives))
+    XCTAssertThrowsError(
+      try SSBAgreementSearch.fitTilt(
+        recorder.evaluate, staged: Self.derivatives, isCancelled: { true }))
   }
 }

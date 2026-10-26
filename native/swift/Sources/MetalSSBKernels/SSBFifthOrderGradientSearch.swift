@@ -26,6 +26,29 @@ public enum SSBFifthOrderGradientSearch {
     }
   }
 
+  public struct Sample: Codable, Sendable {
+    public let evaluation: Int
+    public let agreement: Double
+    public let elapsedSeconds: Double
+  }
+
+  /// A fifth-order search's record (`SSBFit.higherOrderRefinement`).
+  public struct Result: Codable, Sendable {
+    public let coordinates: [Double]
+    public let agreement: Double
+    /// Full-data objective passes.
+    public let evaluations: Int
+    public let executedObjectives: Int
+    public let iterations: Int
+    public let stop: String
+    public let trace: [Sample]
+    /// Full-band gradient passes, gradient evaluations on a band subsample for the steering Hessian, and the
+    /// subsample stride. Nil in runs saved by the retired finite-difference Newton.
+    public var gradientEvaluations: Int? = nil
+    public var subsampledGradients: Int? = nil
+    public var hessianStride: Int? = nil
+  }
+
   /// Values and gradients (d value / d z) of candidate coordinates, divided by the initial full agreement.
   public typealias Evaluate = (_ points: [[Double]], _ request: Request) throws -> [(
     value: Double, gradient: [Double]
@@ -62,7 +85,7 @@ public enum SSBFifthOrderGradientSearch {
     progress: (_ completed: Int, _ total: Int) -> Void = { _, _ in },
     log: ((String) -> Void)? = nil,
     isCancelled: () -> Bool = { false }
-  ) throws -> SSBFifthOrderSearch.Result {
+  ) throws -> SSBFifthOrderGradientSearch.Result {
     let n = start.count
     guard n >= 6, bounds.count == n, settings.maxObjectives > 1, settings.hessianBFStride >= 1,
       settings.coarseBFStride >= 1,
@@ -82,7 +105,7 @@ public enum SSBFifthOrderGradientSearch {
     var subsampled = 0
     var best = -Double.infinity
     var bestPoint = start
-    var trace: [SSBFifthOrderSearch.Sample] = []
+    var trace: [Sample] = []
     let started = Date()
     // A BF subsample is scaled to equal the full normalized agreement at the start.
     var subsampleScale: [Int: Double] = [:]
@@ -273,7 +296,7 @@ public enum SSBFifthOrderGradientSearch {
     let stop = try stage(
       stride: 1, tolerance: settings.gainTolerance, value: fine.value, gradient: fine.gradient)
 
-    var result = SSBFifthOrderSearch.Result(
+    var result = SSBFifthOrderGradientSearch.Result(
       coordinates: bestPoint, agreement: best, evaluations: objectives,
       executedObjectives: objectives, iterations: iterations, stop: stop, trace: trace)
     result.gradientEvaluations = gradients
@@ -399,12 +422,16 @@ public enum SSBFifthOrderGradientSearch {
 extension SSBModelFit {
   /// Which search refines the fifth-order model.
   public enum HigherOrderSearch: String, Codable, Sendable {
-    /// `SSBFifthOrderSearch`: bounded finite-difference Newton (the reference).
+    /// Retired: the bounded finite-difference Newton. Saved options naming it (and those without the key) decode;
+    /// `refineFifthOrder` and `SSBFitOptions.validate()` refuse it.
     case finiteDifferenceNewton
     /// `SSBFifthOrderGradientSearch` on the full data: exact gradients, trust-region quasi-Newton.
     case exactGradient
     /// The same, first climbing the agreement of every 8th BF pixel, then converging on the full data.
     case exactGradientCoarseToFine
+
+    static let retiredMessage =
+      "The finite-difference Newton fifth-order search is retired. Use the exact-gradient search (the default)."
   }
 
   /// Refine a low-order fit through fifth order on `model` at its current rotation, inside `bounds`
@@ -422,8 +449,11 @@ extension SSBModelFit {
     isCancelled: () -> Bool = { false }
   ) throws -> (
     point: SSBModelPoint, agreement: Double, agreement64: Double, normalization: Double,
-    result: SSBFifthOrderSearch.Result
+    result: SSBFifthOrderGradientSearch.Result
   ) {
+    guard search != .finiteDifferenceNewton else {
+      throw MetalSSBError.invalidGeometry(HigherOrderSearch.retiredMessage)
+    }
     let coordinates = SSBFifthOrderCoordinates(
       wavelengthAngstroms: model.wavelengthAngstroms,
       semiangleRadians: model.semiangleRadians)
@@ -435,63 +465,50 @@ extension SSBModelFit {
       return (value.agreement, value.agreement64)
     }
     let initial = try values(start)
-    // Bit-identical to the production objective `fifthOrderAgreements` (ssb-fifth-agreement v0.3).
+    // Bit-identical to the production objective `fifthOrderAgreements` (`ssb-fifth-agreement`).
     let normalization = initial.agreement
     guard normalization.isFinite, normalization > 0 else {
       throw MetalSSBError.invalidGeometry(
         "The higher-order fit needs a positive finite initial agreement. Check calibration and signal in the fitting band."
       )
     }
-    let result: SSBFifthOrderSearch.Result
-    switch search {
-    case .finiteDifferenceNewton:
-      result = try SSBFifthOrderSearch.refine(
-        { rows in
-          try model.fifthOrderAgreements(
-            rows.map(coordinates.point),
-            packedCoefficients: rows.map(coordinates.pack), isCancelled: isCancelled
-          ).map { $0 / normalization }
-        }, start: start, bounds: bounds, maxEvaluations: maxEvaluations, progress: progress,
-        isCancelled: isCancelled)
-    case .exactGradient, .exactGradientCoarseToFine:
-      var settings = gradientSettings
-      settings.maxObjectives = min(settings.maxObjectives, maxEvaluations)
-      if search == .exactGradientCoarseToFine && settings.coarseBFStride == 1 {
-        settings.coarseBFStride = 8
-      }
-      // A BF subsample steers only while its agreement depends on the coordinates (that of a single pixel is
-      // constant): keep at least 32 pixels, so a small bright field uses all of them.
-      let usable = max(1, model.brightFieldPixelCount / 32)
-      settings.hessianBFStride = min(settings.hessianBFStride, usable)
-      settings.coarseBFStride = min(settings.coarseBFStride, usable)
-      result = try SSBFifthOrderGradientSearch.refine(
-        { rows, request in
-          let points = rows.map(coordinates.point)
-          let packed = rows.map(coordinates.pack)
-          let values: [(agreement: Double, agreement64: Double, gradient: [Double])]
-          switch request {
-          case .valueAndGradient(let stride):
-            values = try model.fifthOrderAgreementsAndGradients(
-              points, packedCoefficients: packed, kStride: stride, isCancelled: isCancelled)
-          case .value(let stride):
-            values = try model.fifthOrderAgreementsAndGradients(
-              points, packedCoefficients: packed, kStride: stride, gradients: false,
-              isCancelled: isCancelled)
-          case .gradientOfLastValue(let stride):
-            values = try model.fifthOrderRetainedGradients(
-              points, packedCoefficients: packed, kStride: stride, isCancelled: isCancelled)
-          }
-          return values.map {
-            (
-              value: $0.agreement64 / normalization,
-              gradient: $0.gradient.isEmpty
-                ? [] : coordinates.gradient(row: $0.gradient).map { $0 / normalization }
-            )
-          }
-        }, start: start, startValue: initial.agreement64 / normalization, bounds: bounds,
-        settings: settings,
-        progress: progress, log: log, isCancelled: isCancelled)
+    var settings = gradientSettings
+    settings.maxObjectives = min(settings.maxObjectives, maxEvaluations)
+    if search == .exactGradientCoarseToFine && settings.coarseBFStride == 1 {
+      settings.coarseBFStride = 8
     }
+    // A BF subsample steers only while its agreement depends on the coordinates (that of a single pixel is
+    // constant): keep at least 32 pixels, so a small bright field uses all of them.
+    let usable = max(1, model.brightFieldPixelCount / 32)
+    settings.hessianBFStride = min(settings.hessianBFStride, usable)
+    settings.coarseBFStride = min(settings.coarseBFStride, usable)
+    let result = try SSBFifthOrderGradientSearch.refine(
+      { rows, request in
+        let points = rows.map(coordinates.point)
+        let packed = rows.map(coordinates.pack)
+        let values: [(agreement: Double, agreement64: Double, gradient: [Double])]
+        switch request {
+        case .valueAndGradient(let stride):
+          values = try model.fifthOrderAgreementsAndGradients(
+            points, packedCoefficients: packed, kStride: stride, isCancelled: isCancelled)
+        case .value(let stride):
+          values = try model.fifthOrderAgreementsAndGradients(
+            points, packedCoefficients: packed, kStride: stride, gradients: false,
+            isCancelled: isCancelled)
+        case .gradientOfLastValue(let stride):
+          values = try model.fifthOrderRetainedGradients(
+            points, packedCoefficients: packed, kStride: stride, isCancelled: isCancelled)
+        }
+        return values.map {
+          (
+            value: $0.agreement64 / normalization,
+            gradient: $0.gradient.isEmpty
+              ? [] : coordinates.gradient(row: $0.gradient).map { $0 / normalization }
+          )
+        }
+      }, start: start, startValue: initial.agreement64 / normalization, bounds: bounds,
+      settings: settings,
+      progress: progress, log: log, isCancelled: isCancelled)
     let final = try values(result.coordinates)
     return (
       coordinates.point(result.coordinates), final.agreement, final.agreement64, normalization,

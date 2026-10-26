@@ -10,7 +10,7 @@ import Native4DSTEMIO
 //
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --scan-step A [--kv 300] [--semiangle 30]
 //     [--index DIR] [--max-order 5] [--trials 200] [--repeats 1] [--output RESULT.json]
-//     [--search newton|gradient|gradient-coarse] [--fifth-only BASELINE.json [--gradient-check]] [--higher-order-limit 2|20] [--higher-order-guard]
+//     [--search gradient|gradient-coarse] [--fifth-only BASELINE.json [--gradient-check]] [--higher-order-limit 2|20] [--higher-order-guard]
 //     [--no-consistency-check]
 // --fifth-only starts the fifth-order stage at the kept low-order fit and rotation of an earlier result, inside the
 // --higher-order-limit box;
@@ -23,8 +23,8 @@ import Native4DSTEMIO
 // the app's mask: valid detector pixels at or beyond 1.1 BF radii). --verify-branches also searches the
 // branch that was mapped from the fitted one, and reports both points' agreements and phases and the branch
 // decision taken with the searched fit instead. --check-maximum evaluates the kept low-order fit's neighbours
-// one stencil-Newton tolerance away along each Newton coordinate (C10, C12 x/y, tilt row/column, depth), and
-// with --baseline RESULT.json the same for that run's kept low-order fit.
+// 0.05 A, 0.05 A, 0.05 A, 0.005 mrad, 0.005 mrad and 0.5 A away along each Newton coordinate (C10, C12 x/y, tilt
+// row/column, depth), and with --baseline RESULT.json the same for that run's kept low-order fit.
 //   metal-ssb-fit-benchmark --cache DIR --direct-parity LIMITS.json --cuda-dir DIR [--limits 2,10] [--factors 1,3]
 //     [--output PARITY.json] [--phase-out DIR]
 //     ssb, phase and complex of the limits' optics against CUDA's arrays, with timings (DirectParity.swift).
@@ -114,11 +114,10 @@ struct Options {
       case "--dump": dump = URL(fileURLWithPath: try value(flag))
       case "--search":
         switch try value(flag) {
-        case "newton": search = .finiteDifferenceNewton
         case "gradient": search = .exactGradient
         case "gradient-coarse": search = .exactGradientCoarseToFine
         case let other:
-          throw failure("Unknown search \(other); use newton, gradient or gradient-coarse")
+          throw failure("Unknown search \(other); use gradient or gradient-coarse")
         }
       case "--higher-order-limit": higherOrderLimit = Double(try value(flag)) ?? .nan
       case "--higher-order-guard": higherOrderGuard = true

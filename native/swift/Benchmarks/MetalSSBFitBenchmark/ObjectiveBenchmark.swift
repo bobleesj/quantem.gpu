@@ -9,8 +9,9 @@ import MetalSSBKernels
 //
 // Candidates come from RUN.json (a `metal-ssb-fit-benchmark --output` result): the kept branch's low-order fit
 // (`initial`), the fifth-order start built from it, the final fifth-order coordinates, a 57-point axis stencil
-// around the final point (the Newton diagonal design) and 64 seeded random points within +-0.1 of it. Then the
-// exact-gradient search's value and gradient calls at the start and final points (`search_kernels`).
+// around the final point (the diagonal design of the retired finite-difference Newton, kept so timings compare)
+// and 64 seeded random points within +-0.1 of it. Then the exact-gradient search's value and gradient calls at
+// the start and final points (`search_kernels`).
 
 /// SSBFifthOrderCoordinates.pack: dimensionless coordinates to the 28 Cartesian float32 coefficients.
 private func pack(_ z: [Double], wavelength: Double, semiangle: Double) -> [Float] {

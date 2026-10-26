@@ -225,9 +225,11 @@ final class SSBFifthOrderGradientTests: XCTestCase {
     return try engine.jointModel(scanDetectorRotationDegrees: 17.25)
   }
 
-  /// From the same low-order fit, the exact-gradient search reaches at least the agreement of the
-  /// finite-difference Newton reference with far fewer objective passes.
-  func testExactGradientSearchMatchesFiniteDifferenceNewton() throws {
+  /// From the same low-order fit, both exact-gradient searches converge to a maximum of the Double-summed agreement:
+  /// the exact projected gradient there is small against the start's, no step of 1e-2 along any of the 28
+  /// coordinates raises the agreement beyond its float32 summation noise, and the two searches agree. The retired
+  /// finite-difference Newton is refused.
+  func testExactGradientSearchesReachAMaximum() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let model = try Self.model(device)
     let primary = SSBModelPoint(
@@ -235,22 +237,45 @@ final class SSBFifthOrderGradientTests: XCTestCase {
       sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140)
     let bounds = SSBModelFit.fifthOrderBounds(
       higherOrderLimit: SSBFitOptions.standardHigherOrderLimit)
-    let newton = try SSBModelFit.refineFifthOrder(
-      primary, model: model, search: .finiteDifferenceNewton, bounds: bounds)
+    XCTAssertThrowsError(
+      try SSBModelFit.refineFifthOrder(
+        primary, model: model, search: .finiteDifferenceNewton, bounds: bounds)
+    ) { XCTAssertTrue($0.localizedDescription.contains("retired")) }
+    let start = SSBFifthOrderCoordinates(
+      wavelengthAngstroms: model.wavelengthAngstroms, semiangleRadians: model.semiangleRadians
+    ).initial(primary)
+    let startGradient = try SSBModelFit.fifthOrderGradient(model: model, z: start)
+    let startScale = startGradient.map(abs).max()!
+    var agreements: [Double] = []
     for search in [SSBModelFit.HigherOrderSearch.exactGradient, .exactGradientCoarseToFine] {
-      let gradient = try SSBModelFit.refineFifthOrder(
+      let refined = try SSBModelFit.refineFifthOrder(
         primary, model: model, search: search, bounds: bounds)
-      XCTAssertEqual(gradient.normalization, newton.normalization)
-      XCTAssertGreaterThanOrEqual(gradient.agreement64, newton.agreement64 * (1 - 1e-7))
-      XCTAssertLessThan(gradient.result.evaluations, newton.result.executedObjectives / 10)
-      XCTAssertTrue(["converged", "trust radius exhausted"].contains(gradient.result.stop))
-      for (bound, value) in zip(bounds, gradient.result.coordinates) {
-        XCTAssertTrue(bound.contains(value))
+      let z = refined.result.coordinates
+      XCTAssertTrue(["converged", "trust radius exhausted"].contains(refined.result.stop))
+      XCTAssertLessThan(refined.result.evaluations, 400)
+      XCTAssertGreaterThan(refined.result.agreement, 1)
+      for (bound, value) in zip(bounds, z) { XCTAssertTrue(bound.contains(value)) }
+      let projected = SSBFifthOrderGradientSearch.projectedGradient(
+        try SSBModelFit.fifthOrderGradient(model: model, z: z), at: z, bounds: bounds)
+      let gradientRatio = projected.map(abs).max()! / startScale
+      let center = try SSBModelFit.fifthOrderAgreement64(model: model, z: z)
+      var largestRise = -Double.infinity
+      for i in 0..<28 {
+        for sign in [1.0, -1.0] {
+          var neighbour = z
+          neighbour[i] = min(bounds[i].upperBound, max(bounds[i].lowerBound, z[i] + sign * 1e-2))
+          let value = try SSBModelFit.fifthOrderAgreement64(model: model, z: neighbour)
+          largestRise = max(largestRise, value / center - 1)
+        }
       }
       print(
-        "fifth-order search \(search): Newton \(newton.agreement64) in \(newton.result.executedObjectives) objectives, gradient \(gradient.agreement64) in \(gradient.result.evaluations) objectives, \(gradient.result.gradientEvaluations ?? 0) gradients"
+        "fifth-order search \(search): agreement \(refined.agreement64) in \(refined.result.evaluations) objectives, \(refined.result.gradientEvaluations ?? 0) gradients, projected gradient / start \(gradientRatio), largest neighbour rise \(largestRise)"
       )
+      XCTAssertLessThan(gradientRatio, 1e-2)
+      XCTAssertLessThan(largestRise, 1e-6)
+      agreements.append(refined.agreement64)
     }
+    XCTAssertEqual(agreements[0], agreements[1], accuracy: 1e-6 * agreements[0])
   }
 
   /// Refining a low-order fit gives exactly the fifth-order fit that `findAberrations` computes in one call.

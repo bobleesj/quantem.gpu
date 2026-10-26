@@ -50,8 +50,8 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
   public var maximumOrder: Int
   public var maxHigherOrderEvaluations: Int
   /// The fifth-order search: exact gradients, converged on every BF pixel after a start on every 8th one.
-  /// Saved runs without this key used the finite-difference Newton search (`.finiteDifferenceNewton`), kept as the
-  /// reference trajectory.
+  /// Saved runs without this key used the retired finite-difference Newton (`.finiteDifferenceNewton`); they decode,
+  /// and `validate()` refuses a fifth-order fit with it.
   public var higherOrderSearch: SSBModelFit.HigherOrderSearch = .exactGradientCoarseToFine
   /// The bound of each higher-order coordinate, in rad of probe phase at the aperture edge: one of
   /// `higherOrderLimits`. Saved runs without this key used the standard ±2.
@@ -142,6 +142,9 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
       throw MetalSSBError.invalidGeometry(
         "Choose maximumOrder 1 or 5 and a positive higher-order evaluation cap.")
     }
+    guard maximumOrder == 1 || higherOrderSearch != .finiteDifferenceNewton else {
+      throw MetalSSBError.invalidGeometry(SSBModelFit.HigherOrderSearch.retiredMessage)
+    }
     if maximumOrder == 5 && !tilt {
       throw MetalSSBError.invalidGeometry(
         "The standard fifth-order fit jointly refines tilt and depth. Use maximumOrder: 1 for the primary-only alternatives."
@@ -174,7 +177,7 @@ public struct SSBFit: Codable, Sendable {
   public var mappedFromBranch: Int? = nil
   /// The fifth-order search's trajectory (`higherOrderSearch`); nil for a primary-only fit.
   /// Agreements in this trace are divided by `higherOrderNormalization`.
-  public var higherOrderRefinement: SSBFifthOrderSearch.Result? = nil
+  public var higherOrderRefinement: SSBFifthOrderGradientSearch.Result? = nil
   /// Initial agreement for the shared fifth-order model, using the strict 0.2...0.9 inverse-Angstrom band.
   public var higherOrderNormalization: Double? = nil
   /// Whether the fitted higher orders can be read as the probe's aberrations (coherence and edge-phase precision);

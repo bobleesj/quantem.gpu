@@ -1,14 +1,15 @@
 import Foundation
 
-/// The model-based SSB fit: Python's resident multivariate TPE search and trust-region Newton
-/// (`quantem.gpu.ssb._resident_search`), ported line by line to host double precision, the arithmetic of its
-/// CUDA build. The objective is the least-squares agreement of the transfer model with the measured
-/// double-overlap data (`MetalSSBJointModel.agreements`), larger is better.
+/// The model-based SSB fit: Python's resident multivariate TPE search (`quantem.gpu.ssb._resident_search`),
+/// ported line by line to host double precision, the arithmetic of its CUDA build, then a trust-region Newton on
+/// the exact gradient and Hessian of the same objective (Python `ssb._exact_newton`). The objective is the
+/// least-squares agreement of the transfer model with the measured double-overlap data
+/// (`MetalSSBJointModel.agreements`), larger is better.
 ///
 /// Points are (C10, C12, phi12, tilt row, tilt column, depth spread) in engine units: Angstrom, Angstrom, rad,
-/// mrad, mrad, Angstrom. The search draws in the unit cube; trials, densities and Newton steps follow the
-/// Python kernels, including their float32 literals, so the same scores give the same trials. A joint fit with
-/// a search is polished once more from starts in other basins (`_other_basins`).
+/// mrad, mrad, Angstrom. The search draws in the unit cube; trials and densities follow the Python kernels,
+/// including their float32 literals, so the same scores give the same trials. A joint fit with a search is
+/// polished once more from starts in other basins (`_other_basins`).
 public enum SSBAgreementSearch {
   /// Evaluates trial points (engine units) and returns their agreements.
   public typealias Evaluate = ([[Double]]) throws -> [Double]
@@ -66,8 +67,7 @@ public enum SSBAgreementSearch {
 
   public struct NewtonStart: Codable, Sendable {
     public let iterations: Int
-    /// Objective evaluations: stencil points of the finite-difference Newton, or centers of the exact one (each
-    /// with its gradient and Hessian).
+    /// Newton centers evaluated (each with its gradient and Hessian where the step uses them).
     public let evaluations: Int
     public let converged: Bool
   }
@@ -333,10 +333,9 @@ public enum SSBAgreementSearch {
   // MARK: Trust-region Newton (`_newton`)
 
   static let steps = [2.0, 2.0, 2.0, f(0.25), f(0.25), 5.0]
-  static let tolerances = [f(0.05), f(0.05), f(0.05), f(0.005), f(0.005), f(0.5)]
-  /// The exact Newton's convergence tolerances: a tenth of the stencil Newton's. Its steps converge
-  /// quadratically, so the last center is within about this of the maximum for one or two more centers.
-  static let exactTolerances = tolerances.map { $0 / 10 }
+  /// The convergence tolerances (Python `EXACT_TOLERANCES`): a tenth of the resident Newton's float32 ones. The
+  /// steps converge quadratically, so the last center is within about this of the maximum.
+  static let tolerances = [f(0.05), f(0.05), f(0.05), f(0.005), f(0.005), f(0.5)].map { $0 / 10 }
 
   static func encode(_ p: [Double]) -> [Double] {
     var z = p
@@ -354,13 +353,10 @@ public enum SSBAgreementSearch {
 
   /// The scaled trust-region step that maximizes the quadratic model (`trust_step`, cyclic Jacobi).
   static func trustStep(
-    gradient g: [Double], hessian h: [[Double]], steps: [Double], radius: Double,
-    floatLiterals: Bool = true
-  )
-    -> [Double]
-  {
-    // Preserve primary resident arithmetic; the fifth-order host controller uses Double literals.
-    func literal(_ value: Double) -> Double { floatLiterals ? Double(Float(value)) : value }
+    gradient g: [Double], hessian h: [[Double]], steps: [Double], radius: Double
+  ) -> [Double] {
+    // The resident kernels' float32 literals.
+    func literal(_ value: Double) -> Double { Double(Float(value)) }
     let n = g.count
     var a = (0..<n).map { i in (0..<n).map { j in h[i][j] * steps[i] * steps[j] } }
     var v = (0..<n).map { i in (0..<n).map { j in i == j ? 1.0 : 0.0 } }
@@ -475,7 +471,6 @@ public enum SSBAgreementSearch {
     var keptGradient = [Double](repeating: 0, count: 6)
     var keptHessian = [[Double]](repeating: [Double](repeating: 0, count: 6), count: 6)
     var radius = 8.0
-    var full = true
     var active = true
     var hasPrevious = false
     var iterations = 0
@@ -492,18 +487,15 @@ public enum SSBAgreementSearch {
   /// iterations. `prune` keeps only the highest start after the second step; without it every start climbs
   /// until it converges or meets a higher one.
   ///
-  /// With `derivatives` every iteration evaluates each active center once, with its exact gradient and Hessian,
-  /// in place of the finite-difference stencil (2n + 1 points, or n(n + 3)/2 + 1 with the mixed terms), and
-  /// converges to `exactTolerances`. The trust region, bounds, acceptance and start pruning are the same.
+  /// Every iteration evaluates each active center once (`staged.values`) and asks for its exact gradient and
+  /// Hessian (`staged.derivatives`) only where the step uses them: not at a rejected step, which keeps the
+  /// previous center's, and not at the starts that the second iteration's pruning stops. `standard` holds the
+  /// sample tilt and depth spread at 0.
   static func newton(
-    _ evaluate: Evaluate, points: [[Double]], scores: [Double], lower boxLower: [Double],
-    upper boxUpper: [Double], explicit: [[Double]], starts requested: Int, fixed: Bool,
-    standard: Bool,
-    prune: Bool = true, derivatives: EvaluateDerivatives? = nil,
-    staged stagedDerivatives: StagedDerivatives? = nil, known: [NewtonState] = [],
-    isCancelled: () -> Bool
+    points: [[Double]], scores: [Double], lower boxLower: [Double], upper boxUpper: [Double],
+    explicit: [[Double]], starts requested: Int, standard: Bool, prune: Bool = true,
+    staged: StagedDerivatives, known: [NewtonState] = [], isCancelled: () -> Bool
   ) throws -> (point: [Double], agreement: Double, starts: [NewtonState]) {
-    let staged = stagedDerivatives ?? derivatives.map(Self.staged)
     let starts = min(3, requested)
     let rank = ranks(scores)
     let distinct = [50.0, 20, f(0.3), 2, 2, 50]
@@ -533,24 +525,23 @@ public enum SSBAgreementSearch {
     lower[1] = -upper[1]
     lower[2] = -upper[1]
     upper[2] = upper[1]
-    let first = standard ? 0 : (fixed ? 3 : 0)
     let last = standard ? 3 : 6
-    let n = last - first
-    let free = (0..<6).map { standard ? $0 < 3 : !(fixed && $0 < 3) }
-    let tolerance = staged == nil ? tolerances : exactTolerances
+    let free = (0..<6).map { $0 < last }
     for iteration in 0..<30 {
       if isCancelled() { throw CancellationError() }
       let active = state.indices.filter { state[$0].active }
       if active.isEmpty { break }
-      var designs: [[Double]] = []
-      var sizes: [Int] = []
-      var exact: [Derivatives?] = []
-      let values: [Double]
-      // Staged: the positions (in `active`) whose derivatives wait for the second iteration's pruning.
+      // The positions (in `active`) whose derivatives wait for the second iteration's pruning.
       var deferred: [Int] = []
       var survivor = -1
+      let pruning = prune && iteration == 1 && active.count > 1
+      let values = try staged.values(active.map { state[$0].center }, !pruning)
+      guard values.count == active.count, values.allSatisfy(\.isFinite) else {
+        throw SSBOptimizationError.nonFiniteLoss
+      }
+      var exact = [Derivatives?](repeating: nil, count: active.count)
       func fetch(_ positions: [Int]) throws {
-        guard let staged, !positions.isEmpty else { return }
+        guard !positions.isEmpty else { return }
         let results = try staged.derivatives(positions)
         guard results.count == positions.count,
           results.allSatisfy({ at in
@@ -561,83 +552,37 @@ public enum SSBAgreementSearch {
         else { throw SSBOptimizationError.nonFiniteLoss }
         for (position, at) in zip(positions, results) { exact[position] = at }
       }
-      if let staged {
-        let pruning = prune && iteration == 1 && active.count > 1
-        values = try staged.values(active.map { state[$0].center }, !pruning)
-        guard values.count == active.count, values.allSatisfy(\.isFinite) else {
-          throw SSBOptimizationError.nonFiniteLoss
+      // A rejected step reuses the kept center's derivatives.
+      let kept = active.indices.map { position -> Double in
+        let s = state[active[position]]
+        let value = values[position] / scale
+        return s.hasPrevious && value < s.keptValue ? s.keptValue : value
+      }
+      let accepted = active.indices.filter { position in
+        let s = state[active[position]]
+        return !(s.hasPrevious && values[position] / scale < s.keptValue)
+      }
+      // The second iteration's pruning keeps only the highest active start. When it is strictly highest, above
+      // every stopped start too, no near-or-heading test can stop it, so it is kept unless it converges now; the
+      // others' derivatives are fetched only in that case.
+      if pruning {
+        let best = kept.indices.max { kept[$0] < kept[$1] }!
+        let unique = kept.indices.allSatisfy { $0 == best || kept[$0] < kept[best] }
+        let above = state.indices.allSatisfy { j in
+          active.contains(j) || !state[j].hasPrevious || state[j].keptValue < kept[best]
         }
-        sizes = active.map { _ in 1 }
-        exact = [Derivatives?](repeating: nil, count: active.count)
-        // A rejected step reuses the kept center's derivatives.
-        let kept = active.indices.map { position -> Double in
-          let s = state[active[position]]
-          let value = values[position] / scale
-          return s.hasPrevious && value < s.keptValue ? s.keptValue : value
-        }
-        let accepted = active.indices.filter { position in
-          let s = state[active[position]]
-          return !(s.hasPrevious && values[position] / scale < s.keptValue)
-        }
-        // The second iteration's pruning keeps only the highest active start. When it is strictly highest, above
-        // every stopped start too, no near-or-heading test can stop it, so it is kept unless it converges now; the
-        // others' derivatives are fetched only in that case.
-        if pruning {
-          let best = kept.indices.max { kept[$0] < kept[$1] }!
-          let unique = kept.indices.allSatisfy { $0 == best || kept[$0] < kept[best] }
-          let above = state.indices.allSatisfy { j in
-            active.contains(j) || !state[j].hasPrevious || state[j].keptValue < kept[best]
-          }
-          if unique && above {
-            survivor = best
-            deferred = accepted.filter { $0 != best }
-          }
-        }
-        try fetch(accepted.filter { !deferred.contains($0) })
-      } else {
-        for k in active {
-          let size = 1 + 2 * n + (state[k].full ? n * (n - 1) / 2 : 0)
-          sizes.append(size)
-          for local in 0..<size {
-            var z = state[k].center
-            if local > 0 && local <= 2 * n {
-              let d = first + (local - 1) / 2
-              z[d] += steps[d] * (local % 2 == 1 ? 1 : -1)
-            }
-            if local > 2 * n {
-              var pair = 2 * n + 1
-              for i in first..<last {
-                for j in (i + 1)..<max(i + 1, last) {
-                  if pair == local {
-                    z[i] += steps[i]
-                    z[j] += steps[j]
-                  }
-                  pair += 1
-                }
-              }
-            }
-            designs.append(decode(z))
-          }
-        }
-        values = try evaluate(designs)
-        guard values.count == designs.count, values.allSatisfy(\.isFinite) else {
-          throw SSBOptimizationError.nonFiniteLoss
+        if unique && above {
+          survivor = best
+          deferred = accepted.filter { $0 != best }
         }
       }
-      var offsets: [Int] = []
-      var running = 0
-      for size in sizes {
-        offsets.append(running)
-        running += size
-      }
+      try fetch(accepted.filter { !deferred.contains($0) })
       // One start's update; `stopping` marks a deferred start that this iteration's pruning stops, whose step
       // is not needed (its derivatives were not fetched).
       func advance(_ position: Int, stopping: Bool = false) {
         let k = active[position]
-        let size = sizes[position]
-        let offset = offsets[position]
         var s = state[k]
-        let value = values[offset] / scale
+        let value = values[position] / scale
         var center = s.center
         var moved = 0.0
         for d in 0..<6 {
@@ -658,46 +603,19 @@ public enum SSBAgreementSearch {
           s.hasPrevious = true
           s.heading = center
           s.iterations += 1
-          s.evaluations += size
+          s.evaluations += 1
           state[k] = s
           return
-        } else if staged != nil {
+        } else {
           guard let at = exact[position] else {
             preconditionFailure(
-              "The exact Newton fetches derivatives at every accepted, continuing start.")
+              "The Newton fetches derivatives at every accepted, continuing start.")
           }
-          for d in first..<last {
+          for d in 0..<last {
             g[d] = at.gradient[d] / scale
-            for e in first..<last { h[d][e] = at.hessian[d][e] / scale }
+            for e in 0..<last { h[d][e] = at.hessian[d][e] / scale }
           }
           if s.hasPrevious && moved >= f(0.99) * s.radius { s.radius *= 2 }
-          s.keptCenter = center
-          s.keptGradient = g
-          s.keptHessian = h
-          s.keptValue = value
-          s.hasPrevious = true
-        } else {
-          var plus = [Double](repeating: 0, count: 6)
-          for d in first..<last {
-            plus[d] = values[offset + 1 + 2 * (d - first)] / scale
-            let minus = values[offset + 2 + 2 * (d - first)] / scale
-            g[d] = (plus[d] - minus) / (2 * steps[d])
-            h[d][d] = (plus[d] - 2 * value + minus) / (steps[d] * steps[d])
-          }
-          if size > 2 * n + 1 {
-            var pair = offset + 2 * n + 1
-            for i in first..<last {
-              for j in (i + 1)..<max(i + 1, last) {
-                let mixed =
-                  (values[pair] / scale - plus[i] - plus[j] + value) / (steps[i] * steps[j])
-                h[i][j] = mixed
-                h[j][i] = mixed
-                pair += 1
-              }
-            }
-          }
-          if s.hasPrevious && moved >= f(0.99) * s.radius { s.radius *= 2 }
-          s.full = s.hasPrevious && moved > 2
           s.keptCenter = center
           s.keptGradient = g
           s.keptHessian = h
@@ -711,12 +629,12 @@ public enum SSBAgreementSearch {
           free[d] ? clip(center[d] + move[d], lower[d], upper[d]) : center[d]
         }
         let norm = sqrt(proposal[1] * proposal[1] + proposal[2] * proposal[2])
-        if !fixed && norm > upper[1] {
+        if norm > upper[1] {
           proposal[1] = proposal[1] * upper[1] / norm
           proposal[2] = proposal[2] * upper[1] / norm
         }
-        let converged = (first..<last).allSatisfy {
-          abs(proposal[$0] - center[$0]) < tolerance[$0]
+        let converged = (0..<last).allSatisfy {
+          abs(proposal[$0] - center[$0]) < tolerances[$0]
         }
         if converged {
           s.active = false
@@ -725,7 +643,7 @@ public enum SSBAgreementSearch {
         s.center = converged ? center : proposal
         s.heading = s.center
         s.iterations += 1
-        s.evaluations += size
+        s.evaluations += 1
         state[k] = s
       }
       for position in active.indices where !deferred.contains(position) { advance(position) }
@@ -742,7 +660,7 @@ public enum SSBAgreementSearch {
         for j in state.indices where j != k && state[j].hasPrevious {
           var near = true
           var heading = true
-          for d in first..<last {
+          for d in 0..<last {
             if abs(state[k].keptCenter[d] - state[j].keptCenter[d]) >= 4 * steps[d] { near = false }
             if abs(state[k].heading[d] - state[j].heading[d]) >= 2 * steps[d] { heading = false }
           }
@@ -761,9 +679,11 @@ public enum SSBAgreementSearch {
           if best < 0 || state[k].keptValue > state[best].keptValue { best = k }
         }
         for k in state.indices where k != best { state[k].active = false }
+        // Deferred starts remain only while the survivor climbs on (it converged otherwise, and they were advanced):
+        // the pruning then keeps the survivor alone.
         assert(
-          deferred.allSatisfy { !state[active[$0]].active }
-            && (survivor < 0 || best == active[survivor]))
+          deferred.isEmpty
+            || (best == active[survivor] && deferred.allSatisfy { !state[active[$0]].active }))
       }
     }
     var best = 0
@@ -814,33 +734,28 @@ public enum SSBAgreementSearch {
   /// `_other_basins`: polish the alternate starts, each to its own maximum, and keep that result only when its
   /// agreement is higher by more than `basinMargin`.
   ///
-  /// The exact Newton (`derivatives`) climbs only new basins: an alternate that is one of the first polish's
-  /// starts would retrace that start's deterministic climb and is not polished again, and the polished maximum
-  /// takes part in the start pruning, so an alternate that comes near it, or heads where it is, while lower,
-  /// stops.
+  /// Only new basins are climbed: an alternate that is one of the first polish's starts would retrace that start's
+  /// deterministic climb and is not polished again, and the polished maximum takes part in the start pruning, so
+  /// an alternate that comes near it, or heads where it is, while lower, stops.
   static func otherBasins(
-    _ evaluate: Evaluate, points: [[Double]], scores: [Double], lower: [Double], upper: [Double],
+    points: [[Double]], scores: [Double], lower: [Double], upper: [Double],
     first: (point: [Double], agreement: Double, starts: [NewtonState]),
-    derivatives: EvaluateDerivatives? = nil, staged: StagedDerivatives? = nil,
-    isCancelled: () -> Bool
+    staged: StagedDerivatives, isCancelled: () -> Bool
   ) throws -> (point: [Double], agreement: Double, starts: [NewtonState]) {
-    var alternates = alternateStarts(points: points, scores: scores, polished: first.point)
+    let origins = first.starts.map(\.origin)
+    let alternates = alternateStarts(points: points, scores: scores, polished: first.point)
+      .filter { !origins.contains(encode($0)) }
     var known: [NewtonState] = []
-    if derivatives != nil || staged != nil {
-      let origins = first.starts.map(\.origin)
-      alternates = alternates.filter { !origins.contains(encode($0)) }
-      if let polished = first.starts.filter(\.hasPrevious).max(by: { $0.keptValue < $1.keptValue })
-      {
-        var marker = polished
-        marker.heading = polished.keptCenter
-        known = [marker]
-      }
+    if let polished = first.starts.filter(\.hasPrevious).max(by: { $0.keptValue < $1.keptValue }) {
+      var marker = polished
+      marker.heading = polished.keptCenter
+      known = [marker]
     }
     if alternates.isEmpty { return first }
     let second = try newton(
-      evaluate, points: points, scores: scores, lower: lower, upper: upper, explicit: alternates,
-      starts: alternates.count, fixed: false, standard: false, prune: false,
-      derivatives: derivatives, staged: staged, known: known, isCancelled: isCancelled)
+      points: points, scores: scores, lower: lower, upper: upper, explicit: alternates,
+      starts: alternates.count, standard: false, prune: false, staged: staged, known: known,
+      isCancelled: isCancelled)
     let starts = first.starts + second.starts
     if second.agreement > first.agreement * (1 + basinMargin) {
       return (second.point, second.agreement, starts)
@@ -856,13 +771,13 @@ public enum SSBAgreementSearch {
 
   // MARK: Public fits
 
-  /// The tilt-corrected fit (`fit_resident`): C10, C12, phi12, sample tilt and depth spread together.
-  /// `trials = 0` refines from `start` only.
+  /// The tilt-corrected fit (`fit_resident`): C10, C12, phi12, sample tilt and depth spread together, searched on
+  /// `evaluate` and polished on the exact derivatives of the same objective (`staged`). `trials = 0` refines from
+  /// `start` only.
   public static func fitTilt(
     _ evaluate: Evaluate, trials: Int = 200, seed: Int = 42, tiltLimitMrad: Double = 25,
     c10RangeAngstroms: ClosedRange<Double> = -300...300, c12MaximumAngstroms: Double = 200,
-    start: [Double]? = nil, refine: Bool = true, derivatives: EvaluateDerivatives? = nil,
-    staged: StagedDerivatives? = nil, isCancelled: () -> Bool = { false }
+    start: [Double]? = nil, staged: StagedDerivatives, isCancelled: () -> Bool = { false }
   ) throws -> Result {
     guard trials >= 0, trials > 0 || start != nil else {
       throw MetalSSBError.invalidGeometry(
@@ -879,23 +794,22 @@ public enum SSBAgreementSearch {
     ]
     return try fit(
       evaluate, lower: lower, upper: upper, trials: trials, seed: seed, thin: false, start: start,
-      refine: refine, derivatives: derivatives, staged: staged, isCancelled: isCancelled)
+      staged: staged, isCancelled: isCancelled)
   }
 
-  /// The model-based fit at depth spread 0 (`fit_standard_resident`, Newton): C10, C12 and phi12 with the
-  /// sample tilt and depth spread held at 0. The default box is MPS's `STANDARD_RANGES`.
+  /// The model-based fit at depth spread 0 (`fit_standard_resident`): C10, C12 and phi12 with the sample tilt and
+  /// depth spread held at 0, polished as `fitTilt`. The default box is MPS's `STANDARD_RANGES`.
   public static func fitStandard(
     _ evaluate: Evaluate, trials: Int = 200, seed: Int = 42,
     c10RangeAngstroms: ClosedRange<Double> = -400...400, c12MaximumAngstroms: Double = 100,
-    refine: Bool = true, derivatives: EvaluateDerivatives? = nil,
-    staged: StagedDerivatives? = nil, isCancelled: () -> Bool = { false }
+    staged: StagedDerivatives, isCancelled: () -> Bool = { false }
   ) throws -> Result {
     guard trials > 0 else { throw MetalSSBError.invalidGeometry("Use at least one trial.") }
     let lower = [c10RangeAngstroms.lowerBound, 0, -Double.pi / 2, 0, 0, 0]
     let upper = [c10RangeAngstroms.upperBound, c12MaximumAngstroms, Double.pi / 2, 0, 0, 0]
     return try fit(
       evaluate, lower: lower, upper: upper, trials: trials, seed: seed, thin: true, start: nil,
-      refine: refine, derivatives: derivatives, staged: staged, isCancelled: isCancelled)
+      staged: staged, isCancelled: isCancelled)
   }
 
   /// The tilt fit's standard comparison: the best of a 200-trial search at depth spread 0, unrefined.
@@ -907,13 +821,13 @@ public enum SSBAgreementSearch {
     let upper = [c10RangeAngstroms.upperBound, c12MaximumAngstroms, Double.pi / 2, 0, 0, 0]
     return try fit(
       evaluate, lower: lower, upper: upper, trials: 200, seed: seed, thin: true, start: nil,
-      refine: false, isCancelled: isCancelled)
+      staged: nil, isCancelled: isCancelled)
   }
 
+  /// The search, then the Newton on `staged` (none: the best trial).
   static func fit(
     _ evaluate: Evaluate, lower: [Double], upper: [Double], trials: Int, seed: Int, thin: Bool,
-    start: [Double]?, refine: Bool, derivatives: EvaluateDerivatives? = nil,
-    staged: StagedDerivatives? = nil, isCancelled: () -> Bool
+    start: [Double]?, staged: StagedDerivatives?, isCancelled: () -> Bool
   ) throws -> Result {
     let space = Space(lower: lower, upper: upper, fixed: false, thin: thin)
     let begin = Date()
@@ -931,26 +845,23 @@ public enum SSBAgreementSearch {
     var point: [Double]
     var agreement: Double
     var newtonStarts: [NewtonStart] = []
-    if refine {
+    if let staged {
       var fitted = try newton(
-        evaluate, points: points, scores: scores, lower: lower, upper: upper,
-        explicit: thin ? [] : (start.map { [$0] } ?? []), starts: 3, fixed: false, standard: thin,
-        derivatives: derivatives, staged: staged, isCancelled: isCancelled)
+        points: points, scores: scores, lower: lower, upper: upper,
+        explicit: thin ? [] : (start.map { [$0] } ?? []), starts: 3, standard: thin,
+        staged: staged, isCancelled: isCancelled)
       if trials > 0 && !thin {
         fitted = try otherBasins(
-          evaluate, points: points, scores: scores, lower: lower, upper: upper, first: fitted,
-          derivatives: derivatives, staged: staged, isCancelled: isCancelled)
+          points: points, scores: scores, lower: lower, upper: upper, first: fitted,
+          staged: staged, isCancelled: isCancelled)
       }
       point = fitted.point
-      agreement = fitted.agreement
-      if derivatives != nil || staged != nil {
-        // Report the fitted point on the search's own objective.
-        let values = try evaluate([point])
-        guard values.count == 1, values[0].isFinite else {
-          throw SSBOptimizationError.nonFiniteLoss
-        }
-        agreement = values[0]
+      // Report the fitted point on the search's own objective.
+      let values = try evaluate([point])
+      guard values.count == 1, values[0].isFinite else {
+        throw SSBOptimizationError.nonFiniteLoss
       }
+      agreement = values[0]
       newtonStarts = fitted.starts.filter(\.hasPrevious).map {
         NewtonStart(iterations: $0.iterations, evaluations: $0.evaluations, converged: $0.converged)
       }
