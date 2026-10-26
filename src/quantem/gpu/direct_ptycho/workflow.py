@@ -380,8 +380,8 @@ class DirectPtycho:
 
     C10/C12 reconstruction averages corrected complex waves before taking the
     phase (``phase_of_mean``) on CUDA and MPS. Both support finer output sampling
-    through ``upsampling_factor``. Bright-field selection, loss reduction order
-    and Nelder-Mead settings remain backend-specific, so fitted values and images
+    through ``upsampling_factor``. Bright-field selection and loss reduction order
+    remain backend-specific, so fitted values and images
     need not agree bit for bit.
 
     Parameters
@@ -1931,8 +1931,9 @@ class DirectPtycho:
 
         Each method runs one search of ``trials`` candidates (default 200) per rotation branch, plus local refinement.
         The fits polish with the trust-region Newton on the exact gradient and Hessian of the agreement; a standard fit
-        that locks a coefficient, bounds phi12 or holds a nonzero C12 (not a box for the Newton) polishes with
-        Nelder-Mead; ``refinement=None`` keeps the best trial. ``result.refinement`` records which. ``result.loss`` is
+        that locks a coefficient, bounds phi12 or holds a nonzero C12 (not a box for that Newton) polishes with the
+        exact-gradient quasi-Newton in (C10, C12, phi12), where those limits are bounds; ``refinement=None`` keeps the
+        best trial. ``result.refinement`` records which. ``result.loss`` is
         the phase variance at the fit, unless ``compute_loss=False`` skips that diagnostic. CUDA and MPS run both.
 
         For broad search, pass ``trials=(200, 400, 600)`` to compare independent budgets. This
@@ -1984,7 +1985,7 @@ class DirectPtycho:
         correct. Use ``compare_standard=False`` to omit the optional thin fit.
         A standard fit (``tilt=False``) searches C10_nm over (-40, 40), C12_nm over (0, 10) and phi12_deg over its
         period unless ``search_ranges`` bounds them; a value holds that coefficient in every trial, ``refine_lock``
-        holds it through Nelder-Mead at the search's value, and ``fixed_aberrations`` does both:
+        holds it through the refinement at the search's value, and ``fixed_aberrations`` does both:
         ``find_aberrations(search='primary', tilt=False, fixed_aberrations={"C12_nm": 0.0})``.
 
         ``check_rotation=True`` (default) settles the 180-degree ambiguity of an estimated scan-detector rotation. The
@@ -2406,14 +2407,15 @@ class DirectPtycho:
             search_ranges, refine_lock = _standard_constraints(search_ranges, refine_lock, fixed_aberrations)
             fixed_aberrations = None
         # The trust-region Newton on the exact derivatives polishes the agreement; a standard fit that locks a
-        # coefficient, bounds phi12 or holds a nonzero C12 (not a box in the Newton coordinates) uses Nelder-Mead
+        # coefficient, bounds phi12 or holds a nonzero C12 (not a box in the Newton coordinates) refines on the exact
+        # gradient in (C10, C12, phi12), where they are bounds
         newton_standard = (not tilt
                            and newton_supported(search_ranges_to_engine(search_ranges), refine_lock))
         if refinement not in ("auto", None):
             raise ValueError("refinement is 'auto' (the default) or None for no local refinement.")
         requested_refinement = refinement
         if refinement == "auto":
-            refinement = "newton" if tilt or newton_standard else "nelder-mead"
+            refinement = "newton" if tilt or newton_standard else "bfgs"
         if tilt:
             tilt_bounds, fixed_aberrations = _tilt_constraints(search_ranges, fixed_aberrations)
             search_ranges = None

@@ -224,7 +224,7 @@ def test_batched_fit_kernel_matches_reference_objective():
     params = np.column_stack([rng.uniform(-300, 300, 12), rng.uniform(0, 200, 12), rng.uniform(-1.5, 1.5, 12),
                               rng.uniform(-20, 20, 12), rng.uniform(-20, 20, 12), rng.choice([0.0, 150.0, 400.0], 12)])
     reference = np.array([engine.thick.fit(p[0], p[1], p[2], (p[3], p[4]), p[5]) for p in params])
-    # Cover scalar Nelder-Mead evaluations, full search batches, and the
+    # Cover scalar evaluations, full search batches, and the
     # partial final batch. The BF disk also leaves a partial 256-pixel tile.
     assert engine.num_bright_field_pixels % 256 != 0
     for batch_size in (1, 8, 12):

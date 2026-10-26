@@ -103,10 +103,10 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
         # the standard fit (tilt=False) polishes the agreement with the same resident Newton as on MPS
         fit = standard.find_aberrations(search="primary", tilt=False, check_rotation=False, verbose=False)
         assert fit.refinement == "newton" and fit.sample_agreement > 0 and fit.sample_tilt_mrad is None
-        # a locked coefficient is not a box for the Newton: that fit polishes with Nelder-Mead
+        # a locked coefficient is not a box for the Newton: that fit refines on the exact gradient in (C10, C12, phi12)
         locked = standard.find_aberrations(search="primary", tilt=False, refine_lock=["C10_nm"], check_rotation=False,
                                            verbose=False)
-        assert locked.refinement == "nelder-mead"
+        assert locked.refinement == "bfgs"
 
 
 

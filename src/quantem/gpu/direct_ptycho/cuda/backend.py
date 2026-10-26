@@ -352,9 +352,9 @@ class CudaSSBBackend:
 
         Maximizes the least-squares agreement of the SSB model with G(q, k) at sample tilt and depth spread 0
         (``optimizer.fit_standard``, the resident search shared with MPS; ``refinement`` "newton", the trust-region
-        Newton on the exact derivatives, or "nelder-mead" for a locked or bounded fit). ``search_ranges`` (engine
+        Newton on the exact derivatives, or "bfgs", the exact-gradient quasi-Newton, for a locked or bounded fit). ``search_ranges`` (engine
         keys) bounds the search, a value holding that coefficient in every trial; ``refine_lock`` holds coefficients
-        through Nelder-Mead; ``aberrations`` (engine units) is a refinement start.
+        through the refinement; ``aberrations`` (engine units) is a refinement start.
         """
         if aberrations is not None:
             self.aberrations = dict(aberrations)

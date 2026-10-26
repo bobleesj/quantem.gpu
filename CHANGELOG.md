@@ -67,6 +67,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Removed
 
+- Python SSB (CUDA and MPS): Nelder-Mead is retired. A `search="primary", tilt=False` fit that locks a coefficient
+  (`refine_lock`), bounds phi12, holds a nonzero C12 or holds coefficients with `fixed_aberrations` now refines on
+  the exact gradient: the trust-region quasi-Newton of `_gradient_refinement.refine` in (C10, C12, phi12), where
+  each of those limits is a bound or a held coordinate (a whole phi12 period gets a wall-free box and wraps), with
+  the backend's `LowOrderDerivatives` through the chain rule from (C10, C12 cos 2 phi12, C12 sin 2 phi12).
+  `result.refinement` says `"bfgs"` there. Removed: `fit_standard_resident(polish="nelder-mead")` and
+  `direct_ptycho/batch_refinement.py` (`_minimize_batch`).
 - Native (Metal) SSB: the finite-difference Newton is retired, as in Python. The low-order fit's stencil Newton
   (`SSBAgreementSearch.fitTilt` and `fitStandard` without derivatives) and the fifth-order `SSBFifthOrderSearch`
   (`SSBModelFit.HigherOrderSearch.finiteDifferenceNewton`, `metal-ssb-fit-benchmark --search newton`) are removed:

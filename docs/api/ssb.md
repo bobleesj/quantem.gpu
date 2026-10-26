@@ -23,10 +23,11 @@ Every fit uses `refinement="auto"`: the exact-derivative refinements on CUDA
 and MPS, with a ceiling of 400 full-data objectives per start at fifth order.
 Choosing the method is retired: `"newton"`, `"bfgs"` or `"nelder-mead"` print
 one line and run `"auto"`; `refinement=None` keeps the best trial of a
-`search="primary"` fit unrefined. The one exception to the exact Newton is a
-`search="primary", tilt=False` fit that locks a coefficient (`refine_lock`),
-bounds phi12 or holds a nonzero C12: those limits are not a box for the Newton,
-and it polishes with Nelder-Mead. An evaluation cap is not proof of convergence.
+`search="primary"` fit unrefined. A `search="primary", tilt=False` fit that
+locks a coefficient (`refine_lock`), bounds phi12 or holds a nonzero C12 refines
+on the exact gradient in (C10, C12, phi12), where those limits are bounds
+(`result.refinement == "bfgs"`); Nelder-Mead is retired. An evaluation cap is
+not proof of convergence.
 Scientific objective/reconstruction work stays on the GPU; the optimizer's
 candidate generation and float64 control run on the CPU.
 

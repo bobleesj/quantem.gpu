@@ -100,13 +100,11 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
 
     first = _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False,
         num_trials=200,
-        refinement="nelder-mead",
         save_dir=saved,
         verbose=False,
     )
     second = _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False,
         num_trials=200,
-        refinement="nelder-mead",
         save_dir=saved,
         verbose=False,
     )

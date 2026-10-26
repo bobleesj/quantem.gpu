@@ -10,9 +10,10 @@ import numpy as np
 from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
 from quantem.gpu.direct_ptycho.results import SSBResult
 
-# The local refinement a fit applied: the trust-region Newton on the exact derivatives ("newton"), or Nelder-Mead for a
-# standard fit that locks a coefficient, bounds phi12 or holds a nonzero C12.
-RefineMethod = Literal["nelder-mead", "newton"] | None
+# The local refinement a low-order fit applied: the trust-region Newton on the exact derivatives ("newton"), or the
+# exact-gradient quasi-Newton in (C10, C12, phi12) for a standard fit that locks a coefficient, bounds phi12 or holds a
+# nonzero C12 ("bfgs").
+RefineMethod = Literal["bfgs", "newton"] | None
 
 
 def agreement_objective(objective) -> str:

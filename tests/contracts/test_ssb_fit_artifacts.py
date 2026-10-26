@@ -129,7 +129,7 @@ def test_timed_budget_overlay_uses_one_clock_and_common_objective(tmp_path):
             convergence_clock="fit_start", normalization=normalization,
         )
         fits[count] = fit
-    fits[600].refinement = "nelder-mead"
+    fits[600].refinement = "bfgs"
     before = [deepcopy(fit.optimizer) for fit in fits.values()]
     figure = fits[200].show("convergence", compare=fits, size="large", save=tmp_path / "compare.png")
     ax = figure.axes[0]
@@ -140,7 +140,7 @@ def test_timed_budget_overlay_uses_one_clock_and_common_objective(tmp_path):
     for line in ax.lines[1::2]:
         np.testing.assert_array_equal(line.get_xdata(), [4.6, 5.5])
         np.testing.assert_allclose(line.get_ydata(), [.3, .4])
-    assert "Nelder–Mead" in ax.lines[-1].get_label()
+    assert "Exact-gradient refinement" in ax.lines[-1].get_label()
     assert ax.get_xlabel() == "Elapsed fit time (s)"
     assert not plt.fignum_exists(figure.number)
     assert before == [fit.optimizer for fit in fits.values()]

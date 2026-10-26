@@ -138,9 +138,10 @@ class SSBResult(Mapping[str, float]):
         that was not fitted. Results saved by earlier versions may say ``"phase_variance"`` (a retired search).
     refinement : str | None
         Local refinement the fit applied after its search: ``"bfgs"`` (the fifth-order exact-gradient refinement),
-        ``"newton"`` (the low-order trust-region Newton on the exact derivatives), ``"nelder-mead"`` (the phase
-        variance, or a locked or bounded standard fit), or None for none (the resolved method, never ``"auto"``);
-        None for a result that was not fitted.
+        ``"newton"`` (the low-order trust-region Newton on the exact derivatives; a locked or bounded standard fit
+        also gives ``"bfgs"``, the exact-gradient quasi-Newton), or None for none (the resolved method, never
+        ``"auto"``); None for a result that was not fitted. Results saved by earlier versions may say
+        ``"nelder-mead"``.
     reused : bool
         Whether the result was restored from an exact saved-result match.
     saved_path : pathlib.Path | None

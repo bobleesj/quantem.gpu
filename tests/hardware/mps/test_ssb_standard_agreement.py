@@ -59,7 +59,7 @@ def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
     with SSB(frames, **_settings(detector_mrad)) as session:
         fit = session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C12_nm": 0.0}, num_trials=60,
                                        check_rotation=False, verbose=False)
-        assert fit.refinement == "nelder-mead"  # a locked coefficient: Newton cannot hold it
+        assert fit.refinement == "bfgs"  # a locked coefficient: the exact-gradient refinement in (C10, C12, phi12)
         assert fit.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.1)
         assert fit.aberrations["C12_nm"] == 0.0 and fit.aberrations["phi12_deg"] == 0.0
         held = session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0}, num_trials=40,
@@ -70,7 +70,7 @@ def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
                                      check_rotation=False, verbose=False)
         locked = session.find_aberrations(search="primary", tilt=False, refine_lock=["C10_nm"], num_trials=40,
                                           check_rotation=False, verbose=False)
-        assert locked.refinement == "nelder-mead"  # a locked coefficient is not a box for the Newton
+        assert locked.refinement == "bfgs"  # a locked coefficient is not a box for the Newton
 
 
 def test_phi12_range_bounds_the_standard_fit():
@@ -83,7 +83,7 @@ def test_phi12_range_bounds_the_standard_fit():
                                           check_rotation=False, verbose=False)
         outside = session.find_aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (40.0, 80.0)}, num_trials=60,
                                            check_rotation=False, verbose=False)
-    assert inside.refinement == "nelder-mead" and inside.aberrations["phi12_deg"] == pytest.approx(20.0, abs=0.5)
+    assert inside.refinement == "bfgs" and inside.aberrations["phi12_deg"] == pytest.approx(20.0, abs=0.5)
     assert 40.0 <= outside.aberrations["phi12_deg"] <= 80.0
 
 

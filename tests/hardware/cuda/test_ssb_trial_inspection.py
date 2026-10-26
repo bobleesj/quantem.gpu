@@ -187,7 +187,7 @@ def test_zero_trial_tilt_search_fails_before_backend_work(monkeypatch):
         def forbidden(*args, **kwargs):
             raise AssertionError('An invalid tilt search reached the backend')
         monkeypatch.setattr(ssb, '_fit_tilt', forbidden)
-        with pytest.raises(ValueError, match='num_trials=0'):
+        with pytest.raises(ValueError, match='trials=0'):
             ssb.find_aberrations(search="primary", tilt=True, num_trials=0, verbose=False)
     finally:
         ssb.close()

@@ -47,7 +47,8 @@ def standard_bounds(search_ranges: dict | None) -> tuple[tuple[float, float, flo
 
 
 def newton_supported(search_ranges: dict | None, refine_lock: list[str] | None) -> bool:
-    """Whether Newton refinement can honour these constraints (``fit_standard_resident``); else Nelder-Mead does."""
+    """Whether the Newton can honour these constraints (``fit_standard_resident``); else the exact-gradient
+    quasi-Newton in (C10, C12, phi12) does."""
     lower, upper = standard_bounds(search_ranges)
     return not refine_lock and lower[1] == 0.0 and lower[2] <= -math.pi / 2 + 1e-9 and upper[2] >= math.pi / 2 - 1e-9
 
@@ -74,8 +75,8 @@ def optimize(
 
     ``num_trials`` trials of the resident search maximize the agreement with the sample tilt and depth spread at 0,
     within ``search_ranges`` (engine keys; a value holds that coefficient in every trial); ``refine`` ("newton",
-    "nelder-mead" or None) polishes from the best distinct trials, and from the session's ``aberrations`` when
-    given. ``refine_lock`` (engine names) holds coefficients at the search's value through Nelder-Mead. Returns the
+    "bfgs" or None) polishes from the best distinct trials, and from the session's ``aberrations`` when
+    given. ``refine_lock`` (engine names) holds coefficients at the search's value through the refinement. Returns the
     result (phase-variance ``loss`` at the fit) and the float32 mean phase the session keeps for its first preview.
     ``compute_loss=False`` omits that diagnostic and its mean-phase image; the object and fit are unchanged.
     """
@@ -98,7 +99,7 @@ def optimize(
     fit = fit_standard_resident(
         lambda trial: evaluate(prepared, trial, band_inv_A), backend="mps", lower=lower, upper=upper,
         trials=int(num_trials), seed=int(seed), polish=refine, lock=lock, start=start,
-        derivatives=LowOrderDerivatives(prepared, band_inv_A) if refine == "newton" else None,
+        derivatives=None if refine is None else LowOrderDerivatives(prepared, band_inv_A),
     )
     best = {name: fit[name] for name in ("C10", "C12", "phi12")}
     timings = {"search_seconds": fit["timings"]["coarse_search_s"], "refinement_seconds": fit["timings"]["refinement_s"]}

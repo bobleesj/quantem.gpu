@@ -30,8 +30,8 @@ def fit_standard(
     """Standard fit (tilt=False) on the agreement objective: ``fit_standard_resident`` with depth spread 0.
 
     ``search_ranges`` (engine keys; a value holds that coefficient in every trial) bounds the search; ``refine``
-    ("newton", "nelder-mead" or None) polishes from the best distinct trials, and from ``aberrations`` (engine units)
-    when given; ``refine_lock`` (engine names) holds coefficients at the search's value through Nelder-Mead. The start
+    ("newton", "bfgs" or None) polishes from the best distinct trials, and from ``aberrations`` (engine units)
+    when given; ``refine_lock`` (engine names) holds coefficients at the search's value through the refinement. The start
     is clamped into the search box because a held coefficient must be every evaluated point's value, the start
     included. ``band_inv_A`` is the joint fit's band: below 0.2 1/A the probe-overlap geometry dominates G, above
     0.9 1/A the lattice signal ends. Returns ``fit_standard_resident``'s record (the fitted C10, C12, phi12, the
@@ -59,7 +59,7 @@ def fit_standard(
     fit = fit_standard_resident(
         lambda trial: accel.thick.fit_resident(trial, band_inv_A), backend="cuda", lower=lower, upper=upper,
         trials=int(num_trials), seed=int(seed), polish=refine, lock=lock, start=start,
-        derivatives=LowOrderDerivatives(accel, band_inv_A) if refine == "newton" else None,
+        derivatives=None if refine is None else LowOrderDerivatives(accel, band_inv_A),
     )
     return {**fit, "band_inv_A": list(band_inv_A)}
 

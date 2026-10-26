@@ -619,24 +619,23 @@ def fit_standard_resident(
       ``LowOrderDerivatives``; ``_exact_newton`` with the tilt and depth spread held at 0) from the best
       ``polish_starts`` distinct trials (and ``start``), on (C10, C12 cos 2 phi12, C12 sin 2 phi12). It keeps C10 in
       its range and C12 below its maximum, so it needs a C12 range from 0 and the full phi12 period, and no ``lock``;
-    - ``"nelder-mead"``: bounded SciPy Nelder-Mead from the same starts, the starts' simplices evaluated together.
-      ``lock`` (indices into (C10, C12, phi12)) holds those coefficients at the best trial's values; phi12 wraps
-      when its range is the whole period;
+    - ``"bfgs"``: the bounded trust-region quasi-Newton on the exact gradient (``_gradient_refinement.refine``) from
+      the same starts, in (C10, C12, phi12) (``_polar_refine``), where every constraint is a box: ``lock`` (indices
+      into (C10, C12, phi12)) holds those coefficients at the best trial's values, a value or range of
+      ``lower``/``upper`` bounds them, and phi12 wraps when its range is the whole period;
     - ``None``: the best trial (or ``start``) as is.
 
     ``trials=0`` polishes from ``start`` alone. Returns the fitted point, its agreement and the trial records.
     """
-    from quantem.gpu.direct_ptycho.batch_refinement import _minimize_batch
-
     if trials < 0:
         raise ValueError("trials must be non-negative; use 200 for a complete standard search.")
     if trials == 0 and start is None:
         raise ValueError("Zero-trial refinement needs a start point.")
-    if polish not in ("newton", "nelder-mead", None):
-        raise ValueError("A standard fit polishes with 'newton', 'nelder-mead' or None.")
+    if polish not in ("newton", "bfgs", None):
+        raise ValueError("A standard fit polishes with 'newton', 'bfgs' or None.")
     full_period = lower[2] <= -math.pi / 2 + 1e-9 and upper[2] >= math.pi / 2 - 1e-9
     if polish == "newton" and (lock or lower[1] != 0.0 or not full_period):
-        raise ValueError("Newton refinement bounds C10 and the C12 maximum only; use 'nelder-mead' to lock a "
+        raise ValueError("Newton refinement bounds C10 and the C12 maximum only; use 'bfgs' to lock a "
                          "coefficient, bound phi12 or hold a nonzero C12.")
     if polish == "newton" and polish_starts and derivatives is None:
         raise ValueError("The standard Newton polishes on the backend's exact derivatives: pass derivatives.")
@@ -665,7 +664,9 @@ def fit_standard_resident(
             basins=False)
         best = point[:3]
         nfev = int(sum(entry["evaluations"] for entry in starts))
-    elif polish == "nelder-mead" and polish_starts:
+    elif polish == "bfgs" and polish_starts:
+        if derivatives is None:
+            raise ValueError("The standard fit polishes on the backend's exact derivatives: pass derivatives.")
         candidates = ([np.asarray(start[:3], dtype=np.float64)] if start is not None and trials else []) + [
             host_points[index] for index in order]
         starts: list[np.ndarray] = []
@@ -675,32 +676,19 @@ def fit_standard_resident(
             if all(np.max(np.abs(candidate - kept) / np.array([50.0, 20.0, 0.3])) > 1.0 for kept in starts):
                 starts.append(np.array(candidate, dtype=np.float64))
         held = host_points[order[0]] if trials else np.asarray(start[:3], dtype=np.float64)
-        free = [index for index in range(3) if index not in lock]
+        box_lower, box_upper = np.array(lower, dtype=np.float64), np.array(upper, dtype=np.float64)
+        box_lower[list(lock)] = box_upper[list(lock)] = held[list(lock)]
+        if full_period and 2 not in lock and box_lower[2] < box_upper[2]:
+            # a whole period never meets a wall: twice the period around any start, the result wrapped below
+            box_lower[2], box_upper[2] = -math.pi, math.pi
+        best, fit = None, -math.inf
         for kept in starts:
             kept[list(lock)] = held[list(lock)]
-        scale = max(abs(float(host_scores[order[0]])), 1e-30)
-        if not free:
-            best, fit = starts[0], float(host_scores[order[0]])
-        else:
-            def rows(free_points):
-                full = np.tile(starts[0], (len(free_points), 1))
-                full[:, free] = free_points
-                full[:, 1] = np.abs(full[:, 1])
-                if full_period:
-                    full[:, 2] = (full[:, 2] + math.pi / 2) % math.pi - math.pi / 2
-                return full
-
-            def objective(free_points):
-                full = rows(np.asarray(free_points, dtype=np.float64))
-                packed = device.pack(np.concatenate((full, np.zeros((len(full), 3))), axis=1))
-                return -device.host(evaluate(_trial(device, packed))) / scale
-
-            box = [(lower[0], upper[0]), (lower[1], upper[1]), (None, None) if full_period else (lower[2], upper[2])]
-            polished = _minimize_batch(objective, [kept[free] for kept in starts], bounds=[box[i] for i in free],
-                                       options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400})
-            outcome = min(polished, key=lambda result: result.fun)
-            best, fit = rows(outcome.x[None])[0], float(-outcome.fun) * scale
-            nfev = int(sum(result.nfev for result in polished))
+            point, value, evaluations = _polar_refine(derivatives, np.clip(kept, box_lower, box_upper), box_lower,
+                                                      box_upper)
+            nfev += evaluations
+            if value > fit:
+                best, fit = point, value
     else:
         best, fit = host_points[order[0]], float(host_scores[order[0]])
     timings["refinement_s"] = time.perf_counter() - begin
@@ -717,6 +705,55 @@ def fit_standard_resident(
             "trial_records": records, "timings": timings, "nfev": nfev,
             "optimizer": {"search": "resident multivariate TPE", "refinement": polish if polish_starts else None,
                           "device": backend, "objective": "agreement, depth spread 0"}}
+
+# (C10, C12, phi12, tilt row, tilt column, depth spread) in the units of the exact refinement's coordinates: 10 nm,
+# 10 nm, 1 rad, 5 mrad, 10 nm (engine Angstrom and mrad otherwise).
+_POLAR_SCALE = np.array([100.0, 100.0, 1.0, 5.0, 5.0, 100.0])
+
+
+def _polar_refine(derivatives, start, lower, upper):
+    """The standard fit's exact-gradient refinement in (C10, C12, phi12), the sample tilt and depth spread at 0.
+
+    ``derivatives`` (``LowOrderDerivatives``) give the gradient in (C10, a, b) with a = C12 cos 2 phi12 and
+    b = C12 sin 2 phi12; the chain rule turns it into (C12, phi12), where a C12 range from above 0, a C12 value, a
+    phi12 range and a locked coefficient are all bounds (equal bounds hold a coordinate). Returns the point
+    (C10, C12, phi12), its agreement and the number of full objectives.
+    """
+    from quantem.gpu.direct_ptycho import _exact_newton
+    from quantem.gpu.direct_ptycho._gradient_refinement import Settings, refine
+
+    def polar_values(points, with_gradients):
+        p = np.atleast_2d(points) * _POLAR_SCALE
+        values = np.asarray(derivatives.values(np.array([_exact_newton.encode(row) for row in p]), with_gradients),
+                            dtype=np.float64)
+        return values, (polar_gradients(p) if with_gradients else None)
+
+    def polar_gradients(p):
+        """Gradients in the refinement's coordinates at rows p (engine units) of the latest ``values`` call."""
+        gradients = []
+        for row, (_, gradient, _) in zip(p, derivatives.derivatives(range(len(p))), strict=True):
+            c, s = math.cos(2 * row[2]), math.sin(2 * row[2])
+            polar = np.array([gradient[0], gradient[1] * c + gradient[2] * s,
+                              2 * row[1] * (gradient[2] * c - gradient[1] * s), gradient[3], gradient[4], gradient[5]])
+            gradients.append(polar * _POLAR_SCALE)
+        return np.array(gradients)
+
+    u = np.array([*start[:3], 0.0, 0.0, 0.0]) / _POLAR_SCALE
+    bounds = np.column_stack([np.array([*lower, 0.0, 0.0, 0.0]), np.array([*upper, 0.0, 0.0, 0.0])]) / _POLAR_SCALE[:, None]
+    norm = float(polar_values(u, False)[0][0])
+    latest = {}
+
+    def evaluate(points, kind, stride):
+        if kind == "gradient":
+            return latest["values"], polar_gradients(latest["points"] * _POLAR_SCALE) / norm
+        values, gradients = polar_values(points, kind != "value")
+        latest.update(points=np.atleast_2d(points), values=values / norm)
+        return values / norm, None if gradients is None else gradients / norm
+
+    record = refine(evaluate, u, bounds, start_value=1.0, settings=Settings(hessian_bf_stride=1, coarse_bf_stride=1))
+    return np.asarray(record["coordinates"])[:3] * _POLAR_SCALE[:3], float(record["agreement"]) * norm, int(
+        record["objectives"])
+
 
 # Probability components are independent work. Expose them as GPU threads
 # instead of serially evaluating every mixture component within a candidate.
