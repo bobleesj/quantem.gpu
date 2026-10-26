@@ -10,9 +10,10 @@ import Native4DSTEMIO
 //
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --scan-step A [--kv 300] [--semiangle 30]
 //     [--index DIR] [--max-order 5] [--trials 200] [--repeats 1] [--output RESULT.json]
-//     [--search newton|gradient] [--fifth-only BASELINE.json [--gradient-check]] [--higher-order-limit 2|20] [--higher-order-guard]
+//     [--search newton|gradient|gradient-coarse] [--fifth-only BASELINE.json [--gradient-check]] [--higher-order-limit 2|20] [--higher-order-guard]
 //     [--no-consistency-check]
-// --fifth-only starts the fifth-order stage at the kept low-order fit and rotation of an earlier result;
+// --fifth-only starts the fifth-order stage at the kept low-order fit and rotation of an earlier result, inside the
+// --higher-order-limit box;
 // --gradient-check compares the exact gradient with central differences there and at the earlier optimum.
 //     [--compare-standard] [--dark-field DARK.f32] [--verify-branches] [--check-maximum]
 //   metal-ssb-fit-benchmark --input MASTER.h5 --cache DIR --export-dark-field DARK.f32

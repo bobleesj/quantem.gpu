@@ -60,7 +60,7 @@ public enum SSBFifthOrderGradientSearch {
   ///   (Hessian columns and coarse steps).
   public static func refine(
     _ evaluate: Evaluate, start: [Double], startValue: Double? = nil,
-    bounds: [ClosedRange<Double>] = SSBFifthOrderSearch.bounds,
+    bounds: [ClosedRange<Double>],
     settings: Settings = .init(),
     progress: (_ completed: Int, _ total: Int) -> Void = { _, _ in },
     log: ((String) -> Void)? = nil,
@@ -400,7 +400,7 @@ public enum SSBFifthOrderGradientSearch {
 
   /// The projected gradient: zero where a bound holds the coordinate and the ascent direction leaves the box.
   public static func projectedGradient(
-    _ gradient: [Double], at z: [Double], bounds: [ClosedRange<Double>] = SSBFifthOrderSearch.bounds
+    _ gradient: [Double], at z: [Double], bounds: [ClosedRange<Double>]
   ) -> [Double] {
     (0..<gradient.count).map { i in
       if z[i] <= bounds[i].lowerBound && gradient[i] < 0 { return 0 }
@@ -421,14 +421,15 @@ extension SSBModelFit {
     case exactGradientCoarseToFine
   }
 
-  /// Refine a low-order fit through fifth order on `model` at its current rotation.
+  /// Refine a low-order fit through fifth order on `model` at its current rotation, inside `bounds`
+  /// (`fifthOrderBounds(higherOrderLimit:)`).
   /// - Returns: the refined point, its agreement (the float32 objective score) and the same per-frequency powers
   ///   summed in Double, the initial agreement that normalizes the trace, and the trace. The exact-gradient search
   ///   compares Double-summed agreements.
   public static func refineFifthOrder(
     _ primary: SSBModelPoint, model: MetalSSBJointModel, search: HigherOrderSearch,
     maxEvaluations: Int = 5000,
-    bounds: [ClosedRange<Double>] = SSBFifthOrderSearch.bounds,
+    bounds: [ClosedRange<Double>],
     gradientSettings: SSBFifthOrderGradientSearch.Settings = .init(),
     log: ((String) -> Void)? = nil,
     progress: (_ completed: Int, _ total: Int) -> Void = { _, _ in },
@@ -514,9 +515,10 @@ extension SSBModelFit {
 
   /// Benchmark diagnostics: the exact gradient (d agreement / d z) and central differences of the float32
   /// objective at `z` for each step in `steps`, and the wall time of one objective and one value-and-gradient
-  /// evaluation (median of `repeats`).
+  /// evaluation (median of `repeats`). The projected gradient holds the coordinates on `bounds`.
   public static func fifthOrderGradientCheck(
-    model: MetalSSBJointModel, z: [Double], steps: [Double], repeats: Int = 5
+    model: MetalSSBJointModel, z: [Double], steps: [Double], bounds: [ClosedRange<Double>],
+    repeats: Int = 5
   ) throws -> [String: Any] {
     let coordinates = SSBFifthOrderCoordinates(
       wavelengthAngstroms: model.wavelengthAngstroms,
@@ -551,7 +553,8 @@ extension SSBModelFit {
     var report: [String: Any] = [
       "z": z, "agreement": point.agreement,
       "objective_agreement": try values([z])[0], "exact_gradient": gradient,
-      "projected_gradient": SSBFifthOrderGradientSearch.projectedGradient(gradient, at: z),
+      "projected_gradient": SSBFifthOrderGradientSearch.projectedGradient(
+        gradient, at: z, bounds: bounds),
       "objective_s": objectiveSeconds, "value_and_gradient_s": gradientSeconds,
       "objective_28_s": objective28Seconds, "value_and_gradient_28_s": gradient28Seconds,
     ]
@@ -646,11 +649,11 @@ extension SSBModelFit {
   /// Benchmark diagnostics: GPU (command buffer) and wall time per call of the exact-gradient search's fifth-order
   /// evaluations at `z`, median of `repeats`: the value pass alone, the gradient pass after it, and both together,
   /// on all BF pixels and on every `coarseStride`-th; then the start Hessian batch (`z` and its 28 forward offsets)
-  /// on every `hessianStride`-th BF pixel. Each entry records its agreements and the first candidate's d agreement
-  /// / dz, so kernels can be compared at equal coordinates.
+  /// on every `hessianStride`-th BF pixel, each offset turned back at the upper end of `bounds`. Each entry records
+  /// its agreements and the first candidate's d agreement / dz, so kernels can be compared at equal coordinates.
   public static func fifthOrderKernelTimings(
-    model: MetalSSBJointModel, z: [Double], coarseStride: Int = 8, hessianStride: Int = 64,
-    repeats: Int = 5
+    model: MetalSSBJointModel, z: [Double], bounds: [ClosedRange<Double>], coarseStride: Int = 8,
+    hessianStride: Int = 64, repeats: Int = 5
   ) throws -> [[String: Any]] {
     let coordinates = SSBFifthOrderCoordinates(
       wavelengthAngstroms: model.wavelengthAngstroms,
@@ -700,7 +703,6 @@ extension SSBModelFit {
       }
     }
     let h = [0.01, 0.01, 0.01, 0.025, 0.025, 0.025] + Array(repeating: 0.01, count: 22)
-    let bounds = SSBFifthOrderSearch.bounds
     let design = (0..<28).map { i -> [Double] in
       var p = z
       p[i] += p[i] + h[i] <= bounds[i].upperBound ? h[i] : -h[i]

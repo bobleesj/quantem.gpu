@@ -32,11 +32,10 @@ func limitSweep(
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   var records: [[String: Any]] = []
   for limit in limits {
-    let bounds =
-      Array(SSBFifthOrderSearch.bounds.prefix(6)) + Array(repeating: -limit...limit, count: 22)
     let started = Date()
     let refined = try SSBModelFit.refineFifthOrder(
-      start, model: model, search: search, bounds: bounds)
+      start, model: model, search: search,
+      bounds: SSBModelFit.fifthOrderBounds(higherOrderLimit: limit))
     let seconds = Date().timeIntervalSince(started)
     let phase = try model.reconstruct(refined.point, upsamplingFactor: factor)
     let values = Array(

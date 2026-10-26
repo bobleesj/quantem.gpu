@@ -4,6 +4,10 @@ import XCTest
 @testable import MetalSSBKernels
 
 final class SSBFifthOrderSearchTests: XCTestCase {
+  /// The standard (±2) box of the finite-difference Newton's reference trajectory.
+  static let bounds = SSBModelFit.fifthOrderBounds(
+    higherOrderLimit: SSBFitOptions.standardHigherOrderLimit)
+
   func testStandardDefaultAndLegacySavedOptions() throws {
     let current = SSBFitOptions()
     XCTAssertEqual(current.trials, 200)
@@ -88,11 +92,10 @@ final class SSBFifthOrderSearchTests: XCTestCase {
   func testStencilStaysInsideBoundsAndFindsCoupledCurvature() throws {
     let center = [-3.0, 2, -2, -5, 5, 0.2] + Array(repeating: 0.1, count: 22)
     let h = [0.02, 0.02, 0.02, 0.05, 0.05, 0.05] + Array(repeating: 0.02, count: 22)
-    let design = try SSBFifthOrderSearch.stencil(
-      center, h: h, bounds: SSBFifthOrderSearch.bounds, full: true)
+    let design = try SSBFifthOrderSearch.stencil(center, h: h, bounds: Self.bounds, full: true)
     XCTAssertEqual(design.points.count, 435)
     for p in design.points {
-      for (value, range) in zip(p, SSBFifthOrderSearch.bounds) {
+      for (value, range) in zip(p, Self.bounds) {
         XCTAssertTrue(range.contains(value))
       }
     }
@@ -114,7 +117,7 @@ final class SSBFifthOrderSearchTests: XCTestCase {
       { points in
         executions += points.count
         return points.map { 1 + $0[0] }
-      }, start: start, maxEvaluations: 4)
+      }, start: start, bounds: Self.bounds, maxEvaluations: 4)
     XCTAssertEqual(result.evaluations, 4)
     XCTAssertEqual(result.executedObjectives, 3)
     XCTAssertEqual(executions, 3)
@@ -138,13 +141,17 @@ final class SSBFifthOrderSearchTests: XCTestCase {
         return 100 - residual
       }
     }
-    let result = try SSBFifthOrderSearch.refine(evaluate, start: start)
+    let result = try SSBFifthOrderSearch.refine(evaluate, start: start, bounds: Self.bounds)
     XCTAssertGreaterThan(result.agreement, 99.999999)
     XCTAssertLessThan(result.evaluations, 5000)
     for (p, t) in zip(result.coordinates, target) { XCTAssertEqual(p, t, accuracy: 1e-4) }
     XCTAssertThrowsError(
-      try SSBFifthOrderSearch.refine(evaluate, start: start, isCancelled: { true }))
-    XCTAssertThrowsError(try SSBFifthOrderSearch.refine({ _ in [Double.nan] }, start: start))
-    XCTAssertThrowsError(try SSBFifthOrderSearch.refine(evaluate, start: start, maxEvaluations: 0))
+      try SSBFifthOrderSearch.refine(
+        evaluate, start: start, bounds: Self.bounds, isCancelled: { true }))
+    XCTAssertThrowsError(
+      try SSBFifthOrderSearch.refine({ _ in [Double.nan] }, start: start, bounds: Self.bounds))
+    XCTAssertThrowsError(
+      try SSBFifthOrderSearch.refine(
+        evaluate, start: start, bounds: Self.bounds, maxEvaluations: 0))
   }
 }

@@ -1,7 +1,8 @@
 import Foundation
 
-/// Bounded finite-difference Newton refinement used by the fifth-order Python fitter.
-/// The controller uses Double; the caller evaluates batches of scientific objectives on the GPU.
+/// Bounded finite-difference Newton refinement of the fifth-order agreement (`SSBModelFit.HigherOrderSearch
+/// .finiteDifferenceNewton`), the reference trajectory of the exact-gradient search. The controller uses Double;
+/// the caller evaluates batches of scientific objectives on the GPU. `Result` and `Sample` record either search.
 public enum SSBFifthOrderSearch {
   public typealias Evaluate = ([[Double]]) throws -> [Double]
 
@@ -26,20 +27,14 @@ public enum SSBFifthOrderSearch {
     public var hessianStride: Int? = nil
   }
 
-  /// The same dimensionless box as `fifth_order_fit.py`: C10, Cartesian C12, tilt, depth,
-  /// then Cartesian coefficients scaled to unit phase at the aperture edge.
-  public static let bounds: [ClosedRange<Double>] =
-    [
-      -3...3, -2...2, -2...2, -5...5, -5...5, 0.2...6,
-    ] + Array(repeating: -2...2, count: 22)
-
   private enum Budget: Error { case reached }
 
-  /// Refine the initial point, retaining the best of every stencil and proposal evaluation.
-  /// A finite evaluation cap is a safety bound, not a convergence criterion. Identical points reuse
-  /// exact scores without changing their place in the evaluation budget or convergence trace.
+  /// Refine the initial point inside `bounds` (`SSBModelFit.fifthOrderBounds(higherOrderLimit:)`), retaining the
+  /// best of every stencil and proposal evaluation. A finite evaluation cap is a safety bound, not a convergence
+  /// criterion. Identical points reuse exact scores without changing their place in the evaluation budget or
+  /// convergence trace.
   public static func refine(
-    _ evaluate: Evaluate, start: [Double], bounds: [ClosedRange<Double>] = bounds,
+    _ evaluate: Evaluate, start: [Double], bounds: [ClosedRange<Double>],
     maxEvaluations: Int = 5000,
     progress: (_ completed: Int, _ total: Int) -> Void = { _, _ in },
     isCancelled: () -> Bool = { false }

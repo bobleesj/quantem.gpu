@@ -23,6 +23,10 @@ func fifthOnly(
   let point = SSBModelPoint(
     c10Nanometers: c10, c12Nanometers: c12, phi12Degrees: phi12, sampleTiltMrad: tilt,
     depthSpreadNanometers: depth)
+  guard SSBFitOptions.higherOrderLimits.contains(options.higherOrderLimit) else {
+    throw failure("--higher-order-limit takes 2 or 20")
+  }
+  let bounds = SSBModelFit.fifthOrderBounds(higherOrderLimit: options.higherOrderLimit)
   var results: [[String: Any]] = []
   for repeatIndex in 0..<options.repeats {
     try autoreleasepool {
@@ -33,7 +37,7 @@ func fifthOnly(
       var result: [String: Any] = [
         "repeat": repeatIndex, "device": device.name, "rotation_deg": rotation,
         "bf_pixels": setup.pixels.count, "band_count": model.bandCount,
-        "search": options.search.rawValue,
+        "search": options.search.rawValue, "higher_order_limit": options.higherOrderLimit,
       ]
       if let scoreURL = options.score {
         // Double-summed agreement of another run's fifth-order point and of the baseline's, at this rotation.
@@ -65,14 +69,14 @@ func fifthOnly(
           ] + Array(repeating: 0.0, count: 22)
         var checks = [
           try SSBModelFit.fifthOrderGradientCheck(
-            model: model, z: start, steps: [1e-2, 3e-3, 1e-3, 3e-4])
+            model: model, z: start, steps: [1e-2, 3e-3, 1e-3, 3e-4], bounds: bounds)
         ]
         if let refinement = fit["refinement"] as? [String: Any],
           let z = refinement["coordinates"] as? [Double]
         {
           checks.append(
             try SSBModelFit.fifthOrderGradientCheck(
-              model: model, z: z, steps: [1e-2, 3e-3, 1e-3, 3e-4]))
+              model: model, z: z, steps: [1e-2, 3e-3, 1e-3, 3e-4], bounds: bounds))
         }
         result["gradient_checks"] = checks
         for check in checks {
@@ -96,7 +100,7 @@ func fifthOnly(
         let started = Date()
         let refined = try SSBModelFit.refineFifthOrder(
           point, model: model, search: options.search,
-          maxEvaluations: SSBFitOptions().maxHigherOrderEvaluations,
+          maxEvaluations: SSBFitOptions().maxHigherOrderEvaluations, bounds: bounds,
           gradientSettings: options.gradientSettings, log: options.verbose ? { log($0) } : nil)
         let seconds = Date().timeIntervalSince(started)
         let r = refined.result

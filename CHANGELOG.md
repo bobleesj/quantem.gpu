@@ -62,6 +62,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Removed
 
+- Native (Metal) SSB: `SSBFifthOrderSearch.bounds`, the standard ±2 box that the lower-level fifth-order calls
+  defaulted to while `SSBFitOptions` defaults to ±20, is removed. `SSBModelFit.refineFifthOrder`,
+  `SSBFifthOrderGradientSearch.refine`, `SSBFifthOrderSearch.refine`, `SSBFifthOrderGradientSearch.projectedGradient`
+  and the benchmark diagnostics `fifthOrderGradientCheck` and `fifthOrderKernelTimings` take `bounds:` explicitly;
+  build it with `SSBModelFit.fifthOrderBounds(higherOrderLimit:)`. Fits are unchanged.
+  `metal-ssb-fit-benchmark --fifth-only` now uses `--higher-order-limit` (default 20; it used ±2 silently), and
+  `--objective-bench` clips its candidates to the run's recorded limit (±2 for runs recorded without one).
 - Native (Metal) SSB is model-based only: the engine's own non-model reconstruction and the phase-variance fit are
   retired. Removed: `MetalSSBEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`, `phaseVariance`,
   `optimize` and `MetalSSBPhaseVarianceResult`; `SSBOptimizer` and `SSBOptimizationProgress`; the phase-variance

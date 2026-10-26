@@ -233,15 +233,18 @@ final class SSBFifthOrderGradientTests: XCTestCase {
     let primary = SSBModelPoint(
       c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4,
       sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140)
+    let bounds = SSBModelFit.fifthOrderBounds(
+      higherOrderLimit: SSBFitOptions.standardHigherOrderLimit)
     let newton = try SSBModelFit.refineFifthOrder(
-      primary, model: model, search: .finiteDifferenceNewton)
+      primary, model: model, search: .finiteDifferenceNewton, bounds: bounds)
     for search in [SSBModelFit.HigherOrderSearch.exactGradient, .exactGradientCoarseToFine] {
-      let gradient = try SSBModelFit.refineFifthOrder(primary, model: model, search: search)
+      let gradient = try SSBModelFit.refineFifthOrder(
+        primary, model: model, search: search, bounds: bounds)
       XCTAssertEqual(gradient.normalization, newton.normalization)
       XCTAssertGreaterThanOrEqual(gradient.agreement64, newton.agreement64 * (1 - 1e-7))
       XCTAssertLessThan(gradient.result.evaluations, newton.result.executedObjectives / 10)
       XCTAssertTrue(["converged", "trust radius exhausted"].contains(gradient.result.stop))
-      for (bound, value) in zip(SSBFifthOrderSearch.bounds, gradient.result.coordinates) {
+      for (bound, value) in zip(bounds, gradient.result.coordinates) {
         XCTAssertTrue(bound.contains(value))
       }
       print(

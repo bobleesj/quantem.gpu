@@ -76,7 +76,10 @@ func objectiveBenchmark(
       start.c12Angstroms / 100 * sin(2 * start.phi12Radians), tilt[0] / 5, tilt[1] / 5,
       start.depthSpreadAngstroms / 100,
     ] + Array(repeating: 0.0, count: 22)
-  let bounds = SSBFifthOrderSearch.bounds
+  // The box of the run's fifth-order fit; runs recorded without it used the standard one.
+  let bounds = SSBModelFit.fifthOrderBounds(
+    higherOrderLimit: fit["higher_order_limit"] as? Double ?? SSBFitOptions.standardHigherOrderLimit
+  )
   func clip(_ z: [Double]) -> [Double] {
     zip(z, bounds).map { min($1.upperBound, max($1.lowerBound, $0)) }
   }
@@ -197,7 +200,7 @@ func objectiveBenchmark(
   var searchKernels: [[String: Any]] = []
   for (label, z) in [("start", zStart), ("final", zFinal)] {
     for entry in try SSBModelFit.fifthOrderKernelTimings(
-      model: model, z: z, repeats: max(3, repeats))
+      model: model, z: z, bounds: bounds, repeats: max(3, repeats))
     {
       var entry = entry
       entry["point"] = label

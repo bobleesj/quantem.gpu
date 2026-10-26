@@ -15,7 +15,7 @@ public enum SSBObjective: String, Codable, Sendable {
 ///
 /// | Options | Method |
 /// |---|---|
-/// | `SSBFitOptions()` | 200 primary TPE trials, then joint fifth-order Newton with tilt/depth |
+/// | `SSBFitOptions()` | 200 primary TPE trials and exact low-order Newton, then the exact-gradient fifth-order search with tilt/depth |
 /// | `SSBFitOptions(maximumOrder: 1)` | original low-order model agreement with tilt/depth |
 /// | `SSBFitOptions(tilt: false)` | model agreement, sample tilt and depth spread held at 0 |
 ///
@@ -50,8 +50,8 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
   public var maximumOrder: Int
   public var maxHigherOrderEvaluations: Int
   /// The fifth-order search: exact gradients, converged on every BF pixel after a start on every 8th one.
-  /// Saved runs without this key used the finite-difference Newton search, which stays available as the
-  /// Python-trajectory reference.
+  /// Saved runs without this key used the finite-difference Newton search (`.finiteDifferenceNewton`), kept as the
+  /// reference trajectory.
   public var higherOrderSearch: SSBModelFit.HigherOrderSearch = .exactGradientCoarseToFine
   /// The bound of each higher-order coordinate, in rad of probe phase at the aperture edge: one of
   /// `higherOrderLimits`. Saved runs without this key used the standard ±2.
@@ -172,7 +172,7 @@ public struct SSBFit: Codable, Sendable {
   /// The branch whose fit this one is the exact 180-degree image of (`SSBRotationBranches.oppositeBranch`);
   /// nil for a fit searched at its own rotation.
   public var mappedFromBranch: Int? = nil
-  /// The bounded fifth-order Newton trajectory; nil for a primary-only fit.
+  /// The fifth-order search's trajectory (`higherOrderSearch`); nil for a primary-only fit.
   /// Agreements in this trace are divided by `higherOrderNormalization`.
   public var higherOrderRefinement: SSBFifthOrderSearch.Result? = nil
   /// Initial agreement for the shared fifth-order model, using the strict 0.2...0.9 inverse-Angstrom band.

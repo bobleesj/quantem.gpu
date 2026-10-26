@@ -53,10 +53,9 @@ final class SSBHigherOrderLimitTests: XCTestCase {
     for limit in SSBFitOptions.higherOrderLimits {
       let bounds = SSBModelFit.fifthOrderBounds(higherOrderLimit: limit)
       XCTAssertEqual(bounds.count, 28)
-      XCTAssertEqual(Array(bounds.prefix(6)), Array(SSBFifthOrderSearch.bounds.prefix(6)))
+      XCTAssertEqual(Array(bounds.prefix(6)), [-3...3, -2...2, -2...2, -5...5, -5...5, 0.2...6])
       XCTAssertTrue(bounds.dropFirst(6).allSatisfy { $0 == -limit...limit })
     }
-    XCTAssertEqual(SSBModelFit.fifthOrderBounds(higherOrderLimit: 2), SSBFifthOrderSearch.bounds)
   }
 
   /// The aperture-phase disagreement of the validation's `common.py` (`rms_piston_free(chi(a) - chi(b))`) on known
