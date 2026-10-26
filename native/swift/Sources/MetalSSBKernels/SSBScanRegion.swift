@@ -69,9 +69,35 @@ extension MetalSSBCalibration {
   /// imply full nominal bandwidth (`ssbUpsamplingRequirement` gives the requirement). 8x stays available as an
   /// explicit `SSBOutputSampling.factor(8)`.
   public func ssbUpsamplingFactor() throws -> Int {
-    let required = try ssbUpsamplingRequirement()
-    return [1, 2, 3, 4].first(where: { Double($0) >= required - 1e-12 }) ?? 4
+    try ssbUpsamplingChoice().factor
   }
+
+  /// The automatic factor with the factor the scan sampling would support without the 4x cap, so a viewer can say
+  /// when Auto is capped (as Python's notice does). The uncapped factor is the smallest supported factor (1, 2, 3,
+  /// 4 or 8) covering the requirement, or 8x when none does.
+  public func ssbUpsamplingChoice() throws -> SSBUpsamplingChoice {
+    let required = try ssbUpsamplingRequirement()
+    let covering = { (factors: [Int]) in factors.first(where: { Double($0) >= required - 1e-12 }) }
+    let factor = covering([1, 2, 3, 4]) ?? 4
+    let uncapped = covering(SSBOutputSampling.supportedFactors) ?? 8
+    return SSBUpsamplingChoice(factor: factor, uncappedFactor: uncapped)
+  }
+}
+
+/// The automatic output factor and the factor the scan sampling supports without the 4x automatic cap.
+public struct SSBUpsamplingChoice: Equatable, Hashable, Sendable {
+  /// The automatic factor (1-4x).
+  public let factor: Int
+  /// The smallest supported factor covering nominal support (1, 2, 3, 4 or 8x).
+  public let uncappedFactor: Int
+
+  public init(factor: Int, uncappedFactor: Int) {
+    self.factor = factor
+    self.uncappedFactor = uncappedFactor
+  }
+
+  /// True when the 4x cap lowered the automatic factor below what the scan sampling supports.
+  public var capped: Bool { uncappedFactor > factor }
 }
 
 /// SSB output sampling: Auto (from the acquisition calibration, 1x-4x) or an explicit factor. Upsampling

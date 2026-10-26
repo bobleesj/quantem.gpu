@@ -207,6 +207,10 @@ final class MetalSSBJointTests: XCTestCase {
       XCTAssertEqual(try cal.ssbUpsamplingFactor(), expected, "requirement \(required)")
       XCTAssertEqual(try cal.ssbUpsamplingRequirement(), required, accuracy: 1e-9)
       XCTAssertEqual(try SSBOutputSampling.auto.resolve(cal), expected)
+      let choice = try cal.ssbUpsamplingChoice()
+      XCTAssertEqual(choice.factor, expected)
+      XCTAssertEqual(choice.uncappedFactor, required > 4 ? 8 : expected, "requirement \(required)")
+      XCTAssertEqual(choice.capped, required > 4, "requirement \(required)")
     }
     let thick = MetalSSBCalibration(
       voltageKV: 300, semiangleMrad: 30, scanSamplingRowAngstroms: 0.373,
@@ -233,6 +237,8 @@ final class MetalSSBJointTests: XCTestCase {
       brightfieldCenterColumnPixels: 96)
     XCTAssertEqual(try cal.ssbUpsamplingRequirement(), 7.31, accuracy: 0.01)
     XCTAssertEqual(try cal.ssbUpsamplingFactor(), 4)
+    XCTAssertEqual(try cal.ssbUpsamplingChoice(), SSBUpsamplingChoice(factor: 4, uncappedFactor: 8))
+    XCTAssertTrue(try cal.ssbUpsamplingChoice().capped)
     XCTAssertEqual(try SSBOutputSampling.auto.resolve(cal), 4)
     XCTAssertEqual(try SSBOutputSampling.factor(8).resolve(cal), 8)
     for invalid in [0, 5, 6, 7, 16] {
