@@ -60,6 +60,13 @@ def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monk
 
     received = {}
 
+    class DeviceArray(np.ndarray):
+        """A CUDA session hands back a device array; the preview copies it into its own pinned host buffer."""
+
+        def get(self, out):
+            out[...] = self
+            return out
+
     class Recorder:
         def __init__(self, name):
             self.name = name
@@ -67,11 +74,11 @@ def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monk
         def preview_upsampled(self, aberrations, *, compute_loss, higher_order_magnitudes=None, higher_order_angles=None, **kwargs):
             assert "phase_estimator" not in kwargs  # SSB has one estimator, the phase of the mean wave
             received[self.name] = (aberrations, higher_order_magnitudes, higher_order_angles)
-            return np.zeros((2, 2), np.float32), 0.5 if compute_loss else None
+            return np.zeros((2, 2), np.float32).view(DeviceArray), 0.5 if compute_loss else None
 
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
-    # a CUDA session hands back a device array; the double returns a host one
-    monkeypatch.setattr(workflow, "cp", SimpleNamespace(asnumpy=np.asarray))
+    # pinned host memory stands in as a plain host buffer
+    monkeypatch.setattr(workflow, "cp", SimpleNamespace(cuda=SimpleNamespace(alloc_pinned_memory=bytearray)))
 
     def session(name):
         ssb = workflow.SSB(np.zeros((2, 2, 3, 3), np.uint16), voltage_kV=300.0, semiangle_mrad=30.0,

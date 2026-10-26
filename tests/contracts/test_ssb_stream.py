@@ -1,9 +1,13 @@
-"""Streaming refits only defocus and astigmatism and holds every other coordinate."""
+"""Streaming refits only defocus and astigmatism and holds every other coordinate.
+
+The stream registers and combines frames on CuPy arrays: without CuPy only the refit test runs.
+"""
 
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from quantem.gpu.direct_ptycho.stream import _refit
 
@@ -47,7 +51,7 @@ def lattice_image(rows, sampling_A, seed):
     """A periodic test specimen: a hexagonal lattice near MoS2's 0.35 Å⁻¹ (spots on the FFT grid, so
     a Fourier shift moves it exactly) over a smooth random background at periods past 3 Å, the
     aperiodic features the coarse registration needs."""
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     generator = np.random.default_rng(seed)
     q = np.fft.fftfreq(rows, sampling_A)
@@ -65,7 +69,7 @@ def test_place_recovers_each_shift_and_sums_the_frames_in_register():
     """Six noisy frames of one specimen, each moved a known sub-pixel amount further: each is
     registered against the frame before it to 0.02 px, and the sum in register is the specimen with
     the noise averaged down by sqrt(6)."""
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     from quantem.gpu.drift import shifted
     from quantem.gpu.direct_ptycho.stream import (
@@ -109,7 +113,7 @@ def test_place_recovers_each_shift_and_sums_the_frames_in_register():
 def test_align_replaces_the_live_shifts_with_the_pairwise_drift():
     """The final pass runs the pairwise drift on the phase stack, takes its displacement (Å) and
     rebuilds the combined image from it."""
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     from quantem.gpu.drift import shifted
     from quantem.gpu.direct_ptycho.stream import DirectPtychoStream, _add, _combined, _start
@@ -172,7 +176,7 @@ class FakeSession:
         return SSB._resolve_upsampling_factor(self, upsampling_factor)
 
     def run(self, chosen, *, method, **options):
-        import cupy
+        cupy = pytest.importorskip("cupy")
 
         strengths = {name: value for name, value in options.items() if name not in (
             "upsampling_factor", "compute_loss", "force", "verbose")}
@@ -190,7 +194,7 @@ def fake_stream(monkeypatch, tmp_path, rows=256, noise_frames=()):
     """Five frames of one specimen drifting a known amount, each with its own defocus peak, written
     as small files so their identities are real; returns the sources and the reference fit. A frame
     in noise_frames shows noise only, so its registration cannot be confident."""
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     from quantem.gpu.drift import shifted
     from quantem.gpu.direct_ptycho import stream as stream_module
@@ -239,7 +243,7 @@ def streamed(sources, fit, save_dir, **options):
 
 
 def assert_same_stream(left, right):
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     assert left.aberrations == right.aberrations
     assert [{name: refit[name] for name in ("evaluations", "stop")} for refit in left.refits] == \
@@ -334,7 +338,7 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
     """method=("phase", "complex") runs SSB (for registration) and both regularized methods once per
     frame, each at that frame's refit optics with the strengths given; images and combined hold the
     phase of each method and the complex method's amplitude, every image moved by the same shifts."""
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     series, _ = streamed(sources, fit, None, method=("phase", "complex"), phase_regularization=0.07,
@@ -380,7 +384,7 @@ def test_a_capped_auto_factor_is_announced_once_per_stream(monkeypatch, tmp_path
 def test_registration_uses_the_ssb_phase_whatever_the_method(monkeypatch, tmp_path):
     """A stream asking for the phase method only still registers each frame on its SSB phase: the
     shifts and confidences equal an SSB stream's exactly, though the regularized images are noise."""
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     ssb, _ = streamed(sources, fit, None)
@@ -395,7 +399,7 @@ def test_registration_uses_the_ssb_phase_whatever_the_method(monkeypatch, tmp_pa
 def test_reconstruct_rebuilds_a_method_from_the_saved_optics_and_shifts(monkeypatch, tmp_path):
     """After a stream, reconstruct("phase", ...) reloads each frame, runs the phase method once per
     frame at fits[k] with the new strength, and places it at shifts_A; nothing is refit."""
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     series, _ = streamed(sources, fit, None)
@@ -490,7 +494,7 @@ def test_a_frame_below_confidence_stays_out_of_every_combined_image(monkeypatch,
     which each equal the by-hand sum of the confident frames. CONFIDENCE (0.04) is set from the
     measured series; on this specimen good pairs score 0.39 and the noise frame 0.053, so the cut is
     raised to 0.1 here to put the noise frame below it."""
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     from quantem.gpu.direct_ptycho import stream as stream_module
 
@@ -509,7 +513,7 @@ def test_a_frame_below_confidence_stays_out_of_every_combined_image(monkeypatch,
 def test_reconstruct_after_align_places_every_frame_at_the_pairwise_shifts(monkeypatch, tmp_path):
     """After align, reconstruct places every frame, including one the live pass left out, at
     align's shifts_A, and report() shows the pairwise σ in place of the live threshold flag."""
-    import cupy
+    cupy = pytest.importorskip("cupy")
 
     sources, fit = fake_stream(monkeypatch, tmp_path, noise_frames=(3,))
     series, _ = streamed(sources, fit, None)

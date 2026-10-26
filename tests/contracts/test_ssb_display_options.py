@@ -193,8 +193,9 @@ def test_crop_fft_uses_selected_region_and_preserves_relative_signal():
 
 @pytest.mark.parametrize("size,width", [("small", 300), ("medium", 450), ("large", 600), ("xlarge", 900), (750, 750), (900, 900)])
 def test_interactive_phase_comparison_keeps_native_crops_and_shared_fft_scale(size, width):
-    from ipywidgets import VBox
-    from quantem.widget import Show2D
+    # interactive=True draws with quantem.widget, which no install extra brings
+    VBox = pytest.importorskip("ipywidgets").VBox
+    Show2D = pytest.importorskip("quantem.widget").Show2D
 
     result = _saved_result()
     widget = result.show(compare=[result, result], region="bottom-left",
