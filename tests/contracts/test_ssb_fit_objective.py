@@ -58,15 +58,13 @@ def test_standard_fit_is_the_tilt_corrected_agreement(tmp_path, monkeypatch):
     assert session.reconstruct(aberrations={"C10_nm": 1.0}).objective is None
 
 
-def test_phase_variance_cannot_fit_the_tilt_and_refines_with_nelder_mead(tmp_path, monkeypatch):
+def test_phase_variance_cannot_fit_the_tilt(tmp_path, monkeypatch):
     backend = _Recording()
     session = _session(monkeypatch, _source(tmp_path), backend)
     with pytest.raises(ValueError, match="cannot fit the sample tilt"):
         session.find_aberrations(search="primary", objective="phase_variance", verbose=False)
     with pytest.raises(ValueError, match="cannot fit the sample tilt"):
         session.compare_rotation_branches(objective="phase_variance", verbose=False)
-    with pytest.raises(ValueError, match="refines with 'nelder-mead'"):
-        session.find_aberrations(search="primary", tilt=False, objective="phase_variance", refinement="newton", verbose=False)
     with pytest.raises(ValueError, match="objective is 'agreement'"):
         session.find_aberrations(search="primary", tilt=False, objective="variance", verbose=False)
     assert not backend.fits

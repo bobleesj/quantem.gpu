@@ -32,16 +32,15 @@ def _astigmatism_error_nm(fit, C12_nm, phi12_deg):
 
 
 @pytest.mark.parametrize("C10_nm,C12_nm", [(-8.0, 2.5), (5.0, 0.0), (-20.0, 5.0)])
-@pytest.mark.parametrize("refinement", ["auto", "nelder-mead"])
-def test_standard_fit_recovers_known_aberrations(C10_nm, C12_nm, refinement):
+def test_standard_fit_recovers_known_aberrations(C10_nm, C12_nm):
     pytest.importorskip("mlx.core")
     from quantem.gpu import SSB
 
     frames, detector_mrad = _astigmatic_crystal(C10_A=10 * C10_nm, C12_A=10 * C12_nm, phi12_deg=20.0)
     with SSB(frames, **_settings(detector_mrad)) as session:
-        fit = session.find_aberrations(search="primary", tilt=False, refinement=refinement, check_rotation=False, verbose=False)
+        fit = session.find_aberrations(search="primary", tilt=False, check_rotation=False, verbose=False)
         _, loss = session.preview(fit.aberrations)
-    assert fit.refinement == ("newton" if refinement == "auto" else refinement)
+    assert fit.refinement == "newton"
     assert fit.aberrations["C10_nm"] == pytest.approx(C10_nm, abs=0.1)
     assert _astigmatism_error_nm(fit.aberrations, C12_nm, 20.0) < 0.05
     assert fit.sample_tilt_mrad is None and fit.depth_spread_nm is None
@@ -69,9 +68,9 @@ def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
         with pytest.raises(ValueError, match="nothing to fit"):
             session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0, "C12_nm": 0.0, "phi12_deg": 0.0},
                                      check_rotation=False, verbose=False)
-        with pytest.raises(ValueError, match="nelder-mead"):
-            session.find_aberrations(search="primary", tilt=False, refinement="newton", refine_lock=["C10_nm"],
-                                     check_rotation=False, verbose=False)
+        locked = session.find_aberrations(search="primary", tilt=False, refine_lock=["C10_nm"], num_trials=40,
+                                          check_rotation=False, verbose=False)
+        assert locked.refinement == "nelder-mead"  # a locked coefficient is not a box for the Newton
 
 
 def test_phi12_range_bounds_the_standard_fit():

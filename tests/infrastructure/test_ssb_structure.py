@@ -221,7 +221,7 @@ def test_reconstruct_series_reuses_only_exact_results(
     assert metadata["Probe reference frame"] == 151
     assert metadata["Probe reference dataset"] == reference
     assert metadata["Trials"] == 200
-    assert metadata["Refinement"] == "nelder-mead"
+    assert metadata["Refinement"] == "auto"
     assert metadata["Results reused"] == 3
 
 

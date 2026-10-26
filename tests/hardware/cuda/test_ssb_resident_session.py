@@ -2,8 +2,8 @@
 
 At a microscope the data are streamed and there is no file: SSB takes the dataset ``io.load`` returns, decodes the
 bright-field columns of ``scan_region`` only, finds the disk on the whole scan's mean pattern (``mean_pattern`` when the
-caller has it), and files a saved fit under the data's identity. The tilt fit polishes with Newton steps
-(``refinement="newton"``), can skip the standard comparison (``compare_standard=False``) and, with no trials, refines
+caller has it), and files a saved fit under the data's identity. The tilt fit polishes with Newton steps on the exact
+derivatives, can skip the standard comparison (``compare_standard=False``) and, with no trials, refines
 the previous scan's fit. Synthetic Poisson counts with a bright-field disk; skips without a CUDA device.
 """
 
@@ -68,7 +68,7 @@ def test_a_saved_tilt_fit_of_resident_data_is_found_by_the_data(acquisition, tmp
     """A second session on the same resident acquisition reuses the saved fit; a region of it is other data."""
     from quantem.gpu import SSB
 
-    settings = dict(tilt=True, num_trials=8, refinement="newton", compare_standard=False, check_rotation=False,
+    settings = dict(tilt=True, num_trials=8, compare_standard=False, check_rotation=False,
                     save_dir=tmp_path / "fit", verbose=False)
     with SSB(acquisition, **SETTINGS) as first:
         fitted = first.find_aberrations(search="primary", **settings)
@@ -87,9 +87,9 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
     from quantem.gpu import SSB
 
     with SSB(acquisition, **SETTINGS) as ssb:
-        fitted = ssb.find_aberrations(search="primary", tilt=True, num_trials=8, refinement="newton", compare_standard=False,
+        fitted = ssb.find_aberrations(search="primary", tilt=True, num_trials=8, compare_standard=False,
                                       check_rotation=False, verbose=False)
-        again = ssb.find_aberrations(search="primary", tilt=True, num_trials=0, refinement="newton", compare_standard=False,
+        again = ssb.find_aberrations(search="primary", tilt=True, num_trials=0, compare_standard=False,
                                      check_rotation=False, verbose=False)
         assert again.num_trials == 0 and again.trial_records == []
         assert abs(again.aberrations["C10_nm"] - fitted.aberrations["C10_nm"]) < 0.5
@@ -101,10 +101,12 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
         np.testing.assert_array_equal(cp.asnumpy(native).astype(np.float32), host)
     with SSB(acquisition, **SETTINGS) as standard:
         # the standard fit (tilt=False) polishes the agreement with the same resident Newton as on MPS
-        fit = standard.find_aberrations(search="primary", tilt=False, refinement="newton", check_rotation=False, verbose=False)
+        fit = standard.find_aberrations(search="primary", tilt=False, check_rotation=False, verbose=False)
         assert fit.refinement == "newton" and fit.sample_agreement > 0 and fit.sample_tilt_mrad is None
-        with pytest.raises(ValueError, match="nelder-mead"):
-            standard.find_aberrations(search="primary", tilt=False, refinement="newton", refine_lock=["C10_nm"], verbose=False)
+        # a locked coefficient is not a box for the Newton: that fit polishes with Nelder-Mead
+        locked = standard.find_aberrations(search="primary", tilt=False, refine_lock=["C10_nm"], check_rotation=False,
+                                           verbose=False)
+        assert locked.refinement == "nelder-mead"
 
 
 
@@ -129,7 +131,7 @@ def test_native_previews_are_their_own_arrays_and_a_region_refit_starts_from_ass
     with SSB(acquisition, **SETTINGS) as ssb:
         ssb.aberrations = {"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}
         ssb.sample_tilt_mrad, ssb.depth_spread_nm = (1.0, -2.0), 30.0
-        ssb.find_aberrations(search="primary", tilt=True, num_trials=0, refinement="newton", compare_standard=False, check_rotation=False,
+        ssb.find_aberrations(search="primary", tilt=True, num_trials=0, compare_standard=False, check_rotation=False,
                              scan_region=(0, 128, 0, 128), verbose=False)
     assert starts == [{"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}]
 
@@ -169,7 +171,7 @@ def test_calibration_from_a_resident_acquisition_opens_no_file(tmp_path, monkeyp
     def counting(self, name, *args, **kwargs):
         opened_by_h5py.append(str(name))
         return original(self, name, *args, **kwargs)
-    fit = dict(tilt=True, num_trials=8, refinement="newton", compare_standard=False, save_dir=tmp_path / "fit", verbose=False)
+    fit = dict(tilt=True, num_trials=8, compare_standard=False, save_dir=tmp_path / "fit", verbose=False)
     with load(str(source), verbose=False) as data:
         sys.addaudithook(_note_open)
         _WATCH["folder"] = str(source.resolve().parent)

@@ -137,8 +137,10 @@ class SSBResult(Mapping[str, float]):
         data, the default, with or without tilt) or ``"phase_variance"`` (the older SSB search); None for a result
         that was not fitted.
     refinement : str | None
-        Local refinement the fit applied after its search: ``"nelder-mead"``, ``"newton"``, or None for none (the
-        resolved method, never ``"auto"``); None for a result that was not fitted.
+        Local refinement the fit applied after its search: ``"bfgs"`` (the fifth-order exact-gradient refinement),
+        ``"newton"`` (the low-order trust-region Newton on the exact derivatives), ``"nelder-mead"`` (the phase
+        variance, or a locked or bounded standard fit), or None for none (the resolved method, never ``"auto"``);
+        None for a result that was not fitted.
     reused : bool
         Whether the result was restored from an exact saved-result match.
     saved_path : pathlib.Path | None

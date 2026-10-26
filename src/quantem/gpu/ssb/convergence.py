@@ -143,7 +143,8 @@ def _plot_broad(ax, result, *, x, label=None, color=None, scale=1.0):
         raise ValueError("This fit has no complete elapsed-time history. Use x='evaluations', "
                          "or rerun the fit to record times.")
     best = np.maximum.accumulate(np.where(np.isfinite(scores), scores, -np.inf))
-    method = {"newton": "Newton", "nelder-mead": "Nelder–Mead"}.get(result.refinement, "Refinement")
+    method = {"bfgs": "Exact-gradient refinement", "newton": "Newton", "nelder-mead": "Nelder–Mead"}.get(
+        result.refinement, "Refinement")
     prefix = "" if label is None else f"{label} · "
     if len(scores):
         line, = ax.plot(seconds if x == "time" else np.arange(1, len(scores) + 1),

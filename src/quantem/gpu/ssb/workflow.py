@@ -32,7 +32,7 @@ from quantem.gpu.ssb import series
 from quantem.gpu.ssb._execution import cancellation_scope
 from quantem.gpu.ssb.branches import DARK_FIELD_INNER_RADIUS, RotationBranches, compare_branches
 from quantem.gpu.ssb.brightfield import bright_field_crop_region, crop_bright_field
-from quantem.gpu.ssb.contract import FitObjective, RefineMethod, SSBProtocol
+from quantem.gpu.ssb.contract import FitObjective, RefineMethod, SSBProtocol, auto_refinement
 from quantem.gpu.ssb.higher_order_fit import (
     assess,
     from_coordinates,
@@ -1790,7 +1790,7 @@ class DirectPtycho:
         objective: FitObjective = "agreement",
         scan_region: tuple[int, int, int, int] | None = None,
         trials: int | Sequence[int] | None = None,
-        refinement: RefineMethod | Literal["auto", "bfgs"] = "auto",
+        refinement: Literal["auto"] | None = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         refine_lock: list[str] | None = None,
         tilt_limit_mrad: float = 25.0,
@@ -1822,12 +1822,14 @@ class DirectPtycho:
 
         On CUDA and MPS both refinements use exact derivatives of the
         agreement: the low-order Newton its exact gradient and Hessian, the
-        fifth-order refinement (``refinement="auto"``, i.e. ``"bfgs"``) a
-        bounded trust-region quasi-Newton on exact gradients, started from a
-        Hessian of every 64th bright-field pixel, first on every 8th pixel and
-        then converged on all of them; steps are accepted on the full
-        objective summed in float64. ``refinement="newton"`` keeps the earlier
-        finite-difference fifth-order Newton as the reference trajectory.
+        fifth-order refinement (``"bfgs"``) a bounded trust-region
+        quasi-Newton on exact gradients, started from a Hessian of every 64th
+        bright-field pixel, first on every 8th pixel and then converged on all
+        of them; steps are accepted on the full objective summed in float64.
+        Choosing the refinement is retired: every fit uses
+        ``refinement="auto"``; ``"newton"``, ``"bfgs"`` or ``"nelder-mead"``
+        print one line and run ``"auto"``. ``refinement=None`` skips the local
+        refinement of a ``search="primary"`` fit (the best trial as is).
 
         ``higher_order_limit`` bounds each of the 22 higher-order Cartesian
         coordinates of the fifth-order fit, in rad of phase at the aperture
@@ -1883,11 +1885,9 @@ class DirectPtycho:
         agreement, so at the default trials and seeds a broad fit never ends
         below the standard fit. ``optimizer["starts"]`` lists each start's
         agreement and ``optimizer["kept_start"]`` the one kept.
-        ``refinement="nelder-mead"`` selects the same bounded simplex path in
-        either fifth-order strategy. Newton has a 5000-evaluation ceiling;
-        Nelder-Mead has 3000; the exact-gradient refinement 400 full-data
-        objectives. All may stop earlier; a budget cap does not establish
-        convergence or a global optimum.
+        The exact-gradient refinement has a ceiling of 400 full-data
+        objectives per start and may stop earlier; a budget cap does not
+        establish convergence or a global optimum.
 
         Both fifth-order strategies use the selected CUDA or MPS device. They share the
         ``broad_fifth_agreement`` model, bounds, precision and reconstruction.
@@ -1928,10 +1928,11 @@ class DirectPtycho:
         3x closer to the true C10 (docs/performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md).
 
         Each method runs one search of ``trials`` candidates (default 200) per rotation branch, plus local refinement.
-        ``refinement="auto"`` (default) selects Newton for the agreement fits and Nelder-Mead for the phase variance and for an agreement fit that
-        locks a coefficient, bounds phi12 or holds a nonzero C12 (Newton cannot). Explicit ``"nelder-mead"`` uses the
-        simplex in an agreement fit too; None skips local refinement. Saved settings record the selected optimizer,
-        not ``"auto"``. ``result.objective`` records the objective; ``result.loss`` is the phase variance at the fit
+        The agreement fits polish with the trust-region Newton on the exact gradient and Hessian of the agreement; the
+        phase variance (no exact derivatives) and an agreement fit that locks a coefficient, bounds phi12 or holds a
+        nonzero C12 (not a box for the Newton) polish with Nelder-Mead; ``refinement=None`` keeps the best trial.
+        ``result.refinement`` records which.
+        ``result.objective`` records the objective; ``result.loss`` is the phase variance at the fit
         whatever the objective, unless ``compute_loss=False`` skips that diagnostic. CUDA and MPS run all three.
 
         For broad search, pass ``trials=(200, 400, 600)`` to compare independent budgets. This
@@ -1961,8 +1962,7 @@ class DirectPtycho:
         scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit. On two full 512 x 512
         acquisitions 100 trials already converged every seed and 200-400 gave the same tilt to 0.02 mrad
         (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
-        ``refinement="newton"`` polishes with Newton steps on finite-difference models whose evaluations share
-        passes over the data, a few passes instead of hundreds (both backends evaluate the trials of a pass in one batch).
+        The polish climbs with Newton steps on the exact gradient and Hessian of the agreement.
         ``compare_standard=False`` skips the standard-SSB search that only measures ``tilt_fit_gain`` (left None).
         ``trials=0`` with ``tilt=True`` searches nothing and refines from the session's ``aberrations``,
         ``sample_tilt_mrad`` and ``depth_spread_nm``: set them to the previous scan's fit and the next scan of a session
@@ -1978,8 +1978,8 @@ class DirectPtycho:
 
         ``fixed_aberrations`` with all three of C10_nm, C12_nm and phi12_deg holds optics common across
         local tilt fits. Supply a previously calibrated thick-sample optical
-        model, ``tilt=True`` and ``check_rotation=False``. The same batched
-        Newton solver optimizes only tilt and depth spread on CUDA and MPS.
+        model, ``tilt=True`` and ``check_rotation=False``. The same exact-derivative
+        Newton optimizes only tilt and depth spread on CUDA and MPS.
         This conditional fit does not determine whether the common optics are
         correct. Use ``compare_standard=False`` to omit the optional thin fit.
         A standard fit (``tilt=False``) searches C10_nm over (-40, 40), C12_nm over (0, 10) and phi12_deg over its
@@ -2065,6 +2065,7 @@ class DirectPtycho:
         from quantem.gpu.display._layout import panel_inches, resolve_columns
 
         panel_inches(size)  # Validate display options before expensive preparation.
+        refinement = auto_refinement(refinement)
         resolve_columns(3, columns=columns)
         if show_convergence and search == "primary":
             raise ValueError("Live convergence requires search='standard' or 'broad'. "
@@ -2169,8 +2170,8 @@ class DirectPtycho:
                 return result
             if (not tilt or objective != "agreement"
                     or search_ranges is not None or refine_lock is not None
-                    or fixed_aberrations is not None or higher_order is not None
-                    or refinement not in ("auto", "bfgs", "newton", "nelder-mead") or tilt_limit_mrad != 25.0):
+                    or fixed_aberrations is not None or higher_order is not None or refinement is None
+                    or tilt_limit_mrad != 25.0):
                 raise ValueError(
                     "Fifth-order search uses its joint model and bounds. "
                     "Use search='primary' for custom ranges, "
@@ -2184,7 +2185,6 @@ class DirectPtycho:
                 seed=(17 if search == "broad" else 42) if seed is None else seed,
                 save_dir=save_dir, force=force, verbose=verbose,
                 primary_options={"check_rotation": check_rotation, "refine_rotation": refine_rotation},
-                refinement=refinement,
                 compute_loss=False if compute_loss is None else compute_loss,
                 show=show, size=size, columns=columns, show_convergence=show_convergence,
                 on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
@@ -2203,7 +2203,7 @@ class DirectPtycho:
 
     @_on_scan_gpu
     def compare_rotation_defocus(
-        self, *, show: bool = False, trials: int | None = None, refinement: RefineMethod | Literal["auto"] = "auto",
+        self, *, show: bool = False, trials: int | None = None, refinement: str | None = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         seed: int = 42, tilt: bool = True, verbose: bool = True,
         num_trials: int | None = None,
@@ -2235,7 +2235,7 @@ class DirectPtycho:
         num_trials : int, optional
             Compatibility alias for ``trials``. Supply only one of them.
         refinement : str, optional
-            Local refinement, as in ``find_aberrations``; default ``"auto"``.
+            ``"auto"`` (default) or None, as in ``find_aberrations``; another value is retired and prints one line.
         search_ranges : dict, optional
             The joint-fit default ranges unless supplied. C10_nm must span zero
             and is split into negative and positive intervals, including zero.
@@ -2267,7 +2267,7 @@ class DirectPtycho:
         from quantem.gpu.ssb.rotation_defocus import compare_rotation_defocus
 
         comparison = compare_rotation_defocus(
-            self, num_trials=resolve_trial_count(trials, num_trials), refinement=refinement,
+            self, num_trials=resolve_trial_count(trials, num_trials), refinement=auto_refinement(refinement),
             search_ranges=search_ranges, seed=seed, tilt=tilt, verbose=verbose, region=region,
         )
         if show:
@@ -2346,6 +2346,8 @@ class DirectPtycho:
                             "find_aberrations(check_rotation=False) for one fit at the session's rotation.")
         if apply is None:
             apply = self.scan_detector_rotation_source == "estimated"
+        if "refinement" in find_aberrations_options:
+            find_aberrations_options["refinement"] = auto_refinement(find_aberrations_options["refinement"])
         find_aberrations_options["num_trials"] = resolve_trial_count(
             find_aberrations_options.pop("trials", None), find_aberrations_options.pop("num_trials", None),
         )
@@ -2359,7 +2361,7 @@ class DirectPtycho:
         objective: FitObjective = "agreement",
         scan_region: tuple[int, int, int, int] | None = None,
         num_trials: int = 200,
-        refinement: RefineMethod | Literal["auto"] = "auto",
+        refinement: Literal["auto"] | None = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         refine_lock: list[str] | None = None,
         tilt_limit_mrad: float = 25.0,
@@ -2412,9 +2414,14 @@ class DirectPtycho:
         if not tilt:
             search_ranges, refine_lock = _standard_constraints(search_ranges, refine_lock, fixed_aberrations)
             fixed_aberrations = None
-        # Newton polishes the agreement; the phase variance and a locked or bounded agreement fit use Nelder-Mead
+        # The trust-region Newton on the exact derivatives polishes the agreement; the phase variance (no exact
+        # derivatives) and a standard agreement fit that locks a coefficient, bounds phi12 or holds a nonzero C12 (not
+        # a box in the Newton coordinates) use Nelder-Mead
         newton_standard = (not tilt and objective == "agreement"
                            and newton_supported(search_ranges_to_engine(search_ranges), refine_lock))
+        if refinement not in ("auto", None):
+            raise ValueError("refinement is 'auto' (the default) or None for no local refinement.")
+        requested_refinement = refinement
         if refinement == "auto":
             refinement = "newton" if tilt or newton_standard else "nelder-mead"
         if tilt:
@@ -2424,22 +2431,14 @@ class DirectPtycho:
             fixed_aberrations = validate_aberrations(fixed_aberrations)
             if not all(math.isfinite(v) for v in fixed_aberrations.values()):
                 raise ValueError("fixed_aberrations must contain finite coefficients.")
-            if refinement != "newton" or branches != "off":
+            if refinement is None or branches != "off":
                 raise ValueError(
-                    "Holding all three coefficients with fixed_aberrations needs refinement='newton' (or 'auto') and "
-                    "check_rotation=False: with the optics fixed there is no branch to choose. Hold C10_nm alone or "
-                    "C12_nm=0 alone to keep the rotation check.")
-        if refinement not in {"nelder-mead", "newton", None}:
-            raise ValueError("refinement must be 'auto', 'nelder-mead', 'newton' or None.")
+                    "Holding all three coefficients with fixed_aberrations needs the local refinement "
+                    "(refinement='auto') and check_rotation=False: with the optics fixed there is no branch to choose. "
+                    "Hold C10_nm alone or C12_nm=0 alone to keep the rotation check.")
         if refine_rotation and refinement is None:
-            raise ValueError("refine_rotation polishes the fit at each angle; it needs refinement ('auto', 'newton' or "
-                             "'nelder-mead'), not None.")
-        if refinement == "newton" and not tilt and not newton_standard:
-            raise ValueError(
-                "refinement='newton' polishes the agreement objective; the phase-variance search refines with "
-                "'nelder-mead'." if objective == "phase_variance" else
-                "refinement='newton' in a standard fit (tilt=False) bounds C10 and the C12 maximum only; use "
-                "'nelder-mead' to lock a coefficient, bound phi12 or hold a nonzero C12_nm.")
+            raise ValueError("refine_rotation polishes the fit at each angle; it needs the local refinement "
+                             "(refinement='auto'), not None.")
         if branches == "auto":
             # a rotation given to DirectPtycho(...) or recorded with the acquisition is the user's calibration and is kept
             branches = "apply" if self.scan_detector_rotation_source == "estimated" else "off"
@@ -2543,7 +2542,7 @@ class DirectPtycho:
                 # refine_rotation refines only an estimated rotation, the region's as the full scan's
                 regional.scan_detector_rotation_source = self.scan_detector_rotation_source
                 result = regional._find_aberrations(
-                    branches, tilt=tilt, objective=objective, num_trials=num_trials, refinement=refinement,
+                    branches, tilt=tilt, objective=objective, num_trials=num_trials, refinement=requested_refinement,
                     search_ranges=requested["search_ranges"] if tilt else search_ranges, refine_lock=refine_lock,
                     tilt_limit_mrad=tilt_limit_mrad,
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
@@ -3246,7 +3245,7 @@ class DirectPtycho:
             start = (engine["C10"], engine["C12"], engine["phi12"], *self.sample_tilt_mrad, self.depth_spread_nm * ENGINE_PER_NM)
         fixed = {} if fixed_aberrations is None else {"fixed_aberrations": aberrations_to_engine(fixed_aberrations)}
         options = dict(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed,
-                       polish_starts=0 if refinement is None else 3, polish=refinement or "nelder-mead",
+                       polish_starts=0 if refinement is None else 3, polish=refinement,
                        start=start, **fixed, **(bounds or {}))
         # the standard comparison of a later _measure_tilt_fit_gain uses this fit's seed and search bounds
         self._tilt_fit_options = options

@@ -9,15 +9,25 @@ from quantem.gpu.ssb.stream import _refit
 
 
 class PeakedObjective:
-    """Model agreement exp(-|z - peak|^2): its maximum is known exactly."""
+    """Model agreement exp(-|z - peak|^2) with its exact gradient: its maximum is known exactly."""
+
+    num_bright_field_pixels = 9000
 
     def __init__(self, peak):
         self.peak = peak
         self.seen = []
 
     def evaluate(self, points, order):
+        return self.values(points)
+
+    def values(self, points, stride=1):
+        points = np.atleast_2d(points)
         self.seen.append(np.array(points))
         return np.exp(-np.sum((points - self.peak) ** 2, axis=1))
+
+    def gradients(self, points, stride=1):
+        points = np.atleast_2d(points)
+        return -2 * (points - self.peak) * np.exp(-np.sum((points - self.peak) ** 2, axis=1))[:, None]
 
 
 def test_refit_finds_the_low_order_peak_and_holds_the_rest():

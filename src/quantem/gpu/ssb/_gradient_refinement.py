@@ -99,7 +99,9 @@ def refine(evaluate, start, bounds, *, start_value=None, settings=None, log=None
     ``evaluate(points, kind, stride)`` returns ``(values, gradients)`` of the agreement divided by the initial full
     agreement: kind ``"value_and_gradient"``, ``"value"`` (gradients None) or ``"gradient"`` (the gradients of the
     points of the latest ``"value"`` call, values as returned then). ``stride`` 1 is the full objective; a larger
-    stride the agreement of every n-th BF pixel, which is scaled here to equal the full one at the start.
+    stride the agreement of every n-th BF pixel, which is scaled here to equal the full one at the start. A coordinate
+    whose bounds are equal is held at that value: the search runs over the others, and ``evaluate`` still receives
+    and returns all n.
 
     Returns a dict: the best full-data ``coordinates`` and normalized ``agreement``, ``objectives`` (full-data value
     passes), ``gradients`` (full-data gradient passes), ``subsampled`` (subsample candidates), ``iterations``,
@@ -111,9 +113,33 @@ def refine(evaluate, start, bounds, *, start_value=None, settings=None, log=None
     bounds = np.asarray(bounds, dtype=float)
     n = len(start)
     lower, upper = bounds[:, 0], bounds[:, 1]
-    if (n < 6 or bounds.shape != (n, 2) or not np.all(np.isfinite(bounds)) or np.any(upper <= lower)
-            or not np.all(np.isfinite(start)) or np.any(start < lower) or np.any(start > upper)):
+    if (n < 6 or bounds.shape != (n, 2) or not np.all(np.isfinite(bounds)) or np.any(upper < lower)
+            or np.all(upper == lower) or not np.all(np.isfinite(start)) or np.any(start < lower)
+            or np.any(start > upper)):
         raise ValueError("The initial fit must lie inside the higher-order bounds. Check calibration and the initial fit.")
+    # forward-difference steps of the starting Hessian: low orders, tilt and depth, then the higher orders
+    h = np.array([0.01, 0.01, 0.01, 0.025, 0.025, 0.025] + [0.01] * (n - 6))
+    free = upper > lower
+    if free.all():
+        return _refine(evaluate, start, bounds, h, start_value, settings, log, progress)
+    index = np.flatnonzero(free)
+
+    def reduced(points, kind, stride):
+        full = np.tile(start, (len(points), 1))
+        full[:, index] = points
+        values, gradients = evaluate(full, kind, stride)
+        return values, None if gradients is None else np.asarray(gradients)[:, index]
+
+    result = _refine(reduced, start[index], bounds[index], h[index], start_value, settings, log, progress)
+    coordinates = start.copy()
+    coordinates[index] = result["coordinates"]
+    return {**result, "coordinates": coordinates}
+
+
+def _refine(evaluate, start, bounds, h, start_value, settings, log, progress):
+    """``refine`` over free coordinates only: ``h`` the forward-difference steps of the starting Hessian."""
+    n = len(start)
+    lower, upper = bounds[:, 0], bounds[:, 1]
     counts = {"objectives": 0, "gradients": 0, "subsampled": 0}
     best = {"value": -np.inf, "point": start.copy()}
     trace = []
@@ -153,7 +179,6 @@ def refine(evaluate, start, bounds, *, start_value=None, settings=None, log=None
         record(start, start_value)
     center = start.copy()
     # Forward differences of exact subsample gradients (the first call fixes the subsample's scale at the start).
-    h = np.array([0.01, 0.01, 0.01, 0.025, 0.025, 0.025] + [0.01] * (n - 6))
     offsets = np.where(center + h <= upper, h, -h)
     design = np.tile(center, (n, 1)) + np.diag(offsets)
     column_values, column_gradients = track(np.vstack([center, design]), "value_and_gradient",

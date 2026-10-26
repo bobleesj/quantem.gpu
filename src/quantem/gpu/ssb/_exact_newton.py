@@ -29,9 +29,6 @@ EXACT_TOLERANCES = TOLERANCES / 10
 DISTINCT = np.array([50.0, 20.0, _f(0.3), 2.0, 2.0, 50.0])
 # The second polish replaces the first only when its agreement is higher by this relative margin (BASIN_MARGIN).
 BASIN_MARGIN = 1e-6
-# The joint fit's Newton polishes on exact derivatives where the backend has them (CUDA, MPS); False keeps the
-# resident finite-difference stencils as the reference trajectory.
-EXACT_NEWTON = True
 
 
 def encode(p):
@@ -153,7 +150,10 @@ def newton(objective, points, scores, lower, upper, *, explicit=(), starts=3, pr
     ``objective.values(z_rows, all_derivatives)`` returns the agreements at rows of z and
     ``objective.derivatives(indices)`` (value, gradient, Hessian) at rows of its latest ``values`` call.
     ``prune`` keeps only the highest start after the second step; without it every start climbs until it converges
-    or meets a higher one. Returns the best point (engine units), its agreement and the starts' states.
+    or meets a higher one. ``lower`` and ``upper`` bound (C10, C12, phi12, tilt row, tilt column, depth spread); a
+    coordinate with equal bounds is held there, as is the astigmatism pair when C12 and phi12 both are or the C12
+    maximum is 0 (fixed aberrations; a standard fit's tilt and depth spread at 0). Returns the best point (engine
+    units), its agreement and the starts' states.
     """
     points = np.asarray(points, dtype=float)
     scores = np.asarray(scores, dtype=float)
@@ -172,7 +172,10 @@ def newton(objective, points, scores, lower, upper, *, explicit=(), starts=3, pr
         kept = NewtonState(**{**finished.__dict__})
         kept.active, kept.known = False, True
         state.append(kept)
+    held = np.array(lower, dtype=float) == np.array(upper, dtype=float)
+    held[1] = held[2] = bool(upper[1] == 0 or (held[1] and held[2]))
     for p in chosen:
+        p = np.where(held, lower, p)
         z = encode(p)
         state.append(NewtonState(center=z, heading=z.copy(), origin=z.copy()))
     scale = max(_f(1e-30), float(np.max(np.abs(scores)))) if scores.size else _f(1e-30)
@@ -181,7 +184,7 @@ def newton(objective, points, scores, lower, upper, *, explicit=(), starts=3, pr
     lower[1] = -upper[1]
     lower[2] = -upper[1]
     upper[2] = upper[1]
-    free = np.ones(6, dtype=bool)
+    free = ~held
     for iteration in range(30):
         active = [k for k, s in enumerate(state) if s.active]
         if not active:

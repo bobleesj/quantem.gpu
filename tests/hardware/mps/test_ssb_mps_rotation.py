@@ -315,8 +315,8 @@ def test_unsupported_joint_constraints_say_what_to_pass(constraints, match):
 
 
 @pytest.mark.parametrize("pins,lock,refinement", [
-    ({"C12_nm": 0.0, "phi12_deg": 0.0}, ["C12_nm", "phi12_deg"], "nelder-mead"),
-    ({"C12_nm": 1.5, "phi12_deg": 20.0}, ["C12_nm", "phi12_deg"], "nelder-mead"),
+    ({"C12_nm": 0.0, "phi12_deg": 0.0}, ["C12_nm", "phi12_deg"], "auto"),
+    ({"C12_nm": 1.5, "phi12_deg": 20.0}, ["C12_nm", "phi12_deg"], "auto"),
     ({"C12_nm": 1.5, "phi12_deg": 20.0}, None, None),
 ])
 def test_search_range_pins_hold_their_values_on_mps(pins, lock, refinement):

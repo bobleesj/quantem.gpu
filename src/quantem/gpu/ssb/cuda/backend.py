@@ -353,8 +353,9 @@ class CudaSSBBackend:
 
         ``objective="agreement"`` maximizes the least-squares agreement of the SSB model with G(q, k) at sample tilt
         and depth spread 0 (``optimizer.fit_standard``, the resident search shared with MPS; ``refinement`` "newton",
-        "nelder-mead" or None); ``"phase_variance"`` minimizes the phase variance (``optimizer.fit_standard_phase_variance``,
-        the search of MPS's ``optimize_phase_variance``; ``refinement`` "nelder-mead" or None). ``search_ranges`` (engine keys) bounds the
+        the trust-region Newton on the exact derivatives, or "nelder-mead" for a locked or bounded fit);
+        ``"phase_variance"`` minimizes the phase variance (``optimizer.fit_standard_phase_variance``, the search of
+        MPS's ``optimize_phase_variance``; ``refinement`` "nelder-mead"). ``search_ranges`` (engine keys) bounds the
         search, a value holding that coefficient in every trial; ``refine_lock`` holds coefficients through
         Nelder-Mead; ``aberrations`` (engine units) is a refinement start.
         """

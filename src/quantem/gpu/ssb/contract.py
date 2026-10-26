@@ -10,8 +10,18 @@ import numpy as np
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.results import SSBResult
 
-# Effective local refinement after the public workflow resolves "auto".
+# The local refinement a fit applied: the trust-region Newton on the exact derivatives ("newton"), or Nelder-Mead for
+# the phase variance and a standard fit that locks a coefficient, bounds phi12 or holds a nonzero C12.
 RefineMethod = Literal["nelder-mead", "newton"] | None
+
+
+def auto_refinement(refinement) -> str | None:
+    """``"auto"``, the refinement every fit uses, or None for none (``search="primary"`` only). Choosing the method is
+    retired: another value prints one line and is ``"auto"``."""
+    if refinement is None or refinement == "auto":
+        return refinement
+    print(f"refinement={refinement!r} is retired; using refinement='auto', the exact-derivative fit.")
+    return "auto"
 # What find_aberrations maximizes or minimizes: the least-squares agreement of the SSB model with the data (the
 # default, with or without tilt) or the phase variance over bright-field pixels (the older SSB search, tilt=False only).
 FitObjective = Literal["agreement", "phase_variance"]

@@ -3,8 +3,8 @@
 A full fifth-order fit takes seconds to minutes; between frames of a time series the specimen height and
 the objective lens drift, but coma, trefoil, spherical aberration and the sample tilt change far less.
 ``stream`` therefore keeps the reference fit's coordinates and refines only C10 and the two C12 components
-on each new frame, starting from the previous frame, with the same model-agreement objective and bounded
-Newton step as the full fit. On the measured series (frames 151-191) this is about 0.05 s of fitting per frame, so the
+on each new frame, starting from the previous frame, with the same model-agreement objective and exact-gradient
+trust-region refinement as the full fit. On the measured series (frames 151-191) this is about 0.05 s of fitting per frame, so the
 per-frame time is dominated by reading the compressed acquisition, far inside the 13 s scan.
 
 Each new phase is also placed live: registered against the frame placed before it by the lattice-safe band
@@ -36,15 +36,13 @@ from quantem.gpu import io
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.drift import bands, peaks, prepared, register_spectra, shifted, spots
 from quantem.gpu.resident.hot_pixels import hot_pixel_outcome
-from quantem.gpu.ssb._broad_newton import BudgetReached, Tracker, newton
-from quantem.gpu.ssb.fifth_order_fit import _objective
+from quantem.gpu.ssb.fifth_order_fit import _objective, _refine_with_gradients
 from quantem.gpu.ssb.fifth_order_parameters import public_params
 from quantem.gpu.ssb.persistence import _write_atomically, acquisition_identity, json_value, software_signature
 from quantem.gpu.ssb.results import SSBResult, host_array
 
 # Coordinates 0..2 of the fifth-order vector: C10 and the two C12 components.
 VARIED = slice(0, 3)
-STEP = np.full(3, 0.02)
 EVALUATION_CAP = 300
 # Pair confidence below which a frame is not added to the combined image. On the measured series (frames 151-191) every pair
 # drift rejected as a wrong region or lattice image scored at most 0.034 and every neighbour pair at
@@ -54,7 +52,7 @@ CONFIDENCE = 0.04
 # The live search reaches as far as drift's pairs: the residual past the extrapolated guess is a few Å.
 REACH_A = 30.0
 # The layout of a saved frame record; a record of another layout is computed again.
-RECORD_SCHEMA = "quantem.ssb-stream-frame/2"
+RECORD_SCHEMA = "quantem.ssb-stream-frame/3"
 
 
 def stream(ptycho, sources, fit: SSBResult, *, method="ssb", upsampling_factor="auto", save_dir=None,
@@ -144,7 +142,7 @@ def stream(ptycho, sources, fit: SSBResult, *, method="ssb", upsampling_factor="
             saved = _recorded(records / f"{name}.json", identity) if resuming else None
             resuming = saved is not None
         if saved is None:
-            objective = _objective(session)
+            objective = _objective(session, gradients=True)
             clock["setup_s"] = time.perf_counter() - began
             began = time.perf_counter()
             coordinates, evaluations, stop = _refit(objective, reference, start, bounds)
@@ -549,23 +547,13 @@ def _recorded(path, identity):
 
 
 def _refit(objective, reference, start, bounds):
-    """Bounded Newton over (C10, C12 components) with the other 25 coordinates at ``reference``."""
-    base = float(objective.evaluate(np.concatenate([start, reference[3:]])[None], 5)[0])
-
-    def evaluate(points):
-        full = np.tile(reference, (len(points), 1))
-        full[:, VARIED] = points
-        return objective.evaluate(full, 5) / base
-
-    tracker = Tracker(evaluate, start, bounds, EVALUATION_CAP)
-    try:
-        tracker(start)
-        _, stop = newton(tracker, start, bounds, STEP)
-    except BudgetReached:
-        stop = "evaluation cap"
-    coordinates = reference.copy()
-    coordinates[VARIED] = tracker.best_z
-    return coordinates, tracker.nfev, stop
+    """The exact-gradient refinement over (C10, C12 components) with the other 25 coordinates held at ``reference``."""
+    z = np.array(reference, dtype=float)
+    z[VARIED] = np.clip(start, bounds[:, 0], bounds[:, 1])
+    box = np.column_stack([z, z])
+    box[VARIED] = bounds
+    record = _refine_with_gradients(objective, z, box, float(objective.values(z, 1)[0]), EVALUATION_CAP)
+    return np.asarray(record["coordinates"]), record["objectives"], record["stop"]
 
 
 def _lattice(phase, sampling_A, band_A=(50.0, 0.67)):

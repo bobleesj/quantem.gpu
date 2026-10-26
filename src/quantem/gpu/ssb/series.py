@@ -17,7 +17,7 @@ import yaml
 
 from quantem.gpu import screening
 from quantem.gpu.formats import dataset_yaml
-from quantem.gpu.ssb.contract import RefineMethod
+from quantem.gpu.ssb.contract import auto_refinement
 from quantem.gpu.ssb.persistence import FIT_SCHEMA, RESULT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
 from quantem.gpu.ssb.results import (
     SSBResult,
@@ -42,7 +42,7 @@ def reconstruct_series(
     scan_detector_rotation_deg: float | None = None,
     scan_detector_rotation_flipped: bool | None = None,
     trials: int | None = None,
-    refinement: RefineMethod = "nelder-mead",
+    refinement: str | None = "auto",
     backend: Literal["auto", "cuda", "mps"] = "auto",
     save_dir: str | Path | None = None,
     progress: bool = True,
@@ -87,8 +87,9 @@ def reconstruct_series(
         Search trials per rotation branch of each missing acquisition. Default 200.
     num_trials : int, optional
         Compatibility alias for ``trials``. Supply only one of them.
-    refinement : {"nelder-mead", None}, default "nelder-mead"
-        Independent-fit refinement method.
+    refinement : str or None, default "auto"
+        ``"auto"``, the exact-derivative fit (``find_aberrations``), or None for no local refinement; another value
+        is retired and prints one line.
     backend : {"auto", "cuda", "mps"}, default "auto"
         Accelerated SSB backend. CPU is never used.
     save_dir : str or Path, optional
@@ -105,6 +106,7 @@ def reconstruct_series(
         dark-field companions and a ``metadata()`` table.
     """
     num_trials = resolve_trial_count(trials, num_trials)
+    refinement = auto_refinement(refinement)
     source_root = Path(source_directory).expanduser().resolve()
     if not source_root.is_dir():
         raise FileNotFoundError(f"SSB source directory not found: {source_root}")

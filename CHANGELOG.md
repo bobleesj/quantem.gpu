@@ -81,6 +81,20 @@ new `rcN` heading when that rc is published to TestPyPI.
 - Native (Metal) SSB: the exact-gradient fifth-order search's untested symmetric-rank-one Hessian update
   (`SSBFifthOrderGradientSearch.Update.sr1`, `Settings.update`, `metal-ssb-fit-benchmark --update`) is removed; the
   search always uses its dense BFGS update, as every fit did.
+- Python SSB (CUDA and MPS): choosing the fit refinement is retired; every fit uses `refinement="auto"`, the
+  exact-derivative refinements (the low-order trust-region Newton on the exact gradient and Hessian, the fifth-order
+  quasi-Newton on exact gradients). `find_aberrations(refinement="newton" | "bfgs" | "nelder-mead")`,
+  `compare_rotation_defocus` and `reconstruct_series` keep the keyword, print one line ("refinement='newton' is
+  retired; using refinement='auto', the exact-derivative fit.") and run `"auto"`; `refinement=None` still keeps the
+  best trial of a `search="primary"` fit. Removed: the finite-difference fifth-order Newton and its 435-point
+  stencil (`_broad_newton`), the fifth-order Nelder-Mead (`_broad_nelder_mead`), the resident finite-difference
+  Newton stencils of the joint and standard fits, the host joint search `thick_sample_fit.fit_sample_search` and
+  `newton_polish`, and the `_exact_newton.EXACT_NEWTON` switch. Fixed aberrations in the joint fit, the standard fit
+  (`tilt=False`, its tilt and depth spread held at 0) and the stream's per-frame C10/C12 refit now use the exact
+  derivatives too (held coordinates in `_exact_newton` and `_gradient_refinement.refine`); stream frame records
+  move to `quantem.ssb-stream-frame/3`. Without exact derivatives the refinement is what `"auto"` chose before:
+  Nelder-Mead for the phase-variance search and for a standard fit that locks a coefficient, bounds phi12 or holds a
+  nonzero C12. The `higher_order=` subsets of the primary search keep their finite-difference polish.
 - Native (Metal) SSB is model-based only: the engine's own non-model reconstruction and the phase-variance fit are
   retired. Removed: `MetalSSBEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`, `phaseVariance`,
   `optimize` and `MetalSSBPhaseVarianceResult`; `SSBOptimizer` and `SSBOptimizationProgress`; the phase-variance

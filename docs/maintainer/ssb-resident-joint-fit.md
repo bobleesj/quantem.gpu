@@ -1,6 +1,6 @@
 # Resident joint SSB fitting
 
-`SSB.find_aberrations(tilt=True, refinement="newton")` runs the six-parameter
+`SSB.find_aberrations(search="primary", tilt=True)` runs the six-parameter
 adaptive search and refinement on the session's MPS or CUDA device. The model
 jointly fits defocus, two-fold astigmatism and angle, both sample-tilt components,
 and depth spread. No extra notebook optimizer is needed.
@@ -8,8 +8,10 @@ and depth spread. No extra notebook optimizer is needed.
 The resident path preserves multivariate TPE's groups of eight, 24 proposal
 candidates, startup budget, and three distinct Newton starts. Its probability
 model and random stream follow Optuna 4.9.0, independently of the installed
-Optuna version. Newton retains finite-difference steps, full/diagonal designs,
-trust-region updates, boundary handling, convergence checks, and start pruning.
+Optuna version. The Newton climbs on the exact gradient and Hessian of the agreement
+(`_exact_newton`, `LowOrderDerivatives`) with trust-region updates, boundary handling
+(fixed aberrations and a standard fit's tilt and depth spread are held coordinates),
+convergence checks and start pruning; the finite-difference stencils are retired.
 The requested trial count is not reduced. ShowPtycho's regional workflow still
 runs all five seeds with 200 trials and Newton for each seed.
 

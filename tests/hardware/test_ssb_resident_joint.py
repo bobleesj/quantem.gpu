@@ -62,66 +62,40 @@ def test_probability_precision_and_random_stream(device):
     )
 
 
-@pytest.mark.parametrize("fixed", [False, True])
-def test_adaptive_tpe_preserves_trial_sequence(device, fixed):
-    """Fixed score history isolates TPE equivalence from model rounding."""
-    from quantem.gpu.ssb._resident_search import _search
-    from quantem.gpu.ssb.thick_sample_fit import PARAMETERS, fit_sample_search
+class _QuadraticDerivatives:
+    """Exact derivatives of a concave quadratic in the Newton coordinates whose maximum (agreement 100) is the
+    resident test objective's: C10 100, C12 60, phi12 0, tilt (3, -4) mrad, depth spread 150 (engine units)."""
 
-    positions = {"gpu": 0, "reference": 0}
+    def __init__(self):
+        from quantem.gpu.ssb import _exact_newton
 
-    def values(rows, key):
-        offset = positions[key]
-        positions[key] += len(rows)
-        return np.sin(np.arange(offset, offset + len(rows)) * 0.7) + 2
+        self.maximum = _exact_newton.encode([100.0, 60.0, 0.0, 3.0, -4.0, 150.0])
+        self.scales = np.array([50.0, 50.0, 50.0, 10.0, 10.0, 100.0])
+        self.latest = None
 
-    lower = [-300.0, 0.0, -math.pi / 2, -25.0, -25.0, 20.0]
-    upper = [300.0, 200.0, math.pi / 2, 25.0, 25.0, 600.0]
-    fixed_values = {"C10": 100.0, "C12": 60.0, "phi12": 0.2} if fixed else None
-    if fixed:
-        lower[:3] = upper[:3] = list(fixed_values.values())
-    points, _ = _search(
-        device,
-        lambda trial: device.pack(values(trial, "gpu")),
-        device.pack(lower + upper),
-        200,
-        11,
-        fixed=fixed,
-    )
-    expected = fit_sample_search(
-        lambda *args: 1.0,
-        objective_batch=lambda rows: values(rows, "reference"),
-        trials=200,
-        seed=11,
-        polish_starts=0,
-        compare_standard=False,
-        polish="newton",
-        verbose=False,
-        fixed_aberrations=fixed_values,
-    )
-    reference = np.array(
-        [
-            [row["params"][key] for key in PARAMETERS]
-            for row in expected["trial_records"]
-        ]
-    )
-    np.testing.assert_allclose(device.host(points), reference, atol=1e-8, rtol=1e-10)
+    def _value(self, z):
+        return 100.0 - float(np.sum(((np.asarray(z) - self.maximum) / self.scales) ** 2))
+
+    def values(self, z_rows, all_derivatives):
+        self.latest = np.atleast_2d(z_rows)
+        return np.array([self._value(z) for z in self.latest])
+
+    def derivatives(self, indices):
+        return [(self._value(self.latest[i]), -2 * (self.latest[i] - self.maximum) / self.scales ** 2,
+                 np.diag(-2 / self.scales ** 2)) for i in indices]
 
 
-def test_joint_newton_recovers_solution_without_host_optimizer(device, monkeypatch):
-    """Every search and Newton point stays resident for a full 200-trial fit."""
+def test_joint_newton_recovers_the_solution_of_the_resident_search(device, monkeypatch):
+    """The resident search's 200 trials and the Newton on the objective's exact derivatives find the maximum."""
     import scipy.optimize
 
     from quantem.gpu.ssb import thick_sample_fit
     from quantem.gpu.ssb._resident_search import fit_resident
 
     def forbidden(*args, **kwargs):
-        raise AssertionError("The joint fitter called a CPU numerical optimizer")
+        raise AssertionError("The joint fitter called a SciPy optimizer")
 
-    monkeypatch.setattr(thick_sample_fit, "fit_sample_search", forbidden)
-    monkeypatch.setattr(thick_sample_fit, "newton_polish", forbidden)
     monkeypatch.setattr(scipy.optimize, "minimize", forbidden)
-    monkeypatch.setattr(np.linalg, "eigh", forbidden)
 
     def objective(trial):
         return device.run(
@@ -145,6 +119,7 @@ store_real(out0,b,Real(100)-sum);
         trials=200,
         compare_standard=True,
         verbose=False,
+        derivatives=_QuadraticDerivatives(),
     )
     assert len(result["trial_records"]) == 200
     assert abs(result["fit"] - 100) < 1e-7
@@ -156,7 +131,7 @@ store_real(out0,b,Real(100)-sum);
     assert abs(result["depth_spread_A"] - 150) < 0.01
     assert result["optimizer"]["device"] == device.backend
     assert result["optimizer"]["host_numerical_search"] is False
-    assert result["optimizer"]["newton_starts"]
+    assert result["optimizer"]["newton_starts"] and result["optimizer"]["derivatives"] == "exact"
     assert result["standard_fit"] > 0
     assert result["gain"] > 1
     resumed = fit_resident(
@@ -166,15 +141,15 @@ store_real(out0,b,Real(100)-sum);
         start=[result[name] for name in thick_sample_fit.PARAMETERS],
         compare_standard=False,
         verbose=False,
+        derivatives=_QuadraticDerivatives(),
     )
     assert resumed["trial_records"] == []
     assert abs(resumed["fit"] - result["fit"]) < 1e-7
 
 
 def test_model_scores_and_public_joint_fit_remain_on_device(device, monkeypatch):
-    """Use the complete synthetic scan/BF and block the previous host fitter."""
+    """Use the complete synthetic scan/BF: model scores on the device and the public joint fit."""
     from quantem.gpu import SSB
-    from quantem.gpu.ssb import thick_sample_fit
     from quantem.gpu.ssb._resident_search import _trial
 
     rng = np.random.default_rng(7)
@@ -220,20 +195,9 @@ def test_model_scores_and_public_joint_fit_remain_on_device(device, monkeypatch)
         # precision on CUDA; Metal already used an FP64 host reduction.
         np.testing.assert_allclose(actual, expected, rtol=2e-6)
 
-        def forbidden(*args, **kwargs):
-            raise AssertionError(
-                "Public joint fitting called the previous host optimizer"
-            )
-
-        monkeypatch.setattr(thick_sample_fit, "fit_sample_search", forbidden)
-        module = __import__(
-            f"quantem.gpu.ssb.{device.backend}.optimizer", fromlist=["fit_sample"]
-        )
-        monkeypatch.setattr(module, "fit_sample_search", forbidden)
         result = ssb.find_aberrations(search="primary",
             tilt=True,
             num_trials=200,
-            refinement="newton",
             compare_standard=False,
             check_rotation=False,
             verbose=False,

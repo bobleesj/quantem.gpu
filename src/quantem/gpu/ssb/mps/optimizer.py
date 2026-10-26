@@ -23,13 +23,7 @@ from quantem.gpu.ssb.mps.kernels.object_sum import object_fourier_sum_dynamic
 from quantem.gpu.ssb.mps.loss import reconstruct_prepared_batch_exact_loss
 from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB
 from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
-from quantem.gpu.ssb.mps.thick_sample import (
-    THICK_FIT_MAX_BATCH,
-    thick_fit,
-    thick_fit_batch,
-)
 from quantem.gpu.ssb.results import SSBResult
-from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
 
 # The standard fit's search box when search_ranges leaves a coefficient out: C10 +-40 nm, C12 up to 10 nm, phi12 over
 # its period (engine keys and units).
@@ -102,9 +96,12 @@ def optimize(
         # the start obeys the search box: a held coefficient is every trial's and the result's value
         start = [min(max(value, low), high) for value, low, high in zip(start, lower, upper, strict=True)]
     lock = tuple(sorted({"C10": 0, "C12": 1, "phi12": 2}[name] for name in (refine_lock or ())))
+    from quantem.gpu.ssb.mps.exact_derivatives import LowOrderDerivatives
+
     fit = fit_standard_resident(
         lambda trial: evaluate(prepared, trial, band_inv_A), backend="mps", lower=lower, upper=upper,
         trials=int(num_trials), seed=int(seed), polish=refine, lock=lock, start=start,
+        derivatives=LowOrderDerivatives(prepared, band_inv_A) if refine == "newton" else None,
     )
     best = {name: fit[name] for name in ("C10", "C12", "phi12")}
     timings = {"search_seconds": fit["timings"]["coarse_search_s"], "refinement_seconds": fit["timings"]["refinement_s"]}
@@ -392,32 +389,18 @@ def fit_sample(
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     **options,
 ) -> dict[str, object]:
-    """Fit C10, C12, phi12, sample tilt and thickness by maximising ``thick_sample.thick_fit`` (search: ``ssb.thick_sample_fit``,
-    shared with CUDA). Trials are evaluated in batches of ``THICK_FIT_MAX_BATCH`` with the fused Metal kernel
-    (``thick_fit_batch``, same value as ``thick_fit``). Units: C10, C12, thickness in Angstrom (engine unit); tilt in mrad,
-    scan frame (row, col)."""
-    if options.get("polish", "newton") == "newton" or options.get("polish_starts", 3) == 0:
-        from quantem.gpu.ssb._resident_search import fit_resident
-        from quantem.gpu.ssb.mps.resident_fit import evaluate
+    """Fit C10, C12, phi12, sample tilt and thickness by maximising the joint agreement with the fused Metal kernel:
+    the resident search (``_resident_search.fit_resident``) and the trust-region Newton on the exact derivatives
+    (``LowOrderDerivatives``). Units: C10, C12, thickness in Angstrom (engine unit); tilt in mrad, scan frame (row,
+    col)."""
+    from quantem.gpu.ssb._resident_search import fit_resident
+    from quantem.gpu.ssb.mps.exact_derivatives import LowOrderDerivatives
+    from quantem.gpu.ssb.mps.resident_fit import evaluate
 
-        from quantem.gpu.ssb import _exact_newton
-
-        if options.get("polish_starts", 3) == 0:
-            options = {**options, "polish": None}
-        derivatives = None
-        if _exact_newton.EXACT_NEWTON:
-            from quantem.gpu.ssb.mps.exact_derivatives import LowOrderDerivatives
-
-            derivatives = LowOrderDerivatives(prepared, band_inv_A)
-        return fit_resident(lambda trial: evaluate(prepared, trial, band_inv_A),
-                            backend="mps", band_inv_A=band_inv_A, derivatives=derivatives, **options)
-    return fit_sample_search(
-        lambda c10, c12, phi12, tilt, thickness: thick_fit(prepared, C10=c10, C12=c12, phi12=phi12, sample_tilt_mrad=tilt,
-                                                           thickness=thickness, band_inv_A=band_inv_A),
-        objective_batch=lambda rows: thick_fit_batch(prepared, rows, band_inv_A),
-        batch_size=THICK_FIT_MAX_BATCH,
-        batch_polish=True,
-        band_inv_A=band_inv_A, **options)
+    if options.get("polish_starts", 3) == 0:
+        options = {**options, "polish": None}
+    return fit_resident(lambda trial: evaluate(prepared, trial, band_inv_A), backend="mps", band_inv_A=band_inv_A,
+                        derivatives=LowOrderDerivatives(prepared, band_inv_A), **options)
 
 
 def _ranges_from_start(

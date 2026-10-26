@@ -6,7 +6,6 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb._broad_newton import Tracker, newton
 from quantem.gpu.ssb.workflow import SSB
 
 
@@ -42,7 +41,6 @@ def test_standard_default_and_explicit_broad_dispatch(monkeypatch):
 @pytest.mark.parametrize("options", [
     {"search": "coarse"}, {"search": "broad", "tilt": False},
     {"search": "broad", "search_ranges": {"C10_nm": (-5, 5)}},
-    {"search": "broad", "refinement": "invalid"},
 ])
 def test_invalid_options_fail_before_computation(options):
     with pytest.raises(ValueError):
@@ -59,88 +57,91 @@ def test_mps_uses_same_default_model(monkeypatch):
     assert run.call_args.kwargs["trials"] == 200
 
 
-def test_bounded_newton_quadratic():
-    target = np.linspace(-0.3, 0.3, 28)
-    start = np.zeros(28)
-    bounds = np.tile([-2., 2.], (28, 1))
-    tracker = Tracker(lambda points: 100 - np.sum((points - target)**2, axis=1), start, bounds, 3000)
-    newton(tracker, start, bounds)
-    np.testing.assert_allclose(tracker.best_z, target, atol=1e-5, rtol=0)
-
-
-@pytest.mark.parametrize("refinement", ["newton", "nelder-mead"])
-def test_broad_preserves_refinement_choice(monkeypatch, refinement):
+@pytest.mark.parametrize("refinement", ["newton", "nelder-mead", "bfgs"])
+def test_a_retired_refinement_prints_one_line_and_runs_auto(monkeypatch, capsys, refinement):
     from quantem.gpu.ssb import fifth_order_fit
     run = Mock(return_value="fit")
     monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", run)
     assert call(object(), search="broad", refinement=refinement) == "fit"
-    assert run.call_args.kwargs["refinement"] == refinement
-    assert run.call_args.kwargs["trials"] == 400
+    assert "refinement" not in run.call_args.kwargs
+    printed = capsys.readouterr().out.splitlines()
+    assert printed == [f"refinement={refinement!r} is retired; using refinement='auto', the exact-derivative fit."]
+    session = SimpleNamespace(_find_aberrations=Mock(return_value="primary fit"))
+    assert call(session, search="primary", refinement=refinement) == "primary fit"
+    assert session._find_aberrations.call_args.kwargs["refinement"] == "auto"
+    assert len(capsys.readouterr().out.splitlines()) == 1
 
 
-def test_nelder_mead_can_move_initially_zero_higher_terms():
-    from quantem.gpu.ssb._broad_nelder_mead import nelder_mead
-    target = np.array([.1, -.1, .2, -.2, .1, .5, .15, -.15])
-    start = np.zeros(8)
-    bounds = np.tile([-2., 2.], (8, 1))
-    tracker = Tracker(lambda points: 1 - np.sum((points - target)**2, axis=1), start, bounds, 3000)
-    tracker(start)
-    nelder_mead(tracker, start, bounds)
-    np.testing.assert_allclose(tracker.best_z, target, atol=.002, rtol=0)
-    assert tracker.nfev <= 3000
+def test_no_refinement_is_for_the_primary_search_only(capsys):
+    session = SimpleNamespace(_find_aberrations=Mock(return_value="primary fit"))
+    assert call(session, search="primary", refinement=None) == "primary fit"
+    assert session._find_aberrations.call_args.kwargs["refinement"] is None
+    with pytest.raises(ValueError, match="Fifth-order search uses its joint model"):
+        call(object(), search="standard", refinement=None)
+    assert capsys.readouterr().out == ""
 
 
-
-@pytest.mark.parametrize("refinement, cap", [("newton", 5000), ("nelder-mead", 3000)])
-def test_broad_records_refinement_budget(monkeypatch, tmp_path, refinement, cap):
-    """The actual solver, persisted result and cache signature share one budget."""
+def test_auto_prints_nothing(monkeypatch, capsys):
     from quantem.gpu.ssb import fifth_order_fit
-    import sys
+    monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", Mock(return_value="fit"))
+    call(object(), refinement="auto")
+    assert capsys.readouterr().out == ""
 
-    # Exercise orchestration without importing a CUDA runtime on CPU CI.
-    broad_batch = SimpleNamespace(Objective=None)
-    broad_objective = SimpleNamespace(vector=None, public_params=None)
-    monkeypatch.setitem(sys.modules, "quantem.gpu.ssb.cuda.broad_batch", broad_batch)
-    monkeypatch.setitem(sys.modules, "quantem.gpu.ssb.fifth_order_parameters", broad_objective)
 
-    objective = SimpleNamespace(evaluate=lambda points, order: np.ones(len(np.atleast_2d(points))))
-    monkeypatch.setattr(broad_batch, "Objective", lambda engine: objective)
-    monkeypatch.setattr(broad_objective, "vector", lambda fit, order: np.zeros(28))
-    monkeypatch.setattr(broad_objective, "public_params", lambda *args: ({}, (0., 0.), 1.))
-    study = SimpleNamespace(
-        best_params={f"p{i}": (1. if i == 5 else 0.) for i in range(28)},
-        trials=[], enqueue_trial=lambda value: None, optimize=lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(fifth_order_fit.optuna, "create_study", lambda **kwargs: study)
-    monkeypatch.setattr(fifth_order_fit, "make_independent_sampler", lambda **kwargs: None)
-    def refine(tracker, start, bounds):
-        assert tracker.cap == cap
-        return 0, "test stop"
-    monkeypatch.setattr(fifth_order_fit, refinement.replace("-", "_"), refine)
+def _exact_session(monkeypatch, start, refine, *, study=None, **session):
+    """A CUDA session stub whose fifth-order fit runs on a constant objective with ``refine`` as the refinement."""
+    from quantem.gpu.ssb import fifth_order_fit, fifth_order_parameters
+
+    objective = SimpleNamespace(evaluate=lambda points, order: np.ones(len(np.atleast_2d(points))),
+                                p=SimpleNamespace(wavelength=0.019687489006849, semiangle_rad=0.03))
+    monkeypatch.setattr(fifth_order_fit, "_objective", lambda ssb, gradients=False: objective)
+    monkeypatch.setattr(fifth_order_parameters, "vector", lambda fit, order: start.copy())
+    monkeypatch.setattr(fifth_order_parameters, "public_params",
+                        lambda *args: ({"C50_nm": 1.}, (1., -2.), 10.))
+    monkeypatch.setattr(fifth_order_fit, "_refine_with_gradients", refine)
+    if study is not None:
+        monkeypatch.setattr(fifth_order_fit.optuna, "create_study", lambda **kwargs: study)
+        monkeypatch.setattr(fifth_order_fit, "make_independent_sampler", lambda **kwargs: None)
+    return SimpleNamespace(
+        backend="cuda", _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object()),
+        run=lambda result, **kwargs: result, _accept_result=lambda result: result, **session)
+
+
+def _record(point, stop="test stop"):
+    return {"coordinates": np.asarray(point, dtype=float), "agreement": 1.0, "objectives": 3, "gradients": 2,
+            "subsampled": 0, "iterations": 1, "stop": stop, "trace": [[1, 1.0, 0.0]], "hessian_bf_stride": 64,
+            "coarse_bf_stride": 8}
+
+
+def test_broad_records_the_exact_gradient_budget(monkeypatch, tmp_path):
+    """The refinement, the persisted result and the cache signature share one budget."""
+    from quantem.gpu.ssb import fifth_order_fit
+
+    start = np.zeros(28)
+    start[5] = 1.
+    caps = []
+
+    def refine(objective, point, bounds, norm, cap, *, on_progress=None):
+        caps.append(cap)
+        return _record(point)
+
+    study = SimpleNamespace(trials=[], enqueue_trial=lambda value: None, optimize=lambda *args, **kwargs: None)
+    signature = Mock(return_value="signature")
+    session = _exact_session(
+        monkeypatch, start, refine, study=study, source_kind="hdf5", _result_signature=signature,
+        _save_result=lambda result, **kwargs: result,
+        _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None, trial_records=[])))
     monkeypatch.setattr(fifth_order_fit, "result_paths", lambda *args: object())
     monkeypatch.setattr(fifth_order_fit, "load_result", lambda **kwargs: None)
-    signature = Mock(return_value="signature")
-    session = SimpleNamespace(
-        backend="cuda", source_kind="hdf5", _find_aberrations=Mock(
-            return_value=SimpleNamespace(rotation_branches=None, trial_records=[])),
-        _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object()),
-        _result_signature=signature, _accept_result=lambda result: result,
-        run=lambda result, **kwargs: result, _save_result=lambda result, **kwargs: result,
-    )
     result = fifth_order_fit.fit_fifth_order(
-        session, search="broad", trials=400, seed=17, save_dir=tmp_path,
-        force=False, verbose=False, primary_options={"check_rotation": True, "refine_rotation": False}, refinement=refinement,
-        higher_order_limit=2,
-    )
-    assert signature.call_args.args[1]["newton_cap"] == cap
-    assert result.optimizer["refinement_cap"] == cap
-    assert result.optimizer["stop"] == "test stop"
+        session, search="broad", trials=400, seed=17, save_dir=tmp_path, force=False, verbose=False,
+        primary_options={"check_rotation": True, "refine_rotation": False}, higher_order_limit=2)
+    assert caps == [400]
+    assert signature.call_args.args[1]["newton_cap"] == 400 and signature.call_args.args[1]["refinement"] == "bfgs"
+    assert result.optimizer["refinement_cap"] == 400 and "newton_cap" not in result.optimizer
+    assert result.optimizer["stop"] == "test stop" and result.refinement == "bfgs"
     assert result.optimizer["trials"] == 400
     assert session._find_aberrations.call_args.kwargs["num_trials"] == 200
-    if refinement == "newton":
-        assert result.optimizer["newton_cap"] == 5000
-    else:
-        assert "newton_cap" not in result.optimizer
 
 
 def test_trial_budget_comparison_keeps_start_and_saved_results_independent(tmp_path):
@@ -165,55 +166,40 @@ def test_trial_budget_comparison_keeps_start_and_saved_results_independent(tmp_p
             closed.append(True)
     parent = SimpleNamespace(input_scan_shape=(512, 512), select_region=select_region,
                              aberrations={"C10_nm": 0.})
-    fits = call(parent, search="broad", trials=(200, 400, 600), seed=17, refinement="nelder-mead",
-                save_dir=tmp_path, verbose=False)
+    fits = call(parent, search="broad", trials=(200, 400, 600), seed=17, save_dir=tmp_path, verbose=False)
     assert list(fits) == [200, 400, 600]
     assert parent.aberrations == {"C10_nm": 0.}
     assert len(closed) == 3
     assert [item["save_dir"] for item in options] == [tmp_path / f"trials-{n}" for n in fits]
-    assert all(item["seed"] == 17 and item["refinement"] == "nelder-mead" for item in options)
+    assert all(item["seed"] == 17 and item["refinement"] == "auto" for item in options)
 
 
-@pytest.mark.parametrize("refinement", ["newton", "nelder-mead"])
-def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch, refinement):
+def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch):
     """Default initialization reaches the same joint solver without an extra study."""
     from quantem.gpu.ssb import fifth_order_fit
-    import sys
 
     start = np.zeros(28)
     start[5] = 1.
-    objective = SimpleNamespace(evaluate=lambda points, order: np.ones(len(np.atleast_2d(points))))
-    monkeypatch.setitem(sys.modules, "quantem.gpu.ssb.cuda.broad_batch",
-                        SimpleNamespace(Objective=lambda engine: objective))
-    monkeypatch.setitem(sys.modules, "quantem.gpu.ssb.fifth_order_parameters", SimpleNamespace(
-        vector=lambda fit, order: start.copy(),
-        public_params=lambda *args: ({"C50_nm": 1.}, (1., -2.), 10.),
-    ))
+
+    def refine(objective, initial, bounds, norm, cap, *, on_progress=None):
+        np.testing.assert_array_equal(initial, start)
+        return _record(initial, "converged")
+
+    primary = SimpleNamespace(rotation_branches="initial branches", trial_records=[{"loss": -1.}])
+    session = _exact_session(monkeypatch, start, refine, _find_aberrations=Mock(return_value=primary))
     monkeypatch.setattr(fifth_order_fit.optuna, "create_study",
                         lambda **kwargs: pytest.fail("Extra TPE search in default route"))
-    def refine(tracker, initial, bounds):
-        np.testing.assert_array_equal(initial, start)
-        return 0, "small bounded step"
-    monkeypatch.setattr(fifth_order_fit, refinement.replace("-", "_"), refine)
-    primary = SimpleNamespace(rotation_branches="initial branches", trial_records=[{"loss": -1.}])
-    session = SimpleNamespace(
-        backend="cuda", _find_aberrations=Mock(return_value=primary),
-        _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object()),
-        run=lambda result, **kwargs: result, _accept_result=lambda result: result,
-    )
     fit = fifth_order_fit.fit_fifth_order(
-        session, search="standard", trials=200, seed=42, save_dir=None,
-        force=False, verbose=False, refinement=refinement, higher_order_limit=2,
-        primary_options={"check_rotation": False, "refine_rotation": False},
-    )
+        session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
+        higher_order_limit=2, primary_options={"check_rotation": False, "refine_rotation": False})
     assert session._find_aberrations.call_args.args == ("off",)
     assert session._find_aberrations.call_args.kwargs["num_trials"] == 200
-    assert session._find_aberrations.call_args.kwargs["refinement"] == "newton"
+    assert "refinement" not in session._find_aberrations.call_args.kwargs
     assert fit.optimizer["primary_trials"] == 200
     assert fit.optimizer["exploration_trials"] == 0
     assert fit.optimizer["search"] == "standard"
     assert fit.optimizer["coarse_scores"] == []
     assert fit.rotation_branches == "initial branches"
     assert fit.sample_tilt_mrad == (1., -2.) and fit.depth_spread_nm == 10.
-    assert fit.refinement == refinement
+    assert fit.refinement == "bfgs"
     assert fit.phase_clim is None

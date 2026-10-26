@@ -147,8 +147,8 @@ def test_joint_history_carries_tilt_depth_and_objective():
 def test_zero_trial_search_does_not_relabel_previous_search():
     ssb, _ = _synthetic_session()
     try:
-        first = ssb.find_aberrations(search="primary", tilt=False, num_trials=4, refinement='nelder-mead',
-                                      check_rotation=False, verbose=False)
+        first = ssb.find_aberrations(search="primary", tilt=False, num_trials=4, check_rotation=False,
+                                     verbose=False)
         history = deepcopy(first.trial_records)
         assert first.refine_nfev > 0
         ssb.set_rotation(37.)

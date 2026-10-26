@@ -596,9 +596,9 @@ def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path
         session.measure_parameters(unsaved)
 
 
-@pytest.mark.parametrize("tilt, method", [(True, "newton"), (False, "newton")])
-def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypatch, tilt, method):
-    """Automatic selection stores the effective optimizer and shares its cache."""
+@pytest.mark.parametrize("tilt", [True, False])
+def test_a_retired_refinement_reuses_the_automatic_result(tmp_path, monkeypatch, capsys, tilt):
+    """Every fit uses the automatic refinement: an explicit other value is announced and shares its cache."""
     source = tmp_path / "scan.bin"
     source.write_bytes(b"detector counts")
     saved = tmp_path / "result"
@@ -614,23 +614,19 @@ def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypat
     backend.fit_sample = fit_sample
     settings = dict(tilt=tilt, save_dir=saved, check_rotation=False, verbose=False)
     first = _session(monkeypatch, source, backend).find_aberrations(search="primary", **settings)
-    explicit = _session(monkeypatch, source, backend).find_aberrations(search="primary",
-        refinement=method, **settings,
-    )
-    assert first.refinement == method
+    assert first.refinement == "newton"
     assert first.num_trials == 200
-    assert explicit.reused
-    assert explicit.metadata["signature"]["settings"]["refinement"] == method
-    np.testing.assert_array_equal(explicit.object_wave, first.object_wave)
+    capsys.readouterr()
+    for method in ("newton", "nelder-mead", "bfgs"):
+        explicit = _session(monkeypatch, source, backend).find_aberrations(
+            search="primary", refinement=method, **settings)
+        assert explicit.reused and explicit.refinement == "newton"
+        assert explicit.metadata["signature"]["settings"]["refinement"] == "newton"
+        np.testing.assert_array_equal(explicit.object_wave, first.object_wave)
+        assert f"refinement={method!r} is retired" in capsys.readouterr().out
     if tilt:
         assert len(joint_calls) == 1
-        assert joint_calls[0]["polish"] == "newton"
-        changed = _session(monkeypatch, source, backend).find_aberrations(search="primary",
-            refinement="nelder-mead", **settings,
-        )
-        assert not changed.reused
-        assert changed.refinement == "nelder-mead"
-        assert joint_calls[-1]["polish"] == "nelder-mead"
+        assert joint_calls[0]["polish"] == "newton" and joint_calls[0]["polish_starts"] == 3
     else:
         assert backend.fit_calls == 1
     unrefined = _session(monkeypatch, source, backend).find_aberrations(search="primary",

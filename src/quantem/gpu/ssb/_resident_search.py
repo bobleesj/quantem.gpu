@@ -306,257 +306,6 @@ for(int j=0;j<COUNT;j++){
 out0[i]=float(rank);
 """
 
-NEWTON_HEADER = r"""
-FN void encode_point(LOCAL Real *p,LOCAL Real *z){
-    for(int d=0;d<6;d++)z[d]=p[d];
-    z[1]=p[1]*cos_r(Real(2)*p[2]);z[2]=p[1]*sin_r(Real(2)*p[2]);
-}
-FN void decode_point(LOCAL Real *z,LOCAL Real *p){
-    for(int d=0;d<6;d++)p[d]=z[d];
-    p[1]=sqrt_r(z[1]*z[1]+z[2]*z[2]);p[2]=atan2_r(z[2],z[1])/Real(2);p[5]=abs_r(z[5]);
-}
-FN void trust_step(LOCAL Real *g,LOCAL Real *h,LOCAL Real *steps,int n,Real radius,LOCAL Real *result){
-    Real a[36],v[36],along[6],scaled_g[6];
-    for(int i=0;i<n;i++){
-        scaled_g[i]=g[i]*steps[i];
-        for(int j=0;j<n;j++){a[i*6+j]=h[i*6+j]*steps[i]*steps[j];v[i*6+j]=Real(i==j?1:0);}
-    }
-    // Cyclic Jacobi for a small symmetric matrix; no host LAPACK fallback.
-    for(int sweep=0;sweep<32;sweep++){
-        Real maximum(0);
-        for(int p=0;p<n;p++)for(int q=p+1;q<n;q++){
-            Real off=a[p*6+q];maximum=max_r(maximum,abs_r(off));
-            if(abs_r(off)<Real(1e-25f))continue;
-            Real tau=(a[q*6+q]-a[p*6+p])/(Real(2)*off);
-            Real t=(tau<Real(0)?Real(-1):Real(1))/(abs_r(tau)+sqrt_r(Real(1)+tau*tau));
-            Real c=Real(1)/sqrt_r(Real(1)+t*t),s=t*c;
-            Real pp=a[p*6+p],qq=a[q*6+q];
-            a[p*6+p]=pp-t*off;a[q*6+q]=qq+t*off;a[p*6+q]=a[q*6+p]=Real(0);
-            for(int k=0;k<n;k++){
-                if(k!=p&&k!=q){Real x=a[k*6+p],y=a[k*6+q];a[k*6+p]=a[p*6+k]=c*x-s*y;a[k*6+q]=a[q*6+k]=s*x+c*y;}
-                Real x=v[k*6+p],y=v[k*6+q];v[k*6+p]=c*x-s*y;v[k*6+q]=s*x+c*y;
-            }
-        }
-        if(maximum<Real(1e-24f))break;
-    }
-    Real largest(-1e30f),gnorm(0),norm(0);
-    for(int i=0;i<n;i++){
-        largest=max_r(largest,a[i*6+i]);along[i]=Real(0);gnorm=gnorm+scaled_g[i]*scaled_g[i];
-        for(int j=0;j<n;j++)along[i]=along[i]+v[j*6+i]*scaled_g[j];
-        Real denom=-a[i*6+i];if(abs_r(denom)>Real(1e-30f)){Real y=along[i]/denom;norm=norm+y*y;}else norm=Real(1e30f);
-    }
-    Real mu(0);
-    if(!(largest<Real(0)&&sqrt_r(norm)<=radius)){
-        Real low=max_r(Real(0),largest),high=low+sqrt_r(gnorm)/radius+Real(1e-30f);
-        low=low+Real(1e-12f)*(abs_r(low)+Real(1));
-        for(int k=0;k<100;k++){
-            Real middle=(low+high)/Real(2);norm=Real(0);
-            for(int i=0;i<n;i++){Real y=along[i]/(middle-a[i*6+i]);norm=norm+y*y;}
-            if(sqrt_r(norm)>radius)low=middle;else high=middle;
-        }
-        mu=high;
-    }
-    for(int i=0;i<n;i++){
-        Real y(0);for(int j=0;j<n;j++)y=y+v[i*6+j]*(along[j]/(mu-a[j*6+j]));result[i]=y*steps[i];
-    }
-}
-FN void bounded_step(LOCAL Real *center,LOCAL Real *g,LOCAL Real *h,LOCAL Real *step,
-                     Real radius,LOCAL Real *lower,LOCAL Real *upper,LOCAL Real *move){
-    bool free[6];Real held[6];for(int d=0;d<6;d++){free[d]=!(FIXED&&d<3);held[d]=Real(0);}
-    for(int pass=0;pass<6;pass++){
-        int ids[6],n=0;for(int d=0;d<6;d++){move[d]=held[d];if(free[d])ids[n++]=d;}
-        if(n){
-            Real fg[6],fh[36],fs[6],fm[6];
-            for(int i=0;i<n;i++){
-                int d=ids[i];fg[i]=g[d];fs[i]=step[d];
-                for(int j=0;j<6;j++)if(!free[j])fg[i]=fg[i]+h[d*6+j]*held[j];
-                for(int j=0;j<n;j++)fh[i*6+j]=h[d*6+ids[j]];
-            }
-            trust_step(fg,fh,fs,n,radius,fm);for(int i=0;i<n;i++)move[ids[i]]=fm[i];
-        }
-        bool any=false;
-        for(int d=0;d<6;d++)if(free[d]&&(center[d]+move[d]<lower[d]||center[d]+move[d]>upper[d])){
-            held[d]=clip_r(center[d]+move[d],lower[d],upper[d])-center[d];free[d]=false;any=true;
-        }
-        if(!any)break;
-    }
-}
-"""
-
-INIT_NEWTON_BODY = r"""
-if(index>0)return;
-Real chosen[18];int kept=0;
-Real distinct[6]={Real(50),Real(20),Real(0.3f),Real(2),Real(2),Real(50)};
-for(int e=0;e<EXPLICIT;e++){for(int d=0;d<6;d++)chosen[kept*6+d]=load_real(start,e*6+d);kept++;}
-for(int rank=0;rank<COUNT && kept<STARTS;rank++){
-    int idx=0;for(int i=0;i<COUNT;i++)if(int(ranks[i])==rank)idx=i;
-    Real p[6];for(int d=0;d<6;d++)p[d]=load_real(points,idx*6+d);
-    bool different=true;
-    for(int k=0;k<kept;k++){
-        Real dist(0);for(int d=0;d<6;d++)dist=max_r(dist,abs_r(p[d]-chosen[k*6+d])/distinct[d]);
-        if(dist<=Real(1))different=false;
-    }
-    if(different){for(int d=0;d<6;d++)chosen[kept*6+d]=p[d];kept++;}
-}
-for(int k=0;k<STARTS;k++){
-    for(int j=0;j<68;j++)store_real(out0,k*68+j,Real(0));
-    if(k<kept){
-        Real z[6],p[6];for(int d=0;d<6;d++)p[d]=chosen[k*6+d];encode_point(p,z);
-        for(int d=0;d<6;d++){store_real(out0,k*68+d,z[d]);store_real(out0,k*68+62+d,z[d]);}
-        store_real(out0,k*68+55,Real(8));store_real(out0,k*68+56,Real(1));store_real(out0,k*68+57,Real(1));
-    }
-    out1[k]=k<kept?1:0;out1[STARTS+k]=1;
-}
-"""
-
-DESIGN_BODY = r"""
-if(index>=COUNT)return;
-int point=int(index),which=0,local=point;
-for(int k=0;k<ACTIVE;k++){int size=int(plan[ACTIVE+k]);if(local<size){which=int(plan[k]);break;}local-=size;}
-Real z[6],p[6];for(int d=0;d<6;d++)z[d]=load_real(state,which*68+d);
-Real steps[6]={Real(2),Real(2),Real(2),Real(0.25f),Real(0.25f),Real(5)};
-int first=FIXED?3:0,n=6-first;
-if(local>0 && local<=2*n){int d=first+(local-1)/2;z[d]=z[d]+steps[d]*Real(local%2?1:-1);}
-if(local>2*n){int pair=2*n+1;for(int i=first;i<6;i++)for(int j=i+1;j<6;j++){if(pair==local){z[i]=z[i]+steps[i];z[j]=z[j]+steps[j];}pair++;}}
-decode_point(z,p);for(int d=0;d<6;d++)store_real(out0,point*6+d,p[d]);
-"""
-
-UPDATE_NEWTON_BODY = r"""
-if(index>0)return;
-Real all[204];for(int k=0;k<STARTS*68;k++)all[k]=load_real(state,k);
-Real steps[6]={Real(2),Real(2),Real(2),Real(0.25f),Real(0.25f),Real(5)};
-Real tol[6]={Real(0.05f),Real(0.05f),Real(0.05f),Real(0.005f),Real(0.005f),Real(0.5f)};
-Real lower[6],upper[6];for(int d=0;d<6;d++){lower[d]=load_real(bounds,d);upper[d]=load_real(bounds,6+d);}
-lower[1]=-upper[1];lower[2]=-upper[1];upper[2]=upper[1];
-int offset=0,first=FIXED?3:0,n=6-first;
-for(int active=0;active<ACTIVE;active++){
-    int k=int(plan[active]),base=k*68,size=int(plan[ACTIVE+active]);
-    Real value=load_real(values,offset)/load_real(scale,0),center[6],g[6],h[36];
-    bool previous=all[base+58]>Real(0.5f);Real moved(0);
-    for(int d=0;d<6;d++){
-        center[d]=all[base+d];Real delta=(center[d]-all[base+6+d])/steps[d];moved=moved+delta*delta;
-        g[d]=Real(0);for(int j=0;j<6;j++)h[d*6+j]=all[base+19+d*6+j];
-    }
-    moved=sqrt_r(moved);
-    if(previous && value<all[base+12]){
-        for(int d=0;d<6;d++){center[d]=all[base+6+d];g[d]=all[base+13+d];}
-        all[base+55]=min_r(all[base+55],moved)/Real(4);
-    }else{
-        Real plus[6],minus[6];
-        for(int d=first;d<6;d++){
-            plus[d]=load_real(values,offset+1+2*(d-first))/load_real(scale,0);
-            minus[d]=load_real(values,offset+2+2*(d-first))/load_real(scale,0);
-            g[d]=(plus[d]-minus[d])/(Real(2)*steps[d]);
-            h[d*6+d]=(plus[d]-Real(2)*value+minus[d])/(steps[d]*steps[d]);
-        }
-        if(size>2*n+1){int pair=offset+2*n+1;for(int i=first;i<6;i++)for(int j=i+1;j<6;j++){
-            Real mixed=(load_real(values,pair++)/load_real(scale,0)-plus[i]-plus[j]+value)/(steps[i]*steps[j]);h[i*6+j]=h[j*6+i]=mixed;
-        }}
-        if(previous && moved>=Real(0.99f)*all[base+55])all[base+55]=Real(2)*all[base+55];
-        all[base+56]=Real(previous && moved>Real(2)?1:0);
-        for(int d=0;d<6;d++){all[base+6+d]=center[d];all[base+13+d]=g[d];for(int j=0;j<6;j++)all[base+19+d*6+j]=h[d*6+j];}
-        all[base+12]=value;all[base+58]=Real(1);
-    }
-    Real move[6];bounded_step(center,g,h,steps,all[base+55],lower,upper,move);
-    Real proposal[6];for(int d=0;d<6;d++)proposal[d]=FIXED&&d<3?center[d]:clip_r(center[d]+move[d],lower[d],upper[d]);
-    Real norm=sqrt_r(proposal[1]*proposal[1]+proposal[2]*proposal[2]);
-    if(!FIXED&&norm>upper[1]){proposal[1]=proposal[1]*upper[1]/norm;proposal[2]=proposal[2]*upper[1]/norm;}
-    bool converged=true;for(int d=first;d<6;d++)if(abs_r(proposal[d]-center[d])>=tol[d])converged=false;
-    if(converged){all[base+57]=Real(0);all[base+61]=Real(1);}
-    for(int d=0;d<6;d++){all[base+d]=converged?center[d]:proposal[d];all[base+62+d]=all[base+d];}
-    all[base+59]=all[base+59]+Real(1);all[base+60]=all[base+60]+Real(size);offset+=size;
-}
-for(int k=0;k<STARTS;k++)if(all[k*68+57]>Real(0.5f))for(int j=0;j<STARTS;j++){
-    if(j==k || all[j*68+58]<Real(0.5f))continue;
-    bool near=true,heading=true;
-    for(int d=first;d<6;d++){
-        if(abs_r(all[k*68+6+d]-all[j*68+6+d])>=Real(4)*steps[d])near=false;
-        if(abs_r(all[k*68+62+d]-all[j*68+62+d])>=Real(2)*steps[d])heading=false;
-    }
-    bool worse=all[k*68+12]<all[j*68+12] || (!(all[k*68+12]>all[j*68+12])&&k>j);
-    if((near||heading)&&worse){all[k*68+57]=Real(0);break;}
-}
-if(PRUNE && ITERATION==1){
-    int best=-1;for(int k=0;k<STARTS;k++)if(all[k*68+57]>Real(0.5f))if(best<0||all[k*68+12]>all[best*68+12])best=k;
-    for(int k=0;k<STARTS;k++)if(k!=best)all[k*68+57]=Real(0);
-}
-for(int k=0;k<STARTS;k++){
-    for(int j=0;j<68;j++)store_real(out0,k*68+j,all[k*68+j]);
-    out1[k]=scalar(all[k*68+57]);out1[STARTS+k]=scalar(all[k*68+56]);
-}
-"""
-
-FINAL_NEWTON_BODY = r"""
-if(index>0)return;
-int best=0;for(int k=1;k<STARTS;k++)if(load_real(state,k*68+58)>Real(0.5f)&&load_real(state,k*68+12)>load_real(state,best*68+12))best=k;
-Real z[6],p[6];for(int d=0;d<6;d++)z[d]=load_real(state,best*68+6+d);decode_point(z,p);
-for(int d=0;d<6;d++)store_real(out0,d,p[d]);
-store_real(out1,0,load_real(state,best*68+12)*load_real(scale,0));
-"""
-
-
-# Starts in other basins of the joint objective for a second polish (``fit_resident``): the best trial with phi12
-# mirrored (C12 cos 2 phi12 kept, C12 sin 2 phi12 negated), and the best trial whose (phi12, tilt, depth spread)
-# differs from both the polished point and that mirror. Distances use the Newton starts' scales (0.3 rad, 2 mrad,
-# 2 mrad, 50 A) with phi12 periodic in pi; a candidate within one scale of a kept start is not a new basin.
-ALTERNATE_STARTS_BODY = r"""
-if(index>0)return;
-Real scale[6]={Real(50),Real(20),Real(0.3f),Real(2),Real(2),Real(50)};
-Real best[6],mirror[6],polished[6],chosen[12];int kept=0;
-int idx=0;for(int i=0;i<COUNT;i++)if(int(ranks[i])==0)idx=i;
-for(int d=0;d<6;d++){best[d]=load_real(points,idx*6+d);mirror[d]=best[d];polished[d]=load_real(point,d);}
-mirror[2]=-best[2];
-Real half_pi=pi_r()*Real(0.5f);
-for(int pass=0;pass<2;pass++){
-    for(int rank=0;rank<COUNT && kept<2;rank++){
-        Real p[6];
-        if(pass==0){if(rank>0)break;for(int d=0;d<6;d++)p[d]=mirror[d];}
-        else{int j=0;for(int i=0;i<COUNT;i++)if(int(ranks[i])==rank)j=i;for(int d=0;d<6;d++)p[d]=load_real(points,j*6+d);}
-        bool different=true;
-        for(int other=0;other<kept+1 && different;other++){
-            Real q[6];for(int d=0;d<6;d++)q[d]=other==0?polished[d]:chosen[(other-1)*6+d];
-            Real phi=abs_r(p[2]-q[2]);if(phi>half_pi)phi=pi_r()-phi;
-            Real dist=phi/scale[2];
-            for(int d=3;d<6;d++)dist=max_r(dist,abs_r(p[d]-q[d])/scale[d]);
-            if(dist<=Real(1))different=false;
-        }
-        if(different){for(int d=0;d<6;d++)chosen[kept*6+d]=p[d];kept++;if(pass==0)break;}
-    }
-}
-for(int k=0;k<2;k++)for(int d=0;d<6;d++)store_real(out0,k*6+d,k<kept?chosen[k*6+d]:Real(0));
-out1[0]=float(kept);
-"""
-
-
-# The standard fit (tilt=False) holds coordinates 3-5 (sample tilt and depth spread) at 0, as FIXED holds 0-2 in a
-# fixed-optics fit. Its kernels are derived from the joint fit's by these exact edits, not parameterized by another
-# flag, so the joint fit's generated source (MPS and CUDA) is unchanged; every edit must match exactly once.
-_STANDARD_EDITS = {
-    "header": [("free[d]=!(FIXED&&d<3);", "free[d]=d<3;")],
-    "design": [("int first=FIXED?3:0,n=6-first;", "int first=0,n=3;"),
-               ("for(int i=first;i<6;i++)for(int j=i+1;j<6;j++)", "for(int i=0;i<3;i++)for(int j=i+1;j<3;j++)")],
-    "update": [("int offset=0,first=FIXED?3:0,n=6-first;", "int offset=0,first=0,n=3;"),
-               ("for(int d=first;d<6;d++){\n            plus[d]", "for(int d=0;d<3;d++){\n            plus[d]"),
-               ("for(int i=first;i<6;i++)for(int j=i+1;j<6;j++){", "for(int i=0;i<3;i++)for(int j=i+1;j<3;j++){"),
-               ("proposal[d]=FIXED&&d<3?center[d]:", "proposal[d]=d>=3?center[d]:"),
-               ("bool converged=true;for(int d=first;d<6;d++)", "bool converged=true;for(int d=0;d<3;d++)"),
-               ("for(int d=first;d<6;d++){\n        if(abs_r(all[k*68+6+d]", "for(int d=0;d<3;d++){\n        if(abs_r(all[k*68+6+d]")],
-}
-
-
-def _standard_source(source: str, part: str) -> str:
-    for old, new in _STANDARD_EDITS[part]:
-        if source.count(old) != 1:
-            raise RuntimeError(f"The standard-fit Newton edit {old!r} no longer matches the joint kernel once.")
-        source = source.replace(old, new)
-    return source
-
-
-STANDARD_NEWTON_HEADER = _standard_source(NEWTON_HEADER, "header")
-STANDARD_DESIGN_BODY = _standard_source(DESIGN_BODY, "design")
-STANDARD_UPDATE_NEWTON_BODY = _standard_source(UPDATE_NEWTON_BODY, "update")
-
-
 def _rank(device, scores):
     return device.run(
         "ssb_joint_rank",
@@ -659,125 +408,8 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
     return _decode(device, history, bounds), scores
 
 
-def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=False, standard=False,
-            explicit=None, prune=True):
-    """Polish ``starts`` points by Newton steps: ``start`` (a point, or with ``explicit`` that many resident
-    points) and then the best distinct trials. ``prune`` keeps only the highest start after the second step;
-    without it every start climbs until it converges or meets a higher one."""
-    starts = min(3, int(starts))
-    header = STANDARD_NEWTON_HEADER if standard else NEWTON_HEADER
-    design_body = STANDARD_DESIGN_BODY if standard else DESIGN_BODY
-    update_body = STANDARD_UPDATE_NEWTON_BODY if standard else UPDATE_NEWTON_BODY
-    prefix = "ssb_standard" if standard else "ssb_joint"
-    ranks = _rank(device, scores)
-    count = len(points)
-    given = int(explicit) if explicit is not None else int(start is not None)
-    flags = f"\n#define STARTS {starts}\n#define COUNT {count}\n#define FIXED {int(fixed)}\n#define EXPLICIT {given}\n"
-    initial = start if explicit is not None else device.pack([0.0] * 6 if start is None else start)
-    state, plan = device.run(
-        f"{prefix}_newton_init",
-        {"points": points, "scores": scores, "ranks": ranks, "start": initial},
-        [(starts, 68, 3), (starts * 2,)],
-        INIT_NEWTON_BODY,
-        constants=flags + header,
-    )
-    scale = device.run(
-        "ssb_joint_scale",
-        {"scores": scores},
-        [(1, 3)],
-        "if(index>0)return;Real s(1e-30f);for(int i=0;i<COUNT;i++)s=max_r(s,abs_r(load_real(scores,i)));store_real(out0,0,s);",
-        constants=flags,
-    )[0]
-    for iteration in range(30):
-        checkpoint()
-        device.sync(state, plan)
-        # Active/full-design flags are dispatch metadata. Numerical points,
-        # scores, gradients and matrices are never read back here.
-        metadata = np.asarray(plan) if device.backend == "mps" else plan.get()
-        active = [i for i in range(starts) if metadata[i] > 0]
-        if not active:
-            break
-        n = 3 if fixed or standard else 6
-        sizes = [
-            1 + 2 * n + (n * (n - 1) // 2 if metadata[starts + i] > 0 else 0)
-            for i in active
-        ]
-        dispatch = device.xp.array(active + sizes, dtype=device.xp.float32)
-        total = sum(sizes)
-        constants = (
-            f"\n#define FIXED {int(fixed)}\n#define STARTS {starts}\n#define ACTIVE {len(active)}\n#define COUNT {total}\n#define ITERATION {iteration}\n#define PRUNE {int(prune)}\n"
-            + header
-        )
-        design = device.run(
-            f"{prefix}_newton_design",
-            {"state": state, "plan": dispatch},
-            [(total, 6, 3)],
-            design_body,
-            count=total,
-            constants=constants,
-        )[0]
-        values = evaluate(_trial(device, design))
-        state, plan = device.run(
-            f"{prefix}_newton_update",
-            {
-                "state": state,
-                "plan": dispatch,
-                "values": values,
-                "scale": scale,
-                "bounds": bounds,
-            },
-            [(starts, 68, 3), (starts * 2,)],
-            update_body,
-            constants=constants,
-        )
-    point, value = device.run(
-        f"{prefix}_newton_result",
-        {"state": state, "scale": scale},
-        [(1, 6, 3), (1, 3)],
-        FINAL_NEWTON_BODY,
-        constants=flags + header,
-    )
-    device.sync(point, value, state)
-    return point, value, state
-
-
-# Polish once more from starts in other basins (``ALTERNATE_STARTS_BODY``) and keep the higher agreement.
+# Polish once more from starts in other basins (``_exact_newton.other_basins``) and keep the higher agreement.
 BASIN_CHECK = True
-# The second polish replaces the first only when its agreement is higher by this relative margin: a start that
-# climbs back to the same maximum leaves the first polish, and its bits, in place.
-BASIN_MARGIN = 1e-6
-
-
-def _other_basins(device, evaluate, points, scores, bounds, point, value, state):
-    """The Newton result from the other basins' starts if its agreement is clearly higher, else the first one.
-
-    The search's best trials can all sit in one basin of the joint objective (phi12 mirrored, with its own tilt and
-    depth spread), and the polish of its top three then stays there. Two more starts, the phi12 mirror of the best
-    trial and the best trial in another (phi12, tilt, depth spread) cluster, are polished together, each to its own
-    maximum. Only the start count crosses to the host; points and scores stay resident.
-    """
-    ranks = _rank(device, scores)
-    alternates, count = device.run(
-        "ssb_joint_alternate_starts",
-        {"points": points, "ranks": ranks, "point": point},
-        [(2, 6, 3), (1,)],
-        ALTERNATE_STARTS_BODY,
-        constants=f"\n#define COUNT {len(points)}\n",
-    )
-    device.sync(alternates, count)
-    count = int((np.asarray(count) if device.backend == "mps" else count.get())[0])
-    if count == 0:
-        return point, value, state
-    # each alternate climbs its own basin: none is dropped for being lower after two steps
-    other_point, other_value, other_state = _newton(
-        device, evaluate, points, scores, bounds, start=alternates, starts=count, explicit=count, prune=False,
-    )
-    first, second = device.host(value)[0], device.host(other_value)[0]
-    # the fit record lists every polished start, the first polish's then these
-    states = device.xp.concatenate((state, other_state), axis=0)
-    if second > first * (1.0 + BASIN_MARGIN):
-        return other_point, other_value, states
-    return point, value, states
 
 
 def fit_resident(
@@ -805,10 +437,10 @@ def fit_resident(
     Parameters use the existing engine units. ``evaluate`` accepts resident
     encoded model trials and returns resident extended scores. Public callers
     use ``SSB.find_aberrations(tilt=True)``; no solver setting is needed.
-    ``derivatives`` (``LowOrderDerivatives`` of ``cuda`` or ``mps.exact_derivatives``) polishes
-    on the exact gradient and Hessian of the same objective
-    (``_exact_newton``) instead of finite-difference stencils; the search and
-    its trials are unchanged. A fit with fixed aberrations keeps the stencils.
+    ``derivatives`` (``LowOrderDerivatives`` of ``cuda`` or ``mps.exact_derivatives``) are the
+    exact gradient and Hessian of the same objective that the trust-region
+    Newton (``_exact_newton``) climbs; a fit that polishes needs them.
+    ``fixed_aberrations`` holds C10, C12 and phi12 at those values.
     ``standard_only=True`` runs only the standard comparison (the 200-trial
     search at depth spread 0 that ``compare_standard`` adds) and returns its
     ``standard_fit``, ``standard`` and timing: the same values a full fit with
@@ -828,6 +460,8 @@ def fit_resident(
         raise ValueError("standard_only runs the standard comparison: leave compare_standard=True.")
     if not 0 <= polish_starts <= 3:
         raise ValueError("Resident Newton supports zero to three distinct starts.")
+    if polish is not None and polish_starts and derivatives is None:
+        raise ValueError("The resident Newton polishes on the backend's exact derivatives: pass derivatives.")
     device = _Device(backend)
     lower = [
         c10_range[0],
@@ -893,27 +527,13 @@ def fit_resident(
     begin = time.perf_counter()
     if polish is None:
         polish_starts = 0
-    exact = derivatives is not None and fixed_aberrations is None and polish_starts > 0
+    exact = polish_starts > 0
     if exact:
         from quantem.gpu.ssb import _exact_newton
 
         host_point, fit, exact_starts = _exact_newton.fit(
             derivatives, device.host(points), device.host(scores), lower, upper, start=start,
-            starts=polish_starts, basins=bool(trials) and BASIN_CHECK)
-        state = None
-    elif polish_starts:
-        point, value, state = _newton(
-            device,
-            evaluate,
-            points,
-            scores,
-            bounds,
-            start=start,
-            starts=polish_starts,
-            fixed=fixed_aberrations is not None,
-        )
-        if trials and fixed_aberrations is None and BASIN_CHECK:
-            point, value, state = _other_basins(device, evaluate, points, scores, bounds, point, value, state)
+            starts=polish_starts, basins=bool(trials) and fixed_aberrations is None and BASIN_CHECK)
     else:
         ranks = _rank(device, scores)
         point, value = device.run(
@@ -923,7 +543,6 @@ def fit_resident(
             "if(index>0)return;for(int i=0;i<COUNT;i++)if(int(ranks[i])==0){for(int d=0;d<6;d++)store_real(out0,d,load_real(points,i*6+d));store_real(out1,0,load_real(scores,i));}",
             constants=f"\n#define COUNT {len(points)}\n",
         )
-        state = None
     if not exact:
         device.sync(point, value)
         host_point = device.host(point)[0]
@@ -951,19 +570,7 @@ def fit_resident(
         else []
     )
     best["phi12"] = (best["phi12"] + math.pi / 2) % math.pi - math.pi / 2
-    if exact:
-        diagnostics = exact_starts
-    else:
-        newton = [] if state is None else device.host(state)
-        diagnostics = [
-            {
-                "iterations": int(row[59]),
-                "evaluations": int(row[60]),
-                "converged": bool(row[61]),
-            }
-            for row in newton
-            if row[58] > 0
-        ]
+    diagnostics = exact_starts if exact else []
     return {
         **best,
         "fit": fit,
@@ -981,7 +588,7 @@ def fit_resident(
         "optimizer": {
             "search": "resident multivariate TPE",
             "refinement": polish if polish_starts else None,
-            "derivatives": "exact" if exact else "finite differences" if polish_starts else None,
+            "derivatives": "exact" if exact else None,
             "device": backend,
             "host_numerical_search": False,
             "precision": "three-float expansion" if backend == "mps" else "float64",
@@ -1002,6 +609,7 @@ def fit_standard_resident(
     lock: tuple[int, ...] = (),
     start=None,
     polish_starts: int = 3,
+    derivatives=None,
 ) -> dict[str, object]:
     """Standard SSB fit (tilt=False): the joint fit's search and objective with sample tilt and depth spread at 0.
 
@@ -1009,9 +617,10 @@ def fit_standard_resident(
     ``lower == upper`` is held at that value in every trial. The search is the resident multivariate TPE of the
     joint fit's standard comparison (``_search(thin=True)``, 10 startup trials). ``polish``:
 
-    - ``"newton"``: the resident trust-region Newton from the best ``polish_starts`` distinct trials (and ``start``),
-      on (C10, C12 cos 2 phi12, C12 sin 2 phi12). It keeps C10 in its range and C12 below its maximum, so it needs
-      a C12 range from 0 and the full phi12 period, and no ``lock``;
+    - ``"newton"``: the trust-region Newton on the exact gradient and Hessian (``derivatives``, the backend's
+      ``LowOrderDerivatives``; ``_exact_newton`` with the tilt and depth spread held at 0) from the best
+      ``polish_starts`` distinct trials (and ``start``), on (C10, C12 cos 2 phi12, C12 sin 2 phi12). It keeps C10 in
+      its range and C12 below its maximum, so it needs a C12 range from 0 and the full phi12 period, and no ``lock``;
     - ``"nelder-mead"``: bounded SciPy Nelder-Mead from the same starts, the starts' simplices evaluated together.
       ``lock`` (indices into (C10, C12, phi12)) holds those coefficients at the best trial's values; phi12 wraps
       when its range is the whole period;
@@ -1031,6 +640,8 @@ def fit_standard_resident(
     if polish == "newton" and (lock or lower[1] != 0.0 or not full_period):
         raise ValueError("Newton refinement bounds C10 and the C12 maximum only; use 'nelder-mead' to lock a "
                          "coefficient, bound phi12 or hold a nonzero C12.")
+    if polish == "newton" and polish_starts and derivatives is None:
+        raise ValueError("The standard Newton polishes on the backend's exact derivatives: pass derivatives.")
     device = _Device(backend)
     bounds = device.pack(list(lower) + [0.0, 0.0, 0.0] + list(upper) + [0.0, 0.0, 0.0])
     timings = {}
@@ -1048,12 +659,14 @@ def fit_standard_resident(
     order = np.argsort(-host_scores, kind="stable")
     nfev = 0
     if polish == "newton" and polish_starts:
-        point, value, state = _newton(device, evaluate, points, scores, bounds,
-                                      start=None if start is None or not trials else [*start[:3], 0.0, 0.0, 0.0],
-                                      starts=polish_starts, standard=True)
-        best = device.host(point)[0, :3]
-        fit = float(device.host(value)[0])
-        nfev = int(sum(row[60] for row in device.host(state) if row[58] > 0))
+        from quantem.gpu.ssb import _exact_newton
+
+        point, fit, starts = _exact_newton.fit(
+            derivatives, device.host(points), host_scores, [*lower, 0.0, 0.0, 0.0], [*upper, 0.0, 0.0, 0.0],
+            start=None if start is None or not trials else [*start[:3], 0.0, 0.0, 0.0], starts=polish_starts,
+            basins=False)
+        best = point[:3]
+        nfev = int(sum(entry["evaluations"] for entry in starts))
     elif polish == "nelder-mead" and polish_starts:
         candidates = ([np.asarray(start[:3], dtype=np.float64)] if start is not None and trials else []) + [
             host_points[index] for index in order]

@@ -9,8 +9,9 @@ This page covers parameters, calibration, ownership, and backend limits.
 ## Choose a search
 
 `ptycho.find_aberrations()` defaults to `search="standard"`: 200 TPE trials
-for initial defocus, astigmatism, tilt and depth, including its Newton polish,
-then joint Newton refinement through fifth order. No additional fifth-order
+for initial defocus, astigmatism, tilt and depth, including its Newton polish
+on the exact gradient and Hessian, then the joint refinement through fifth order
+on exact gradients. No additional fifth-order
 TPE search is performed. `search="broad"` adds 400 fifth-order TPE trials
 before the same joint refinement. Both fit the same model and retain all valid BF pixels.
 
@@ -18,9 +19,13 @@ before the same joint refinement. Both fit the same model and retain all valid B
 fixed coefficients and legacy objective options. Existing constrained calls
 using `search="standard"` should select `"primary"` explicitly.
 
-The default Newton refinement may stop early and has a 5000-evaluation ceiling.
-`refinement="nelder-mead"` keeps bounded simplex refinement available with a
-3000-evaluation ceiling. An evaluation cap is not proof of convergence.
+Every fit uses `refinement="auto"`: the exact-derivative refinements on CUDA
+and MPS, with a ceiling of 400 full-data objectives per start at fifth order.
+Choosing the method is retired: `"newton"`, `"bfgs"` or `"nelder-mead"` print
+one line and run `"auto"`; `refinement=None` keeps the best trial of a
+`search="primary"` fit unrefined. The phase-variance search, which has no exact
+derivatives, and a standard fit that locks a coefficient or bounds phi12 refine
+with Nelder-Mead. An evaluation cap is not proof of convergence.
 Scientific objective/reconstruction work stays on the GPU; the optimizer's
 candidate generation and float64 control run on the CPU.
 

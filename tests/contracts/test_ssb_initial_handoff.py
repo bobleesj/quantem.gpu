@@ -112,36 +112,45 @@ def handoff(monkeypatch):
 
     objectives = []
 
-    def objective(session):
+    def objective(session, gradients=False):
         events.append("setup")
         clock.now += 3.0
         instance = Objective()
         objectives.append(instance)
         return instance
 
-    def refine(tracker, start, bounds):
+    def refine(objective, start, bounds, norm, cap, *, on_progress=None):
+        """The exact-gradient refinement's bookkeeping: the start, one accepted step, a trace on the fit clock."""
         events.append("refine")
+        began = clock.now
         candidate = start.copy()
         candidate[0] *= 0.5
-        tracker(candidate)
-        return 1, "small bounded Newton step"
+        trace = []
+        for count, point in enumerate((start, candidate), 1):
+            value = float(objective.evaluate(point, 5)[0]) / norm
+            trace.append([count, max([value] + [row[1] for row in trace]), clock.now - began])
+            if on_progress is not None:
+                on_progress(count, trace[-1][1])
+        return {"coordinates": candidate, "agreement": trace[-1][1], "objectives": 2, "gradients": 2,
+                "subsampled": 0, "iterations": 1, "stop": "converged", "trace": trace, "hessian_bf_stride": 64,
+                "coarse_bf_stride": 8}
 
     monkeypatch.setattr(fifth_order_fit, "_objective", objective)
-    monkeypatch.setattr(fifth_order_fit, "newton", refine)
+    monkeypatch.setattr(fifth_order_fit, "_refine_with_gradients", refine)
     monkeypatch.setattr(fifth_order_parameters, "public_params", lambda obj, z, order: (
         {"C10_nm": float(z[0] * 10), "C12_nm": 0.2, "phi12_deg": 17.0,
          "C50_nm": 2.0}, (0.1, -0.2), 10.0,
     ))
 
     def run(session=None, **options):
-        # the finite-difference Newton refinement, which this fixture replaces with a bounded stub, in the
-        # standard box (the wide box's half-band check needs exact gradients)
+        # the exact-gradient refinement, which this fixture replaces with a bounded stub, in the standard box (the
+        # wide box's half-band check refits on band halves the stub objective does not have)
         return fifth_order_fit.fit_fifth_order(
             Session() if session is None else session,
             search="standard", trials=200, seed=42,
             save_dir=options.pop("save_dir", None), force=False, verbose=False,
             primary_options={"check_rotation": False, "refine_rotation": False},
-            refinement=options.pop("refinement", "newton"), higher_order_limit=options.pop("higher_order_limit", 2),
+            higher_order_limit=options.pop("higher_order_limit", 2),
             **options,
         )
 
@@ -202,9 +211,10 @@ def test_callback_runs_once_before_refinement_and_outside_fit_clock(handoff):
     assert result.timings["final_display_s"] == 8.0
     assert result.timings["primary_fit_s"] == 2.0
     assert result.timings["fifth_order_setup_s"] == 3.5
-    assert result.timings["refinement_s"] == 1.0
-    assert result.elapsed_s == 7.5
-    assert result.timings["fit_and_display_s"] == 30.5
+    # two refinement objectives, then the reported float32 score of the kept point
+    assert result.timings["refinement_s"] == 1.5
+    assert result.elapsed_s == 8.0
+    assert result.timings["fit_and_display_s"] == 31.0
     assert result.optimizer["refinement_start_s"] == 5.5
     np.testing.assert_array_equal(
         np.asarray(result.optimizer["refinement_trace"])[:, 2], [0.5, 1.0],

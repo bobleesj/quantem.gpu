@@ -188,6 +188,32 @@ def test_gradient_refinement_respects_the_objective_cap():
     assert capped["stop"] == "evaluation cap"
 
 
+def test_gradient_refinement_holds_coordinates_with_equal_bounds():
+    """The stream's refit: C10 and the C12 pair free, the other 25 coordinates held where they start."""
+    curvature, target = _box_quadratic(2)
+    start = np.zeros(28)
+    start[5] = 1.0
+    start[10] = 0.7
+    bounds = np.column_stack([start, start])
+    bounds[:3] = FIFTH_BOUNDS[:3]
+    seen = []
+
+    def evaluate(points, kind, stride):
+        seen.append(np.atleast_2d(points).shape[1])
+        return _quadratic_evaluator(curvature, target, [])(points, kind, stride)
+
+    result = refine(evaluate, start, bounds)
+    z = result["coordinates"]
+    np.testing.assert_array_equal(z[3:], start[3:])
+    assert set(seen) == {28}
+    # the maximum over the free coordinates with the others held: grad_free = 0 inside the box
+    gradient = -(z - target) @ curvature
+    assert np.abs(projected_gradient(gradient[:3], z[:3], bounds[:3])).max() < 1e-2
+    assert result["stop"] == "converged"
+    with pytest.raises(ValueError, match="inside the higher-order bounds"):
+        refine(evaluate, start, np.column_stack([start, start]))
+
+
 def test_bounded_step_holds_coordinates_that_would_leave_the_box():
     curvature, _ = _box_quadratic(2, n=6)
     z = np.array([2.0, 0.0, -2.0, 0.5, 0.0, 1.0])
@@ -241,6 +267,41 @@ def test_exact_newton_polish_converges_on_the_maximum_from_the_best_trials():
     assert objective.derivative_calls <= sum(s["evaluations"] for s in starts)
 
 
+@pytest.mark.parametrize("held, fixed", [
+    ("C10", {0: 50.0}), ("C12 = 0", {1: 0.0}), ("C10, C12 and phi12", {0: 50.0, 1: 12.0, 2: 0.3}),
+    ("tilt and depth spread (standard fit)", {3: 0.0, 4: 0.0, 5: 0.0}),
+])
+def test_exact_newton_holds_coordinates_with_equal_bounds(held, fixed):
+    """Fixed aberrations and a standard fit's tilt and depth spread: the Newton climbs the other coordinates only."""
+    maximum_point = np.array([60.0, 9.0, 0.4, 3.0, -2.0, 120.0])
+    objective = _LowOrderQuadratic(_exact_newton.encode(maximum_point), [80, 40, 40, 6, 6, 200])
+    lower = [-300.0, 0.0, -math.pi / 2, -25.0, -25.0, 0.0]
+    upper = [300.0, 200.0, math.pi / 2, 25.0, 25.0, 600.0]
+    for index, value in fixed.items():
+        lower[index] = upper[index] = value
+    if 1 in fixed and fixed[1] == 0.0:
+        lower[1] = upper[1] = 0.0
+    rng = np.random.default_rng(3)
+    points = rng.uniform([-300.0, 0.0, -math.pi / 2, -25.0, -25.0, 20.0], [300.0, 200.0, math.pi / 2, 25.0, 25.0, 600.0],
+                         (100, 6))
+    for index, value in fixed.items():
+        points[:, index] = value
+    scores = np.array([objective.value(_exact_newton.encode(p)) for p in points])
+    # a start that differs in the held coordinates is moved onto them
+    start = np.array([0.0, 30.0, -0.5, 1.0, 1.0, 50.0])
+    point, _, starts = _exact_newton.fit(objective, points, scores, lower, upper, start=start)
+    z = _exact_newton.encode(point)
+    held_z = _exact_newton.encode(np.where(np.array(lower) == np.array(upper), lower, point))
+    for index in fixed:
+        if index in (1, 2):
+            np.testing.assert_allclose(z[1:3], held_z[1:3], atol=1e-12)
+        else:
+            assert point[index] == fixed[index]
+    free = [index for index in range(6) if index not in fixed and not (index in (1, 2) and (1 in fixed))]
+    np.testing.assert_allclose(z[free], objective.maximum[free], atol=float(_exact_newton.EXACT_TOLERANCES.max()))
+    assert any(s["converged"] for s in starts)
+
+
 def test_other_basins_keep_the_first_polish_unless_clearly_higher():
     objective = _LowOrderQuadratic(np.zeros(6) + [0, 5, 5, 0, 0, 100], [80, 40, 40, 6, 6, 200])
     first = (np.array([0.0, 7.0, math.pi / 8, 0.0, 0.0, 100.0]), 5e13, [])
@@ -276,13 +337,8 @@ def test_mapped_branch_is_the_exact_180_degree_image():
     assert first.aberrations["C10_nm"] == 6.25 and first.sample_tilt_mrad == (-0.07, -3.28)
 
 
-@pytest.mark.parametrize("backend, expected", [("cuda", "bfgs"), ("mps", "bfgs"), ("webgpu", "newton")])
-def test_auto_refinement_uses_exact_gradients_where_the_backend_has_them(monkeypatch, backend, expected):
-    import sys
-
-    start = np.zeros(28)
-    start[5] = 1.0
-    seen = {}
+def _gradient_session(monkeypatch, backend, start, seen=None):
+    """A session stub whose fifth-order objective is constant, with exact (zero) gradients."""
     gradient_objective = SimpleNamespace(
         evaluate=lambda points, order: np.ones(len(np.atleast_2d(points))),
         values=lambda points, stride=1: np.ones(len(np.atleast_2d(points))),
@@ -291,35 +347,41 @@ def test_auto_refinement_uses_exact_gradients_where_the_backend_has_them(monkeyp
     )
 
     def objective(ssb, gradients=False):
-        seen["gradients"] = gradients
+        if seen is not None:
+            seen.append(gradients)
         return gradient_objective
 
     monkeypatch.setattr(fifth_order_fit, "_objective", objective)
-    monkeypatch.setitem(sys.modules, "quantem.gpu.ssb.fifth_order_parameters", SimpleNamespace(
-        vector=lambda fit, order: start.copy(), public_params=lambda *args: ({}, (0.0, 0.0), 10.0)))
-    monkeypatch.setattr(fifth_order_fit, "newton", lambda tracker, initial, bounds: (0, "small bounded Newton step"))
-    session = SimpleNamespace(
+    monkeypatch.setattr(fifth_order_parameters, "vector", lambda fit, order: start.copy())
+    monkeypatch.setattr(fifth_order_parameters, "public_params", lambda *args: ({}, (0.0, 0.0), 10.0))
+    return SimpleNamespace(
         backend=backend, _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None,
                                                                               trial_records=[])),
         run=lambda result, **kwargs: result, _accept_result=lambda result: result,
     )
+
+
+@pytest.mark.parametrize("backend", ["cuda", "mps"])
+def test_the_fifth_order_fit_refines_on_exact_gradients(monkeypatch, backend):
+    start = np.zeros(28)
+    start[5] = 1.0
+    seen = []
+    session = _gradient_session(monkeypatch, backend, start, seen)
     fit = fifth_order_fit.fit_fifth_order(
         session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
         primary_options={"check_rotation": False, "refine_rotation": False}, show=False, higher_order_limit=2)
-    assert fit.refinement == expected
-    assert seen["gradients"] is (expected == "bfgs")
-    if expected == "bfgs":
-        assert fit.optimizer["refinement_cap"] == 400
-        assert fit.optimizer["exact_gradients"]["objectives"] >= 1
-        assert fit.optimizer["stop"] == "converged"
+    assert fit.refinement == "bfgs" and seen == [True]
+    assert fit.optimizer["refinement_cap"] == 400
+    assert fit.optimizer["exact_gradients"]["objectives"] >= 1
+    assert fit.optimizer["stop"] == "converged"
 
 
-def test_bfgs_on_a_backend_without_gradients_fails_before_computation():
+def test_a_backend_without_exact_gradients_has_no_fifth_order_fit():
     session = SimpleNamespace(backend="webgpu", _find_aberrations=Mock())
-    with pytest.raises(ValueError, match="exact fifth-order gradients"):
+    with pytest.raises(NotImplementedError, match="CUDA or MPS"):
         fifth_order_fit.fit_fifth_order(
             session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
-            primary_options={"check_rotation": False, "refine_rotation": False}, refinement="bfgs", show=False)
+            primary_options={"check_rotation": False, "refine_rotation": False}, show=False)
     session._find_aberrations.assert_not_called()
 
 
@@ -338,26 +400,19 @@ def test_other_higher_order_limits_are_refused(limit):
 
 def test_higher_order_limit_is_recorded_and_checked_before_computation(monkeypatch):
     import inspect
-    import sys
 
     start = np.zeros(28)
     start[5] = 1.0
-    objective = SimpleNamespace(evaluate=lambda points, order: np.ones(len(np.atleast_2d(points))))
-    monkeypatch.setattr(fifth_order_fit, "_objective", lambda ssb, gradients=False: objective)
-    monkeypatch.setitem(sys.modules, "quantem.gpu.ssb.fifth_order_parameters", SimpleNamespace(
-        vector=lambda fit, order: start.copy(), public_params=lambda *args: ({}, (0.0, 0.0), 10.0)))
+    session = _gradient_session(monkeypatch, "cuda", start)
     seen = {}
 
-    def refine(tracker, initial, bounds):
+    def refine(objective, initial, bounds, norm, cap, *, on_progress=None):
         seen["bounds"] = bounds
-        return 0, "small bounded Newton step"
+        return {"coordinates": initial, "agreement": 1.0, "objectives": 1, "gradients": 1, "subsampled": 0,
+                "iterations": 1, "stop": "converged", "trace": [[1, 1.0, 0.0]], "hessian_bf_stride": 64,
+                "coarse_bf_stride": 8}
 
-    monkeypatch.setattr(fifth_order_fit, "newton", refine)
-    session = SimpleNamespace(
-        backend="webgpu", _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None,
-                                                                               trial_records=[])),
-        run=lambda result, **kwargs: result, _accept_result=lambda result: result,
-    )
+    monkeypatch.setattr(fifth_order_fit, "_refine_with_gradients", refine)
     fit = fifth_order_fit.fit_fifth_order(
         session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
         primary_options={"check_rotation": False, "refine_rotation": False}, show=False, higher_order_limit=2)
@@ -586,23 +641,3 @@ def test_wide_fit_is_checked_on_two_band_halves(monkeypatch, capsys, difference,
         assert check["checked_coordinates"][10] > 2.0
         assert fit.timings["higher_order_fallback_s"] > 0
         assert "Higher orders not trusted" in printed and "1.49 rad" in printed
-
-
-def test_the_half_band_check_uses_exact_gradients_whatever_the_refinement(monkeypatch):
-    standard = np.zeros(28)
-    standard[[0, 5]] = 1.0, 2.0
-    bumps = _RingBumps(standard, standard)
-    seen = []
-
-    def objective(ssb, gradients=False):
-        seen.append(gradients)
-        return bumps
-
-    session = _broad_session(monkeypatch, bumps, standard)
-    monkeypatch.setattr(fifth_order_fit, "_objective", objective)
-    monkeypatch.setattr(fifth_order_fit, "newton", lambda tracker, initial, bounds: (0, "small bounded Newton step"))
-    fit = fifth_order_fit.fit_fifth_order(
-        session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False, show=False,
-        primary_options={"check_rotation": False, "refine_rotation": False}, refinement="newton")
-    assert seen == [False, True]
-    assert fit.refinement == "newton" and fit.optimizer["higher_order_consistency"]["trusted"]

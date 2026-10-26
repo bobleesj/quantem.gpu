@@ -121,8 +121,9 @@ def check_opposite_branch(simulation, backend):
     assert second == pytest.approx(first, rel=1e-5)
 
 
-def float64_optimum(truth, start):
-    """The float64 maximum near ``start``: the exact-gradient search on the reference's own values and gradients."""
+def float64_optimum(truth, start, bounds=BOUNDS):
+    """The float64 maximum near ``start`` inside ``bounds`` (equal bounds hold a coordinate): the exact-gradient
+    search on the reference's own values and gradients."""
     from quantem.gpu.ssb._gradient_refinement import Settings, refine
 
     norm = truth.agreement(start)
@@ -135,37 +136,28 @@ def float64_optimum(truth, start):
             gradients.append(gradient / norm)
         return np.array(values), (None if kind == "value" else np.array(gradients))
 
-    start = np.clip(start, BOUNDS[:, 0], BOUNDS[:, 1])
-    return refine(evaluate, start, BOUNDS, settings=Settings(hessian_bf_stride=1, coarse_bf_stride=1,
+    start = np.clip(start, bounds[:, 0], bounds[:, 1])
+    return refine(evaluate, start, bounds, settings=Settings(hessian_bf_stride=1, coarse_bf_stride=1,
                                                               initial_radius=0.1))["coordinates"]
 
 
 def check_fit(simulation, backend):
-    """The default fit (exact Newton, exact-gradient fifth order, mapped branch) reaches the float64 optimum of the
-    reference and at least the agreement of the earlier finite-difference algorithms."""
-    import quantem.gpu.ssb._exact_newton as exact_newton
-    import quantem.gpu.ssb.workflow as workflow
-
+    """The default fit (exact low-order Newton, exact-gradient fifth order, mapped branch) reaches the float64 optimum
+    of the reference: at fifth order, and over the six low-order coordinates with the higher orders held at 0."""
     data, _, detector_mrad = simulation
     with session(data, detector_mrad, backend) as ssb:
         exact = ssb.find_aberrations(show=False, verbose=False, check_rotation="both", higher_order_limit=2)
         truth = reference(ssb)
         fitted = np.asarray(exact.optimizer["coordinates"])
-        optimum = float64_optimum(truth, fitted)
-        assert truth.agreement(fitted) >= truth.agreement(optimum) * (1 - 2e-7)
-    previous = exact_newton.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH
-    exact_newton.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH = False, False
-    try:
-        with session(data, detector_mrad, backend) as ssb:
-            earlier = ssb.find_aberrations(show=False, verbose=False, check_rotation="both", refinement="newton",
-                                           higher_order_limit=2)
-    finally:
-        exact_newton.EXACT_NEWTON, workflow.MAP_OPPOSITE_BRANCH = previous
-    assert exact.refinement == "bfgs" and earlier.refinement == "newton"
-    assert exact.scan_detector_rotation_deg == earlier.scan_detector_rotation_deg
-    assert exact.rotation_branches.kept == earlier.rotation_branches.kept
-    assert truth.agreement(fitted) >= truth.agreement(np.asarray(earlier.optimizer["coordinates"])) * (1 - 2e-7)
-    assert exact.refine_nfev < earlier.refine_nfev
+        assert truth.agreement(fitted) >= truth.agreement(float64_optimum(truth, fitted)) * (1 - 2e-7)
+        # the low-order fit is the standard start of the fifth-order refinement
+        low = np.asarray(exact.optimizer["starts"][0]["initial_coordinates"])
+        assert exact.optimizer["starts"][0]["start"] == "standard" and not np.any(low[6:])
+        low_bounds = BOUNDS.copy()
+        low_bounds[6:] = 0.0
+        low_optimum = float64_optimum(truth, low, low_bounds)
+        assert truth.agreement(low) >= truth.agreement(low_optimum) * (1 - 2e-7)
+    assert exact.refinement == "bfgs"
     # C10 changes sign on the opposite branch
     mirrored = 1.0 if exact.scan_detector_rotation_deg == 0.0 else -1.0
     assert abs(exact.aberrations["C10_nm"] - mirrored * TRUTH["C10_nm"]) < 0.5

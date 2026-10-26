@@ -136,22 +136,27 @@ def test_fit_heading_clears_the_phase_title(size):
             assert title.y1 + 2 < heading.y0
 
 
-def test_progress_does_not_change_newton_solution_or_evaluation_count():
+def test_progress_does_not_change_the_refinement_or_its_evaluation_count():
     import numpy as np
-    from quantem.gpu.ssb._broad_newton import Tracker, newton
+    from quantem.gpu.ssb._gradient_refinement import refine
 
     start = np.zeros(6)
+    start[5] = 1.0
     bounds = np.tile([-2.0, 2.0], (6, 1))
-    objective = lambda points: -np.sum((points - 0.5) ** 2, axis=1)
+    bounds[5] = (0.2, 6.0)
+
+    def evaluate(points, kind, stride):
+        points = np.atleast_2d(points)
+        values = (10 - np.sum((points - 0.5) ** 2, axis=1)) / 10
+        return values, None if kind == "value" else -2 * (points - 0.5) / 10
+
     observed = []
-    plain = Tracker(objective, start, bounds, 1000)
-    live = Tracker(objective, start, bounds, 1000,
-                   on_progress=lambda count, score: observed.append((count, score)))
-    assert newton(plain, start, bounds) == newton(live, start, bounds)
-    np.testing.assert_array_equal(plain.best_z, live.best_z)
-    assert plain.best == live.best
-    assert plain.nfev == live.nfev
-    assert observed[-1] == (live.nfev, live.best)
+    plain = refine(evaluate, start, bounds)
+    live = refine(evaluate, start, bounds, progress=lambda count, best: observed.append((count, best)))
+    np.testing.assert_array_equal(plain["coordinates"], live["coordinates"])
+    assert plain["agreement"] == live["agreement"]
+    assert plain["objectives"] == live["objectives"]
+    assert observed[-1] == (live["objectives"], live["agreement"])
 
 
 def test_showptycho_rotation_handoff_preserves_prepared_equations():

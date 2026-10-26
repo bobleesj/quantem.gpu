@@ -11,7 +11,7 @@ from .test_ssb_upsampling import _disk_session
 def test_fit_without_diagnostic_retains_fit_phase_and_later_loss(tilt):
     """Fit for interactive review, then request the identical diagnostic later."""
     _require_mps()
-    options = dict(tilt=tilt, num_trials=8, refinement="newton", seed=11,
+    options = dict(tilt=tilt, num_trials=8, seed=11,
                    check_rotation=False, compare_standard=False, verbose=False)
     with _disk_session(n=32) as reference, _disk_session(n=32) as session:
         expected = reference.find_aberrations(search="primary", **options)

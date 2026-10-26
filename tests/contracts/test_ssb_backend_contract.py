@@ -383,30 +383,3 @@ def test_preview_context_is_consumed_by_public_workflow() -> None:
     assert events == ["enter", "exit"]
     assert phase.dtype == np.float32
     assert loss is None
-
-
-def test_thick_sample_search_refuses_a_batch_objective_that_drops_trials() -> None:
-    """A batch objective returning fewer values than trials is an error, not trials left without a result."""
-    pytest.importorskip("optuna")
-    from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
-
-    def short_batch(rows):
-        return -np.sum(rows[:-1] ** 2, axis=1)
-
-    with pytest.raises(ValueError, match="zip"):
-        fit_sample_search(lambda *args: 0.0, objective_batch=short_batch, batch_size=4, trials=8, verbose=False)
-
-
-def test_thick_sample_search_leaves_the_process_warning_filters_alone() -> None:
-    """The tilt search silences optuna's experimental-feature warning for its own sampler only."""
-    pytest.importorskip("optuna")
-    import warnings
-
-    import scipy.optimize  # noqa: F401 (scipy adds its own filters when first imported)
-
-    from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
-
-    before = list(warnings.filters)
-    fit_sample_search(lambda c10, c12, phi12, tilt, thickness: 1.0 + c10 * c10, trials=8, polish_starts=0, verbose=False)
-
-    assert warnings.filters == before
