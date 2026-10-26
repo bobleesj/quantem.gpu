@@ -293,6 +293,9 @@ Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.
 forwards to `.run(...)` with a deprecation warning. Saved calibration/result
 schemas and their reading paths remain unchanged. The series entry point is
 `DirectPtycho.run_series(...)`; the previous spelling remains readable.
+The package is `quantem.gpu.direct_ptycho` (for example
+`from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA`); the old
+`quantem.gpu.ssb` paths are a deprecated alias of the same modules.
 The established `SSBResult` type holds all three direct methods. The older SSB
 phase estimators are retired: `phase_estimator="mean_phase"` raises naming
 `method="phase"`, and `"complex_wave"` naming `method="complex"`. Results saved

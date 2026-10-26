@@ -151,6 +151,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- The Model-Based Direct Ptychography package `quantem.gpu.ssb` is now `quantem.gpu.direct_ptycho`, its WebGPU
+  sources included (`direct_ptycho/webgpu/*.ts` in `webgpu/sources.json`). Public names stay: `DirectPtycho`, `SSB`,
+  `SSBResult`, kernel and registry names. `quantem.gpu.ssb` remains a deprecated import alias: `quantem.gpu.ssb` and
+  every `quantem.gpu.ssb.<module>` are the same module objects as `quantem.gpu.direct_ptycho.<module>` (no second
+  copies, so `isinstance` checks and pickles naming the old path still work), and the first import warns once with a
+  DeprecationWarning. Browser bundles that copy the WebGPU sources read them from `direct_ptycho/webgpu`.
 - Python SSB: `upsampling_factor="auto"` still picks the factor from the scan sampling, at most 4×, and now says so
   when the cap lowers it: one line per session, `SSB: auto upsampling capped at 4× (the scan sampling supports 8×);
   pass upsampling_factor=8 for the full factor.` `stream` resolves auto once for the series. Explicit factors are
