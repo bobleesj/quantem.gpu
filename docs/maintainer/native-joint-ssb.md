@@ -97,7 +97,7 @@ complex object) still opens; `MetalSSBEngine.phase(of:)` converts its object to 
 
 ```sh
 swift test -c release -Xswiftc -enable-testing --filter MetalSSBKernelsTests
-PYTHONPATH=src python scripts/ssb_agreement_gate.py        # Python and native draw the same trials
+PYTHONPATH=src python scripts/ssb_agreement_gate.py        # the same search trials and exact-Newton fits
 SSB_PARITY_FIXTURE=... SSB_PARITY_REFERENCE=... swift test -c release -Xswiftc -enable-testing \
   --filter MetalSSBMeasuredParityTests                     # a measured acquisition, kept outside this repository
 SSB_DIRECT_FIXTURE=... [SSB_DIRECT_ALL=1] swift test -c release -Xswiftc -enable-testing \

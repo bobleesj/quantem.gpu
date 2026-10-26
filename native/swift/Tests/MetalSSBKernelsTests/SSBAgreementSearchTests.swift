@@ -69,22 +69,25 @@ final class SSBAgreementSearchTests: XCTestCase {
     }
   }
 
-  /// `scripts/ssb_agreement_gate.py` runs the current Python search and passes its records here, so a change on
-  /// either side fails without editing the pins below.
+  /// `scripts/ssb_agreement_gate.py` runs the current Python fits (`fit_resident`, `fit_standard_resident`, with
+  /// `exact` as their derivatives) and passes their records here, so a change on either side fails without editing
+  /// the pins below.
   struct Reference: Decodable {
     struct Fit: Decodable {
       let searchRows: Int
       let searchSHA256: String
+      let point: [Double]
       enum CodingKeys: String, CodingKey {
         case searchRows = "search_rows"
         case searchSHA256 = "search_sha256"
+        case point
       }
     }
     let tilt: Fit
     let standard: Fit
   }
 
-  func testCurrentPythonSearchWhenGiven() throws {
+  func testCurrentPythonFitsWhenGiven() throws {
     guard let path = ProcessInfo.processInfo.environment["SSB_AGREEMENT_REFERENCE"] else {
       throw XCTSkip(
         "scripts/ssb_agreement_gate.py sets SSB_AGREEMENT_REFERENCE to the current Python records.")
@@ -93,7 +96,7 @@ final class SSBAgreementSearchTests: XCTestCase {
       Reference.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
     for (name, expected) in [("tilt", reference.tilt), ("standard", reference.standard)] {
       let recorder = Recorder()
-      _ =
+      let fit =
         name == "tilt"
         ? try SSBAgreementSearch.fitTilt(recorder.evaluate, staged: Self.derivatives)
         : try SSBAgreementSearch.fitStandard(recorder.evaluate, staged: Self.derivatives)
@@ -101,6 +104,10 @@ final class SSBAgreementSearchTests: XCTestCase {
       XCTAssertEqual(
         recorder.digest(expected.searchRows), expected.searchSHA256,
         "\(name): a search trial differs from the Python search")
+      XCTAssertEqual(fit.point.count, 6, name)
+      for (actual, value) in zip(fit.point, expected.point) {
+        XCTAssertEqual(actual, value, accuracy: 1e-6, name)
+      }
     }
   }
 

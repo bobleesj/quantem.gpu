@@ -1,15 +1,16 @@
 """Gate the native SSB fit on the agreement objective: the Swift port must draw the Python search's trials.
 
 The default fit (``find_aberrations()``, tilt-corrected) and ``find_aberrations(tilt=False)`` maximize the model
-agreement with the resident multivariate TPE and trust-region Newton of ``ssb._resident_search``. The native
-``SSBAgreementSearch`` is a port of that search. This gate runs both on one synthetic float32 objective, which
-each side evaluates from the same float32 trial rows, and requires every trial row (search and Newton, in
-order) to be identical and the fitted points to agree to 1e-6:
+agreement with the resident multivariate TPE of ``ssb._resident_search``, then a trust-region Newton on the
+exact gradient and Hessian (``ssb._exact_newton``). The native ``SSBAgreementSearch`` ports both. This gate runs
+them on one synthetic float32 objective, which each side's search evaluates from the same float32 trial rows,
+with the same analytic derivatives for the Newton, and requires the 200 search rows to be identical and the
+fitted points to agree to 1e-6:
 
 1. Python ``fit_resident`` and ``fit_standard_resident`` (seed 42, 200 trials) on MPS or CUDA record the
-   SHA-256 of their trial rows and their fits;
-2. ``swift test --filter SSBAgreementSearchTests`` checks the native search against those records (and its
-   own pins);
+   SHA-256 of their search rows and their fits;
+2. ``swift test --filter SSBAgreementSearchTests`` checks the native fits against those records (and its own
+   pins);
 3. with ``SSB_PARITY_FIXTURE`` and ``SSB_PARITY_REFERENCE`` set, ``MetalSSBMeasuredParityTests`` also compares
    the native fits, branch decision and phases with an MPS reference on a measured acquisition.
 
@@ -27,6 +28,11 @@ import tempfile
 
 import numpy as np
 
+# The maximum of ``synthetic_score`` in the Newton coordinates z (C10, C12 cos 2 phi12, C12 sin 2 phi12, tilt row,
+# tilt column [mrad], depth spread [A]) and its curvatures, as ``SSBAgreementSearchTests.target`` and ``curvature``.
+TARGET = (37.25, 30.0, -12.0, 3.5, -1.25, 151.0)
+CURVATURE = (0.25, 1.0, 1.0, 400.0, 400.0, 0.01)
+
 
 def synthetic_score(trial, xp):
     """The float32 objective of ``SSBAgreementSearchTests.score``, written in the same order."""
@@ -43,8 +49,37 @@ def synthetic_score(trial, xp):
     return s - dt * dt * f(0.01)
 
 
+def synthetic_exact(z):
+    """``synthetic_score`` in z in double precision with its analytic gradient and Hessian, summed in the order of
+    ``SSBAgreementSearchTests.exact``."""
+    value = 1.0e6
+    gradient = np.zeros(6)
+    hessian = np.zeros((6, 6))
+    for d in range(6):
+        x = abs(z[d]) if d == 5 else z[d]
+        r = x - TARGET[d]
+        value -= CURVATURE[d] * r * r
+        gradient[d] = -2 * CURVATURE[d] * r * (-1 if d == 5 and z[d] < 0 else 1)
+        hessian[d, d] = -2 * CURVATURE[d]
+    return value, gradient, hessian
+
+
+class SyntheticDerivatives:
+    """The Newton objective of ``_exact_newton``: values at rows of z, derivatives at rows of the latest call."""
+
+    def __init__(self):
+        self.rows = np.zeros((0, 6))
+
+    def values(self, rows, all_derivatives):
+        self.rows = np.asarray(rows, dtype=float)
+        return np.array([synthetic_exact(z)[0] for z in self.rows])
+
+    def derivatives(self, indices):
+        return [synthetic_exact(self.rows[index]) for index in indices]
+
+
 def python_reference(backend: str) -> dict:
-    """Run the Python resident fits on the synthetic objective and digest their trial rows."""
+    """Run the Python resident fits on the synthetic objective and digest their search rows."""
     from quantem.gpu.ssb._resident_search import _Device, fit_resident, fit_standard_resident
 
     xp = _Device(backend).xp
@@ -58,18 +93,20 @@ def python_reference(backend: str) -> dict:
         zero = xp.zeros_like(values)
         return xp.stack([values, zero, zero], axis=1)
 
-    def digest():
-        return hashlib.sha256(np.concatenate(rows).astype(np.float32).tobytes()).hexdigest()
+    def search(point):
+        searched = np.concatenate(rows).astype(np.float32)
+        return {"search_rows": len(searched), "search_sha256": hashlib.sha256(searched.tobytes()).hexdigest(),
+                "point": point}
 
-    tilt = fit_resident(evaluate, backend=backend, trials=200, seed=42, verbose=False, compare_standard=False)
-    record = {"tilt": {
-        "point": [tilt[key] for key in ("C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "depth_spread_A")],
-        "agreement": tilt["fit"], "rows": int(sum(len(r) for r in rows)), "sha256": digest()}}
+    tilt = fit_resident(evaluate, backend=backend, trials=200, seed=42, verbose=False, compare_standard=False,
+                        derivatives=SyntheticDerivatives())
+    record = {"tilt": search(
+        [tilt[key] for key in ("C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "depth_spread_A")])}
     rows.clear()
     standard = fit_standard_resident(evaluate, backend=backend, lower=(-400.0, 0.0, -np.pi / 2),
-                                     upper=(400.0, 100.0, np.pi / 2), trials=200, seed=42)
-    record["standard"] = {"point": [standard[key] for key in ("C10", "C12", "phi12")], "agreement": standard["fit"],
-                          "rows": int(sum(len(r) for r in rows)), "sha256": digest()}
+                                     upper=(400.0, 100.0, np.pi / 2), trials=200, seed=42,
+                                     derivatives=SyntheticDerivatives())
+    record["standard"] = search([standard[key] for key in ("C10", "C12", "phi12")])
     return record
 
 
@@ -97,7 +134,7 @@ def main() -> int:
             failed = failed or swift_test("MetalSSBMeasuredParityTests", environment)
         else:
             print("measured parity: SKIP (set SSB_PARITY_FIXTURE and SSB_PARITY_REFERENCE)", flush=True)
-    print("FAIL" if failed else "PASS: the native agreement search draws the Python trials", flush=True)
+    print("FAIL" if failed else "PASS: the native agreement fit draws the Python trials and fits", flush=True)
     return 1 if failed else 0
 
 

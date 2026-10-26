@@ -254,7 +254,8 @@ bash scripts/check_ssb_parity.sh
 ```
 
 `check_ssb_parity.sh` checks that the native `SSBAgreementSearch` draws the
-trials of the Python resident search (`scripts/ssb_agreement_gate.py`). It does
+search trials of the Python resident search and reaches the fits of its
+exact-derivative Newton on a synthetic objective (`scripts/ssb_agreement_gate.py`). It does
 not run a CPU reconstruction oracle or recapture a baseline. Native
 reconstruction, fit and saved-result checks are XCTest suites
 (`MetalSSBKernelsTests`). Set `QUANTEM_SSB_PARITY_SOURCE` to a local acquisition
