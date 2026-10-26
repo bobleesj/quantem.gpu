@@ -128,8 +128,8 @@ Use `x="evaluations"` to change the horizontal axis. Older histories and primary
 fits without timestamps use evaluation counts automatically; `x="time"` requires
 recorded times. Overlays use the unnormalized model agreement so differing
 normalization factors do not change the comparison. They require the same data,
-calibration, region and objective. Newton and Nelder–Mead are both supported;
-keep differently fitted rotations in separate plots.
+calibration, region and objective; keep differently fitted rotations in
+separate plots.
 
 `save_calibration` exports this fit's coefficients, tilt/depth, rotation and
 acquisition identity in ShowPtycho's calibration format. It computes no phase
@@ -148,42 +148,50 @@ image-quality score. For each trial set of aberrations, sample tilt and depth
 spread, it predicts the bright-field data G(q, k) the detector should have
 recorded, then keeps the parameters whose prediction agrees best with the
 measurement (least squares). This model-based, tilt-corrected fit is the
-default everywhere, and it is where SSB in quantem is heading.
+default everywhere.
 
 | Call | Method | Use it for |
 |---|---|---|
-| `find_aberrations()` | model-based, tilt-corrected | **the default**: every fit |
+| `find_aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
 | `find_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
-| `find_aberrations(search="primary", tilt=False, objective="phase_variance")` | phase variance, the earlier SSB search | a backup: reproducing older results, cross-checking a fit |
 
-Phase variance chooses the aberrations under which the corrected phase images
-of all bright-field pixels agree best (the least phase variance across them).
-It stays as a backup, not an equal alternative: it scores images instead of
-predicting the data, it cannot see sample tilt or depth spread, and it is about
-10x slower (gold, both 180° branches: about 75 s against 7.8 s). On simulated
+Each method searches 200 seeded trials and then refines on exact derivatives
+of the agreement with `refinement="auto"` (above). `result.objective` records
+the objective and `report()` shows it; `result.loss` is an optional
+native-grid phase-variance diagnostic, not the fitted objective. Fifth-order
+fitting skips it by default; pass `compute_loss=True` to calculate it. The same
+names pass through `compare_rotation_branches(...)` and are part of a saved
+fit's settings.
+
+The phase-variance search (`objective="phase_variance"`) is retired. It chose
+the aberrations under which the corrected phase images of all bright-field
+pixels agree best, so it scored images instead of predicting the data, could
+not see sample tilt or depth spread, and was about 10x slower; on simulated
 crystals with known aberrations the model-based fit lands about 3x closer to
-the true C10. Evidence: [the standard-fit objective](../performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md).
-
-`objective` is `"agreement"` (default) or `"phase_variance"`, kept for
-reproducing older results and cross-checks; with `tilt=True` the phase
-variance raises. Each method searches 200 seeded trials and then refines:
-`refinement="auto"` is Newton for the agreement fits and Nelder–Mead for the
-phase variance, and for an agreement fit that locks a coefficient, bounds
-phi12 or holds a nonzero C12. `result.objective` records the objective and
-`report()` shows it; `result.loss` is an optional native-grid phase-variance diagnostic.
-Fifth-order fitting skips it by default; pass `compute_loss=True` to calculate it. The same names pass through `compare_rotation_branches(...)`
-and are part of a saved fit's settings, so a saved phase-variance fit never
-answers an agreement call.
+the true C10 ([the standard-fit objective](../performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md)).
 
 | Method | MPS | CUDA | Browser |
 |---|---|---|---|
 | `find_aberrations()` | yes | yes | no fit |
 | `find_aberrations(search="primary", tilt=False)` | yes | yes | no fit |
-| `find_aberrations(search="primary", tilt=False, objective="phase_variance")` | yes | yes | no fit |
 
-On CUDA, `tilt=False` was the phase-variance search until 2026-10-20; that
-search is now `objective="phase_variance"`, the same search as on MPS
-(`ssb/phase_variance_fit.py`). The browser engine has no aberration search.
+The browser engine has no aberration search.
+
+### Higher-order box
+
+The fifth-order refinement bounds each of the 22 higher-order coordinates
+(C21 through C56) to ±20 rad of probe phase at the aperture edge
+(`higher_order_limit=None`, the default; `higher_order_limit=2` keeps the
+earlier ±2 box; `search="primary"` stops at low order and refuses either). A
+±20 fit is checked on two halves of the band: the fifth order is refitted on
+alternate 0.05 Å⁻¹ rings of the band frequencies from the same low-order fit,
+and when the two probe phases through fifth order (C10 and C12 included, tilt
+and depth not) differ by more than 0.5 rad rms over the aperture, the ±2 fit is
+returned, its higher orders are marked not trusted and one line says so.
+`optimizer["higher_order_consistency"]` records `half_band_rms_rad`,
+`trusted`, `shown_limit`, both halves and the checked ±20 fit;
+`optimizer["higher_order_limit"]` is the limit of the fit returned. CUDA, MPS
+and native Metal use the same definition.
 
 ## Inputs and outputs
 
@@ -277,7 +285,7 @@ are not included in a detector-viewer loading-time claim.
 `object_wave` with shape `(scan_row, scan_column)`. `phase` and `amplitude` are
 derived as `angle(object_wave)` and `abs(object_wave)`. The result also records
 the backend, fitted aberrations, rotation, loss, trial counts, the local
-`refinement` applied (`"nelder-mead"`, `"newton"` or None), bright-field
+`refinement` applied (None when a `search="primary"` fit kept its best trial), bright-field
 geometry, timings, reuse state, and provenance metadata. A fit that compared
 the two 180-degree branches records them as `rotation_branches` (a
 `RotationBranches`); `reconstruct()` keeps it on its result whenever it applies
@@ -315,11 +323,11 @@ Computational padding is separate from `reconstruct(..., upsampling_factor=2)`.
 
 The default fit evaluates 200 seeded TPE candidates of the least-squares
 agreement of the SSB model with the full active bright field, keeps the best,
-and refines it with Newton steps. The standard fit (`tilt=False`) runs the
-same search with the sample tilt and depth spread held at 0, on CUDA and MPS;
-`objective="phase_variance"` minimizes the phase variance with Optuna TPE and
-Nelder–Mead ({ref}`Fit methods <ssb-fit-methods>`). No fit averages optimizer
-candidates.
+refines it with a trust-region Newton on the exact gradient and Hessian of the
+agreement, then refines every term through fifth order on exact gradients. The
+standard fit (`search="primary", tilt=False`) runs the same low-order search
+and Newton with the sample tilt and depth spread held at 0, on CUDA and MPS
+({ref}`Fit methods <ssb-fit-methods>`). No fit averages optimizer candidates.
 
 This is the implemented calibration workflow; Levenberg–Marquardt is not an
 available refinement mode. The browser SSB engine has no aberration search:
@@ -419,9 +427,9 @@ shown.show()
 The numbers above illustrate the units; use your acquisition's calibration.
 SSB here is model-based and tilt-corrected: `find_aberrations()` (`tilt=True`,
 the default) jointly estimates specimen tilt and model depth spread as well as
-aberrations, and so does the automatic fit of `reconstruct()`. `tilt=False`
-holds the tilt at 0, and `tilt=False, objective="phase_variance"` is the older
-SSB search ({ref}`Fit methods <ssb-fit-methods>`).
+aberrations, and so does the automatic fit of `reconstruct()`.
+`search="primary", tilt=False` holds the tilt and depth spread at 0
+({ref}`Fit methods <ssb-fit-methods>`).
 Fits stay on the native scan grid; what you look at is reconstructed at
 `upsampling_factor="auto"`, the factor the scan sampling allows (at 300 kV
 and 30 mrad: 2× for the 0.264 Å step above, 3× at 0.373 Å, 4× for the 0.5 Å
@@ -549,8 +557,7 @@ scale bars and a parameter table. They are reconstructed at
 `upsampling_factor="auto"` by default (the title names the factor); the search
 losses in the table are native-grid values. Trials are replayed from their
 recorded settings rather than stored as a large image stack. Browsing preserves the
-active reconstruction. `best` ranks the latest search only; losses from
-different objectives (the phase variance and the agreement) are not mixed.
+active reconstruction. `best` ranks the latest search only.
 `result.objective` names the fit's objective, and an agreement trial table its
 `objective` column. Local refinement is separate from the search trials and
 its final result appears in `report()`.
@@ -894,8 +901,8 @@ Rerun the aberration search for older records; the loader does not guess their u
   open the file with `DirectPtycho.open(path, ...)`.
 - `trials` is the search budget per rotation branch (default 200), before refinement.
   `num_trials` remains a compatibility alias; supply only one keyword.
-  `trials` must be non-negative and `refinement` is `"auto"`,
-  `"nelder-mead"`, `"newton"` (tilt fits) or `None`. With `tilt=True` and
+  `trials` must be non-negative and `refinement` is `"auto"` or `None` (a
+  `search="primary"` fit's best trial, unrefined). With `tilt=True` and
   `trials=0` the session's previous joint fit is refined. Use
   `reconstruct()`, or assign `ptycho.aberrations = {...}`, to apply known
   parameters without a search.
@@ -1128,7 +1135,7 @@ and visualization. It must present approximate previews as previews and must
 not promote them to exact calibration evidence.
 
 See [Single-sideband ptychography](../kernels/ssb.md) for the complete
-mathematics and [SSB performance evidence](../maintainer/ssb-performance.md)
+mathematics and [SSB performance reports](../performance/ssb/reports/index.md)
 for dated, revision- and device-qualified measurements. Performance numbers do
 not live in this API contract because a new benchmark must not silently change
 API semantics.

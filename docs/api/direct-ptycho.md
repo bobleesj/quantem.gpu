@@ -273,6 +273,19 @@ later call with the same `fit` and frames rebuilds the recorded frames without
 refitting or registering and continues; the result equals an uninterrupted run.
 Every frame must have the scan shape of the first.
 
+## Drag previews
+
+A viewer drags one control at a time. `ssb.direct_workflow.drag` serves those
+frames for `method="phase"` and `method="complex"` from a Chebyshev drag
+window along the dragged control, on CUDA and MPS, with the window rule of
+`ssb.chebyshev` that native Metal shares: a series of the prepared normal
+equations over a range around the current value (C10 ±6.8 nm, C12 ±3.4 nm at
+300 kV and 30 mrad), every other input held. `prepare` asks for windows before
+a grab and `advance` adds one exact preparation per call between frames; until
+a window is ready, and outside its range, frames are exact. A window frame
+agrees with the exact image to about 1e-6 of its largest phase. `run`,
+`preview` and saved results never come from a window.
+
 ## Migration
 
 Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.

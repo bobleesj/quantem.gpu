@@ -600,6 +600,12 @@ small-field CPU operations after GPU CoM, not GPU-kernel claims.
 
 ### SSB reconstruction and calibration
 
+Historical: these rows time the phase-variance search with Nelder–Mead
+refinement, which is retired. The current model fit with exact-derivative
+refinement is timed in the
+[exact-derivative SSB fit](ssb/reports/2026-10-25-ssb-exact-derivative-fit.md)
+record (0.56–1.25 s per fit on CUDA, five 512 × 512 acquisitions).
+
 CUDA calibration uses calibration SHA-256
 `4a2d9cc36943973dbe0f1d5e40858160f0a6393cd56d9f54e073a358b3eff8e8`,
 200 kV, 21.4 mrad semiangle, 0.49492961 Å scan sampling, full automatically
@@ -636,7 +642,7 @@ current benchmark row. Native Swift calibration also repeats deterministically
 but uses a different real fixture and optimizer implementation, so its timing
 is not a direct CUDA ranking. The prepared MPS companion candidate is rejected
 because its stored columns do not match its declared detector-bin coordinate
-grid. WebGPU implements reconstruction but not TPE or Nelder–Mead calibration.
+grid. WebGPU implements reconstruction but not aberration fitting.
 Levenberg–Marquardt is not implemented in any current SSB backend.
 
 ### Native Swift/Metal boundary

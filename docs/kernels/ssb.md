@@ -2,25 +2,25 @@
 
 Single-sideband (SSB) ptychography uses scan-frequency interference from a
 4D-STEM acquisition to reconstruct a complex transmission function. This page
-derives the older SSB fit, `find_aberrations(search="primary", tilt=False, objective="phase_variance")`:
+derives the reconstruction for given aberrations and the phase-variance
+diagnostic that every backend reports as `result.loss`:
 
 ```text
 4D counts → bright-field selection → scan FFT → aberration correction
-          → per-BF phase maps → phase-variance loss
-          → 200 TPE trials → Nelder-Mead refinement
-          → best aberrations → final complex object wave
+          → per-BF corrected waves → phase of the mean wave (SSB phase)
+                                   → phase-variance diagnostic (result.loss)
 ```
 
-The `200` is the default number of global Optuna TPE candidates. Each candidate
-is scored with the same full active-bright-field phase-variance objective. The
-best candidate then seeds a local Nelder-Mead refinement. The workflow selects
-the minimum recorded loss; it does not average the 200 parameter sets.
-
-The default fit, `find_aberrations()`, maximizes the least-squares agreement
-of the SSB model with G instead and fits the sample tilt and depth spread;
-`tilt=False` holds them at 0 ({ref}`fit methods <ssb-fit-methods>`,
-`docs/performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md`). The phase variance
-derived here is what every backend reports as `result.loss`.
+The aberrations are fitted with the SSB model instead:
+`find_aberrations()` maximizes the least-squares agreement of the model with G
+over 200 seeded TPE trials, fits the sample tilt and depth spread, and refines
+on exact derivatives of the agreement (a trust-region Newton on the exact
+gradient and Hessian at low order, a bounded quasi-Newton on exact gradients
+through fifth order); `search="primary", tilt=False` holds the tilt and depth
+spread at 0 ({ref}`fit methods <ssb-fit-methods>`). The fit selects the best
+candidate and refines it; it never averages parameter sets. The phase-variance
+search (`objective="phase_variance"`, 200 TPE trials and Nelder–Mead) that this
+page once derived is retired.
 
 The PyTorch blocks below form one progressive reference: run them from top to
 bottom. Each equation introduces an operation, and the code immediately below
@@ -121,10 +121,9 @@ def scan_fft(selected_R_k: Tensor) -> Tensor:
 Here $\boldsymbol{\nu}$ indexes **scan frequency**, while $b$ indexes one selected
 bright-field detector coordinate. The inverse FFT converts each corrected
 $\boldsymbol{\nu}$ plane back to probe/scan position $\mathbf R$ before the variance is
-formed. The fit therefore does not search for a minimum variance "among
-$\boldsymbol{\nu}$"; it measures phase variance across $b$, averages that variance
-over $\mathbf R$, and minimizes the resulting scalar over candidate
-$\boldsymbol\theta$.
+formed. The diagnostic is therefore not a variance "among
+$\boldsymbol{\nu}$"; it measures phase variance across $b$ and averages that
+variance over $\mathbf R$ for the given parameters $\boldsymbol\theta$.
 
 ## 3. Candidate aberration correction
 
@@ -245,7 +244,7 @@ $$
 =\frac{1}{B}\sum_{b\in\mathcal B}\phi_b[\mathbf R;\boldsymbol\theta].
 $$
 
-The variance at one scan position and the scalar fit loss are
+The variance at one scan position and the scalar diagnostic loss are
 
 $$
 V[\mathbf R;\boldsymbol\theta]
@@ -270,8 +269,8 @@ def phase_variance_loss(object_b_R: Tensor) -> Tensor:
     return variance_R.mean()                 # mean over scan positions
 ```
 
-All quantities needed to evaluate one optimizer candidate are now defined, so
-the complete candidate function is short:
+All quantities needed to evaluate one parameter set are now defined, so the
+complete evaluation is short:
 
 ```python
 def evaluate_candidate(
@@ -295,52 +294,12 @@ def evaluate_candidate(
 
 This is the two-stage mean the implementation computes: moments across all
 active bright-field contributions, followed by the mean spatial variance over
-the scan. These are scientific reduction axes, not averages over optimizer
-trials. The best candidate is
+the scan. These are scientific reduction axes, not averages over fit trials.
 
-$$
-\hat{\boldsymbol\theta}
-=\operatorname*{arg\,min}_{\boldsymbol\theta}L(\boldsymbol\theta).
-$$
+## 5. Final result
 
-## 5. Phase-variance optimization and final result
-
-The phase-variance fit evaluates 200 seeded TPE candidates, chooses the
-lowest-loss candidate, and refines it with Nelder-Mead. In compact form,
-
-$$
-\left\{\boldsymbol\theta_j,L_j\right\}_{j=1}^{200}
-\xrightarrow{\operatorname*{arg\,min}_j L_j}
-\boldsymbol\theta_{\mathrm{TPE}}
-\xrightarrow{\mathrm{Nelder\text{-}Mead}
-}
-\hat{\boldsymbol\theta}.
-$$
-
-TPE proposes candidates sequentially, but the selection rule itself is simply:
-
-```python
-def best_tpe_candidate(
-    theta_candidates: Tensor,
-    candidate_losses: Tensor,
-) -> Tensor:
-    """Select the parameter vector with minimum loss; never average trials."""
-    if theta_candidates.shape != (200, 3):
-        raise ValueError("theta_candidates must have shape (200, 3)")
-    if candidate_losses.shape != (200,):
-        raise ValueError("candidate_losses must have shape (200,)")
-    best_trial_index = torch.argmin(candidate_losses)
-    return theta_candidates[best_trial_index]
-```
-
-The returned tensor is $\boldsymbol\theta_{\mathrm{TPE}}$ and seeds the local
-Nelder-Mead refinement. There is no mean over the 200 candidates. The mean
-operations are only over bright-field samples and scan positions inside
-`phase_variance_loss`.
-
-Thus the "second step" after the 200 trials is a local refinement beginning at
-the best trial, not another average. With the final parameters, the
-complex transmission function is
+With the fitted parameters $\hat{\boldsymbol\theta}$, the complex
+transmission function is
 
 $$
 O[\mathbf R]
@@ -351,9 +310,9 @@ $$
 SSB keeps its phase, $\phi=\arg O$ (`phase_of_mean`), on CUDA and MPS, and the
 public result stores a phase-only wave with unit amplitude, recorded as
 `amplitude_estimated=False`. Amplitude is the regularized `method="complex"`'s.
-The optimizer's $\bar\phi$, the mean of the per-contribution phases
-$\arg O_b$, is part of the variance objective; it is not substituted for the
-final phase. (The `mean_phase` estimator, which displayed $\bar\phi$, and the
+The diagnostic's $\bar\phi$, the mean of the per-contribution phases
+$\arg O_b$, is part of the variance; it is not substituted for the final
+phase. (The `mean_phase` estimator, which displayed $\bar\phi$, and the
 `complex_wave` estimator, which stored $O$ itself at 1x, were retired on
 2026-10-25.)
 
@@ -419,18 +378,22 @@ An approximate preview is not calibration evidence. A fitted result is reused
 only when source identity, detector selection, calibration, backend, physical
 parameters, precision, and optimizer settings match.
 
-### Joint CUDA refinement
+### Exact-derivative refinement
 
-The joint tilt/depth model evaluates independent Nelder-Mead starts in
-batches. Each solver retains its own candidate sequence, bounds, and
-stopping rules; the calling thread evaluates the shared device objective.
-A separate singleton reduction for each refinement candidate preserves
-its numerical policy. Initial trial batches keep their existing reduction.
-This scheduling change applies to the joint model, rather than the
-standard phase-variance example above. The public API is unchanged.
+The fit's refinements use exact derivatives of the agreement on CUDA and MPS
+(`cuda/exact_derivatives.py`, `mps/exact_derivatives.py`). The low-order fit
+climbs with a trust-region Newton on the exact gradient and Hessian
+(`_exact_newton.py`); the fifth-order fit with a bounded trust-region
+quasi-Newton on exact gradients (`_gradient_refinement.py`), started from a
+Hessian of every 64th bright-field pixel, first on every 8th pixel and then
+converged on all of them. Per-(q, k) terms are float32; sums over
+bright-field chunks and band frequencies are float64, and steps are accepted on
+the full objective. A broad fit refines from the standard start and from the 8
+best distinct TPE candidates and keeps the highest agreement.
 
-[CUDA refinement batching](../performance/ssb/reports/2026-10-15-cuda-batched-refinement.md) records the measured
-speedup, exact comparison scope, source map, and regression commands.
+[Exact-derivative SSB fit](../performance/ssb/reports/2026-10-25-ssb-exact-derivative-fit.md)
+records the speed, the precision against a float64 autograd reference, and the
+comparison with the earlier finite-difference refinement.
 
 ## Coordinate and unit checks
 
@@ -448,7 +411,7 @@ speedup, exact comparison scope, source map, and regression commands.
 | Public workflow/results | `src/quantem/gpu/ssb` |
 | CUDA engine and optimizer | `src/quantem/gpu/ssb/cuda` |
 | Python MPS engine and optimizer | `src/quantem/gpu/ssb/mps` |
-| Native Swift/Metal preparation and joint model (its phase-variance engine and optimizer are retired, 2026-10-25) | `native/swift/Sources/MetalSSBKernels` |
+| Native Swift/Metal preparation, joint model, fit and direct methods | `native/swift/Sources/MetalSSBKernels` |
 | WebGPU kernels | `src/quantem/gpu/ssb/webgpu` |
 
 Parity uses the same source, bright-field selection, physical calibration,

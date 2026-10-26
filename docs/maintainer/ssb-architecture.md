@@ -17,7 +17,7 @@ with DirectPtycho.open(
     semiangle_mrad=30,
     scan_sampling_A=(0.5, 0.5),
     scan_detector_rotation_deg=351.8,
-) as ssb:
+) as ptycho:
     result = ptycho.find_aberrations(save_dir="results/ssb")
 ```
 
@@ -36,21 +36,21 @@ not exported from `quantem.gpu` or `quantem.gpu.ssb`.
 
 The scientific defaults are 200 trials, the least-squares agreement of the SSB
 model with the full-BF evidence fitted with the sample tilt and depth spread
-(`find_aberrations()`), Newton refinement, float32 real values, and complex64
-object values. One vocabulary names the three fit methods, on every backend
-that fits:
+(`find_aberrations()`), refinement on exact derivatives (`refinement="auto"`),
+float32 real values, and complex64 object values. One vocabulary names the fit
+methods, on every backend that fits:
 
 | Call | Objective | Search and refinement | Code |
 | --- | --- | --- | --- |
-| `find_aberrations()` (default) | agreement, tilt and depth spread fitted | resident TPE, Newton | `_resident_search.fit_resident` |
-| `find_aberrations(tilt=False)` | agreement, tilt and depth spread held at 0 | resident TPE, Newton (Nelder-Mead when constrained) | `_resident_search.fit_standard_resident` (CUDA and MPS) |
-| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance over BF pixels | Optuna TPE, Nelder-Mead | `mps/optimizer.optimize_phase_variance` (MPS), `ssb/phase_variance_fit.py` (CUDA) |
+| `find_aberrations()` (default) | agreement, tilt and depth spread fitted, through fifth order | resident TPE, exact-Hessian Newton, then exact-gradient BFGS through fifth order | `_resident_search.fit_resident`, `_exact_newton`, `fifth_order_fit`, `_gradient_refinement` |
+| `find_aberrations(search="primary", tilt=False)` | agreement, tilt and depth spread held at 0 | resident TPE, exact-Hessian Newton | `_resident_search.fit_standard_resident` (CUDA and MPS) |
 
-`objective` is a saved setting and `SSBResult.objective` records it. The phase
-variance is the reported diagnostic `result.loss` everywhere
-(`2026-10-20-ssb-standard-fit-objective.md`). A
-backend may reject a job it cannot execute, but may not switch to CPU, crop or
-subsample the BF evidence, quantize values, or change the objective silently.
+The phase-variance search (`objective="phase_variance"`) and the
+finite-difference and Nelder–Mead refinements are retired. `objective` is a
+saved setting and `SSBResult.objective` records it. The phase variance remains
+the optional diagnostic `result.loss`. A backend may reject a job it cannot
+execute, but may not switch to CPU, crop or subsample the BF evidence, quantize
+values, or change the objective silently.
 
 `find_aberrations()` and `reconstruct()` own saved-result reuse through the same `save_dir`
 and `force` controls. Reuse requires an exact scientific signature and restores
@@ -67,8 +67,7 @@ The same call does not return the same phase image on CUDA and MPS:
   wave sums run different kernels in different orders;
 - the bright-field disk is selected by the same rule with different rounding
   (CUDA device float32, MPS host float32), so edge pixels can differ; and
-- the Nelder-Mead tolerances of the phase-variance search and the loss
-  reduction order differ.
+- the agreement and loss reduction orders differ.
 
 Each result records its backend, `phase_of_mean` and output factor
 (`result.phase_estimator`, `result.upsampling_factor`).
@@ -84,8 +83,7 @@ Each result records its backend, `phase_of_mean` and output factor
 
 Python CUDA and MPS run in process. The browser engine runs asynchronously and
 reconstructs from exported bright-field columns and calibration; it does not
-fit aberrations. Fitting stays on CUDA or MPS until a browser fit passes the
-shared 200-trial plus Nelder-Mead parity suite.
+fit aberrations. Fitting stays on CUDA, MPS and native Metal.
 
 ## Required parity gates
 

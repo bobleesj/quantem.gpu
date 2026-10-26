@@ -46,7 +46,7 @@ through `RansResidentSet.loadQemFile` / `loadQemFiles` (`detector/webgpu/qem-sou
 WebGPU implements local-file load/decode, detector products, CoM/DPC/iDPC,
 and SSB reconstruction, phase and loss; the browser client owns display. It does not currently
 implement the Python `screening.prepare` cache or SSB aberration fitting.
-Exact calibration runs in the 200-trial TPE plus Nelder–Mead CUDA/MPS workflow;
+Aberration fitting (`find_aberrations`) runs on CUDA, MPS or native Metal;
 the browser never substitutes a smaller objective. Levenberg–Marquardt is not an implemented refinement
 mode in any current backend.
 
