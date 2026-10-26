@@ -203,3 +203,12 @@ def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch):
     assert fit.sample_tilt_mrad == (1., -2.) and fit.depth_spread_nm == 10.
     assert fit.refinement == "bfgs"
     assert fit.phase_clim is None
+
+
+def test_higher_order_subsets_are_retired(capsys):
+    session = SimpleNamespace(_find_aberrations=Mock(return_value="primary fit"))
+    assert call(session, search="primary", tilt=False, higher_order=("C21", "C30")) == "primary fit"
+    assert "higher_order" not in session._find_aberrations.call_args.kwargs
+    assert capsys.readouterr().out.splitlines() == [
+        "higher_order is retired; the default fit (search='standard') fits every term through fifth order, and this "
+        "primary fit holds them at 0."]

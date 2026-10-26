@@ -34,6 +34,15 @@ def agreement_objective(objective) -> str:
     raise ValueError(f"objective is retired: every fit maximizes the model agreement; got {objective!r}.")
 
 
+def retired_higher_order(higher_order) -> None:
+    """``higher_order`` is retired: the default fifth-order fit fits coma, trefoil, C30 and every term through fifth
+    order on exact gradients, with the half-band check. A subset prints one line; the primary fit holds them at 0."""
+    if higher_order:
+        print("higher_order is retired; the default fit (search='standard') fits every term through fifth order, and "
+              "this primary fit holds them at 0.")
+    return None
+
+
 def auto_refinement(refinement) -> str | None:
     """``"auto"``, the refinement every fit uses, or None for none (``search="primary"`` only). Choosing the method is
     retired: another value prints one line and is ``"auto"``."""
@@ -138,14 +147,6 @@ class SSBProtocol(Protocol):
     def fit_sample(self, **options) -> dict[str, object]: ...
 
     def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray: ...
-
-    def higher_order_agreement(self, rows: np.ndarray, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
-        """The joint objective with the probe phase from Krivanek terms (``find_aberrations(higher_order=...)``)."""
-        ...
-
-    def band_power(self, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> dict[str, float]:
-        """G's power over the agreement band, the band weight and the Poisson noise variance (the fit's coherence)."""
-        ...
 
     def preview_context(self, num_bright_field_pixels: int) -> AbstractContextManager | None: ...
 

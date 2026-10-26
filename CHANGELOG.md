@@ -67,6 +67,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Removed
 
+- Python SSB (CUDA and MPS): the `higher_order=` subsets of `search="primary"` (coma, trefoil, C30 polished by a
+  finite-difference Newton in Angstrom, with its coherence and precision guard) are retired: the default fit fits every
+  term through fifth order on exact gradients with the half-band check. `find_aberrations(higher_order=...)` and
+  `compare_rotation_branches(higher_order=...)` print one line and the primary fit holds them at 0. Removed:
+  `higher_order_fit.refine_higher_order`, `assess`, `standard_errors`, `edge_phase`, the coordinate helpers, the
+  `thick_sample_fit` finite-difference trust-region helpers, the backends' `higher_order_agreement` and `band_power`,
+  and `direct_ptycho/cuda/higher_order_agreement.py`.
 - Python SSB (CUDA and MPS): Nelder-Mead is retired. A `search="primary", tilt=False` fit that locks a coefficient
   (`refine_lock`), bounds phi12, holds a nonzero C12 or holds coefficients with `fixed_aberrations` now refines on
   the exact gradient: the trust-region quasi-Newton of `_gradient_refinement.refine` in (C10, C12, phi12), where

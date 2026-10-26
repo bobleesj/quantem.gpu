@@ -32,17 +32,16 @@ from quantem.gpu.direct_ptycho import series
 from quantem.gpu.direct_ptycho._execution import cancellation_scope
 from quantem.gpu.direct_ptycho.branches import DARK_FIELD_INNER_RADIUS, RotationBranches, compare_branches
 from quantem.gpu.direct_ptycho.brightfield import bright_field_crop_region, crop_bright_field
-from quantem.gpu.direct_ptycho.contract import RefineMethod, SSBProtocol, agreement_objective, auto_refinement
-from quantem.gpu.direct_ptycho.higher_order_fit import (
-    assess,
-    from_coordinates,
-    refine_higher_order,
-    to_coordinates,
-    validate_terms,
+from quantem.gpu.direct_ptycho.contract import (
+    RefineMethod,
+    SSBProtocol,
+    agreement_objective,
+    auto_refinement,
+    retired_higher_order,
 )
 from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
 from quantem.gpu.direct_ptycho.mps.frames import EncodedBrightFieldCrop, MpsBfColumnFrames, find_bf_columns
-from quantem.gpu.direct_ptycho.mps.optimizer import newton_supported, standard_bounds
+from quantem.gpu.direct_ptycho.mps.optimizer import newton_supported
 from quantem.gpu.direct_ptycho.mps.reconstruct import fit_loss_tiles
 from quantem.gpu.direct_ptycho.persistence import (
     RESULT_SCHEMA,
@@ -1902,7 +1901,7 @@ class DirectPtycho:
 
         ``search="primary"`` keeps the earlier low-order fit (200 trials,
         seed 42) on CUDA and MPS. Use it for custom bounds, fixed coefficients,
-        or ``higher_order`` subsets.
+        and fixed coefficients.
         These advanced controls are not silently applied to the fifth-order
         model. In earlier versions this initial-only route was ``standard``.
         The model interpretation and rotation choice still need validation.
@@ -2044,23 +2043,9 @@ class DirectPtycho:
         Zero trials start from the current session coefficients: the standard search refines them, and ``tilt=True``
         refines them with the session's sample tilt and depth spread.
 
-        ``higher_order=("C21", "C23", "C30")`` also fits coma (``C21_nm``, ``phi21_deg``), trefoil (``C23_nm``,
-        ``phi23_deg``) and spherical aberration (``C30_nm``), any subset, with the same model agreement: after the
-        fit above (both branches, rotation refinement), one Newton polish from it moves the higher orders together
-        with C10, C12, phi12 and, with ``tilt=True``, the sample tilt and depth spread. Coma and trefoil are not
-        confused with the sample tilt (correlations below 0.25 on simulated tilted crystals); C30 is strongly
-        correlated with C10 (about -0.9), and fitting it moves C10. The result's ``aberrations`` hold the fitted
-        terms, so ``reconstruct(result)`` applies them. They are the probe's aberrations only where the SSB model
-        holds: on simulated crystals they matched the truth to a few percent for a light-element crystal up to
-        8 nm and for SrTiO3 up to about 1 nm; thicker or heavier crystals returned terms that fit dynamical
-        scattering instead (docs/performance/ssb/reports/2026-10-21-ssb-higher-order-fit.md). ``result.optimizer["higher_order"]``
-        says whether they can be read as the probe's (``trusted``, and the numbers in ``guard``): the fitted model must
-        explain at least 90 % of G's signal power over the fit band (``coherence``; simulated thick crystals without
-        these aberrations reached at most 0.80 where their fit returned spurious terms), and each term's standard
-        error, from the agreement's curvature and the Poisson noise of counted electrons, may move the probe phase at
-        the aperture edge by at most 0.1 rad. An untrusted fit prints why and keeps the terms. One Newton polish after the fit: about 0.2 s on a
-        64 x 64 scan, 5 to 7 s on a 512 x 512 scan with 8,807 bright-field pixels. MPS and CUDA; the agreement
-        objective only, and not with ``fixed_aberrations``.
+        ``higher_order`` is retired: the default fit (``search="standard"``) fits coma, trefoil, C30 and every term
+        through fifth order on exact gradients, with the half-band check. ``higher_order=...`` prints one line and
+        the primary fit holds them at 0.
         """
 
         from quantem.gpu.display._layout import panel_inches, resolve_columns
@@ -2068,6 +2053,7 @@ class DirectPtycho:
         panel_inches(size)  # Validate display options before expensive preparation.
         refinement = auto_refinement(refinement)
         objective = agreement_objective(objective)
+        higher_order = retired_higher_order(higher_order)
         resolve_columns(3, columns=columns)
         if show_convergence and search == "primary":
             raise ValueError("Live convergence requires search='standard' or 'broad'. "
@@ -2107,7 +2093,7 @@ class DirectPtycho:
                         save_dir=None if save_dir is None else Path(save_dir) / f"trials-{budget}",
                         force=force, verbose=verbose, compare_standard=compare_standard,
                         fixed_aberrations=fixed_aberrations, refine_rotation=refine_rotation,
-                        compute_loss=compute_loss, higher_order=higher_order,
+                        compute_loss=compute_loss,
                         show=show, size=size, columns=columns, show_convergence=show_convergence,
                         on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
                     )
@@ -2146,7 +2132,7 @@ class DirectPtycho:
                         seed=seed, save_dir=save_dir, force=force, verbose=verbose,
                         compare_standard=compare_standard, fixed_aberrations=fixed_aberrations,
                         refine_rotation=refine_rotation, compute_loss=compute_loss,
-                        higher_order=higher_order, show=False, size=size, columns=columns,
+                        show=False, size=size, columns=columns,
                         show_convergence=show_convergence,
                         on_initial_fit=initial_region, higher_order_limit=higher_order_limit,
                     )
@@ -2172,12 +2158,12 @@ class DirectPtycho:
                 return result
             if (not tilt or objective != "agreement"
                     or search_ranges is not None or refine_lock is not None
-                    or fixed_aberrations is not None or higher_order is not None or refinement is None
+                    or fixed_aberrations is not None or refinement is None
                     or tilt_limit_mrad != 25.0):
                 raise ValueError(
                     "Fifth-order search uses its joint model and bounds. "
                     "Use search='primary' for custom ranges, "
-                    "fixed coefficients or higher_order subsets."
+                    "or fixed coefficients."
                 )
             from .fifth_order_fit import fit_fifth_order
 
@@ -2200,8 +2186,7 @@ class DirectPtycho:
             refinement=refinement, search_ranges=search_ranges, refine_lock=refine_lock,
             tilt_limit_mrad=tilt_limit_mrad, seed=42 if seed is None else seed, save_dir=save_dir, force=force, verbose=verbose,
             compare_standard=compare_standard, fixed_aberrations=fixed_aberrations,
-            refine_rotation=refine_rotation, compute_loss=True if compute_loss is None else compute_loss,
-            higher_order=higher_order)
+            refine_rotation=refine_rotation, compute_loss=True if compute_loss is None else compute_loss)
 
     @_on_scan_gpu
     def compare_rotation_defocus(
@@ -2349,6 +2334,8 @@ class DirectPtycho:
             find_aberrations_options["refinement"] = auto_refinement(find_aberrations_options["refinement"])
         if "objective" in find_aberrations_options:
             find_aberrations_options["objective"] = agreement_objective(find_aberrations_options["objective"])
+        if "higher_order" in find_aberrations_options:
+            retired_higher_order(find_aberrations_options.pop("higher_order"))
         find_aberrations_options["num_trials"] = resolve_trial_count(
             find_aberrations_options.pop("trials", None), find_aberrations_options.pop("num_trials", None),
         )
@@ -2374,7 +2361,6 @@ class DirectPtycho:
         fixed_aberrations: dict[str, float] | None = None,
         refine_rotation: bool = False,
         compute_loss: bool = True,
-        higher_order: Sequence[str] | None = None,
     ) -> SSBResult:
         """``find_aberrations`` with the 180-degree branch handling explicit.
 
@@ -2391,11 +2377,6 @@ class DirectPtycho:
                 "check_rotation=False).")
         if num_trials < 0:
             raise ValueError(f"trials must be non-negative, got {num_trials}.")
-        higher_order = validate_terms(higher_order)
-        if higher_order:
-            if fixed_aberrations is not None or refine_lock is not None:
-                raise ValueError("higher_order refines C10, C12 and phi12 together with the higher orders; it does not "
-                                 "combine with fixed_aberrations or refine_lock.")
         if tilt and int(num_trials) == 0 and (self.sample_tilt_mrad is None or self.depth_spread_nm is None):
             raise ValueError(
                 "find_aberrations(tilt=True, trials=0) refines from the session's aberrations, sample_tilt_mrad and "
@@ -2459,7 +2440,6 @@ class DirectPtycho:
                     **({"fixed_aberrations": fixed_aberrations} if fixed_aberrations is not None else
                        {"fixed_aberrations": requested["fixed_aberrations"]} if requested["fixed_aberrations"] else {}),
                     **({"refine_rotation": True} if refine_rotation else {}),
-                    **({"higher_order": list(higher_order)} if higher_order else {}),
                 },
             )
             if not force and self.source_kind != "array":
@@ -2540,7 +2520,7 @@ class DirectPtycho:
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
                     fixed_aberrations=(fixed_aberrations if fixed_aberrations is not None else
                                        requested["fixed_aberrations"] if tilt else None),
-                    refine_rotation=refine_rotation, compute_loss=compute_loss, higher_order=higher_order,
+                    refine_rotation=refine_rotation, compute_loss=compute_loss,
                 )
                 if result.rotation_branches is not None:
                     # the branch panels need the region's G(q, k), which closes with the region session
@@ -2609,16 +2589,6 @@ class DirectPtycho:
             if refine_rotation:
                 result = self._refine_rotation(result, fit, keep=branches == "keep",
                                                measure_gain=tilt and refinement == "newton", verbose=verbose)
-            if higher_order:
-                if tilt:
-                    limits = {key: value for key, value in tilt_bounds.items() if key in ("c10_range", "c12_max")}
-                else:
-                    # the standard search box (C10 +-40 nm, C12 0 to 10 nm unless search_ranges bounds them)
-                    low, high = standard_bounds(search_ranges_to_engine(search_ranges))
-                    limits = {"c10_range": (low[0], high[0]), "c12_max": high[1]}
-                result = self._fit_higher_order(result, higher_order, tilt=tilt, limits=limits,
-                                                tilt_limit_mrad=float(tilt_limit_mrad), verbose=verbose,
-                                                compute_loss=compute_loss)
         if not compute_loss:
             result.loss = None
             self.best_loss = float("inf")
@@ -3277,67 +3247,6 @@ class DirectPtycho:
                          elapsed_s=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
                          refinement=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                          object_sampling_A=self.scan_sampling_A)
-
-    def _fit_higher_order(self, result: SSBResult, terms: tuple[str, ...], *, tilt: bool,
-                          limits: dict[str, object], tilt_limit_mrad: float, verbose: bool,
-                          compute_loss: bool = True) -> SSBResult:
-        """Polish a finished fit with the higher-order ``terms`` free (``higher_order_fit.refine_higher_order``).
-
-        Starts from ``result`` with the terms at 0, at its rotation, inside the fit's C10 range and C12 maximum
-        (``limits``). ``tilt=False`` holds the tilt and depth spread at 0. Returns a new result at the polished point with its native phase and loss, carrying the fit's
-        rotation evidence and trials.
-        """
-        started = time.perf_counter()
-        backend = self._backend()
-        engine = aberrations_to_engine(result.aberrations)
-        sample_tilt = result.sample_tilt_mrad or (0.0, 0.0)
-        depth_A = (result.depth_spread_nm or 0.0) * ENGINE_PER_NM
-        start = to_coordinates(engine["C10"], engine["C12"], engine["phi12"], sample_tilt, depth_A, {}, terms)
-        fit = refine_higher_order(backend.higher_order_agreement, start, terms, tilt=tilt,
-                                  tilt_limit_mrad=tilt_limit_mrad, **limits)
-        guard = assess(fit, terms, backend.band_power(), counted=_counted_electrons(self.source_dtype),
-                       wavelength_A=float(wavelength_A_from_kV(self.voltage_kV)),
-                       semiangle_rad=float(self.semiangle_mrad) * 1e-3)
-        values = from_coordinates(fit["z"], terms)
-        aberrations = {"C10_nm": values["C10"] / ENGINE_PER_NM, "C12_nm": values["C12"] / ENGINE_PER_NM,
-                       "phi12_deg": math.degrees(values["phi12"])}
-        for name in terms:
-            aberrations[f"{name}_nm"] = values[name] / ENGINE_PER_NM
-            if name[2] != "0":
-                aberrations[f"phi{name[1:]}_deg"] = math.degrees(values[f"phi{name[1:]}"])
-        if tilt:
-            sample_tilt_mrad = (values["tilt_row_mrad"], values["tilt_col_mrad"])
-            depth_spread_nm = values["depth_spread_A"] / ENGINE_PER_NM
-        else:
-            sample_tilt_mrad, depth_spread_nm = result.sample_tilt_mrad, result.depth_spread_nm
-        refined_s = time.perf_counter() - started
-        phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad or (0.0, 0.0),
-                                  depth_spread_nm=depth_spread_nm or 0.0, compute_loss=compute_loss)
-        record = {"terms": list(terms), "start_agreement": float(fit["start_agreement"]),
-                  "agreement": float(fit["agreement"]), "evaluations": int(fit["evaluations"]),
-                  "passes": int(fit["passes"]), "converged": bool(fit["converged"]), "seconds": refined_s,
-                  "trusted": guard["trusted"], "guard": guard,
-                  "host_numerical_search": True, "optimizer_backend": "numpy",
-                  "agreement_backend": self.backend}
-        refined = replace(
-            result, object_wave=self._unit_wave(phase), aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
-            depth_spread_nm=depth_spread_nm, loss=None if loss is None else float(loss),
-            phase_estimator="phase_of_mean", amplitude_estimated=False,
-            sample_agreement=float(fit["agreement"]),
-            timings={**result.timings, "higher_order_s": time.perf_counter() - started},
-            optimizer={**result.optimizer, "higher_order": record, "host_numerical_search": True},
-            elapsed_s=None if result.elapsed_s is None else result.elapsed_s + (time.perf_counter() - started),
-        )
-        if verbose:
-            gain = record["agreement"] / record["start_agreement"]
-            fitted = ", ".join(f"{name} {aberrations[f'{name}_nm']:.1f} nm" for name in terms)
-            print(f"SSB: higher orders {fitted}; agreement x{gain:.3f}, coherence {guard['coherence']:.2f}, "
-                  f"{record['evaluations']} evaluations in {refined_s:.2f} s.")
-        if not guard["trusted"]:
-            # announced whatever verbose says: the result keeps the terms, but they are fit parameters
-            print("SSB: the fitted higher orders are not the probe's aberrations here: " + "; ".join(guard["reasons"])
-                  + ". They stay in result.aberrations; optimizer['higher_order']['guard'] has the numbers.")
-        return self._finish_fit(refined)
 
     def _unit_wave(self, phase):
         """The unit-amplitude wave exp(i phase) of a phase-only reconstruction, on the session's device."""

@@ -444,18 +444,6 @@ class CudaSSBBackend:
         """Evaluate the joint objective on the session's existing evidence."""
         return self._get_accelerator().thick.fit_batch(parameters, band_inv_A)
 
-    def higher_order_agreement(self, rows: np.ndarray, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
-        """The joint objective with higher-order aberrations (``higher_order_agreement.agreement_batch``) per row."""
-        from quantem.gpu.direct_ptycho.cuda.higher_order_agreement import agreement_batch
-
-        return agreement_batch(self._get_accelerator(), rows, band_inv_A)
-
-    def band_power(self, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> dict[str, float]:
-        """G's power over the agreement band and its Poisson noise variance (``higher_order_agreement.band_power``)."""
-        from quantem.gpu.direct_ptycho.cuda.higher_order_agreement import band_power
-
-        return band_power(self._get_accelerator(), band_inv_A)
-
     def close(self) -> None:
         """Release CUDA-owned session state."""
 

@@ -199,19 +199,4 @@ def agreement_batch(prepared, rows, band_inv_A: tuple[float, float] = (0.2, 0.9)
     return out
 
 
-def band_power(prepared, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> dict[str, float]:
-    """G's power over the agreement band, sum_q w_q sum_k |G(q, k)|^2 (the agreement's upper bound), the band's weight
-    sum_q w_q, and the noise variance of one G(q, k) for counted electrons: the mean over k of G(0, k), the counts at k
-    summed over the scan (Poisson)."""
-    mx = prepared.mx
-    flat, _, _, weight = _band(prepared, band_inv_A)
-    g = prepared.g_qk
-    columns = mx.take(g.reshape(g.shape[0], -1), mx.array(np.asarray(flat)), axis=1)
-    per_q = np.asarray(mx.sum(mx.real(columns) ** 2 + mx.imag(columns) ** 2, axis=0)).astype(np.float64)
-    w = np.asarray(weight, dtype=np.float64)
-    counts = np.asarray(mx.real(g[:, 0, 0])).astype(np.float64)
-    return {"power": float((w * per_q).sum()), "band_weight": float(w.sum()), "noise_variance": float(counts.mean()),
-            "num_bf": len(counts)}
-
-
-__all__ = ["agreement_batch", "band_power"]
+__all__ = ["agreement_batch"]
