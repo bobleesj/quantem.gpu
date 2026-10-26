@@ -1126,6 +1126,8 @@ class DirectPtycho:
                 "schema": RESULT_SCHEMA,
                 "software": software_signature(),
                 "operation": operation,
+                # sample_agreement is the explained fraction of the band's power (it was the raw agreement)
+                "sample_agreement": "band_power_fraction",
                 "reconstruction": {
                     "default_estimator": "phase_of_mean",
                     # "k-q": the probe phase of the first sideband at k - q (odd orders were at q - k before)
@@ -1324,7 +1326,8 @@ class DirectPtycho:
         engine = aberrations_to_engine(aberrations)
         row = np.array([[engine["C10"], engine["C12"], engine["phi12"], *sample_tilt_mrad,
                          depth_spread_nm * ENGINE_PER_NM]])
-        agreement = float(self._backend().sample_agreement(row, (0.2, 0.9))[0])
+        backend = self._backend()
+        agreement = float(backend.sample_agreement(row, (0.2, 0.9))[0]) / backend.band_power((0.2, 0.9))
         phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
                                   compute_loss=compute_loss)
         elapsed_s = time.perf_counter() - started
@@ -1347,9 +1350,11 @@ class DirectPtycho:
         gives the gain the kept branch's own fit would have reported, at the cost of one comparison instead of two.
         """
         started = time.perf_counter()
-        standard = self._backend().fit_sample(verbose=False, compare_standard=True, standard_only=True,
-                                              **self._tilt_fit_options)
-        standard_fit = float(standard["standard_fit"])
+        backend = self._backend()
+        standard = backend.fit_sample(verbose=False, compare_standard=True, standard_only=True,
+                                      **self._tilt_fit_options)
+        # the same fraction of band power as the joint fit's sample_agreement
+        standard_fit = float(standard["standard_fit"]) / backend.band_power((0.2, 0.9))
         result.tilt_fit_gain = (float(result.sample_agreement) / standard_fit if standard_fit > 0
                                 else float("nan"))
         result.timings["standard_comparison_s"] = time.perf_counter() - started
@@ -1955,7 +1960,9 @@ class DirectPtycho:
         acquisitions 100 trials already converged every seed and 200-400 gave the same tilt to 0.02 mrad
         (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
         The polish climbs with Newton steps on the exact gradient and Hessian of the agreement.
-        ``compare_standard=False`` skips the standard-SSB search that only measures ``tilt_fit_gain`` (left None).
+        ``compare_standard=False`` skips the standard-SSB search that only measures ``tilt_fit_gain`` (left None),
+        for the primary and the fifth-order fits. ``sample_agreement`` is the fraction of the band's power the model
+        explains, in [0, 1], the same quantity for every fit.
         ``trials=0`` with ``tilt=True`` searches nothing and refines from the session's ``aberrations``,
         ``sample_tilt_mrad`` and ``depth_spread_nm``: set them to the previous scan's fit and the next scan of a session
         costs one polish.
@@ -2173,7 +2180,7 @@ class DirectPtycho:
                 seed=(17 if search == "broad" else 42) if seed is None else seed,
                 save_dir=save_dir, force=force, verbose=verbose,
                 primary_options={"check_rotation": check_rotation, "refine_rotation": refine_rotation},
-                compute_loss=False if compute_loss is None else compute_loss,
+                compute_loss=False if compute_loss is None else compute_loss, compare_standard=compare_standard,
                 show=show, size=size, columns=columns, show_convergence=show_convergence,
                 on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
             )
@@ -3237,7 +3244,7 @@ class DirectPtycho:
                 "depth_spread_nm": values["depth_spread_A"] / ENGINE_PER_NM,
             })
         return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
-                         timings=timings, optimizer=dict(fit.get("optimizer", {})), depth_spread_nm=depth_spread_nm, sample_agreement=float(fit["fit"]), tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
+                         timings=timings, optimizer=dict(fit.get("optimizer", {})), depth_spread_nm=depth_spread_nm, sample_agreement=float(fit["fit"]) / backend.band_power(tuple(fit["band_inv_A"])), tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
                          amplitude_estimated=False, phase_estimator="phase_of_mean",
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),

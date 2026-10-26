@@ -67,6 +67,8 @@ class PreparedMpsSSB:
     bf_storage_indices_np: np.ndarray | None = None
     # thick-sample fit band (band limits, band arrays); it depends only on the q grid, so it survives rotation changes
     thick_band: tuple | None = None
+    # G's power over that band (band limits, power), ``thick_sample.band_power``; a BF subset clears it
+    band_power: tuple | None = None
     # One latest reconstruction grid/probe, invalidated with rotated geometry.
     upsampled_geometry: tuple | None = None
     upsampled_probe: tuple | None = None

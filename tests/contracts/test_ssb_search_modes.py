@@ -103,7 +103,7 @@ def _exact_session(monkeypatch, start, refine, *, study=None, **session):
         monkeypatch.setattr(fifth_order_fit.optuna, "create_study", lambda **kwargs: study)
         monkeypatch.setattr(fifth_order_fit, "make_independent_sampler", lambda **kwargs: None)
     return SimpleNamespace(
-        backend="cuda", _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object()),
+        backend="cuda", _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object(), band_power=lambda band: 1.0),
         run=lambda result, **kwargs: result, _accept_result=lambda result: result, **session)
 
 
@@ -130,7 +130,7 @@ def test_broad_records_the_exact_gradient_budget(monkeypatch, tmp_path):
     session = _exact_session(
         monkeypatch, start, refine, study=study, source_kind="hdf5", _result_signature=signature,
         _save_result=lambda result, **kwargs: result,
-        _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None, trial_records=[])))
+        _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None, trial_records=[], tilt_fit_gain=None)))
     monkeypatch.setattr(fifth_order_fit, "result_paths", lambda *args: object())
     monkeypatch.setattr(fifth_order_fit, "load_result", lambda **kwargs: None)
     result = fifth_order_fit.fit_fifth_order(
@@ -185,7 +185,7 @@ def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch):
         np.testing.assert_array_equal(initial, start)
         return _record(initial, "converged")
 
-    primary = SimpleNamespace(rotation_branches="initial branches", trial_records=[{"loss": -1.}])
+    primary = SimpleNamespace(rotation_branches="initial branches", trial_records=[{"loss": -1.}], tilt_fit_gain=None)
     session = _exact_session(monkeypatch, start, refine, _find_aberrations=Mock(return_value=primary))
     monkeypatch.setattr(fifth_order_fit.optuna, "create_study",
                         lambda **kwargs: pytest.fail("Extra TPE search in default route"))

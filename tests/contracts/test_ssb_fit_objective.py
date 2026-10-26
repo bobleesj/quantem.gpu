@@ -24,7 +24,7 @@ class _Recording(_Backend):
 
 def _fit_sample(**settings):
     return {"C10": -101.0, "C12": 4.0, "phi12": 0.25, "tilt_row_mrad": 3.0, "tilt_col_mrad": -4.0,
-            "depth_spread_A": 150.0, "fit": 9.0, "gain": 1.5, "trial_records": []}
+            "depth_spread_A": 150.0, "fit": 9.0, "gain": 1.5, "band_inv_A": [0.2, 0.9], "trial_records": []}
 
 
 def _source(tmp_path):

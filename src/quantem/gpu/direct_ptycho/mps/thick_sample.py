@@ -460,6 +460,26 @@ def _thick_fit_batch_kernel():
     )
 
 
+def band_power(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> float:
+    """G's power over the fit band, sum_q w_q sum_k |G(q, k)|^2 (per-q sums of BF chunks, added in float64).
+
+    It bounds the agreement (Cauchy-Schwarz at each q), so agreement / band power is the fraction of the band's
+    power the model explains, in [0, 1]. Cached on ``prepared``.
+    """
+    key = (float(band_inv_A[0]), float(band_inv_A[1]))
+    if prepared.band_power is not None and prepared.band_power[0] == key:
+        return prepared.band_power[1]
+    mx = prepared.mx
+    flat, _, _, weight = _band(prepared, band_inv_A)
+    g = prepared.g_qk.reshape(prepared.g_qk.shape[0], -1)
+    per_q = np.zeros(len(weight))
+    for start in range(0, g.shape[0], 256):
+        columns = mx.take(g[start:start + 256], flat, axis=1)
+        per_q += np.asarray(mx.sum(mx.real(columns) ** 2 + mx.imag(columns) ** 2, axis=0)).astype(np.float64)
+    prepared.band_power = (key, float(np.dot(weight, per_q)))
+    return prepared.band_power[1]
+
+
 def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
     """Band q on the stored half-plane: flat index into a G plane, (qx, qy) and the mirror weight; cached on ``prepared``.
 

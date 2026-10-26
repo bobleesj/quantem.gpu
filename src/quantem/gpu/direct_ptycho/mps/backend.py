@@ -259,6 +259,14 @@ class MpsSSBBackend:
         # release_cache() when the fit is done, and close() clears it too.
         return result
 
+    def band_power(self, band_inv_A: tuple[float, float]) -> float:
+        """G's power over the band, the agreement's upper bound (``thick_sample.band_power``)."""
+        from quantem.gpu.direct_ptycho.mps.thick_sample import band_power
+
+        if self._prepared is None:
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
+        return band_power(self._prepared, band_inv_A)
+
     def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray:
         """Evaluate the joint objective on the session's existing evidence."""
         from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
@@ -756,6 +764,7 @@ def _subset_prepared(prepared: PreparedMpsSSB, num_bright_field_pixels: int) -> 
         separable_geometry=None,
         row_steps=None,
         fit_probe_geometry=None,
+        band_power=None,
         **fields,
     )
     mx.eval(subset.g_qk, subset.kx, subset.ky, *fields.values())

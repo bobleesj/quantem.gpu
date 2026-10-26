@@ -79,10 +79,12 @@ class SSBResult(Mapping[str, float]):
         Depth over which the tilted columns spread in the thick-sample model (a model parameter, not a measured
         thickness); None for standard SSB.
     sample_agreement : float | None
-        Final thick-sample objective, comparable between starts on the same
-        data, region, band and calibration. Not normalized across regions.
+        The fraction of G's power in the fit band (0.2-0.9 1/A) that the fitted model explains, in [0, 1]: the
+        agreement sum_q |sum_k G conj(gamma)|^2 / sum_k |gamma|^2 over sum_q sum_k |G|^2, its upper bound. The
+        low-order and fifth-order fits report the same quantity; noise and unmodelled structure keep it below 1.
     tilt_fit_gain : float | None
-        Least-squares agreement with the data of the tilt fit relative to standard SSB (> 1: the tilt explains more).
+        The fit's agreement over the best standard-SSB agreement (tilt and depth spread 0) on the same data
+        (> 1: the tilt explains more); None when ``compare_standard=False``.
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees, in [0, 360). The CoM curl fixes it only modulo 180 degrees;
         for an estimated rotation ``find_aberrations`` fits both branches and keeps one (``rotation_branches``).

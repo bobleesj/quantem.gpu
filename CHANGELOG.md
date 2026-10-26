@@ -185,6 +185,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- SSB `sample_agreement` is the fraction of G's power in the fit band that the fitted model explains, from 0 to 1,
+  the same quantity for the standard, joint and fifth-order fits (it was the raw agreement, e.g. 4e17). The band power
+  is `band_power` on the CUDA and MPS backends, summed in float64. The fifth-order fit now reports `tilt_fit_gain` (the
+  primary's gain times its agreement over the primary's) and honors `compare_standard`. Saved results with the raw
+  agreement are fitted again.
 - The Model-Based Direct Ptychography package `quantem.gpu.ssb` is now `quantem.gpu.direct_ptycho`, its WebGPU
   sources included (`direct_ptycho/webgpu/*.ts` in `webgpu/sources.json`). Public names stay: `DirectPtycho`, `SSB`,
   `SSBResult`, kernel and registry names. `quantem.gpu.ssb` remains a deprecated import alias: `quantem.gpu.ssb` and

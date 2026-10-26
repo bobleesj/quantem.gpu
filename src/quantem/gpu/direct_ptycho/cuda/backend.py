@@ -373,7 +373,8 @@ class CudaSSBBackend:
                         "params": {"C10_A": record["params"]["C10"], "C12_A": record["params"]["C12"],
                                    "phi12_deg": math.degrees(record["params"]["phi12"])},
                         "loss": record["loss"]} for record in fit["trial_records"]]
-            nfev, agreement, optimizer = int(fit["nfev"]), float(fit["fit"]), dict(fit["optimizer"])
+            nfev, optimizer = int(fit["nfev"]), dict(fit["optimizer"])
+            agreement = float(fit["fit"]) / accel.thick.band_power(tuple(fit["band_inv_A"]))
         except cp.cuda.memory.OutOfMemoryError:
             raise self._out_of_memory("optimization") from None
         self.aberrations.update(best)
@@ -443,6 +444,10 @@ class CudaSSBBackend:
     def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray:
         """Evaluate the joint objective on the session's existing evidence."""
         return self._get_accelerator().thick.fit_batch(parameters, band_inv_A)
+
+    def band_power(self, band_inv_A: tuple[float, float]) -> float:
+        """G's power over the band, the agreement's upper bound (``ThickSample.band_power``)."""
+        return self._get_accelerator().thick.band_power(band_inv_A)
 
     def close(self) -> None:
         """Release CUDA-owned session state."""

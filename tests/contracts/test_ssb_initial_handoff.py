@@ -80,6 +80,9 @@ def handoff(monkeypatch):
         def _accept_result(self, fit):
             return SSB._accept_result(self, fit)
 
+        def _backend(self):
+            return SimpleNamespace(band_power=lambda band: 20.0)
+
         def _find_aberrations(self, *args, **kwargs):
             events.append("initial")
             clock.now += 2.0

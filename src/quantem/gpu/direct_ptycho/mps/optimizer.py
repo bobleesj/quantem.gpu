@@ -82,6 +82,7 @@ def optimize(
     """
     from quantem.gpu.direct_ptycho._resident_search import fit_standard_resident
     from quantem.gpu.direct_ptycho.mps.resident_fit import evaluate
+    from quantem.gpu.direct_ptycho.mps.thick_sample import band_power
 
     started = time.perf_counter()
     lower, upper = standard_bounds(search_ranges)
@@ -132,7 +133,7 @@ def optimize(
         aberrations=dict(best),
         scan_detector_rotation_deg=float(scan_detector_rotation_deg),
         loss=None if loss is None else float(loss),
-        sample_agreement=float(fit["fit"]),
+        sample_agreement=float(fit["fit"]) / band_power(prepared, band_inv_A),
         elapsed_s=time.perf_counter() - started,
         timings=timings,
         optimizer=dict(fit["optimizer"]),

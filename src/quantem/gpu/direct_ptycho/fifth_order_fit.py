@@ -209,7 +209,7 @@ def fifth_order_bounds(higher_order_limit) -> np.ndarray:
 
 def fit_fifth_order(
     ssb, *, search, trials, seed, save_dir, force, verbose,
-    primary_options, compute_loss=False,
+    primary_options, compute_loss=False, compare_standard=True,
     show=True, on_initial_fit=None, size="medium", columns=3, show_convergence=False,
     higher_order_limit=DEFAULT_HIGHER_ORDER_LIMIT,
 ):
@@ -222,6 +222,9 @@ def fit_fifth_order(
     (standard) rad of phase at the aperture edge. A wide fit is checked on two halves of the band
     (``higher_order_consistency``, with exact gradients); when the halves disagree the +-2 fit is returned, its
     higher orders marked not trusted, and the checked wide fit stays in the record.
+    ``sample_agreement`` is the fraction of the band's power the fit explains, as the low-order fit's.
+    ``compare_standard`` measures the primary fit's ``tilt_fit_gain`` (one standard-SSB search); the fifth-order
+    fit's gain is that gain times its agreement over the primary's.
     """
     higher_order_limit = validate_higher_order_limit(higher_order_limit)
     if not _exact_gradients(ssb):
@@ -254,6 +257,7 @@ def fit_fifth_order(
         "higher_order_limit": higher_order_limit,
         "primary_options": primary_options,
         "compute_loss": bool(compute_loss),
+        **({"compare_standard": False} if not compare_standard else {}),
     }
     if higher_order_limit == DEFAULT_HIGHER_ORDER_LIMIT:
         settings["higher_order_check"] = {"ring_width_inv_A": RING_WIDTH_INV_A,
@@ -282,7 +286,7 @@ def fit_fifth_order(
          "auto" if primary_options["check_rotation"] else "off"),
         num_trials=primary_trials,
         seed=primary_seed,
-        compare_standard=False,
+        compare_standard=compare_standard,
         compute_loss=False,
         verbose=verbose,
         refine_rotation=primary_options["refine_rotation"],
@@ -406,8 +410,11 @@ def fit_fifth_order(
     chosen.sample_tilt_mrad = tilt
     chosen.depth_spread_nm = depth
     chosen.objective = "broad_fifth_agreement"
-    chosen.sample_agreement = float(best_score)
-    chosen.tilt_fit_gain = None
+    band_power = ssb._backend().band_power((0.2, 0.9))
+    chosen.sample_agreement = float(best_score) / band_power
+    # the primary's gain over standard SSB times the fifth-order agreement over the primary's (same objective)
+    chosen.tilt_fit_gain = (None if primary.tilt_fit_gain is None
+                            else float(primary.tilt_fit_gain) * float(best_score / norm))
     chosen.parameter_slices = None
     chosen.rotation_branches = primary.rotation_branches
     chosen.trial_records = primary.trial_records
@@ -429,6 +436,7 @@ def fit_fifth_order(
         "executed_objectives": nfev,
         "normalized_agreement": float(best_score / norm),
         "normalization": norm,
+        "band_power": band_power,
         "fit_band_inv_A": [0.2, 0.9],
         "higher_order_limit": float(bounds[6, 1]),
         "bounds": bounds.tolist(),
@@ -468,6 +476,7 @@ def fit_fifth_order(
     for field in (
         "objective",
         "sample_agreement",
+        "tilt_fit_gain",
         "optimizer",
         "num_trials",
         "refinement",

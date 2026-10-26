@@ -41,6 +41,7 @@ class ThickSample:
         self.engine = engine
         self._band_key = None
         self._band = None
+        self._band_power = None
         self._wave_sum_buffer = None
         self._wave_pairing = None
         self._wave_bounds = None
@@ -455,6 +456,25 @@ class ThickSample:
                           cache["qx_1d"][rows_idx].reshape(1, -1), cache["qy_1d"][cols_idx].reshape(1, -1), weight)
             self._band_key = key
         return self._band
+
+    def band_power(self, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> float:
+        """G's power over the fit band, sum_q w_q sum_k |G(q, k)|^2, summed in float64.
+
+        It bounds the agreement (Cauchy-Schwarz at each q), so agreement / band power is the fraction of the band's
+        power the model explains, in [0, 1]. Cached for the band and the engine's G (a BF subset has its own).
+        """
+        engine = self.engine
+        _, _, flat, _, _, weight = self._prepare_fit_band(band_inv_A)
+        key = (self._band_key, engine.G_qk.data.ptr, engine.G_qk.shape)
+        if self._band_power is None or self._band_power[0] != key:
+            num_bf, _, _ = engine._bf_grid()
+            g = engine.G_qk.reshape(num_bf, -1)
+            per_q = cp.zeros(flat.size, dtype=cp.float64)
+            for start in range(0, num_bf, 256):
+                columns = g[start:start + 256][:, flat]
+                per_q += (columns.real.astype(cp.float64) ** 2 + columns.imag.astype(cp.float64) ** 2).sum(axis=0)
+            self._band_power = (key, float((weight.astype(cp.float64) * per_q).sum()))
+        return self._band_power[1]
 
     def fit_batch(self, params, band_inv_A: tuple[float, float] = (0.2, 0.9), *, independent: bool = False) -> np.ndarray:
         """``fit`` for many parameter sets at once, with the fused batch kernel (fast path used by the fit search).

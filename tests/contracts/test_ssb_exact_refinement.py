@@ -322,7 +322,7 @@ def test_mapped_branch_is_the_exact_180_degree_image():
     agreement = Mock(return_value=np.array([3.5e14]))
     phase = Mock(return_value=(np.zeros((4, 4), np.float32), None))
     session = SimpleNamespace(
-        _backend=lambda: SimpleNamespace(sample_agreement=agreement), _phase=phase,
+        _backend=lambda: SimpleNamespace(sample_agreement=agreement, band_power=lambda band: 5e14), _phase=phase,
         _unit_wave=lambda image: np.exp(1j * image), scan_detector_rotation_deg=165.8,
     )
     mapped = SSB._mapped_branch(session, first, compute_loss=False)
@@ -330,7 +330,7 @@ def test_mapped_branch_is_the_exact_180_degree_image():
     assert mapped.sample_tilt_mrad == (0.07, 3.28)
     assert mapped.depth_spread_nm == 14.4
     assert mapped.scan_detector_rotation_deg == 165.8
-    assert mapped.trial_records == [] and mapped.sample_agreement == 3.5e14
+    assert mapped.trial_records == [] and mapped.sample_agreement == 0.7
     assert mapped.optimizer["mapped_from_rotation_deg"] == 345.8
     row = agreement.call_args.args[0][0]
     np.testing.assert_allclose(row, [-62.5, 15.9, math.radians(5.1), 0.07, 3.28, 144.0])
@@ -356,7 +356,8 @@ def _gradient_session(monkeypatch, backend, start, seen=None):
     monkeypatch.setattr(fifth_order_parameters, "public_params", lambda *args: ({}, (0.0, 0.0), 10.0))
     return SimpleNamespace(
         backend=backend, _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None,
-                                                                              trial_records=[])),
+                                                                              trial_records=[], tilt_fit_gain=None)),
+        _backend=lambda: SimpleNamespace(band_power=lambda band: 1.0),
         run=lambda result, **kwargs: result, _accept_result=lambda result: result,
     )
 
@@ -374,6 +375,25 @@ def test_the_fifth_order_fit_refines_on_exact_gradients(monkeypatch, backend):
     assert fit.optimizer["refinement_cap"] == 400
     assert fit.optimizer["exact_gradients"]["objectives"] >= 1
     assert fit.optimizer["stop"] == "converged"
+
+
+@pytest.mark.parametrize("compare_standard, gain", [(True, 1.5), (False, None)])
+def test_the_fifth_order_agreement_is_its_fraction_of_band_power_and_the_gain_follows_the_primary(
+        monkeypatch, compare_standard, gain):
+    """sample_agreement = agreement / band power; tilt_fit_gain = the primary's gain x agreement / primary's."""
+    start = np.zeros(28)
+    start[5] = 1.0
+    session = _gradient_session(monkeypatch, "cuda", start)
+    session._find_aberrations.return_value.tilt_fit_gain = gain
+    session._backend = lambda: SimpleNamespace(band_power=lambda band: 4.0)
+    fit = fifth_order_fit.fit_fifth_order(
+        session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
+        primary_options={"check_rotation": False, "refine_rotation": False}, show=False, higher_order_limit=2,
+        compare_standard=compare_standard)
+    assert session._find_aberrations.call_args.kwargs["compare_standard"] is compare_standard
+    # the constant objective: agreement 1 at the start and at the fit
+    assert fit.sample_agreement == 0.25 and fit.optimizer["band_power"] == 4.0
+    assert fit.tilt_fit_gain == gain
 
 
 def test_a_backend_without_exact_gradients_has_no_fifth_order_fit():
@@ -527,7 +547,8 @@ def _broad_session(monkeypatch, objective, standard):
     monkeypatch.setattr(fifth_order_parameters, "public_params", lambda *args: ({}, (0.0, 0.0), 10.0))
     return SimpleNamespace(
         backend="cuda", _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None,
-                                                                             trial_records=[])),
+                                                                             trial_records=[], tilt_fit_gain=None)),
+        _backend=lambda: SimpleNamespace(band_power=lambda band: 1.0),
         run=lambda result, **kwargs: result, _accept_result=lambda result: result,
     )
 

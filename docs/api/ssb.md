@@ -82,7 +82,10 @@ edits; use the viewer's calibration export for those.
 
 The report includes recorded elapsed time, stage timings, the objective name,
 model agreement, variance diagnostic loss, search/refinement counts and the
-optimizer's stopping reason. These quantities have distinct meanings; reaching
+optimizer's stopping reason. The model agreement (`sample_agreement`) is the
+fraction of G's power in the fit band (0.2-0.9 1/A) that the fitted model
+explains, from 0 to 1, the same quantity for the low-order and fifth-order fits;
+noise and unmodelled structure keep it below 1. These quantities have distinct meanings; reaching
 an evaluation limit is not proof of convergence. Stage times can overlap and
 must not be summed. Unrecorded diagnostics are omitted, not invented.
 
@@ -1049,7 +1052,8 @@ tilted = ptycho.find_aberrations(search="primary")  # + specimen tilt and depth 
 
 tilted.sample_tilt_mrad   # (row, col) mrad, scan frame
 tilted.depth_spread_nm    # model depth spread, not a measured thickness
-tilted.tilt_fit_gain      # least-squares agreement relative to standard SSB (> 1: tilt explains more)
+tilted.sample_agreement   # fraction of the band's power the model explains, 0 to 1
+tilted.tilt_fit_gain      # agreement over the best standard-SSB search's (> 1: tilt explains more)
 pd.concat([standard.report(), tilted.report()], axis=1)   # one column per fit
 ```
 

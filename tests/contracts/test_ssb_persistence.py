@@ -50,6 +50,10 @@ class _Backend:
 
     num_bright_field_pixels = 17
 
+    def band_power(self, band_inv_A):
+        """G's power over the band: the fits' sample_agreement is their agreement over it."""
+        return 10.0
+
     def cache_rotation(self, angle):
         """Accept the workflow's temporary diagnostic rotation."""
 
@@ -607,7 +611,7 @@ def test_a_retired_refinement_reuses_the_automatic_result(tmp_path, monkeypatch,
         joint_calls.append(settings)
         return {"C10": -101.0, "C12": 4.0, "phi12": 0.25,
                 "tilt_row_mrad": 3.0, "tilt_col_mrad": -4.0,
-                "depth_spread_A": 150.0, "fit": 9.0, "gain": 1.5, "trial_records": []}
+                "depth_spread_A": 150.0, "fit": 9.0, "gain": 1.5, "band_inv_A": [0.2, 0.9], "trial_records": []}
 
     backend.fit_sample = fit_sample
     settings = dict(tilt=tilt, save_dir=saved, check_rotation=False, verbose=False)
@@ -647,7 +651,7 @@ def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_
         calls.append(settings)
         return {**settings["fixed_aberrations"], "tilt_row_mrad": 3.0,
                 "tilt_col_mrad": -4.0, "depth_spread_A": 150.0, "fit": 9.0,
-                "gain": None, "trial_records": []}
+                "gain": None, "band_inv_A": [0.2, 0.9], "trial_records": []}
 
     backend.fit_sample = fit_sample
     optics = {"C10_nm": -10.1, "C12_nm": .4, "phi12_deg": 15.0}
@@ -655,7 +659,7 @@ def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_
                     check_rotation=False, compare_standard=False, verbose=False)
     first = _session(monkeypatch, source, backend).find_aberrations(search="primary", **settings)
     second = _session(monkeypatch, source, backend).find_aberrations(search="primary", **settings)
-    assert first.sample_agreement == second.sample_agreement == 9.0
+    assert first.sample_agreement == second.sample_agreement == 0.9
     assert second.reused and len(calls) == 1
     assert calls[0]["polish"] == "newton"
     assert calls[0]["fixed_aberrations"]["C10"] == -101.0
