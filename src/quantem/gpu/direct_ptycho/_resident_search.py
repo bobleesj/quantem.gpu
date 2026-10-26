@@ -10,9 +10,7 @@ Objective: ``fit_resident`` (tilt=True) maximizes the least-squares
 agreement of the thick-sample SSB model with G(q, k) on CUDA and MPS.
 ``fit_standard_resident`` (tilt=False) is the same search and objective with
 the sample tilt and depth spread held at 0, on CUDA and MPS
-(``cuda/optimizer.py``, ``mps/optimizer.py``). The phase-variance search
-(``objective="phase_variance"``) is ``mps/optimizer.optimize_phase_variance``
-on MPS and ``phase_variance_fit.py`` on CUDA.
+(``cuda/optimizer.py``, ``mps/optimizer.py``).
 """
 
 import math
@@ -551,7 +549,7 @@ def fit_resident(
     best = dict(zip(PARAMETERS, np.asarray(host_point, dtype=float).tolist(), strict=True))
     if not math.isfinite(fit) or fit <= 0:
         raise ValueError(
-            "Joint tilt fitting found no positive finite agreement. Check scan sampling and signal in the fitting band, or use tilt=False, objective='phase_variance'."
+            "Joint tilt fitting found no positive finite agreement. Check scan sampling and signal in the fitting band."
         )
     record_points = device.host(points)
     record_scores = device.host(scores)

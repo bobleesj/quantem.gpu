@@ -482,7 +482,7 @@ def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
         raise ValueError(
             f"The model-agreement fit needs spatial frequencies in {key[0]:g}–{key[1]:g} 1/A, "
             f"but this scan reaches only {float(q.max()):.3g} 1/A. "
-            "Use the phase-variance search (tilt=False, objective='phase_variance'), or acquire a finer scan. "
+            "Acquire a finer scan. "
             "Reconstruction upsampling does not add measured frequencies."
         )
     if half:

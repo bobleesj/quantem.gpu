@@ -10,7 +10,7 @@ import numpy as np
 
 from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import wavelength_A_from_kV
-from quantem.gpu.direct_ptycho.contract import FitObjective, SSBExportState, SSBPrecision
+from quantem.gpu.direct_ptycho.contract import SSBExportState, SSBPrecision
 from quantem.gpu.direct_ptycho.mps.frames import (
     MpsBfColumnFrames,
     MpsTensorFrames,
@@ -23,7 +23,7 @@ from quantem.gpu.direct_ptycho.mps.hardware import (
     effective_phase_loss_chunk_bf,
     require_mlx,
 )
-from quantem.gpu.direct_ptycho.mps.optimizer import fit_sample, optimize_phase_variance
+from quantem.gpu.direct_ptycho.mps.optimizer import fit_sample
 from quantem.gpu.direct_ptycho.mps.optimizer import optimize as optimize_mps
 from quantem.gpu.direct_ptycho.mps.padding import pad_scan
 from quantem.gpu.direct_ptycho.mps.prepared import (
@@ -143,19 +143,14 @@ class MpsSSBBackend:
         refine_lock: list[str] | None,
         seed: int,
         verbose: bool,
-        objective: FitObjective,
         compute_loss: bool = True,
     ):
-        """Run the standard fit (tilt=False) on MPS/Metal, on this session's prepared evidence.
-
-        ``objective="agreement"`` is the resident model-agreement search (``optimizer.optimize``),
-        ``"phase_variance"`` the older phase-variance search (``optimizer.optimize_phase_variance``).
-        """
+        """Run the standard fit (tilt=False) on MPS/Metal, on this session's prepared evidence: the resident
+        model-agreement search (``optimizer.optimize``)."""
 
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
-        search = {"agreement": optimize_mps, "phase_variance": optimize_phase_variance}[objective]
-        result, phase = search(
+        result, phase = optimize_mps(
             self._prepared,
             self._selection,
             voltage_kV=self._voltage_kV,
@@ -169,9 +164,9 @@ class MpsSSBBackend:
             scan_detector_rotation_deg=self._scan_detector_rotation_deg,
             seed=int(seed),
             verbose=verbose,
-            **({"compute_loss": compute_loss} if objective == "agreement" else {}),
+            compute_loss=compute_loss,
         )
-        if not compute_loss and objective == "agreement":
+        if not compute_loss:
             result.loss = None
         # The fit's final phase-variance pass answers the first loss at the fitted aberrations without a second one.
         self._fit_preview_phase = phase

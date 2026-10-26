@@ -28,7 +28,7 @@ def label_trials(result: SSBResult, *, search: int) -> None:
         rotation = wrap_degrees(record["params"].pop("scan_detector_rotation_deg", result.scan_detector_rotation_deg), 360.0)
         record.update(trial=index, search=search, scan_detector_rotation_deg=rotation)
         record.setdefault("stage", "search")
-        record.setdefault("objective", "phase_variance")
+        record.setdefault("objective", "negative_thick_agreement")
         record.setdefault("sample_tilt_mrad", [0.0, 0.0])
         record.setdefault("depth_spread_nm", 0.0)
 
@@ -114,7 +114,7 @@ def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (4.5, 4
     table.auto_set_font_size(False)
     table.set_fontsize(10 if columns == 2 else 8)
     table.scale(1, 1.8)
-    names = {"phase_variance": "native phase variance", "negative_thick_agreement": "negative thick-sample agreement"}
+    names = {"negative_thick_agreement": "negative thick-sample agreement"}
     objectives = ", ".join(sorted({names.get(record["objective"], record["objective"]) for record in records}))
     sampling = f"{result.upsampling_factor}×" if sampling is None else sampling
     figure.suptitle(f"{selection} {count} search trials · {sampling} · phase (rad)", fontsize=18, y=1 - .08 / height)

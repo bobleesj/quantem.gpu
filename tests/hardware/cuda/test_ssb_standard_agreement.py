@@ -1,5 +1,4 @@
-"""The CUDA standard fit (tilt=False): the joint fit's agreement objective and search with depth spread 0, and the
-phase-variance objective kept as ``objective="phase_variance"``.
+"""The CUDA standard fit (tilt=False): the joint fit's agreement objective and search with depth spread 0.
 
 The synthetic crystal (128 x 128 scan, 300 kV, 30 mrad, a periodic phase object, the CUDA twin of
 ``test_ssb_mps_rotation._astigmatic_crystal``) has known aberrations, so the fits are checked against the truth, not
@@ -78,23 +77,6 @@ def test_standard_fit_recovers_known_aberrations(C10_nm, C12_nm):
     assert len(fit.trial_records) == 200
 
 
-def test_phase_variance_objective_is_the_older_standard_fit():
-    """The phase-variance standard fit minimizes the phase variance with TPE then Nelder-Mead, and needs tilt=False."""
-    from quantem.gpu import SSB
-
-    frames, detector_sampling_mrad = _astigmatic_crystal()  # truth C10 -8 nm, C12 2.5 nm, phi12 20 degrees
-    with SSB(frames, **_settings(detector_sampling_mrad)) as session:
-        fit = session.find_aberrations(search="primary", tilt=False, objective="phase_variance", check_rotation=False, verbose=False)
-        _, loss = session.preview(fit.aberrations)
-        assert fit.refinement == "nelder-mead" and fit.sample_agreement is None
-        assert fit.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.15)
-        assert _astigmatism_error_nm(fit.aberrations, 2.5, 20.0) < 0.1
-        assert fit.loss == pytest.approx(loss, rel=1e-6)
-        assert len(fit.trials) == 200 and set(fit.trials.objective) == {"phase_variance"}
-        with pytest.raises(ValueError, match="tilt=False"):
-            session.find_aberrations(search="primary", objective="phase_variance", verbose=False)
-
-
 def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
     """fixed_aberrations holds C12 at 0 in every trial and through the refinement; C10 is still fitted."""
     from quantem.gpu import SSB
@@ -109,10 +91,6 @@ def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
         held = session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0}, num_trials=40,
                                         check_rotation=False, verbose=False)
         assert held.aberrations["C10_nm"] == -7.0
-        variance = session.find_aberrations(search="primary", tilt=False, objective="phase_variance", fixed_aberrations={"C12_nm": 0.0},
-                                            num_trials=40, check_rotation=False, verbose=False)
-        assert variance.aberrations["C12_nm"] == 0.0
-        assert variance.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.15)
         with pytest.raises(ValueError, match="nothing to fit"):
             session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0, "C12_nm": 0.0, "phi12_deg": 0.0},
                                      check_rotation=False, verbose=False)

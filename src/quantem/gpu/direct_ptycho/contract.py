@@ -10,9 +10,27 @@ import numpy as np
 from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
 from quantem.gpu.direct_ptycho.results import SSBResult
 
-# The local refinement a fit applied: the trust-region Newton on the exact derivatives ("newton"), or Nelder-Mead for
-# the phase variance and a standard fit that locks a coefficient, bounds phi12 or holds a nonzero C12.
+# The local refinement a fit applied: the trust-region Newton on the exact derivatives ("newton"), or Nelder-Mead for a
+# standard fit that locks a coefficient, bounds phi12 or holds a nonzero C12.
 RefineMethod = Literal["nelder-mead", "newton"] | None
+
+
+def agreement_objective(objective) -> str:
+    """``"agreement"``, what every fit maximizes: the least-squares agreement of the SSB model with the data.
+
+    ``objective`` is retired: ``"agreement"`` prints one line; ``"phase_variance"`` (the earlier search) raises, since
+    a silent agreement fit would land elsewhere.
+    """
+    if objective is None:
+        return "agreement"
+    if objective == "agreement":
+        print("objective is retired; every fit maximizes the model agreement.")
+        return "agreement"
+    if objective == "phase_variance":
+        raise ValueError("objective='phase_variance' is retired: every fit maximizes the agreement of the SSB model with "
+                         "the data, which lands elsewhere. Drop objective=; the phase variance at the fit is still "
+                         "result.loss.")
+    raise ValueError(f"objective is retired: every fit maximizes the model agreement; got {objective!r}.")
 
 
 def auto_refinement(refinement) -> str | None:
@@ -22,9 +40,6 @@ def auto_refinement(refinement) -> str | None:
         return refinement
     print(f"refinement={refinement!r} is retired; using refinement='auto', the exact-derivative fit.")
     return "auto"
-# What find_aberrations maximizes or minimizes: the least-squares agreement of the SSB model with the data (the
-# default, with or without tilt) or the phase variance over bright-field pixels (the older SSB search, tilt=False only).
-FitObjective = Literal["agreement", "phase_variance"]
 
 
 @dataclass(frozen=True)
@@ -102,7 +117,6 @@ class SSBProtocol(Protocol):
         refine_lock: list[str] | None,
         seed: int,
         verbose: bool,
-        objective: FitObjective,
         compute_loss: bool = True,
     ) -> SSBResult: ...
 
@@ -146,7 +160,6 @@ class SSBProtocol(Protocol):
 
 
 __all__ = [
-    "FitObjective",
     "SSBPrecision",
     "SSBProtocol",
 ]

@@ -409,32 +409,6 @@
           "gates": ["tests/infrastructure/test_webgpu_sources.py", "tests/contracts/test_ssb_backend_contract.py", "docs/maintainer/ssb-performance.md"]
         }
       }
-    },
-    {
-      "id": "ssb.calibration-200-nelder-mead",
-      "parity": "Same full active BF selection, seed, 200 exact TPE candidates, candidate history, Nelder-Mead refinement, fitted aberrations, loss, precision, and final independent reconstruction.",
-      "coverage": {
-        "cpu-reference": {
-          "level": "reference-fixture",
-          "gates": ["tests/parity/fixtures/ssb_reference_512_mps.json", "tests/infrastructure/test_ssb_structure.py"]
-        },
-        "cuda": {
-          "level": "required",
-          "gates": ["tests/contracts/test_ssb_phase_variance_fit.py", "tests/hardware/cuda/test_ssb_cuda_128.py", "tests/infrastructure/test_ssb_structure.py"]
-        },
-        "mps": {
-          "level": "required",
-          "gates": ["tests/hardware/mps/test_ssb_mps_cuda_reference.py", "tests/infrastructure/test_ssb_structure.py"]
-        },
-        "swift-metal": {
-          "level": "not-implemented",
-          "gates": ["native/swift/Tests/MetalSSBKernelsTests/SSBFifthOrderSearchTests.swift", "docs/maintainer/native-joint-ssb.md"]
-        },
-        "webgpu": {
-          "level": "not-implemented",
-          "gates": ["tests/infrastructure/test_webgpu_sources.py", "docs/api/ssb.md"]
-        }
-      }
     }
   ]
 }

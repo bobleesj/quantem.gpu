@@ -32,7 +32,7 @@ from quantem.gpu.direct_ptycho import series
 from quantem.gpu.direct_ptycho._execution import cancellation_scope
 from quantem.gpu.direct_ptycho.branches import DARK_FIELD_INNER_RADIUS, RotationBranches, compare_branches
 from quantem.gpu.direct_ptycho.brightfield import bright_field_crop_region, crop_bright_field
-from quantem.gpu.direct_ptycho.contract import FitObjective, RefineMethod, SSBProtocol, auto_refinement
+from quantem.gpu.direct_ptycho.contract import RefineMethod, SSBProtocol, agreement_objective, auto_refinement
 from quantem.gpu.direct_ptycho.higher_order_fit import (
     assess,
     from_coordinates,
@@ -374,9 +374,8 @@ class DirectPtycho:
     a slightly different probe tilt, and once the probe aberrations are corrected for every pixel their phase images
     agree. ``find_aberrations`` fits C10_nm, C12_nm and phi12_deg (with the sample tilt and a depth spread by default) by
     maximising the least-squares agreement of that model with the data; ``tilt=False`` holds the tilt and depth spread
-    at 0, and ``tilt=False, objective="phase_variance"`` is the older search that minimizes the phase variance over
-    bright-field pixels instead. ``reconstruct`` and ``preview`` apply known aberrations and report that phase
-    variance as the diagnostic ``loss``. The full
+    at 0. ``reconstruct`` and ``preview`` apply known aberrations and report the phase variance over bright-field
+    pixels as the diagnostic ``loss``. The full
     automatically detected bright-field disk, float32 real and complex64 object storage are fixed.
 
     C10/C12 reconstruction averages corrected complex waves before taking the
@@ -1793,7 +1792,7 @@ class DirectPtycho:
         *,
         search: Literal["standard", "broad", "primary"] = "standard",
         tilt: bool = True,
-        objective: FitObjective = "agreement",
+        objective: str | None = None,
         scan_region: tuple[int, int, int, int] | None = None,
         trials: int | Sequence[int] | None = None,
         refinement: Literal["auto"] | None = "auto",
@@ -1903,7 +1902,7 @@ class DirectPtycho:
 
         ``search="primary"`` keeps the earlier low-order fit (200 trials,
         seed 42) on CUDA and MPS. Use it for custom bounds, fixed coefficients,
-        ``higher_order`` subsets or the phase-variance cross-check below.
+        or ``higher_order`` subsets.
         These advanced controls are not silently applied to the fifth-order
         model. In earlier versions this initial-only route was ``standard``.
         The model interpretation and rotation choice still need validation.
@@ -1913,7 +1912,7 @@ class DirectPtycho:
         SSB in quantem is model-based by default. For each trial set of aberrations, sample tilt and depth spread the
         fit predicts the bright-field data G(q, k) the detector should have recorded and keeps the parameters whose
         prediction agrees best with the measurement (least squares). This model-based, tilt-corrected fit is the
-        default everywhere and the one to use; ``tilt`` and ``objective`` select one of three methods:
+        default everywhere and the one to use; ``tilt`` selects one of two methods:
 
         ============================================================  =====================  ==============================
         Call                                                          Method                 Use it for
@@ -1922,24 +1921,19 @@ class DirectPtycho:
                                                                       tilt-corrected
         ``find_aberrations(search='primary', tilt=False)``                              model-based, tilt and  thin, untilted samples, or to
                                                                       depth spread at 0      see what tilt correction changes
-        ``find_aberrations(search='primary', tilt=False, objective="phase_variance")``  phase variance, the    a backup: reproducing older
-                                                                      earlier SSB search     results, cross-checking a fit
         ============================================================  =====================  ==============================
 
-        ``objective`` is ``"agreement"`` (default, the model) or ``"phase_variance"``, which is kept for reproducing
-        older results and cross-checks: a backup, not an equal alternative. It chooses the aberrations under which the
-        bright-field pixels' corrected phase images agree best (the least phase variance across them), so it scores
-        images rather than predicting the data, cannot see the sample tilt or depth spread (with ``tilt=True`` it
-        raises) and is about 10x slower; on simulated crystals with known aberrations the model-based fit lands about
-        3x closer to the true C10 (docs/performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md).
+        ``objective`` is retired: every fit maximizes the model agreement. ``objective="agreement"`` prints one line;
+        ``objective="phase_variance"`` (the earlier search that minimized the phase variance over bright-field pixels)
+        raises, since the agreement fit lands elsewhere (about 3x closer to the true C10 on simulated crystals,
+        docs/performance/ssb/reports/2026-10-20-ssb-standard-fit-objective.md). The phase variance at the fit remains
+        the reported ``result.loss``.
 
         Each method runs one search of ``trials`` candidates (default 200) per rotation branch, plus local refinement.
-        The agreement fits polish with the trust-region Newton on the exact gradient and Hessian of the agreement; the
-        phase variance (no exact derivatives) and an agreement fit that locks a coefficient, bounds phi12 or holds a
-        nonzero C12 (not a box for the Newton) polish with Nelder-Mead; ``refinement=None`` keeps the best trial.
-        ``result.refinement`` records which.
-        ``result.objective`` records the objective; ``result.loss`` is the phase variance at the fit
-        whatever the objective, unless ``compute_loss=False`` skips that diagnostic. CUDA and MPS run all three.
+        The fits polish with the trust-region Newton on the exact gradient and Hessian of the agreement; a standard fit
+        that locks a coefficient, bounds phi12 or holds a nonzero C12 (not a box for the Newton) polishes with
+        Nelder-Mead; ``refinement=None`` keeps the best trial. ``result.refinement`` records which. ``result.loss`` is
+        the phase variance at the fit, unless ``compute_loss=False`` skips that diagnostic. CUDA and MPS run both.
 
         For broad search, pass ``trials=(200, 400, 600)`` to compare independent budgets. This
         returns a dictionary keyed by trial count. Each fit starts from the
@@ -2000,7 +1994,7 @@ class DirectPtycho:
         located on the scan's dark field, have positive phase; when no columns are resolved, the branch with the
         larger phase tail (``compare_rotation_branches`` explains both tests). The fit then costs two searches: two
         joint fits took 9 to 25 s in all on 512 x 512 scans on an M-series Mac, two MPS standard fits (``tilt=False``)
-        3 to 10 s, two phase-variance fits about 90 s. ``result.rotation_branches`` records both fits and the
+        3 to 10 s. ``result.rotation_branches`` records both fits and the
         evidence, ``result.show("rotation")`` draws it, and one line (with ``verbose``) says which branch was kept.
         A rotation given to ``DirectPtycho(...)`` or recorded with the acquisition is the user's calibration: it is fitted
         once and never moved. ``ssb.compare_rotation_branches()`` still fits both branches of it and reports.
@@ -2072,6 +2066,7 @@ class DirectPtycho:
 
         panel_inches(size)  # Validate display options before expensive preparation.
         refinement = auto_refinement(refinement)
+        objective = agreement_objective(objective)
         resolve_columns(3, columns=columns)
         if show_convergence and search == "primary":
             raise ValueError("Live convergence requires search='standard' or 'broad'. "
@@ -2105,7 +2100,7 @@ class DirectPtycho:
                 with self.select_region(region) as independent:
                     fits[int(budget)] = independent.find_aberrations(
                         search=search, trials=int(budget), seed=seed, refinement=refinement,
-                        tilt=tilt, objective=objective, scan_region=scan_region,
+                        tilt=tilt, scan_region=scan_region,
                         search_ranges=search_ranges, refine_lock=refine_lock,
                         tilt_limit_mrad=tilt_limit_mrad, check_rotation=check_rotation,
                         save_dir=None if save_dir is None else Path(save_dir) / f"trials-{budget}",
@@ -2143,7 +2138,7 @@ class DirectPtycho:
 
                 with self.select_region(scan_region) as regional:
                     result = regional.find_aberrations(
-                        search=search, tilt=tilt, objective=objective,
+                        search=search, tilt=tilt,
                         trials=trials, num_trials=num_trials, refinement=refinement,
                         search_ranges=search_ranges, refine_lock=refine_lock,
                         tilt_limit_mrad=tilt_limit_mrad, check_rotation=check_rotation,
@@ -2286,8 +2281,7 @@ class DirectPtycho:
         """Fit both 180-degree branches of the rotation independently and say which one the phase supports.
 
         Each branch is one ``find_aberrations(**find_aberrations_options)`` fit. The default, and the fit to decide the
-        branch on, is the model-based, tilt-corrected fit; ``tilt`` and ``objective`` pass through, and the phase
-        variance is a backup:
+        branch on, is the model-based, tilt-corrected fit; ``tilt`` passes through:
 
         ============================================================  =====================  ==============================
         Call                                                          Method                 Use it for
@@ -2296,8 +2290,6 @@ class DirectPtycho:
                                                                       tilt-corrected
         ``find_aberrations(search='primary', tilt=False)``                              model-based, tilt and  thin, untilted samples, or to
                                                                       depth spread at 0      see what tilt correction changes
-        ``find_aberrations(search='primary', tilt=False, objective="phase_variance")``  phase variance, the    a backup: reproducing older
-                                                                      earlier SSB search     results, cross-checking a fit
         ============================================================  =====================  ==============================
 
         The centre-of-mass curl knows the scan-detector rotation only modulo 180 degrees. This runs
@@ -2318,7 +2310,7 @@ class DirectPtycho:
         and depth spread makes the column contrast clearer, while both branches still fit equally well.
 
         Both fits cost a full search each: two joint fits (the default) took 9 to 25 s in all on 512 x 512 scans on
-        an M-series Mac, two MPS standard fits (``tilt=False``) 3 to 10 s, two phase-variance fits about 90 s.
+        an M-series Mac, two MPS standard fits (``tilt=False``) 3 to 10 s.
 
         Parameters
         ----------
@@ -2354,6 +2346,8 @@ class DirectPtycho:
             apply = self.scan_detector_rotation_source == "estimated"
         if "refinement" in find_aberrations_options:
             find_aberrations_options["refinement"] = auto_refinement(find_aberrations_options["refinement"])
+        if "objective" in find_aberrations_options:
+            find_aberrations_options["objective"] = agreement_objective(find_aberrations_options["objective"])
         find_aberrations_options["num_trials"] = resolve_trial_count(
             find_aberrations_options.pop("trials", None), find_aberrations_options.pop("num_trials", None),
         )
@@ -2364,7 +2358,7 @@ class DirectPtycho:
         branches: Literal["auto", "off", "apply", "keep"],
         *,
         tilt: bool = True,
-        objective: FitObjective = "agreement",
+        objective: Literal["agreement"] = "agreement",
         scan_region: tuple[int, int, int, int] | None = None,
         num_trials: int = 200,
         refinement: Literal["auto"] | None = "auto",
@@ -2387,14 +2381,8 @@ class DirectPtycho:
         selected one, and fits once otherwise; ``"off"`` fits once; ``"apply"`` compares and applies; ``"keep"``
         compares and keeps the session's rotation.
         """
-        if objective not in ("agreement", "phase_variance"):
-            raise ValueError(f"objective is 'agreement' (the default, the least-squares agreement of the SSB model with "
-                             f"the data) or 'phase_variance' (the older SSB search, tilt=False only); got {objective!r}.")
-        if tilt and objective == "phase_variance":
-            raise ValueError(
-                "objective='phase_variance' cannot fit the sample tilt: the phase variance over bright-field pixels "
-                "does not see it. Use find_aberrations(search='primary', tilt=False, objective='phase_variance') for the older SSB "
-                "search, or the default find_aberrations() for the tilt-corrected model agreement.")
+        if objective != "agreement":
+            raise ValueError(f"Every fit maximizes the model agreement (objective='agreement'); got {objective!r}.")
         if tilt and refine_lock is not None:
             raise ValueError(
                 "refine_lock applies to the standard fit (tilt=False). In the joint fit (tilt=True, the default) hold "
@@ -2404,9 +2392,6 @@ class DirectPtycho:
             raise ValueError(f"trials must be non-negative, got {num_trials}.")
         higher_order = validate_terms(higher_order)
         if higher_order:
-            if objective != "agreement":
-                raise ValueError("higher_order fits coma, trefoil and C30 with the model agreement; it does not combine "
-                                 "with objective='phase_variance'.")
             if fixed_aberrations is not None or refine_lock is not None:
                 raise ValueError("higher_order refines C10, C12 and phi12 together with the higher orders; it does not "
                                  "combine with fixed_aberrations or refine_lock.")
@@ -2420,10 +2405,9 @@ class DirectPtycho:
         if not tilt:
             search_ranges, refine_lock = _standard_constraints(search_ranges, refine_lock, fixed_aberrations)
             fixed_aberrations = None
-        # The trust-region Newton on the exact derivatives polishes the agreement; the phase variance (no exact
-        # derivatives) and a standard agreement fit that locks a coefficient, bounds phi12 or holds a nonzero C12 (not
-        # a box in the Newton coordinates) use Nelder-Mead
-        newton_standard = (not tilt and objective == "agreement"
+        # The trust-region Newton on the exact derivatives polishes the agreement; a standard fit that locks a
+        # coefficient, bounds phi12 or holds a nonzero C12 (not a box in the Newton coordinates) uses Nelder-Mead
+        newton_standard = (not tilt
                            and newton_supported(search_ranges_to_engine(search_ranges), refine_lock))
         if refinement not in ("auto", None):
             raise ValueError("refinement is 'auto' (the default) or None for no local refinement.")
@@ -2581,7 +2565,7 @@ class DirectPtycho:
         # leaves unchanged (C10 range symmetric), the second branch's fit is the image of the first, not a second search.
         c10_range = tilt_bounds.get("c10_range")
         mapped = (partial(self._mapped_branch, compute_loss=compute_loss)
-                  if MAP_OPPOSITE_BRANCH and tilt and objective == "agreement" and refinement == "newton"
+                  if MAP_OPPOSITE_BRANCH and tilt and refinement == "newton"
                   and fixed_aberrations is None and int(num_trials) > 0
                   and (c10_range is None or c10_range[0] == -c10_range[1]) else None)
 
@@ -2597,7 +2581,7 @@ class DirectPtycho:
                 aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
                 trials=trials, refinement=refinement,
                 search_ranges=search_ranges_to_engine(search_ranges), refine_lock=refine_lock_to_engine(refine_lock),
-                seed=int(seed), verbose=verbose, objective=objective, compute_loss=compute_loss,
+                seed=int(seed), verbose=verbose, compute_loss=compute_loss,
             ))
             result.objective = objective
             if result.aberrations["C12_nm"] == 0.0:
@@ -2767,14 +2751,12 @@ class DirectPtycho:
                                                                       tilt-corrected
         ``find_aberrations(search='primary', tilt=False)``                              model-based, tilt and  thin, untilted samples, or to
                                                                       depth spread at 0      see what tilt correction changes
-        ``find_aberrations(search='primary', tilt=False, objective="phase_variance")``  phase variance, the    a backup: reproducing older
-                                                                      earlier SSB search     results, cross-checking a fit
         ============================================================  =====================  ==============================
 
         Later calls reuse that fit. On an estimated rotation that fit compares both 180-degree branches with two
         independent joint fits (9 to 25 s in all for a 512 x 512 scan on an M-series Mac) and prints one line naming the
         branch kept; a given or recorded rotation is fitted once and kept. To choose another method or constrain the fit
-        (``tilt``, ``objective``, search ranges, fixed terms, seed), call ``find_aberrations(...)`` or
+        (``tilt``, search ranges, fixed terms, seed), call ``find_aberrations(...)`` or
         ``compare_rotation_branches(...)`` yourself first.
         Given ``parameters`` or ``aberrations`` are used as they are.
 

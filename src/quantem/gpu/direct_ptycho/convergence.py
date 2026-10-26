@@ -60,8 +60,8 @@ def plot_convergence(result, *, axsize, rows=None, columns=None, compare=None, x
             elif result.refinement:
                 ax.text(0, -0.28, "Refinement trajectory was not recorded.",
                         transform=ax.transAxes, fontsize="small")
-            label = {"negative_thick_agreement": "Model agreement", "agreement": "Model agreement",
-                     "phase_variance": "Phase variance"}.get(objective, objective)
+            label = {"negative_thick_agreement": "Model agreement", "agreement": "Model agreement"}.get(
+                objective, objective)
             ax.set(title=f"Search {search} · {label}", ylabel="Recorded loss (lower is better)")
             ax.set_xlabel("Recorded objective evaluations")
         ax.grid(alpha=0.2)

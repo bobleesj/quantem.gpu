@@ -9,10 +9,10 @@ import numpy as np
 from quantem.gpu.detector.cuda.probe import mean_dp
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.detector import disk_edge_radius
-from quantem.gpu.direct_ptycho.contract import FitObjective, SSBExportState, SSBPrecision
+from quantem.gpu.direct_ptycho.contract import SSBExportState, SSBPrecision
 from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra, select_bright_field
 from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
-from quantem.gpu.direct_ptycho.cuda.optimizer import fit_sample, fit_standard, fit_standard_phase_variance
+from quantem.gpu.direct_ptycho.cuda.optimizer import fit_sample, fit_standard
 from quantem.gpu.direct_ptycho.results import SSBResult
 
 
@@ -346,18 +346,15 @@ class CudaSSBBackend:
         refine_lock: list[str] | None,
         seed: int,
         verbose: bool,
-        objective: FitObjective,
         compute_loss: bool = True,
     ) -> SSBResult:
         """Standard fit (tilt=False) of C10, C12 and phi12, then the complex object and the phase-variance loss there.
 
-        ``objective="agreement"`` maximizes the least-squares agreement of the SSB model with G(q, k) at sample tilt
-        and depth spread 0 (``optimizer.fit_standard``, the resident search shared with MPS; ``refinement`` "newton",
-        the trust-region Newton on the exact derivatives, or "nelder-mead" for a locked or bounded fit);
-        ``"phase_variance"`` minimizes the phase variance (``optimizer.fit_standard_phase_variance``, the search of
-        MPS's ``optimize_phase_variance``; ``refinement`` "nelder-mead"). ``search_ranges`` (engine keys) bounds the
-        search, a value holding that coefficient in every trial; ``refine_lock`` holds coefficients through
-        Nelder-Mead; ``aberrations`` (engine units) is a refinement start.
+        Maximizes the least-squares agreement of the SSB model with G(q, k) at sample tilt and depth spread 0
+        (``optimizer.fit_standard``, the resident search shared with MPS; ``refinement`` "newton", the trust-region
+        Newton on the exact derivatives, or "nelder-mead" for a locked or bounded fit). ``search_ranges`` (engine
+        keys) bounds the search, a value holding that coefficient in every trial; ``refine_lock`` holds coefficients
+        through Nelder-Mead; ``aberrations`` (engine units) is a refinement start.
         """
         if aberrations is not None:
             self.aberrations = dict(aberrations)
@@ -367,28 +364,16 @@ class CudaSSBBackend:
         accel = self._get_accelerator()
         started = time.perf_counter()
         try:
-            if objective == "agreement":
-                fit = fit_standard(accel, aberrations=aberrations, search_ranges=search_ranges, num_trials=int(trials),
-                                   refine=refinement, refine_lock=refine_lock, seed=int(seed))
-                best = {name: fit[name] for name in ("C10", "C12", "phi12")}
-                search_s, refine_s = fit["timings"]["coarse_search_s"], fit["timings"]["refinement_s"]
-                records = [{"stage": "search", "number": record["number"], "objective": "negative_thick_agreement",
-                            "band_inv_A": fit["band_inv_A"],
-                            "params": {"C10_A": record["params"]["C10"], "C12_A": record["params"]["C12"],
-                                       "phi12_deg": math.degrees(record["params"]["phi12"])},
-                            "loss": record["loss"]} for record in fit["trial_records"]]
-                nfev, agreement, optimizer = int(fit["nfev"]), float(fit["fit"]), dict(fit["optimizer"])
-            elif objective == "phase_variance":
-                fit = fit_standard_phase_variance(accel, aberrations=aberrations, search_ranges=search_ranges,
-                                                  num_trials=int(trials), refine=refinement, refine_lock=refine_lock,
-                                                  seed=int(seed), verbose=verbose)
-                best = fit["aberrations"]
-                search_s, refine_s = fit["timings"]["search_seconds"], fit["timings"]["refinement_seconds"]
-                records, nfev, agreement = fit["trial_records"], int(fit["refine_nfev"]), None
-                optimizer = {"search": "optuna TPE", "refinement": refinement, "device": "cuda",
-                             "objective": "phase variance"}
-            else:
-                raise ValueError(f"objective must be 'agreement' or 'phase_variance', got {objective!r}.")
+            fit = fit_standard(accel, aberrations=aberrations, search_ranges=search_ranges, num_trials=int(trials),
+                               refine=refinement, refine_lock=refine_lock, seed=int(seed))
+            best = {name: fit[name] for name in ("C10", "C12", "phi12")}
+            search_s, refine_s = fit["timings"]["coarse_search_s"], fit["timings"]["refinement_s"]
+            records = [{"stage": "search", "number": record["number"], "objective": "negative_thick_agreement",
+                        "band_inv_A": fit["band_inv_A"],
+                        "params": {"C10_A": record["params"]["C10"], "C12_A": record["params"]["C12"],
+                                   "phi12_deg": math.degrees(record["params"]["phi12"])},
+                        "loss": record["loss"]} for record in fit["trial_records"]]
+            nfev, agreement, optimizer = int(fit["nfev"]), float(fit["fit"]), dict(fit["optimizer"])
         except cp.cuda.memory.OutOfMemoryError:
             raise self._out_of_memory("optimization") from None
         self.aberrations.update(best)
@@ -400,13 +385,13 @@ class CudaSSBBackend:
         self._refine_nfev = nfev if refinement else None
         self._elapsed_optimize = search_s
         self._elapsed_refine = refine_s
-        result = self.result(compute_loss=compute_loss or objective == "phase_variance")
+        result = self.result(compute_loss=compute_loss)
         result.sample_agreement = agreement
         result.optimizer = optimizer
         result.timings = {"search_seconds": search_s, "refinement_seconds": refine_s}
         self._best_loss = result.loss
         if verbose:
-            self._print_summary(f"Fit ({objective.replace('_', ' ')}, {refinement or 'no refinement'})",
+            self._print_summary(f"Fit (agreement, {refinement or 'no refinement'})",
                                 time.perf_counter() - started)
         return result
 

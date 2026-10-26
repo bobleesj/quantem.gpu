@@ -76,6 +76,16 @@ new `rcN` heading when that rc is published to TestPyPI.
   `SSBFifthOrderGradientSearch.Result` (same fields). Fits are unchanged: production already polished on exact
   derivatives. Tests now pin the 200 search trials to Python's and check the Newton against the analytic maximum
   of the synthetic objective, and the fifth-order search against a maximum of the Double-summed agreement.
+- Python SSB (CUDA and MPS): the phase-variance fit is retired; every fit maximizes the model agreement.
+  `find_aberrations(objective=...)` and `compare_rotation_branches(objective=...)` keep the keyword:
+  `objective="agreement"` prints one line ("objective is retired; every fit maximizes the model agreement.") and
+  fits as the default; `objective="phase_variance"` raises, since a silent agreement fit would land elsewhere.
+  Removed: `FitObjective`, the backends' `fit(objective=...)`, CUDA `fit_standard_phase_variance` and
+  `direct_ptycho/phase_variance_fit.py` (its TPE and Nelder-Mead), MPS `optimize_phase_variance` with its Nelder-Mead and
+  cache helpers, and `direct_ptycho/mps/loss.py` (the batched phase-variance loss only that search used), the phase-variance
+  labels of trials, convergence and rotation refinement, and the error hints that suggested it. The phase variance at
+  the fit stays the reported diagnostic `result.loss` (`compute_loss`). `fifth_order_bounds` takes its limit
+  explicitly.
 - Native (Metal) SSB: `SSBFifthOrderSearch.bounds`, the standard ±2 box that the lower-level fifth-order calls
   defaulted to while `SSBFitOptions` defaults to ±20, is removed. `SSBModelFit.refineFifthOrder`,
   `SSBFifthOrderGradientSearch.refine`, `SSBFifthOrderSearch.refine`, `SSBFifthOrderGradientSearch.projectedGradient`

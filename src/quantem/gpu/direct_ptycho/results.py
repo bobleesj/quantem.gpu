@@ -133,9 +133,9 @@ class SSBResult(Mapping[str, float]):
     optimizer : dict[str, object]
         Numerical search/refinement device, precision, and Newton diagnostics.
     objective : str | None
-        What ``find_aberrations`` optimized: ``"agreement"`` (the least-squares agreement of the SSB model with the
-        data, the default, with or without tilt) or ``"phase_variance"`` (the older SSB search); None for a result
-        that was not fitted.
+        What ``find_aberrations`` maximized: ``"agreement"`` (the least-squares agreement of the SSB model with the
+        data, with or without tilt) or ``"broad_fifth_agreement"`` (the same through fifth order); None for a result
+        that was not fitted. Results saved by earlier versions may say ``"phase_variance"`` (a retired search).
     refinement : str | None
         Local refinement the fit applied after its search: ``"bfgs"`` (the fifth-order exact-gradient refinement),
         ``"newton"`` (the low-order trust-region Newton on the exact derivatives), ``"nelder-mead"`` (the phase
@@ -198,7 +198,7 @@ class SSBResult(Mapping[str, float]):
     # Local descriptors for deferred file fingerprinting, excluded from saved result metadata.
     _calibration_source: dict[str, object] | None = field(default=None, repr=False, compare=False)
     sample_agreement: float | None = None
-    objective: Literal["agreement", "phase_variance"] | None = None
+    objective: str | None = None
     # find_aberrations(refine_rotation=True): the estimate it started from and the search (rotation_refinement.py)
     rotation_refined: bool = False
     rotation_estimate_deg: float | None = None

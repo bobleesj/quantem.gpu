@@ -1,21 +1,16 @@
-"""Aberration fits on CUDA: the standard fit (tilt=False) on either objective, and the joint fit (tilt=True).
+"""Aberration fits on CUDA: the standard fit (tilt=False) and the joint fit (tilt=True).
 
-The default objective of both fits is the least-squares agreement of the SSB model with G(q, k) (``ThickSample``'s fused
-``thick_fit_batch_kernel``), searched with the device-resident TPE and trust-region Newton of ``direct_ptycho._resident_search``,
-the same code as on MPS; the standard fit holds the sample tilt and depth spread at 0, where the model is ordinary SSB
-exactly. ``objective="phase_variance"`` minimizes the phase variance with the backend-neutral search of
-``direct_ptycho.phase_variance_fit`` (MPS's ``optimize_phase_variance`` search), on the fixed-order full reconstruction (``SSBEngine.reconstruct_with_loss``), so seeded fits get the
-same loss bits on every evaluation and a fit, a reconstruction and a preview report the same loss for the same
-aberrations.
+Both maximize the least-squares agreement of the SSB model with G(q, k) (``ThickSample``'s fused
+``thick_fit_batch_kernel``), searched with the device-resident TPE of ``direct_ptycho._resident_search`` and polished with the
+trust-region Newton on the exact derivatives, the same code as on MPS; the standard fit holds the sample tilt and depth
+spread at 0, where the model is ordinary SSB exactly.
 """
 
 import math
 
-import numpy as np
 
 from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
 from quantem.gpu.direct_ptycho.mps.optimizer import standard_bounds
-from quantem.gpu.direct_ptycho.phase_variance_fit import fit_phase_variance
 
 # where a zero-trial refinement starts when the session has no aberrations (as on MPS)
 _DEFAULT_START = {"C10": 0.0, "C12": 50.0, "phi12": 0.0}
@@ -67,19 +62,6 @@ def fit_standard(
         derivatives=LowOrderDerivatives(accel, band_inv_A) if refine == "newton" else None,
     )
     return {**fit, "band_inv_A": list(band_inv_A)}
-
-
-def fit_standard_phase_variance(accel: SSBEngine, **options) -> dict[str, object]:
-    """Standard fit (tilt=False) on the phase-variance objective: ``phase_variance_fit.fit_phase_variance`` with
-    the engine's loss. ``options`` are that function's (engine units). The search is backend-neutral so that a
-    seeded fit visits the same trials on every backend that evaluates it."""
-
-    def evaluate_batch(C10: np.ndarray, C12: np.ndarray, phi12: np.ndarray) -> np.ndarray:
-        """Losses of float32 candidates, one fixed-order full reconstruction each (the engine has no batched loss)."""
-        return np.asarray([accel.reconstruct_with_loss(float(c10), float(c12), float(phi12_rad))[1]
-                           for c10, c12, phi12_rad in zip(C10, C12, phi12, strict=True)], dtype=np.float64)
-
-    return fit_phase_variance(evaluate_batch, **options)
 
 
 # =========================================================================

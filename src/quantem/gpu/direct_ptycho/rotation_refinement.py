@@ -18,10 +18,8 @@ TOLERANCE_DEG = 0.05
 
 
 def fit_score(result) -> float:
-    """Higher is better: the model agreement, or minus the phase variance for a phase-variance fit (no agreement)."""
-    if result.sample_agreement is not None:
-        return float(result.sample_agreement)
-    return -float(result.loss)
+    """Higher is better: the model agreement."""
+    return float(result.sample_agreement)
 
 
 def refine_rotation(start, polish: Callable[[float, object], object], *, step_deg: float = STEP_DEG,
@@ -78,10 +76,7 @@ def refine_rotation(start, polish: Callable[[float, object], object], *, step_de
 def refinement_summary(record: dict) -> str:
     """One line: the estimate, the refined angle, the change and the gain of the objective."""
     change = (record["refined_deg"] - record["estimate_deg"] + 180.0) % 360.0 - 180.0
-    if record["estimate_agreement"]:
-        gain = f"agreement {100.0 * (record['refined_agreement'] / record['estimate_agreement'] - 1.0):+.2f}%"
-    else:
-        gain = f"phase variance {100.0 * (record['refined_loss'] / record['estimate_loss'] - 1.0):+.2f}%"
+    gain = f"agreement {100.0 * (record['refined_agreement'] / record['estimate_agreement'] - 1.0):+.2f}%"
     return (f"refined rotation {record['estimate_deg']:.2f}° → {record['refined_deg']:.2f}° ({change:+.2f}°, {gain}; "
             f"{record['evaluations']} polishes, {record['seconds']:.1f} s)")
 

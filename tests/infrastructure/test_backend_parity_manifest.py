@@ -21,7 +21,6 @@ EXPECTED_CAPABILITIES = {
     "dpc.com-rotation-idpc",
     "display.transform-histogram-color-fft",
     "ssb.object-phase-loss",
-    "ssb.calibration-200-nelder-mead",
 }
 ALLOWED_LEVELS = {
     "reference",

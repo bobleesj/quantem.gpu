@@ -138,7 +138,7 @@ def test_report_option_displays_saved_convergence_once(monkeypatch):
     fit = SSBResult(
         backend="cuda", object_wave=np.ones((8, 8), dtype=np.complex64),
         aberrations={"C10_nm": 1.23456789},
-        objective="phase_variance",
+        objective="agreement",
         trial_records=[
             {"trial": 0, "params": {"C10_nm": 1.0}, "loss": 0.3},
             {"trial": 1, "params": {"C10_nm": 1.23456789}, "loss": 0.2},

@@ -198,8 +198,11 @@ def higher_order_consistency(objective, start, checked, limit, cap):
             "start_coordinates": np.asarray(start).tolist(), "checked_coordinates": np.asarray(checked).tolist()}
 
 
-def fifth_order_bounds(higher_order_limit=2.0) -> np.ndarray:
-    """Bounds of the 28 coordinates: C10, the C12 pair, tilt, depth spread, then +-limit for the higher orders."""
+def fifth_order_bounds(higher_order_limit) -> np.ndarray:
+    """Bounds of the 28 coordinates: C10, the C12 pair, tilt, depth spread, then +-limit for the higher orders.
+
+    ``higher_order_limit`` (2 or 20, ``validate_higher_order_limit``) has no default: the fit's own default is 20.
+    """
     limit = validate_higher_order_limit(higher_order_limit)
     return np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-limit, limit)] * 22)
 

@@ -68,17 +68,6 @@ def test_the_bracket_walks_to_a_far_optimum_and_stops_at_ten_degrees():
     assert max(rotation for rotation, _ in polished) <= 110.0 + 1e-9
 
 
-def test_a_phase_variance_fit_is_refined_on_its_loss():
-    """A fit without a model agreement (the phase-variance objective) has the lowest loss at the refined angle."""
-    def polish(rotation_deg, start):
-        return _Fit(rotation_deg, None, loss=0.1 + 1e-3 * (rotation_deg - 31.2) ** 2)
-
-    refined, record = refine_rotation(_Fit(30.0, None, loss=0.1 + 1e-3 * 1.2**2), polish)
-    assert refined.scan_detector_rotation_deg == pytest.approx(31.2, abs=0.1)
-    assert record["refined_loss"] < record["estimate_loss"]
-    assert "phase variance -" in refinement_summary(record)
-
-
 def test_the_summary_states_both_angles_the_change_and_the_agreement_gain():
     record = {"estimate_deg": 345.83, "refined_deg": 346.85, "estimate_agreement": 2.0, "refined_agreement": 2.011,
               "estimate_loss": 0.1, "refined_loss": 0.1, "evaluations": 9, "seconds": 8.4}

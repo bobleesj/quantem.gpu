@@ -15,17 +15,18 @@ on exact gradients. No additional fifth-order
 TPE search is performed. `search="broad"` adds 400 fifth-order TPE trials
 before the same joint refinement. Both fit the same model and retain all valid BF pixels.
 
-`search="primary"` retains the earlier initial-only fit and its custom bounds,
-fixed coefficients and legacy objective options. Existing constrained calls
-using `search="standard"` should select `"primary"` explicitly.
+`search="primary"` retains the earlier initial-only fit and its custom bounds
+and fixed coefficients. Existing constrained calls using `search="standard"`
+should select `"primary"` explicitly.
 
 Every fit uses `refinement="auto"`: the exact-derivative refinements on CUDA
 and MPS, with a ceiling of 400 full-data objectives per start at fifth order.
 Choosing the method is retired: `"newton"`, `"bfgs"` or `"nelder-mead"` print
 one line and run `"auto"`; `refinement=None` keeps the best trial of a
-`search="primary"` fit unrefined. The phase-variance search, which has no exact
-derivatives, and a standard fit that locks a coefficient or bounds phi12 refine
-with Nelder-Mead. An evaluation cap is not proof of convergence.
+`search="primary"` fit unrefined. The one exception to the exact Newton is a
+`search="primary", tilt=False` fit that locks a coefficient (`refine_lock`),
+bounds phi12 or holds a nonzero C12: those limits are not a box for the Newton,
+and it polishes with Nelder-Mead. An evaluation cap is not proof of convergence.
 Scientific objective/reconstruction work stays on the GPU; the optimizer's
 candidate generation and float64 control run on the CPU.
 
@@ -168,7 +169,9 @@ fitting skips it by default; pass `compute_loss=True` to calculate it. The same
 names pass through `compare_rotation_branches(...)` and are part of a saved
 fit's settings.
 
-The phase-variance search (`objective="phase_variance"`) is retired. It chose
+The phase-variance search (`objective="phase_variance"`) is retired: that value
+raises, since a silent agreement fit would land elsewhere, and
+`objective="agreement"` prints one line and fits as the default. It chose
 the aberrations under which the corrected phase images of all bright-field
 pixels agree best, so it scored images instead of predicting the data, could
 not see sample tilt or depth spread, and was about 10x slower; on simulated
