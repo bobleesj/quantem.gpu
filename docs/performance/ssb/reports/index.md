@@ -6,6 +6,7 @@ A record that describes since-retired behaviour (the phase-variance search,
 Nelder–Mead or finite-difference refinement, the `mean_phase` and
 `complex_wave` estimators) says so in a **Historical** line at its top.
 
+- [Direct Ptycho backend parity: CUDA, Python MPS and native Metal](2026-10-26-direct-ptycho-backend-parity.md)
 - [Exact-derivative SSB fit in Python on CUDA and MPS](2026-10-25-ssb-exact-derivative-fit.md)
 - [Native Metal SSB redraw precision at the lowest scan frequencies](2026-10-25-ssb-redraw-precision.md)
 - [Where the 9 s of regularized preparation goes](2026-10-24-regularized-preparation.md)

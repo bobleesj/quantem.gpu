@@ -153,6 +153,7 @@ parts:
         - file: performance/ssb/reports/index
           title: SSB reports
           sections:
+          - file: performance/ssb/reports/2026-10-26-direct-ptycho-backend-parity
           - file: performance/ssb/reports/2026-10-25-ssb-exact-derivative-fit
           - file: performance/ssb/reports/2026-10-25-ssb-redraw-precision
           - file: performance/ssb/reports/2026-10-24-ssb-shared-coordinates

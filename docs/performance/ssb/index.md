@@ -1,4 +1,4 @@
-# SSB fitting and reconstruction
+# Direct Ptycho fitting and reconstruction
 
 Keep preparation, joint fitting, reconstruction, host transfer and displayed
 image updates separate. These stages have different workloads and cannot be
@@ -6,6 +6,7 @@ compared as interchangeable FPS or fit times.
 
 ## Fitting
 
+- [Backend parity](reports/2026-10-26-direct-ptycho-backend-parity.md): CUDA, Python MPS and native Metal fit within 1.4σ of each other on five measured scans (180 fits), repeat bitwise, and give the same images; low-order fit 0.57–0.73 s CUDA, 2.2–2.4 s native, 2.5 s MPS.
 - [Full-field and regional benchmark](joint-fit.md): the reusable benchmark command, search budget and timing boundaries.
 - [Initial fitting and fifth-order refinement](reports/2026-10-22-ssb-initialization-and-refinement.md): dated workflow evidence.
 - [Four-case rotation review](reports/2026-10-22-rotation-comparison-reuse.md): preparation reuse and its measured limits.
@@ -19,7 +20,7 @@ compared as interchangeable FPS or fit times.
 - [Staging memory](reports/2026-10-22-ssb-staging-memory.md): memory reduction with numerical checks.
 - [All SSB reports](reports/index.md): dated CUDA and Metal fitting, correction and memory studies.
 
-The [SSB kernel guide](../../kernels/ssb.md) and [SSB API](../../api/ssb.md)
+The [SSB kernel guide](../../kernels/ssb.md) and [Direct Ptycho API](../../api/ssb.md)
 own the scientific and public contracts. [Rendering](../rendering/index.md)
 owns display measurements. Report publication does not imply that a measured
 development implementation is in the latest release.
