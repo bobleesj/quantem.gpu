@@ -1,5 +1,7 @@
 # Exact-derivative SSB fit in Python on CUDA and MPS, 2026-10-25
 
+> **Historical:** describes the code as of 2026-10-25; `refinement="newton"` (the finite-difference reference) is retired, and the default higher-order box is now ±20 with the half-band check. See the [current fit methods](../../../api/ssb.md).
+
 ## Question
 
 The native Metal fit became about 40× faster when its searches moved to exact derivatives of the agreement. Is

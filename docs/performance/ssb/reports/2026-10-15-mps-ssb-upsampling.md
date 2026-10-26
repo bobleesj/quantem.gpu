@@ -1,5 +1,7 @@
 # MPS SSB sampling and search, 2026-10-15
 
+> **Historical:** describes the code as of 2026-10-15; `refinement="nelder-mead"`, the phase-variance search and the `mean_phase` estimator are retired. See the [current fit methods](../../../api/ssb.md).
+
 The Python MPS backend now reconstructs C10/C12 SSB on finer grids with the
 existing `upsampling_factor="auto"` API. It also fuses the depth correction
 into the 512-point row inverse FFT and reuses probe terms within joint search.

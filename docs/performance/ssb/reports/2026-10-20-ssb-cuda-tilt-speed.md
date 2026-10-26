@@ -1,5 +1,7 @@
 # Tilt-corrected SSB on CUDA: fit and preview speed (2026-10-20)
 
+> **Historical:** describes the code as of 2026-10-20; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/ssb.md).
+
 ## Question
 
 Where does a tilt-corrected fit spend its time on CUDA, and how close can the

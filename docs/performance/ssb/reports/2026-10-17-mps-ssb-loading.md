@@ -1,5 +1,7 @@
 # Reuse MPS loading buffers and decode detector regions directly
 
+> **Historical:** describes the code as of 2026-10-17; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/ssb.md).
+
 ## Question and change
 
 Can original-HDF5 loading and SSB session construction do less work while

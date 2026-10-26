@@ -1,5 +1,7 @@
 # MPS slider correction and interruptible diagnostics
 
+> **Historical:** describes the code as of 2026-10-17; the `mean_phase` estimator and the phase-variance search are retired. See the [current fit methods](../../../api/ssb.md).
+
 The fine-grid correction evaluates the frequency-dependent tilt shift and
 aperture bound once per coherent BF group. Previously the helper repeated these
 expressions for each BF contribution. The expressions, BF order, precision,

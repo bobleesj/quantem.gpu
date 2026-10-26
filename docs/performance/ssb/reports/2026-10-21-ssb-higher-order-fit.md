@@ -1,5 +1,7 @@
 # Coma, trefoil and spherical aberration in the model-based SSB fit (2026-10-21)
 
+> **Historical:** describes the code as of 2026-10-21; its higher-order polish used finite differences on the CPU, since replaced by the exact-gradient refinement on the GPU. See the [current fit methods](../../../api/ssb.md).
+
 ## Question
 
 The joint fit (`find_aberrations()`) maximizes the least-squares agreement of the

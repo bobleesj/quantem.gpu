@@ -1,5 +1,7 @@
 # MPS SSB execution and coherent reconstruction, 2026-10-17
 
+> **Historical:** describes the code as of 2026-10-17; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired. See the [current fit methods](../../../api/ssb.md).
+
 The Python MPS path uses four-candidate GPU execution tiles for the joint
 objective and a guarded half-spectrum correction for fine-grid coherent
 reconstruction. The search still proposes eight candidates at a time. Trial

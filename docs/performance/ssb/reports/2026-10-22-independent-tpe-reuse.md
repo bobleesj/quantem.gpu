@@ -1,5 +1,7 @@
 # Faster broad SSB search with identical results
 
+> **Historical:** describes the code as of 2026-10-22; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/ssb.md).
+
 ## What changed
 
 The accepted change batches the independent Optuna proposal calculations and reuses completed trial history. RNG draw order, Gaussian models, float64 density ranking and each parameter's inverse-CDF stopping rule remain unchanged. Scientific objective evaluation and reconstruction remain CUDA; Optuna and Newton orchestration remain CPU. This is a hybrid solver.

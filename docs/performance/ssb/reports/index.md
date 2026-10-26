@@ -2,9 +2,16 @@
 
 Dated records retain their original workload, backend, source revision and
 acceptance limits. They are evidence, not a statement of current release speed.
+A record that describes since-retired behaviour (the phase-variance search,
+Nelder–Mead or finite-difference refinement, the `mean_phase` and
+`complex_wave` estimators) says so in a **Historical** line at its top.
 
 - [Exact-derivative SSB fit in Python on CUDA and MPS](2026-10-25-ssb-exact-derivative-fit.md)
 - [Native Metal SSB redraw precision at the lowest scan frequencies](2026-10-25-ssb-redraw-precision.md)
+- [Where the 9 s of regularized preparation goes](2026-10-24-regularized-preparation.md)
+- [Direct phase reconstruction and viewer handoff](2026-10-24-direct-live-handoff.md)
+- [Which reconstruction to measure drift on](2026-10-24-drift-method-comparison.md)
+- [Live registration notch beyond frame 0](2026-10-24-drift-live-notch.md)
 - [Redraw at slider speed: q, -q symmetry for SSB and a drag window for regularized methods](2026-10-24-redraw-symmetry-and-drag-window.md)
 - [Native Swift/Metal SSB redraw while dragging aberration controls](2026-10-24-native-metal-ssb-redraw.md)
 - [Lower CUDA SSB staging memory without changing numerical results](2026-10-22-ssb-staging-memory.md)
@@ -25,6 +32,7 @@ acceptance limits. They are evidence, not a statement of current release speed.
 - [MPS memory: where SSB's gigabytes go and what fits which Mac (2026-10-20)](2026-10-20-mps-memory.md)
 - [Reuse source addresses in MPS SSB reconstruction](2026-10-18-mps-ssb-source-addressing.md)
 - [Exact group support in CUDA SSB](2026-10-18-cuda-ssb-group-support.md)
+- [MPS coherent SSB dispatch](2026-10-18-mps-ssb-coherent-dispatch.md)
 - [MPS SSB preview reuse](mps-ssb-preview-reuse-2026-10-17.md)
 - [MPS fine-grid optical calculations, 2026-10-17](mps-ssb-optical-shortcuts-2026-10-17.md)
 - [Full BF MPS redraw comparison, 2026-10-17](mps-ssb-full-bf-redraw-2026-10-17.md)

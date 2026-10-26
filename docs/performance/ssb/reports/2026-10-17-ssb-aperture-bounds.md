@@ -1,5 +1,7 @@
 # Exact aperture bounds for interactive MPS SSB
 
+> **Historical:** describes the code as of 2026-10-17; the `mean_phase` estimator is retired. See the [current fit methods](../../../api/ssb.md).
+
 ## Question and change
 
 Can full-resolution coherent reconstruction avoid work without changing phase?

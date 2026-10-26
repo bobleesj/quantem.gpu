@@ -1,5 +1,7 @@
 # Separable C10/C12 coherent SSB on Metal, 2026-10-20
 
+> **Historical:** describes the code as of 2026-10-20; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired. See the [current fit methods](../../../api/ssb.md).
+
 ## Question
 
 Can the interactive MPS SSB preview (`phase_of_mean`, C10/C12/phi12 and

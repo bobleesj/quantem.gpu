@@ -1,5 +1,7 @@
 # Reuse Fourier preparation in four-case SSB review
 
+> **Historical:** describes the code as of 2026-10-22; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/ssb.md).
+
 The rotation/defocus comparison now prepares one temporary full-field session,
 then reuses its source Fourier data for all four cases. Changing the rotation
 refreshes the geometry. Each signed-defocus search still starts from zero

@@ -1,5 +1,7 @@
 # Native Swift/Metal SSB redraw while dragging aberration controls, 2026-10-24
 
+> **Historical:** describes the code as of 2026-10-24; the `complexWave` (`complex_wave`) estimator is retired. See the [current fit methods](../../../api/ssb.md).
+
 ## Question
 
 Can the native `MetalSSBJointModel.reconstruct` re-render a fitted SSB phase at

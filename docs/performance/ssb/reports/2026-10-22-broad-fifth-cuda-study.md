@@ -1,5 +1,7 @@
 # CUDA broad-fifth research workflow
 
+> **Historical:** describes the code as of 2026-10-22; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/ssb.md).
+
 This private-model experiment reduced full 512-square workflow time by
 54–65% while preserving the complete tested phase arrays and search records.
 It does **not** change the public higher-order estimator or its defaults.

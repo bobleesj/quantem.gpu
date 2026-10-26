@@ -1,5 +1,7 @@
 # Initial fitting before fifth-order refinement
 
+> **Historical:** describes the code as of 2026-10-22; the finite-difference Newton and Nelder–Mead refinements it compares are retired. See the [current fit methods](../../../api/ssb.md).
+
 ## Decision and scope
 
 Use 200 TPE trials for the initial defocus, astigmatism, tilt and depth fit,

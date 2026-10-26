@@ -1,5 +1,7 @@
 # CUDA SSB refinement batching
 
+> **Historical:** describes the code as of 2026-10-15; the Nelder–Mead joint refinement it batches and the phase-variance search are retired. See the [current fit methods](../../../api/ssb.md).
+
 The joint SSB search now evaluates the independent Nelder-Mead starts together.
 It keeps the existing initial trial batches, model, precision and optimizer
 settings. The public `SSB.find_aberrations` and reconstruction API is unchanged.

@@ -1,5 +1,7 @@
 # Tilt-corrected SSB on Metal: preview and fit speed (2026-10-20)
 
+> **Historical:** describes the code as of 2026-10-20; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/ssb.md).
+
 ## Question
 
 The default SSB result is tilt-corrected (sample tilt and depth spread fitted with the aberrations), so the

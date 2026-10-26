@@ -1,5 +1,7 @@
 # SSB joint-fit benchmark, 2026-10-21
 
+> **Historical:** describes the code as of 2026-10-21; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/ssb.md).
+
 The reusable command is `quantem-gpu benchmark-ssb`. Its
 [measurement protocol](../joint-fit.md) and repository
 [agent skill](../../../../.agents/skills/gpu-benchmark/SKILL.md) keep subsequent
