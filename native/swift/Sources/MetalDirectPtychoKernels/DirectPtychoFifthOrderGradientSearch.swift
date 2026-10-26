@@ -577,15 +577,20 @@ extension DirectPtychoModelFit {
         rows.append(minus)
       }
       let v = try values(rows)
-      let central = (0..<28).map { (v[2 * $0] - v[2 * $0 + 1]) / (2 * step) }
-      let scale = central.map(abs).max() ?? 0
-      let error = (0..<28).map { abs(central[$0] - gradient[$0]) }
+      // Explicit types: Swift 6.1 times out inferring the untyped closures.
+      let central: [Double] = (0..<28).map { (i: Int) -> Double in
+        (v[2 * i] - v[2 * i + 1]) / (2 * step)
+      }
+      let scale: Double = central.map { abs($0) }.max() ?? 0
+      let error: [Double] = (0..<28).map { (i: Int) -> Double in abs(central[i] - gradient[i]) }
+      let maxError: Double = error.max() ?? 0
+      let relative: [Double] = (0..<28).map { (i: Int) -> Double in
+        error[i] / max(abs(gradient[i]), 1e-300)
+      }
       differences.append([
-        "step": step, "central": central, "max_abs_error": error.max() ?? 0,
-        "max_relative_error": (error.max() ?? 0) / max(scale, 1e-300),
-        "per_coordinate_relative_error": (0..<28).map {
-          error[$0] / max(abs(gradient[$0]), 1e-300)
-        },
+        "step": step, "central": central, "max_abs_error": maxError,
+        "max_relative_error": maxError / max(scale, 1e-300),
+        "per_coordinate_relative_error": relative,
       ])
     }
     report["central_differences"] = differences

@@ -620,7 +620,13 @@ final class DirectPtychoSolver {
       // The system's rows of the augmented Gram: all for complex, the phase block of a complex system for phase.
       let dim = complex ? 2 * count : count
       let offset = system.complex && !complex ? count : 0
-      let sums = system.sums[index].contents().assumingMemoryBound(to: SIMD4<Float>.self)
+      // Chunks read the group and its sums, write disjoint frequencies (and their mirrors) and only ever raise
+      // `invalid`; Swift 6.1 rejects these non-Sendable captures without the opt-out.
+      nonisolated(unsafe) let group = group
+      nonisolated(unsafe) let sums = system.sums[index].contents().assumingMemoryBound(
+        to: SIMD4<Float>.self)
+      nonisolated(unsafe) let invalid = invalid
+      nonisolated(unsafe) let spectrum = spectrum
       let chunk = 256
       let chunks = (group.size + chunk - 1) / chunk
       DispatchQueue.concurrentPerform(iterations: chunks) { part in
