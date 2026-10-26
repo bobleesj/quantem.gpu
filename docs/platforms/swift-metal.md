@@ -22,7 +22,7 @@ WebGPU paths.
 | `MetalDisplayKernels` | range, histogram, transfer function, colormap | `.../MetalDisplayKernels` |
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |
-| `MetalSSBKernels` | exact native 128×128, 256×256 and 512×512 SSB reconstruction, phase-variance objective, and deterministic fitting | `.../MetalSSBKernels` |
+| `MetalSSBKernels` | native 128×128, 256×256 and 512×512 SSB: Fourier preparation, model-agreement fitting through fifth order, SSB redraw and regularized phase and complex reconstruction | `.../MetalSSBKernels` |
 
 The native package does not provide the Python `screening.prepare` cache
 contract. It does provide detector, CoM, DPC/iDPC, display, FFT, load, and SSB

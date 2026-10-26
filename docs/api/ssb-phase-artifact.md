@@ -82,8 +82,8 @@ the verified phase and metadata. Pairs of another schema, including version-1
 
 Swift `MetalSSBKernels.SSBPhaseArtifact.load` reads `.json` pairs of this
 schema and `savePair(to:)` writes them, with the same keys and checks as the
-Python reader. `MetalSSBSavedRun.savePhasePair(to:phase:)` exports native saved
-runs without reconstruction buffers: the native engine works in Angstrom and
+Python reader. `MetalSSBSavedRun.savePhasePair(to:phase:)` exports runs saved
+by the retired non-model native engine (`.ssb`) without reconstruction buffers: the native engine works in Angstrom and
 radians (`MetalSSBAberrations.c10Angstroms`, `c12Angstroms`, `phi12Radians`), and
 the record states them once, as `C10_nm`, `C12_nm` and `phi12_deg`, with the
 rotation in [0, 360) and `scan_detector_rotation_flipped` false. Swift does not invoke
