@@ -77,6 +77,9 @@ class PreparedMpsSSB:
     row_steps: tuple | None = None
     # Trial-independent detector geometry used by the resident joint objective.
     fit_probe_geometry: object | None = None
+    # the low-order fit's aperture radii (``resident_fit.aperture_radii``); optics only, so rotation and BF subsets
+    # keep them
+    fit_radii: object | None = None
     # the regularized direct methods' optics-free layout (``direct._layout``) and its key
     direct_layout: tuple | None = None
 

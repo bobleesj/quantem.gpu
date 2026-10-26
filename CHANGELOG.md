@@ -185,6 +185,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- Python MPS: the low-order Direct Ptycho fit runs as fast as the native Metal fit on the same Mac (2.5 s warm on a
+  512 x 512 scan, from 6.9 s): its agreement kernel takes the native arithmetic (exact aperture inside and outside
+  the edge ring, uniform phasor anchors, one dispatch per group of eight trials), and the Newton's exact gradient and
+  Hessian come from 29 k-sums per band frequency, fused with the value pass where every center's are used. The fitted
+  point moves by float32 rounding only (C10 within 2e-6 nm).
 - SSB `sample_agreement` is the fraction of G's power in the fit band that the fitted model explains, from 0 to 1,
   the same quantity for the standard, joint and fifth-order fits (it was the raw agreement, e.g. 4e17). The band power
   is `band_power` on the CUDA and MPS backends, summed in float64. The fifth-order fit now reports `tilt_fit_gain` (the
