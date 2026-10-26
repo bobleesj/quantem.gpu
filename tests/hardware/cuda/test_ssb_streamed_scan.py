@@ -268,7 +268,7 @@ def test_streamed_regularized_matches_resident_1024(method, factor, weighting, t
     policy = direct_workflow.settings(method, None, None, None, weighting)
     optics = {"aberrations": HIGHER, "sample_tilt_mrad": (1., -2.), "depth_spread_nm": 14.}
     with _encoded(values, chunk_scans=65536) as data:
-        streamed = StreamedSSB(
+        streamed = StreamedDirectPtycho(
             data, mean_pattern=None, center=SETTINGS["bright_field_center_px"],
             radius=SETTINGS["bright_field_radius_px"], threshold=0., semiangle_mrad=30.,
             detector_sampling_mrad=SETTINGS["detector_sampling_mrad"], scan_detector_rotation_flipped=transposed,
@@ -300,3 +300,38 @@ def test_large_scan_regularized_matches_periodic_native_reference(method):
             actual = session.run(method=method, aberrations=HIGHER, upsampling_factor=2, compute_loss=False)
     assert actual.object_wave.shape == (2 * shape[0], 2 * shape[1])
     _assert_same_wave(actual.object_wave, cp.tile(cp.asarray(expected.object_wave), (shape[0] // 128, shape[1] // 128)), 2e-6)
+
+
+def test_open_bright_field_only_matches_full_load(tmp_path, capsys):
+    """A .qem above 1024 loaded with only its bright-field pixels gives the same bits as loading every pixel."""
+    from quantem.gpu import io
+
+    values = _counts((1536, 1024, 8, 8))
+    path = tmp_path / "large.qem"
+    with _encoded(values, chunk_scans=16384) as data:
+        io.save(path, data)
+    options = dict(SETTINGS, aberrations=HIGHER)
+    results = {}
+    for bright_field_only in (False, True):
+        with SSB.open(str(path), bright_field_only=bright_field_only, **options) as session:
+            source = session._owned_dataset.data
+            printed = capsys.readouterr().out
+            if bright_field_only:
+                assert "loaded only the" in printed and "bright_field_only=False" in printed
+                assert source.kept_pixels.sum() == session.num_bright_field_pixels < 64
+                assert source.spatial_index is False
+            else:
+                assert getattr(source, "kept_pixels", None) is None
+            results[bright_field_only] = (
+                session._streamed.mean_pattern.copy(),
+                cp.asnumpy(session.preview(HIGHER, compute_loss=False, output="native")[0]),
+                cp.asnumpy(session.preview(HIGHER, compute_loss=False, upsampling_factor=2, output="native")[0]),
+                *(cp.asnumpy(cp.asarray(session.run(method=method, aberrations=HIGHER, upsampling_factor=2,
+                                                     compute_loss=False).object_wave))
+                  for method in ("phase", "complex")),
+                cp.asnumpy(cp.asarray(session.find_aberrations(
+                    search="primary", tilt=False, scan_region=(256, 384, 128, 256), num_trials=0, refinement=None,
+                    check_rotation=False, verbose=False).phase)),
+            )
+    for full, kept in zip(results[False], results[True]):
+        np.testing.assert_array_equal(kept, full)

@@ -20,6 +20,40 @@ from quantem.gpu.direct_ptycho.cuda.brightfield import select_bright_field
 from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_wave_sum_add_kernel, thick_wave_sum_full_add_kernel
 
 
+def bright_field_pixels(mean_pattern, valid, center, radius, threshold, flipped):
+    """The streamed session's bright-field selection from the full-detector mean pattern alone.
+
+    Returns the valid-masked mean pattern, the disk centre and radius, the selected detector rows and columns in
+    the compute frame (transposed when ``flipped``) and their row-major indices on the stored detector. A loader
+    that keeps only some pixels calls this before the session exists, so it keeps exactly what the session reads.
+    """
+    valid = np.asarray(valid, dtype=bool)
+    mean_pattern = np.where(valid, np.asarray(mean_pattern, dtype=np.float64), 0)
+    if radius is None:
+        selected = mean_pattern > mean_pattern.mean() + mean_pattern.std()
+        rows, cols = np.nonzero(selected)
+        if not rows.size:
+            raise ValueError("No bright-field disk found. Supply calibrated detector geometry.")
+        if center is None:
+            center = (float(rows.mean()), float(cols.mean()))
+        radius = math.sqrt(rows.size / math.pi)
+    elif center is None:
+        rows, cols = np.nonzero(mean_pattern > mean_pattern.max() * threshold)
+        weights = mean_pattern[rows, cols]
+        center = (float(np.average(rows, weights=weights)), float(np.average(cols, weights=weights)))
+    mean = mean_pattern.T if flipped else mean_pattern
+    compute_center = tuple(center)[::-1] if flipped else tuple(center)
+    rows, cols, _, _ = select_bright_field(cp.asarray(mean, dtype=cp.float32)[None, None], threshold, float(radius),
+                                           compute_center)
+    selected_valid = cp.asarray(valid.T if flipped else valid)[rows, cols]
+    rows, cols = rows[selected_valid], cols[selected_valid]
+    if not rows.size:
+        raise ValueError("The bright-field disk contains no valid detector pixels.")
+    original_rows, original_cols = (cols, rows) if flipped else (rows, cols)
+    pixels = (original_rows * mean_pattern.shape[1] + original_cols).astype(cp.uint32)
+    return mean_pattern, center, radius, rows, cols, pixels
+
+
 class StreamedDirectPtycho:
     """Borrow a complete exact-count resident and retain its immutable chunks."""
 
@@ -61,21 +95,16 @@ class StreamedDirectPtycho:
         if self.mean_pattern.shape != self.detector_shape or not np.isfinite(self.mean_pattern).all():
             raise ValueError("Supply the finite full-detector mean pattern for this acquisition.")
         valid = np.asarray(source.valid_pixels, dtype=bool)
-        self.mean_pattern = np.where(valid, self.mean_pattern, 0)
-        if radius is None:
-            selected = self.mean_pattern > self.mean_pattern.mean() + self.mean_pattern.std()
-            rows, cols = np.nonzero(selected)
-            if not rows.size:
-                raise ValueError("No bright-field disk found. Supply calibrated detector geometry.")
-            if center is None:
-                center = (float(rows.mean()), float(cols.mean()))
-            radius = math.sqrt(rows.size / math.pi)
-        elif center is None:
-            rows, cols = np.nonzero(self.mean_pattern > self.mean_pattern.max() * threshold)
-            weights = self.mean_pattern[rows, cols]
-            center = (float(np.average(rows, weights=weights)), float(np.average(cols, weights=weights)))
+        self.mean_pattern, center, radius, self.rows, self.cols, self.pixels = bright_field_pixels(
+            self.mean_pattern, valid, center, radius, threshold, scan_detector_rotation_flipped)
         self.center = tuple(float(value) for value in center)
         self.radius = float(radius)
+        kept = getattr(source, "kept_pixels", None)
+        if kept is not None and not bool(np.asarray(kept).ravel()[cp.asnumpy(self.pixels)].all()):
+            raise ValueError(
+                "This acquisition was loaded with only some detector pixels, and the bright-field selection needs "
+                "others. Load every pixel (DirectPtycho.open(..., bright_field_only=False))."
+            )
         if detector_sampling_mrad is not None and np.ndim(detector_sampling_mrad) == 0:
             # one number for both axes, as every DirectPtycho entry point accepts
             detector_sampling_mrad = (float(detector_sampling_mrad),) * 2
@@ -84,18 +113,6 @@ class StreamedDirectPtycho:
             # the module function: the keyword of the same name shadows the import inside this method
             self.detector_sampling_mrad = detector.detector_sampling_mrad(self.mean_pattern, semiangle_mrad)
         self.transposed = bool(scan_detector_rotation_flipped)
-        mean = self.mean_pattern.T if self.transposed else self.mean_pattern
-        compute_center = self.center[::-1] if self.transposed else self.center
-        self.rows, self.cols, _, _ = select_bright_field(
-            cp.asarray(mean, dtype=cp.float32)[None, None], threshold,
-            self.radius, compute_center,
-        )
-        selected_valid = cp.asarray(valid.T if self.transposed else valid)[self.rows, self.cols]
-        self.rows, self.cols = self.rows[selected_valid], self.cols[selected_valid]
-        if not self.rows.size:
-            raise ValueError("The bright-field disk contains no valid detector pixels.")
-        original_rows, original_cols = (self.cols, self.rows) if self.transposed else (self.rows, self.cols)
-        self.pixels = (original_rows * self.detector_shape[1] + original_cols).astype(cp.uint32)
         self.num_bright_field_pixels = int(self.pixels.size)
         self.timings = {}
 

@@ -8,6 +8,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- CUDA `DirectPtycho.open` of a `.qem` scan above 1024 with a known rotation loads only the bright-field pixels the
+  session reads (`bright_field_only=True`, announced in one line; `False` loads every pixel). The file is summed once
+  over the scan for the exact detector total, the session's own bright-field rule picks the pixels from that mean,
+  and a second pass copies only their count streams through a bounded staging window
+  (`io.qem.load_counts_pixels`); every other pixel becomes an empty constant-zero stream and the spatial index is
+  not loaded. SSB, Phase, Complex and region fits give the same bits as a full load; the session refuses a selection
+  outside the kept pixels.
+
 - CUDA: `run(method="phase")` and `"complex"` above 1024 (encoded scans up to 4096, rectangular included). The
   normal equations of every frequency are summed over streamed detector-column batches in float64
   (`direct_normal_equations` gains an accumulate variant) and solved by float64 Cholesky; frequencies are split into

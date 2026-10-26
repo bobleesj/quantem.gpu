@@ -22,7 +22,7 @@ from quantem.gpu.device import resolve
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.geometry.frames import opposite_rotation_deg
 from quantem.gpu.formats.qem.metadata import BRIGHT_FIELD_DISK_KEY
-from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
+from quantem.gpu.formats.qem.snapshot import ARRAY_DTYPES, INTEGER_CODEC
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io import metadata_display as labels
 from quantem.gpu.io.metadata_display import calibration_rows
@@ -354,6 +354,57 @@ def _streams_scan(data: Dataset4dstemGPU, backend: str) -> bool:
     return max(data.shape[:2]) > 1024 or (
         data.shape[:2] == (1024, 1024) and type(data.data) is StreamedCounts
     )
+
+
+def _load_bright_field_only(source, backend, enabled, rotation_deg, flipped, center, radius, threshold, verbose):
+    """``(dataset, mean pattern, message)`` of a CUDA ``.qem`` scan above 1024 loaded with only its bright-field pixels.
+
+    None when another load applies: a disabled request, MPS, a file that is not an integer counts ``.qem``, a scan
+    of 1024 or less (it is decoded into a resident crop anyway), or an unknown rotation (estimating it reads the
+    dark field). The kept pixels are exactly those ``StreamedDirectPtycho`` selects from the exact full-detector
+    mean, with the same centre, radius, threshold and orientation, so no pixel the session reads is dropped.
+    """
+    from quantem.gpu.formats.qem.snapshot import is_qem_file
+
+    if not enabled or backend != "cuda" or not is_qem_file(source):
+        return None
+    from quantem.gpu.direct_ptycho.cuda.streamed import bright_field_pixels
+    from quantem.gpu.io import qem
+
+    header, recorded = qem.read_metadata(source)
+    shape = tuple(header["shape"])
+    if header["codec"] != INTEGER_CODEC or max(shape[:2]) <= 1024:
+        return None
+    if rotation_deg is None:
+        if recorded.get("scan_detector_rotation_deg") is None:
+            return None
+        if flipped is None:
+            flipped = bool(recorded.get("scan_detector_rotation_flipped", False))
+    flipped = bool(flipped)
+    if center is None:
+        center = _recorded_bright_field_center_px(recorded)
+    selection = {}
+
+    def select(total, valid):
+        # every mean pattern's rule (detector.mean): the exact total divided in float64, rounded once to float32
+        mean = (total.get().astype(np.float64) / (shape[0] * shape[1])).astype(np.float32)
+        mean, disk_center, disk_radius, _, _, pixels = bright_field_pixels(mean, valid, center, radius, threshold,
+                                                                         flipped)
+        keep = np.zeros(shape[2] * shape[3], bool)
+        keep[cp.asnumpy(pixels)] = True
+        selection.update(mean=mean, center=disk_center, radius=disk_radius, count=int(pixels.size))
+        return keep.reshape(shape[2:])
+
+    loaded = qem.load_counts_pixels(source, select, verbose=verbose)
+    full = sum(entry["count"] * np.dtype(dtype).itemsize for chunk in header["chunks"]
+               for entry, dtype in zip(chunk["arrays"], ARRAY_DTYPES))
+    message = (
+        f"DirectPtycho.open: loaded only the {selection['count']} bright-field detector pixels (disk of radius "
+        f"{selection['radius']:.1f} px at ({selection['center'][0]:.1f}, {selection['center'][1]:.1f})), the pixels "
+        f"SSB, Phase and Complex read, of the {shape[0]} x {shape[1]} scan: {loaded.data.nbytes / 2**30:.1f} of "
+        f"{full / 2**30:.1f} GiB on the GPU. The file is unchanged; bright_field_only=False loads every pixel."
+    )
+    return loaded, selection["mean"], message
 
 
 class DirectPtycho:
@@ -811,6 +862,7 @@ class DirectPtycho:
         bright_field_radius_px: float | None = None,
         bright_field_center_px: tuple[float, float] | None = None,
         calibration: str | None = None,
+        bright_field_only: bool = True,
         verbose: bool = False,
     ) -> Self:
         """Open one lossless 4D-STEM source and prepare a Direct Ptycho session.
@@ -840,6 +892,16 @@ class DirectPtycho:
         and ``detector_sampling_mrad`` together when replaying a fit. The
         centre remains in the original full-detector ``(row, col)`` axes,
         including when ``scan_detector_rotation_flipped=True``.
+
+        A CUDA ``.qem`` scan above 1024 with a known rotation keeps only the
+        bright-field pixels the session reads (``bright_field_only=True``): the
+        file is summed once over the scan to find them by the session's own
+        rule, then only their count streams are loaded, chunk by chunk, so a
+        4096 x 4096 scan with a 192 x 192 detector fits on a 96 GB GPU. One
+        line says how many pixels are kept and why. SSB, Phase, Complex and
+        region fits give the same bits as a full load; the full-detector mean
+        is exact, and the session refuses any read outside the kept pixels.
+        ``bright_field_only=False`` loads every pixel.
         """
 
         supplied = {
@@ -852,6 +914,7 @@ class DirectPtycho:
         dark_field = None
         crop_origin = (0, 0)
         owned = None
+        kept_mean_pattern = kept_message = None
         source_detector_bin = 1
         browser_qem = None
         # on MPS an exact BF-column export beside the source replaces decoding the detector
@@ -884,13 +947,22 @@ class DirectPtycho:
                 detector_sampling_mrad = frames.detector_sampling_mrad or (semiangle_mrad / frames.selection.bright_field_edge_radius_px,) * 2
         else:
             load_started = time.perf_counter()
-            loaded = io.load(
-                source,
-                backend=selected,
-                scan_shape=scan_shape,
-                dtype=dtype,
-                verbose=verbose,
+            kept = _load_bright_field_only(
+                source, selected, bright_field_only and dtype is None and scan_shape is None,
+                scan_detector_rotation_deg, scan_detector_rotation_flipped, bright_field_center_px,
+                bright_field_radius_px, bright_field_intensity_threshold, verbose,
             )
+            if kept is not None:
+                loaded, kept_mean_pattern, kept_message = kept
+            else:
+                kept_mean_pattern = kept_message = None
+                loaded = io.load(
+                    source,
+                    backend=selected,
+                    scan_shape=scan_shape,
+                    dtype=dtype,
+                    verbose=verbose,
+                )
             file_calibration = calibration_rows(loaded.metadata)
             browser_qem = _browser_qem_source(loaded)
             try:
@@ -965,7 +1037,10 @@ class DirectPtycho:
                 bright_field_radius_px=bright_field_radius_px,
                 source_path=str(source),
                 bright_field_center_px=bright_field_center_px,
+                mean_pattern=kept_mean_pattern,
             )
+            if kept_message is not None:
+                print(kept_message)
         except Exception:
             if owned is not None:
                 owned.close()
