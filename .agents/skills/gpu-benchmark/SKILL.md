@@ -28,7 +28,8 @@ dependency versions, physical GPU, input dimensions/dtype, calibration and
 measurement boundary. Freeze the known-good GPU output before changing compute.
 Use the same acquisition, calibration, precision and workload for the candidate.
 
-For SSB, the default interaction is one seed, 200 trials plus Newton. The
+For SSB, the default interaction is one seed, 200 trials, the exact-derivative
+Newton and the fifth-order refinement with its half-band check. The
 full-field estimated rotation tests two branches. Regions jointly fit optics,
 tilt and depth; reconstruction uses the full scan before cropping the view.
 Benchmark repetitions estimate timing variation and do not change the number of
