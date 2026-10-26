@@ -87,13 +87,6 @@
    "min_ms": 17.556,
    "timed_as": "an eighth of one search batch"
   },
-  "search_candidate_phase_variance": {
-   "n": 10,
-   "p50_ms": 80.904,
-   "p90_ms": 83.347,
-   "min_ms": 79.098,
-   "timed_as": "half of one TPE pair"
-  },
   "find_aberrations": {
    "n": 1,
    "p50_ms": 24369.524,
@@ -105,12 +98,6 @@
    "p50_ms": 4973.638,
    "p90_ms": 4973.638,
    "min_ms": 4973.638
-  },
-  "find_aberrations_phase_variance": {
-   "n": 1,
-   "p50_ms": 23856.196,
-   "p90_ms": 23856.196,
-   "min_ms": 23856.196
   },
   "detector_full_uint32": {
    "n": 3,
@@ -154,13 +141,6 @@
    "loss": 0.0450218,
    "scan_detector_rotation_deg": 358.3108
   },
-  "fit_phase_variance": {
-   "C10_nm": -23.2177,
-   "C12_nm": 3.4054,
-   "phi12_deg": -40.1085,
-   "loss": 0.0449884,
-   "scan_detector_rotation_deg": 358.3108
-  },
   "detector_update_equals_full_sum": true,
   "bright_field_disk_px": [
    93.57,
@@ -202,7 +182,6 @@
   "prepared_steady": 7.57,
   "loss_preview_steady": 10.7,
   "fit_peak": 22.26,
-  "fit_steady": 7.5,
-  "phase_variance_fit_peak": 26.05
+  "fit_steady": 7.5
  }
 }

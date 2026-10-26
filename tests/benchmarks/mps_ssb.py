@@ -33,17 +33,12 @@ p90 of its repeats. The metrics, all in milliseconds:
 - ``search_candidate``: one candidate of the aberration search, timed as a
   batch of eight agreement trials at depth spread 0 (the standard fit's
   objective, ``thick_fit_batch``) and divided by eight;
-- ``search_candidate_phase_variance``: one candidate of the phase-variance
-  search (``objective="phase_variance"``), timed as a TPE pair of the exact
-  loss and halved;
 - ``find_aberrations``: the default fit, single shot. The rotation is
   estimated, so it runs the tilt-corrected joint fit on both 180-degree
   branches and keeps one;
-- ``find_aberrations_standard``: one standard (``tilt=False``) 200-trial
-  search and Newton at the kept rotation, single shot;
-- ``find_aberrations_phase_variance``: one ``tilt=False,
-  objective="phase_variance"`` 200-trial search and Nelder-Mead at the kept
-  rotation, single shot;
+- ``find_aberrations_standard``: one standard
+  (``search="primary", tilt=False``) 200-trial search and exact-derivative
+  Newton at the kept rotation, single shot;
 - ``detector_update`` / ``detector_full``: Show4DSTEM's exact masked sum on
   the gold scan as loaded (its uint32 counts fit 16 bits once the flagged
   pixels are replaced, so ``io.load`` stores them as the uint16 count
@@ -65,7 +60,6 @@ and MLX's buffers, sampled every few milliseconds for the peaks):
 - ``loss_preview_steady``: after the loss previews (MLX keeps their row IFFT
   tile in its cache between slider releases);
 - ``fit_peak`` / ``fit_steady``: during and after the default fit;
-- ``phase_variance_fit_peak``: during the phase-variance fit;
 - ``encoded``: the acquisition itself, absolute.
 
 ``compare`` fails a memory metric that grew by more than 10 % and 0.25 GiB.
@@ -313,8 +307,6 @@ def alternating(session, first, second):
 def measure(master, reps=20, load_reps=3, log=print):
     """One report of every stage on ``master`` (the gold scan)."""
     from quantem.gpu import SSB, detector, io
-    from quantem.gpu.ssb.mps.hardware import effective_phase_loss_chunk_bf
-    from quantem.gpu.ssb.mps.loss import reconstruct_prepared_batch_exact_loss
     from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
 
     report = {"schema": "quantem.gpu.mps-benchmark/1", "dataset": {"id": DATASET, "revision": REVISION,
@@ -394,23 +386,12 @@ def measure(master, reps=20, load_reps=3, log=print):
     metrics["search_candidate"] = {**{key: round(value / 8, 3) if key.endswith("_ms") else value
                                       for key, value in batches.items()}, "timed_as": "an eighth of one search batch"}
     log(f"search_candidate {metrics['search_candidate']}")
-    chunk_bf = effective_phase_loss_chunk_bf(16, prepared.scan_shape)
-
-    def pair(index):
-        offset = 0.1 * index
-        reconstruct_prepared_batch_exact_loss(
-            prepared, C10=np.asarray([5.0 + offset, -5.0 - offset], np.float32),
-            C12=np.asarray([10.0, 20.0], np.float32), phi12=np.asarray([0.3, 1.1], np.float32), chunk_bf=chunk_bf)
-
-    pairs = timed(pair, max(5, reps // 2), warmup=2)
-    metrics["search_candidate_phase_variance"] = {
-        **{key: round(value / 2, 3) if key.endswith("_ms") else value for key, value in pairs.items()},
-        "timed_as": "half of one TPE pair"}
-    log(f"search_candidate_phase_variance {metrics['search_candidate_phase_variance']}")
 
     def fit_values(fit):
+        # Fifth-order fits skip the separate phase-variance diagnostic (compute_loss=None), so loss can be None.
         return {"C10_nm": round(float(fit.aberrations["C10_nm"]), 4), "C12_nm": round(float(fit.aberrations["C12_nm"]), 4),
-                "phi12_deg": round(float(fit.aberrations["phi12_deg"]), 4), "loss": round(float(fit.loss), 7),
+                "phi12_deg": round(float(fit.aberrations["phi12_deg"]), 4),
+                "loss": None if fit.loss is None else round(float(fit.loss), 7),
                 "scan_detector_rotation_deg": round(float(fit.scan_detector_rotation_deg), 4)}
 
     synchronize()
@@ -432,26 +413,11 @@ def measure(master, reps=20, load_reps=3, log=print):
     ssb.preview(base, compute_loss=False)
     synchronize()
     started = time.perf_counter()
-    fit = ssb.find_aberrations(search="standard", tilt=False, verbose=False)
+    fit = ssb.find_aberrations(search="primary", tilt=False, verbose=False)
     synchronize()
     metrics["find_aberrations_standard"] = summary([1e3 * (time.perf_counter() - started)])
     report["values"]["fit_standard"] = fit_values(fit)
     log(f"find_aberrations_standard {metrics['find_aberrations_standard']} -> {report['values']['fit_standard']}")
-    ssb.close()
-
-    # The older phase-variance search at the same rotation, from a fresh session.
-    ssb = SSB(data, scan_detector_rotation_deg=rotation)
-    ssb.preview(base, compute_loss=False)
-    synchronize()
-    with PeakMemory() as phase_variance_memory:
-        started = time.perf_counter()
-        fit = ssb.find_aberrations(search="standard", tilt=False, objective="phase_variance", verbose=False)
-        synchronize()
-        metrics["find_aberrations_phase_variance"] = summary([1e3 * (time.perf_counter() - started)])
-    memory["phase_variance_fit_peak"] = round(phase_variance_memory.peak - encoded, 2)
-    report["values"]["fit_phase_variance"] = fit_values(fit)
-    log(f"find_aberrations_phase_variance {metrics['find_aberrations_phase_variance']} -> "
-        f"{report['values']['fit_phase_variance']}, peak {memory['phase_variance_fit_peak']} GiB above the encoded data")
     ssb.close()
 
     # Show4DSTEM on the gold scan as loaded: the uint16 count resident and its incremental exact sum.

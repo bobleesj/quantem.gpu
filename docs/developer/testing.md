@@ -33,14 +33,15 @@ both the timings and the output hashes the script prints.
 
 | Operation | Entry point | Primary output |
 |---|---|---|
-| CUDA SSB, DPC and parallax | `scripts/benchmark_ssb.py` | First and median warm wall time per stage (session, reconstruct, fit, tilt fit, DPC, parallax) and the SHA-256 of every output array |
+| CUDA SSB, DPC and parallax | `scripts/benchmark_ssb.py` | First and median warm wall time per stage (session, reconstruct, standard fit, default fit, DPC, parallax) and the SHA-256 of every output array |
 | Complete CUDA/MPS/native IO scale matrix | `scripts/benchmark_io_scale.py` | Three repetitions per acquisition, separate HDF5/encoding/write/QEM-reopen stages, full verification, and explicit unsupported cases |
 | Routine CUDA/MPS/Swift IO regression check | `scripts/benchmark_io_scale.py --load-only` | First observation, five cold and five cached loads per format, frozen references, optional matched-baseline slowdown flag |
 | IO benchmark history | `scripts/benchmark_io_history.py` or `--history-dir` | Immutable private reports, source/device/cache provenance, CSV timing history and Markdown index |
 | QEM conversion and full source verification | `scripts/benchmark_qem.py` | Separate CUDA/MPS/native conversion stages, exact count coverage, reloads, and disposable output; native output independently verified with MPS |
 | Python CUDA/MPS/CPU HDF5 load | `scripts/benchmark_hdf5_load.py` | Run-level p50/p95/max, full-volume hash/dtype/shape parity, logical resident bytes, sampled accelerator/process peak, and release snapshots |
 | CUDA/MPS screening | `scripts/benchmark_screening.py` | Separate build and prepared-reopen distributions, product hashes, stages, cache bytes, and memory |
-| Python MPS SSB | `scripts/benchmark_ssb_mps_scaling.py` | Reconstruction, parity-pair, and complete phase-variance fit (`objective="phase_variance"`) JSONL |
+| Full-field and regional SSB fits (CUDA or MPS) | `quantem-gpu benchmark-ssb` | First and warm median/p90 per fit and region, trial counts, Newton diagnostics, source fingerprint and phase hashes ([SSB benchmark](../performance/ssb/joint-fit.md)) |
+| Python MPS SSB and detector regression check | `tests/benchmarks/mps_ssb.py run`, then `compare` (`pytest -m benchmark tests/benchmarks`) | p50/p90 of previews, search candidates, the default and standard fits and the detector sums on the public gold scan, with driver memory, against this chip's committed baseline |
 | Native Swift/Metal indexed load | `metal-4dstem-indexed-load-benchmark` | Exact resident volume/products, stage timing, hashes, and Metal/process memory |
 | Native Swift/Metal SSB | `metal-ssb-fit-benchmark`, `metal-ssb-redraw-benchmark` | Joint-model fit stages and fitted parameters; SSB redraw latency |
 

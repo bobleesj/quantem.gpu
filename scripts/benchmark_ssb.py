@@ -5,8 +5,9 @@ the first (cold, includes kernel compilation) and the median warm wall time, and
 so two checkouts compared back to back show both. Each fit starts from a fresh session with a fixed seed.
 
 Stages: ``session`` (SSB construction, bright-field crop and Fourier preparation), ``reconstruct`` (fixed probe,
-without and with the loss), ``fit`` (``find_aberrations(tilt=False, objective="phase_variance")``, 200 trials +
-Nelder-Mead), ``tilt`` (``find_aberrations(tilt=True)``), ``dpc`` (``dpc.run``) and ``parallax`` (``parallax.run`` with the aberration fit).
+without and with the loss), ``fit`` (``find_aberrations(search="primary", tilt=False)``, the standard model fit:
+200 trials and the exact-derivative Newton), ``tilt`` (``find_aberrations()``, the default tilt-corrected fit
+through fifth order), ``dpc`` (``dpc.run``) and ``parallax`` (``parallax.run`` with the aberration fit).
 
 Compiled kernels are cached per process tree: give every checkout its own empty ``CUPY_CACHE_DIR`` (the script
 makes a temporary one when it is unset), or one tree's cached binaries time the other.
@@ -133,15 +134,14 @@ def run(arguments, stages) -> None:
                         times.append(seconds)
                         hashes.append(f"phase {digest(result.phase)} loss {result.loss!r}")
                     report(f"reconstruct loss={compute_loss}", times, hashes)
-        for stage, tilt in (("fit", False), ("tilt", True)):
+        for stage, options in (("fit", {"search": "primary", "tilt": False}), ("tilt", {})):
             if stage not in stages:
                 continue
             times, hashes = [], []
             for _ in range(arguments.fit_repeats):
                 with prepared(data) as ssb:
                     result, seconds = timed(lambda: ssb.find_aberrations(
-                        tilt=tilt, num_trials=arguments.trials, seed=arguments.seed, verbose=False,
-                        **({} if tilt else {"objective": "phase_variance"})))
+                        **options, trials=arguments.trials, seed=arguments.seed, show=False, verbose=False))
                 times.append(seconds)
                 aberrations = {key: float(value) for key, value in result.aberrations.items()}
                 hashes.append(f"phase {digest(result.phase)} loss {result.loss!r} aberrations "
