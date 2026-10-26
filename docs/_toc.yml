@@ -224,7 +224,6 @@ parts:
       - file: maintainer/backend-optimization-matrix
       - file: maintainer/backend-4dstem-load-checklist
       - file: maintainer/ans-io-acceptance
-      - file: maintainer/ssb-performance
       - file: backends
         title: Backend coverage
     - file: developer/kernel-lifecycle
@@ -289,6 +288,8 @@ parts:
         title: Calibration speed-up on main (2026-10-13)
       - file: maintainer/native-metal-ssb-migration
         title: Native Metal SSB migration
+      - file: maintainer/ssb-performance
+        title: SSB performance notes (to 2026-10-18)
       - file: maintainer/history/index
         title: Historical experiments
         sections:

@@ -1,5 +1,11 @@
 # SSB performance notes
 
+> **Historical:** describes the SSB code as of 2026-10-18. The phase-variance
+> search and its Nelder–Mead refinement, the finite-difference Newton, the
+> `mean_phase` and `complex_wave` estimators and many of the kernels below are
+> retired. Current behaviour: [SSB fit methods](../api/ssb.md) and the
+> [kernel registry](../performance/kernels.md).
+
 This page records the CUDA, Python MPS, native Swift/Metal, and WebGPU SSB
 performance contracts so future work starts from measured behavior, not from
 memory.
