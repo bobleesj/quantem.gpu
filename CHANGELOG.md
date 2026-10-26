@@ -8,6 +8,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- CUDA: scans above 1024 (encoded, even sides up to 4096, rectangular included) now reconstruct the full field with
+  the default fifth-order fit. The streamed full-scan SSB applies all 14 fitted aberration terms with the fitted tilt
+  and depth (the resident 14-term kernel), so `find_aberrations(scan_region=...)` followed by
+  `run(fit, compute_loss=False)` works as fitted instead of raising; it matches the resident SSB within 1e-6 rad at
+  1x, 2x and 3x, transposed detectors included. An encoded 1024 x 1024 acquisition keeps `method="phase"` and
+  `"complex"` (they were refused because the scan was streamed); above 1024 they still need a resident region.
+  Fixed: a large scan with one number for `detector_sampling_mrad`, or none (the estimate), raised a TypeError.
+
 - `io.load` reads a 4D-STEM dataset QuantEM saved as a zipped Zarr v3 store (`Dataset4dstem` serializer) in place,
   without quantem core: chunks decode on parallel threads straight into one array, bit for bit in the stored dtype,
   and the saved sampling, units and origin become `scan_sampling_A`, the detector sampling and `origin`. On a saved

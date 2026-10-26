@@ -61,6 +61,7 @@ from quantem.gpu.direct_ptycho.trials import (
     resolve_trial_count,
     select_records,
 )
+from quantem.gpu.direct_ptycho.higher_order import pack_coefficients
 from quantem.gpu.direct_ptycho.units import (
     ENGINE_PER_NM,
     aberrations_from_engine,
@@ -1447,13 +1448,22 @@ class DirectPtycho:
         result.scan_detector_rotation_flipped = self.scan_detector_rotation_flipped
         return result
 
+    @property
+    def _streams_full_scan(self) -> bool:
+        """Whether this session reconstructs only by streaming detector columns: an encoded scan above 1024.
+
+        A streamed 1024 x 1024 acquisition still has the resident backend (its Fourier stack is built on first use),
+        so every resident method, the regularized ones included, stays available there.
+        """
+        return self._streamed is not None and max(self._streamed.scan_shape) > 1024
+
     def _backend(self) -> SSBProtocol:
         """The session's CUDA or MPS implementation, built on first use.
 
         Building it reads the bright-field evidence and transforms it (seconds and gigabytes on a full scan), so a
         session that is only configured, saved or closed never pays for it.
         """
-        if self._streamed is not None and max(self._streamed.scan_shape) > 1024:
+        if self._streams_full_scan:
             raise NotImplementedError(
                 "This large resident uses streamed full-scan reconstruction. "
                 "Fit with find_aberrations(scan_region=(row_start, row_stop, col_start, col_stop)), "
@@ -3161,10 +3171,10 @@ class DirectPtycho:
             higher_order_magnitudes = higher_order_angles = None
         scope = nullcontext() if context is None else context
         if self._streamed is not None:
-            bounded = not compute_loss and higher_order_magnitudes is None and context is None
-            if not bounded and max(self._streamed.scan_shape) > 1024:
+            bounded = not compute_loss and context is None
+            if not bounded and self._streams_full_scan:
                 raise NotImplementedError(
-                    "Streamed full-scan SSB supports C10/C12 with compute_loss=False. "
+                    "Streamed full-scan SSB computes no full-scan loss; pass compute_loss=False. "
                     "The regional fit retains its own diagnostic loss; it is not a full-scan loss."
                 )
             if bounded:
@@ -3173,6 +3183,8 @@ class DirectPtycho:
                     scan_sampling_A=self.scan_sampling_A, rotation_deg=self.scan_detector_rotation_deg,
                     upsampling_factor=upsampling_factor, sample_tilt_mrad=sample_tilt_mrad,
                     depth_spread_A=float(depth_spread_nm) * ENGINE_PER_NM,
+                    higher_order=None if higher_order_magnitudes is None else pack_coefficients(
+                        higher_order_magnitudes * np.float32(ENGINE_PER_NM), higher_order_angles),
                 )
         backend = self._backend()
         # all 14 magnitudes (C10, C12 in slots 0-1, then C21..C56) are nm; the engines take Angstrom

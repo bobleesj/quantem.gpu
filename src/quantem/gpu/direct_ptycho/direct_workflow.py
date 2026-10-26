@@ -88,7 +88,7 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
     MPS prepares on the Apple GPU and solves in float64 on the CPU
     (``direct_ptycho.mps.direct``), from the same model and layout.
     """
-    if session._streamed is not None:
+    if session._streams_full_scan:
         raise NotImplementedError(
             "Regularized direct reconstruction needs a resident region; use select_region(...) first."
         )
@@ -192,7 +192,7 @@ def advance(session) -> bool:
 
 def _windowed(session, factor, policy) -> bool:
     """Whether drags of this method can use a window: a resident region, and for SSB CUDA's fine-grid coherent sum."""
-    if session._streamed is not None:
+    if session._streams_full_scan:
         return False
     if policy.get("method", "ssb") == "ssb":
         return session.backend == "cuda" and factor > 1

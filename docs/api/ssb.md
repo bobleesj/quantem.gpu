@@ -396,16 +396,19 @@ does not establish that assumption for a specimen with varying thickness or
 long-scan drift. `result.fit_scan_region` records the region used.
 
 The bounded path supports a native 1024×1024 scan and even scan dimensions
-above 1024 up to 4096, including rectangular grids, uint8/uint16 ANS, C10/C12,
-and optional sample tilt/depth. Smaller rectangular scans retain their existing
+above 1024 up to 4096, including rectangular grids, uint8/uint16 ANS, every
+fitted aberration through fifth order (the default `find_aberrations()` result
+applies as fitted), and sample tilt/depth. Smaller rectangular scans retain their existing
 square computational padding.
 It uses complex64 forward spectra, complex128 summation/inverse FFT and
 float32 phase. Its phase of the mean wave matches the existing CUDA
 wave-average path within floating-point FFT rounding, not bit for bit.
-Use `compute_loss=False` for the bounded path. Full-field per-detector
-phase-variance loss and higher-order aberrations still use the existing
-Fourier-stack backend for 1024 scans, retaining their prior behavior and
-memory cost. Those operations are unsupported above 1024. Fit diagnostics remain available on the small
+Use `compute_loss=False` for the bounded path: above 1024 a full-scan loss is
+not computed, and `compute_loss=True` raises and says so. Full-field per-detector
+phase-variance loss and the regularized `method="phase"` and `"complex"`
+use the existing Fourier-stack backend for 1024 scans, an encoded 1024×1024
+acquisition included, retaining their prior behavior and memory cost. Those
+two operations are unsupported above 1024. Fit diagnostics remain available on the small
 region. A full 1024 fit remains available, but an explicit smaller region avoids
 keeping its entire Fourier stack during optimization.
 

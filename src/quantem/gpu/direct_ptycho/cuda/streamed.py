@@ -16,9 +16,8 @@ from cupy.cuda import cufft
 from quantem.gpu import detector
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.resident.cuda.counts import StreamedCounts
-from quantem.gpu.detector import detector_sampling_mrad
 from quantem.gpu.direct_ptycho.cuda.brightfield import select_bright_field
-from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_wave_sum_kernel
+from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_wave_sum_full_kernel, thick_wave_sum_kernel
 
 
 class StreamedSSB:
@@ -77,9 +76,13 @@ class StreamedSSB:
             center = (float(np.average(rows, weights=weights)), float(np.average(cols, weights=weights)))
         self.center = tuple(float(value) for value in center)
         self.radius = float(radius)
+        if detector_sampling_mrad is not None and np.ndim(detector_sampling_mrad) == 0:
+            # one number for both axes, as every DirectPtycho entry point accepts
+            detector_sampling_mrad = (float(detector_sampling_mrad),) * 2
         self.detector_sampling_mrad = detector_sampling_mrad
         if self.detector_sampling_mrad is None:
-            self.detector_sampling_mrad = detector_sampling_mrad(self.mean_pattern, semiangle_mrad)
+            # the module function: the keyword of the same name shadows the import inside this method
+            self.detector_sampling_mrad = detector.detector_sampling_mrad(self.mean_pattern, semiangle_mrad)
         self.transposed = bool(scan_detector_rotation_flipped)
         mean = self.mean_pattern.T if self.transposed else self.mean_pattern
         compute_center = self.center[::-1] if self.transposed else self.center
@@ -97,8 +100,13 @@ class StreamedSSB:
         self.timings = {}
 
     def phase(self, aberrations, *, voltage_kV, semiangle_mrad, scan_sampling_A,
-              rotation_deg, upsampling_factor, sample_tilt_mrad, depth_spread_A):
-        """Decode, transform and correct every selected count on the source GPU."""
+              rotation_deg, upsampling_factor, sample_tilt_mrad, depth_spread_A, higher_order=None):
+        """Decode, transform and correct every selected count on the source GPU.
+
+        ``higher_order`` holds all 14 Krivanek terms (C10 and C12 included) packed by
+        ``higher_order.pack_coefficients``, or None for C10/C12 alone: the same two kernels, and so the same
+        corrections, as the resident-spectrum backend.
+        """
         started = time.perf_counter()
         rows, cols = self.scan_shape
         output_shape = (rows * upsampling_factor, cols * upsampling_factor)
@@ -148,6 +156,10 @@ class StreamedSSB:
         partial = cp.empty((1, *output_shape), cp.complex128)
         dc = cp.empty(self.num_bright_field_pixels, cp.complex64)
         errors = cp.zeros(1, cp.uint32)
+        kernel = thick_wave_sum_kernel
+        if higher_order is not None:
+            kernel = thick_wave_sum_full_kernel
+            parameters = (*parameters, cp.asarray(higher_order, dtype=cp.float32))
         plan = None
         previous_count = None
         for first in range(0, self.num_bright_field_pixels, batch_size):
@@ -176,7 +188,7 @@ class StreamedSSB:
             dc[first:stop] = spectra[:count, 0, 0]
             # the kernel's arguments in its order: bounds (read only by the bounded variant, so any float array),
             # then num_bf, native rows, cols and stored cols, output rows, cols and stored cols, first BF, group size
-            thick_wave_sum_kernel(
+            kernel(
                 (math.ceil(output_pixels / 128), 1), (128,),
                 (spectra, *frequencies, k_row[first:stop], k_col[first:stop], partial, k_row,
                  *(np.int32(value) for value in (count, rows, cols, cols // 2 + 1,

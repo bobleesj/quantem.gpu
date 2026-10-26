@@ -21,6 +21,9 @@ SETTINGS = {
     "scan_detector_rotation_deg": 27.,
 }
 ABERRATIONS = {"C10_nm": 4.25, "C12_nm": 1.5, "phi12_deg": 17.}
+# a fifth-order fit's mapping: every streamed reconstruction applies the higher orders too
+HIGHER = {**ABERRATIONS, "C21_nm": 60., "phi21_deg": 40., "C23_nm": 25., "phi23_deg": -10., "C30_nm": 4000.,
+          "C32_nm": 900., "phi32_deg": 20., "C50_nm": 2e6}
 
 
 def _counts(shape):
@@ -73,8 +76,14 @@ def test_encoded_fft_columns_preserve_counts(scan_shape, dtype):
         assert int(errors.get()[0]) == 0
 
 
+@pytest.mark.parametrize("aberrations", [ABERRATIONS, HIGHER], ids=["C10-C12", "fifth-order"])
 @pytest.mark.parametrize("transposed, factor, depth", [(False, 1, 0.), (False, 3, 14.), (True, 2, 14.)])
-def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
+def test_streamed_phase_matches_stored_spectra(transposed, factor, depth, aberrations):
+    from quantem.gpu.direct_ptycho.higher_order import pack_coefficients
+    from quantem.gpu.direct_ptycho.units import ENGINE_PER_NM, higher_order_arrays
+
+    higher = higher_order_arrays(aberrations) if aberrations is HIGHER else None
+    coefficients = None if higher is None else pack_coefficients(higher[0] * np.float32(ENGINE_PER_NM), higher[1])
     values = _counts((128, 128, 8, 8))
     with _encoded(values) as data:
         streamed = StreamedSSB(
@@ -84,11 +93,11 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
         )
         values[..., 2, 3] = 0  # independent dense reference's scientific validity mask
         with SSB(values, **SETTINGS, scan_detector_rotation_flipped=transposed) as dense:
-            expected, _ = dense.preview(ABERRATIONS, compute_loss=False,
+            expected, _ = dense.preview(aberrations, compute_loss=False,
                 upsampling_factor=factor, sample_tilt_mrad=(1., -2.), depth_spread_nm=depth, output="native")
             phase, loss = streamed.phase(aberrations_to_engine(ABERRATIONS), voltage_kV=300., semiangle_mrad=30.,
                 scan_sampling_A=SETTINGS["scan_sampling_A"], rotation_deg=27., upsampling_factor=factor,
-                sample_tilt_mrad=(1., -2.), depth_spread_A=depth * 10)
+                sample_tilt_mrad=(1., -2.), depth_spread_A=depth * 10, higher_order=coefficients)
             assert streamed.num_bright_field_pixels == dense.num_bright_field_pixels
             assert loss is None and phase.dtype == cp.float32
             # R2C and C2C forward transforms have different float32 rounding.
@@ -145,8 +154,9 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
         assert data.read(scan_region=(0, 1, 0, 1))[0, 0, 2, 3].item() == 65535
 
 
-@pytest.mark.parametrize("scan_shape", [(1024, 2048), (4096, 4096)])
-def test_global_large_scan_matches_periodic_native_reference(scan_shape):
+@pytest.mark.parametrize("scan_shape, aberrations", [((1024, 2048), ABERRATIONS), ((4096, 4096), ABERRATIONS),
+                                                     ((1536, 1024), HIGHER)], ids=["1024x2048", "4096", "1536x1024-fifth"])
+def test_global_large_scan_matches_periodic_native_reference(scan_shape, aberrations):
     """A repeated fixture is a shape/FFT check, not a new measured field of view."""
     tile = _counts((128, 128, 8, 8))
     valid = np.ones((8, 8), bool)
@@ -159,11 +169,13 @@ def test_global_large_scan_matches_periodic_native_reference(scan_shape):
     with Dataset4dstemGPU(source, resident_metadata(shape, np.uint16, source.nbytes, backend="cuda")) as data:
         tile[..., 2, 3] = 0
         with SSB(tile, **SETTINGS) as reference:
-            expected, _ = reference.preview(ABERRATIONS, compute_loss=False, output="native",
+            expected, _ = reference.preview(aberrations, compute_loss=False, output="native",
                                              depth_spread_nm=14., sample_tilt_mrad=(1., -2.))
         with SSB(data, **SETTINGS) as session:
-            actual, loss = session.preview(ABERRATIONS, compute_loss=False, output="native",
+            actual, loss = session.preview(aberrations, compute_loss=False, output="native",
                                             depth_spread_nm=14., sample_tilt_mrad=(1., -2.))
+            with pytest.raises(NotImplementedError, match="compute_loss=False"):
+                session.preview(aberrations)
             assert actual.shape == scan_shape and loss is None
             cp.testing.assert_allclose(actual, cp.tile(expected, (scan_shape[0] // 128, scan_shape[1] // 128)),
                                        atol=1e-6, rtol=1e-5)
@@ -187,3 +199,40 @@ def test_open_large_file_keeps_encoded_source_and_closes_only_its_owner(tmp_path
             cp.testing.assert_array_equal(first.phase, second.phase)
         assert owner.data.is_released
         assert not original.data.is_released
+
+
+@pytest.mark.parametrize("sampling", [6.5, None], ids=["one-number", "estimated"])
+def test_large_scan_takes_one_detector_sampling_or_estimates_it(sampling):
+    """One number for both axes, as every entry point accepts, and the estimate when none is given."""
+    from quantem.gpu import detector
+
+    tile = _counts((128, 128, 8, 8))
+    shape = (1024, 1280, 8, 8)
+    source = StreamedCounts(shape, np.uint16, np.ones((8, 8), bool))
+    for row in range(0, shape[0], 128):
+        source.append(cp.tile(tile, (1, shape[1] // 128, 1, 1)).reshape(-1, 8, 8))
+    settings = {**SETTINGS, "detector_sampling_mrad": sampling}
+    with Dataset4dstemGPU(source, resident_metadata(shape, np.uint16, source.nbytes, backend="cuda")) as data:
+        with SSB(data, **settings) as session:
+            assert session._streams_full_scan
+            expected = (sampling, sampling) if sampling is not None else detector.detector_sampling_mrad(
+                session._streamed.mean_pattern, 30.)
+            assert tuple(session._streamed.detector_sampling_mrad) == pytest.approx(expected)
+            phase, _ = session.preview(ABERRATIONS, compute_loss=False, output="native")
+            assert phase.shape == shape[:2] and bool(cp.isfinite(phase).all())
+
+
+@pytest.mark.parametrize("method", ["phase", "complex"])
+def test_encoded_1024_scan_keeps_regularized_methods(method):
+    """A streamed 1024 x 1024 scan still has the resident backend: Phase and Complex equal a dense session's."""
+    values = _counts((1024, 1024, 8, 8))
+    with _encoded(values, chunk_scans=65536) as data:
+        with SSB(data, **SETTINGS, aberrations=ABERRATIONS) as session:
+            assert session._streamed is not None and not session._streams_full_scan
+            actual = session.run(method=method, aberrations=ABERRATIONS, compute_loss=False)
+        values[..., 2, 3] = 0
+        with SSB(values, **SETTINGS, aberrations=ABERRATIONS) as dense:
+            expected = dense.run(method=method, aberrations=ABERRATIONS, compute_loss=False)
+        assert actual.object_wave.shape == (1024, 1024)
+        cp.testing.assert_allclose(cp.asarray(actual.object_wave), cp.asarray(expected.object_wave),
+                                   atol=1e-6, rtol=1e-5)
