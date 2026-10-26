@@ -355,6 +355,19 @@ kernel, and accumulated before one inverse FFT. Scan tiles are not stitched.
 The full source and output must fit on the acquisition's GPU; distributing one
 Direct Ptycho session across GPUs is not supported by this API yet.
 
+`DirectPtycho.open` of a CUDA `.qem` above 1024 with a known rotation loads only
+the bright-field pixels the session reads (`bright_field_only=True`; one printed
+line names how many pixels and the disk; `False` loads every pixel). The file is
+summed once over the scan for the exact detector total, the session's own
+bright-field rule picks the pixels from that mean, and a second pass copies only
+their count streams through a bounded staging window; other pixels read as 0 and
+the session refuses a selection outside the kept ones. Results are bit-identical
+to a full load. On a 4096×4096 scan with a 192×192 detector (9298 bright-field
+pixels) this keeps 67.5 of 84.3 GiB, so on one 96 GB GPU the whole workflow
+runs: 512×512 region fits, SSB at 1× and 3×, and Phase and Complex at 3×. Those
+two run their frequencies in passes when the systems do not fit (14 and 94
+passes there, 97 s and 552 s); at 1× they take 7.6 s and 11.5 s.
+
 Decoded batches use a temporary scan-major uint16 buffer, then a tiled CUDA
 transpose writes the float32 FFT input. Counts remain exact in both buffers.
 The uint16 scratch uses two bytes per scan position per detector column; at

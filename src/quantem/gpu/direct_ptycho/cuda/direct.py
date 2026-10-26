@@ -707,7 +707,8 @@ def solve_streamed(source, optics, factor: int, *, complex_object: bool, smoothn
     batch_size = source.batch_size(reserve=2 * 8 * layout.shape[0] * layout.shape[1])
     spectra = [cp.zeros(layout.shape, cp.complex64), cp.zeros(layout.shape, cp.complex64)]
     free = cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes()
-    budget = max(64 << 20, int(free * 0.6) - batch_size * source.column_bytes)
+    # the column batch, and the inverse FFTs and exponential of the final wave (about 4 complex64 planes)
+    budget = max(64 << 20, int(free * 0.6) - batch_size * source.column_bytes - 32 * layout.shape[0] * layout.shape[1])
     # (group, first, stop) pieces of every group's frequencies, packed into passes within the budget
     passes, current, used = [], [], 0
     for group in layout.groups:

@@ -527,6 +527,9 @@ def load_counts_pixels(path, select, *, device=None, verbose: bool = False) -> D
             errors = cp.zeros(1, cp.uint32)
             with cp.cuda.using_allocator():  # retained, so outside the memory pool (see counts.retain)
                 total = cp.zeros(shape[2:], cp.uint64)
+            # each chunk's encoded bytes per detector pixel, so the kept streams get one allocation of exact size:
+            # a few thousand separate allocations would each round up and waste gigabytes at 4096 x 4096
+            pixel_bytes = []
             for chunk, arrays in _chunks_in_order(path, header, start):
                 streams = math.ceil(chunk["scans"] / source.interval) * pixels
                 source.kernels["total"](
@@ -534,6 +537,7 @@ def load_counts_pixels(path, select, *, device=None, verbose: bool = False) -> D
                     (*arrays[:3], source.decoding, total, errors, np.uint32(chunk["scans"]), np.uint32(pixels),
                      np.uint32(source.interval)),
                 )
+                pixel_bytes.append(cp.diff(arrays[1].astype(cp.int64)).reshape(-1, pixels).sum(axis=0))
             if int(errors.get()[0]):
                 raise ValueError("An encoded count stream failed reconstruction.")
             summed = time.perf_counter() - started
@@ -541,18 +545,27 @@ def load_counts_pixels(path, select, *, device=None, verbose: bool = False) -> D
             if keep.shape != shape[2:]:
                 raise ValueError("select must return a detector-shaped mask.")
             kept = cp.asarray(keep.ravel())
-            for chunk, arrays in _chunks_in_order(path, header, start):
+            payload_sizes = [int(sizes[kept].sum()) for sizes in pixel_bytes]
+            stream_counts = [math.ceil(chunk["scans"] / source.interval) * pixels for chunk in header["chunks"]]
+            del pixel_bytes
+            with cp.cuda.using_allocator():  # retained, so outside the memory pool (see counts.retain)
+                payload_arena = cp.empty(max(1, sum(payload_sizes)), cp.uint8)
+                offsets_arena = cp.empty(sum(count + 1 for count in stream_counts), cp.uint32)
+                models_arena = cp.empty(sum(stream_counts), cp.uint8)
+            at = [0, 0, 0]
+            for (chunk, arrays), size, count in zip(_chunks_in_order(path, header, start), payload_sizes, stream_counts):
                 payload, offsets, models = arrays[:3]
                 mask = kept[cp.arange(models.size, dtype=cp.int64) % pixels]
                 sizes = cp.diff(offsets).astype(cp.uint32) * mask
                 streams = cp.flatnonzero(mask).astype(cp.uint32)
-                with cp.cuda.using_allocator():
-                    compact_offsets = cp.empty(models.size + 1, cp.uint32)
-                    compact_offsets[0] = 0
-                    cp.cumsum(sizes, dtype=cp.uint32, out=compact_offsets[1:])
-                    compact = cp.empty(max(1, int(compact_offsets[-1].get())), cp.uint8)
-                    # model 253: an empty stream of the constant 0
-                    compact_models = cp.where(mask, models, np.uint8(253)).astype(cp.uint8)
+                compact = payload_arena[at[0]:at[0] + size]
+                compact_offsets = offsets_arena[at[1]:at[1] + count + 1]
+                compact_models = models_arena[at[2]:at[2] + count]
+                at = [at[0] + size, at[1] + count + 1, at[2] + count]
+                compact_offsets[0] = 0
+                cp.cumsum(sizes, dtype=cp.uint32, out=compact_offsets[1:])
+                # model 253: an empty stream of the constant 0
+                cp.copyto(compact_models, cp.where(mask, models, np.uint8(253)).astype(cp.uint8))
                 _copy_streams((max(1, math.ceil(streams.size / 128)),), (128,),
                               (payload, offsets, compact_offsets, streams, compact, np.uint32(streams.size)))
                 cp.cuda.get_current_stream().synchronize()

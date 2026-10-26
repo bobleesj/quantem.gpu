@@ -14,7 +14,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   and a second pass copies only their count streams through a bounded staging window
   (`io.qem.load_counts_pixels`); every other pixel becomes an empty constant-zero stream and the spatial index is
   not loaded. SSB, Phase, Complex and region fits give the same bits as a full load; the session refuses a selection
-  outside the kept pixels.
+  outside the kept pixels. On a 4096 x 4096 scan with a 192 x 192 detector the kept
+  streams (one exact allocation each for payload, offsets and models) take 67.5 of 84.3 GiB; the whole workflow then
+  runs on one 96 GB GPU (open 33 s, 512 x 512 region fits at +-20 and +-2 in 2.1 / 1.3 s equal to the 512 x 512 scan's
+  fit, SSB 1x 6.6 s and 3x 10.7 s, Phase 1x 7.6 s and 3x 97 s, Complex 1x 11.5 s and 3x 552 s; peak 93.7 GB).
 
 - CUDA: `run(method="phase")` and `"complex"` above 1024 (encoded scans up to 4096, rectangular included). The
   normal equations of every frequency are summed over streamed detector-column batches in float64
