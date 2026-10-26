@@ -31,8 +31,6 @@ public enum SSBFifthOrderGradientSearch {
     value: Double, gradient: [Double]
   )]
 
-  public enum Update: String, Sendable { case bfgs, sr1 }
-
   public struct Settings: Sendable {
     /// BF subsample of the initial difference Hessian (1: all BF pixels).
     public var hessianBFStride = 64
@@ -48,7 +46,6 @@ public enum SSBFifthOrderGradientSearch {
     /// A rejected step that predicted less than this normalized gain ends the stage: the Double-summed float32
     /// powers vary by a few 1e-8 between nearby points, so such a step cannot be resolved.
     public var noiseFloor = 5e-8
-    public var update = Update.bfgs
     public var maxObjectives = 400
     public var maxIterations = 200
     public init() {}
@@ -232,22 +229,11 @@ public enum SSBFifthOrderGradientSearch {
           let next = try track([proposal], .gradientOfLastValue(bfStride: stride))[0]
           let y = (0..<n).map { next.gradient[$0] - gradient[$0] }
           let hs = times(hessian, d)
-          switch settings.update {
-          case .bfgs:
-            let sy = dot(d, y)
-            let shs = dot(d, hs)
-            if sy < -1e-16 && shs < 0 {
-              for i in 0..<n {
-                for j in 0..<n { hessian[i][j] += -hs[i] * hs[j] / shs + y[i] * y[j] / sy }
-              }
-            }
-          case .sr1:
-            let r = (0..<n).map { y[$0] - hs[$0] }
-            let rs = dot(r, d)
-            if abs(rs) > 1e-8 * dot(r, r).squareRoot() * dot(d, d).squareRoot() {
-              for i in 0..<n {
-                for j in 0..<n { hessian[i][j] += r[i] * r[j] / rs }
-              }
+          let sy = dot(d, y)
+          let shs = dot(d, hs)
+          if sy < -1e-16 && shs < 0 {
+            for i in 0..<n {
+              for j in 0..<n { hessian[i][j] += -hs[i] * hs[j] / shs + y[i] * y[j] / sy }
             }
           }
           center = proposal

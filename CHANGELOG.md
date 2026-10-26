@@ -78,6 +78,9 @@ new `rcN` heading when that rc is published to TestPyPI.
   `QUANTEM_SHARED_U8_BLOCKS` knob), `MetalPackedSource.maskedVirtualImage` (use
   `calibratedImage(codeSums: maskedCodeSums(detectorPixels:), pixelCount:)`),
   `MetalRuntimeANSSeries.extractAllRawDiffraction` (use `updateDiffractionBuffers`) and `MetalFloat32SurfaceState`.
+- Native (Metal) SSB: the exact-gradient fifth-order search's untested symmetric-rank-one Hessian update
+  (`SSBFifthOrderGradientSearch.Update.sr1`, `Settings.update`, `metal-ssb-fit-benchmark --update`) is removed; the
+  search always uses its dense BFGS update, as every fit did.
 - Native (Metal) SSB is model-based only: the engine's own non-model reconstruction and the phase-variance fit are
   retired. Removed: `MetalSSBEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`, `phaseVariance`,
   `optimize` and `MetalSSBPhaseVarianceResult`; `SSBOptimizer` and `SSBOptimizationProgress`; the phase-variance

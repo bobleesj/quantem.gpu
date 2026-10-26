@@ -132,9 +132,6 @@ struct Options {
       case "--coarse-stride": gradientSettings.coarseBFStride = Int(try value(flag)) ?? 1
       case "--coarse-tolerance": gradientSettings.coarseTolerance = Double(try value(flag)) ?? 1e-7
       case "--fine-radius": gradientSettings.fineRadius = Double(try value(flag)) ?? 0.1
-      case "--update":
-        gradientSettings.update =
-          SSBFifthOrderGradientSearch.Update(rawValue: try value(flag)) ?? .bfgs
       case "--verbose": verbose = true
       case "--curvature": curvature = true
       case "--score": score = URL(fileURLWithPath: try value(flag))
