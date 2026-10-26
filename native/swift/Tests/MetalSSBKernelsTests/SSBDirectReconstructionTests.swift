@@ -67,7 +67,14 @@ final class SSBDirectReconstructionTests: XCTestCase {
     let half = n / 2 + 1
     let outputN = factor * n
     let k = try model.objectiveArrays().k.map { (Double($0.x), Double($0.y)) }
-    precondition(k.count == s.pixels.count, "every BF pixel of the scene is inside the aperture")
+    // The model's rotated frequencies are those of the BF pixels inside the aperture's support (the engine's
+    // float32 rule); every selected BF pixel enters the dose, weights and damping scale.
+    let outer = g.semiangleRadians + 0.5 * max(g.angularSamplingYRadians, g.angularSamplingXRadians)
+    let active = g.brightfieldKX.indices.filter {
+      hypot(g.brightfieldKX[$0], g.brightfieldKY[$0]) * g.wavelengthAngstroms <= outer
+    }
+    precondition(
+      k.count == active.count, "the model's BF frequencies are the pixels inside the aperture's support")
     let wl = Double(g.wavelengthAngstroms)
     let semi = Double(g.semiangleRadians)
     let angular = Double(g.angularSamplingXRadians)
@@ -109,7 +116,7 @@ final class SSBDirectReconstructionTests: XCTestCase {
     let dc = spectra.map { $0[0].re }
     let apertures = g.brightfieldAperture.map(Double.init)
     let dose = dc.reduce(0, +) / (Double(n * n) * apertures.map { $0 * $0 }.reduce(0, +))
-    var weights = [Double](repeating: 1, count: k.count)
+    var weights = [Double](repeating: 1, count: dc.count)
     if r.detectorWeighting == .inverseMean {
       let mean = dc.map { max($0 / Double(n * n), 0) }
       let sorted = mean.sorted()
@@ -155,8 +162,9 @@ final class SSBDirectReconstructionTests: XCTestCase {
         let dim = complex ? 2 * count : count
         var a = [Complex](repeating: Complex(), count: dim * dim)
         var b = [Complex](repeating: Complex(), count: dim)
-        for (index, (kr, kc)) in k.enumerated() {
-          let (ak, alpha2k, chik) = pixel[index]
+        for (position, (kr, kc)) in k.enumerated() {
+          let index = active[position]
+          let (ak, alpha2k, chik) = pixel[position]
           var v = [Complex](repeating: Complex(), count: dim)
           for (alias, entry) in aliases.enumerated() {
             let (qr, qc) = entry.q
@@ -344,6 +352,44 @@ final class SSBDirectReconstructionTests: XCTestCase {
         XCTAssertNil(result.amplitude)
       }
       print(line)
+    }
+  }
+
+  /// Inverse-mean weights count every selected BF pixel, as Python's: those outside the aperture's support have no
+  /// transfer but enter the median floor and the normalization.
+  func testInverseMeanWeightsEveryBFPixelOutsideTheAperture() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try SSBModelReconstructionTests.scene(radius: 5.2)
+    let g = s.geometry
+    let outer = g.semiangleRadians + 0.5 * max(g.angularSamplingYRadians, g.angularSamplingXRadians)
+    let outside = g.brightfieldKX.indices.filter {
+      hypot(g.brightfieldKX[$0], g.brightfieldKY[$0]) * g.wavelengthAngstroms > outer
+    }
+    XCTAssertGreaterThan(outside.count, 8, "the scene must select BF pixels beyond the aperture's support")
+    let spectra = Self.spectra(s)
+    let point = SSBModelPoint(
+      c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4, sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140)
+    for (factor, method) in [(1, SSBReconstructionMethod.phase), (2, .complex)] {
+      let regularization = SSBDirectRegularization(detectorWeighting: .inverseMean)
+      let model = try model(s, device: device)
+      let result = try model.reconstruct(
+        point, upsamplingFactor: factor, method: method, regularization: regularization)
+      let expected = try Self.reference(
+        s, spectra: spectra, model: model, point: point, factor: factor, complex: method == .complex,
+        regularization: regularization)
+      let count = result.rows * result.columns
+      let phase = values(result.phase, count)
+      var squared = 0.0, maximum = 0.0
+      for i in 0..<count {
+        var d = phase[i] - expected.phase[i]
+        d -= 2 * .pi * (d / (2 * .pi)).rounded()
+        squared += d * d
+        maximum = max(maximum, abs(d))
+      }
+      let rms = (squared / Double(count)).squareRoot()
+      print("DIRECT inverse_mean, \(outside.count) of \(g.logicalBrightfieldCount) BF pixels outside: \(method.rawValue) \(factor)x phase rms \(rms) max \(maximum)")
+      XCTAssertLessThan(rms, 5e-7)
+      XCTAssertLessThan(maximum, 2e-6)
     }
   }
 

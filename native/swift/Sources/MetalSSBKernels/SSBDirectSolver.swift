@@ -123,6 +123,8 @@ final class SSBDirectSolver {
   let library: MTLLibrary
   let geometry: MetalSSBGeometry
   private let activeIndices: [Int]
+  /// The spectra of the logical BF pixels outside the aperture's support, ascending (inverse-mean weights).
+  private let visitInactive: MetalSSBJointModel.VisitSpectra
   let n: Int
   private let pixelPipeline, dcPipeline, wavePipeline: MTLComputePipelineState
   private var pipelines: [Kernel: MTLComputePipelineState] = [:]
@@ -139,8 +141,9 @@ final class SSBDirectSolver {
 
   init(
     device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary, geometry: MetalSSBGeometry,
-    activeIndices: [Int]
+    activeIndices: [Int], visitInactive: @escaping MetalSSBJointModel.VisitSpectra
   ) throws {
+    self.visitInactive = visitInactive
     self.device = device
     self.queue = queue
     self.library = library
@@ -381,40 +384,48 @@ final class SSBDirectSolver {
       key: key, outputN: outputN, groups: groups, weights: weights, scale: scale, dose: dose)
   }
 
-  /// 1 / max(mean count, 5 % of the median mean), normalized to mean 1 over the BF pixels (Python `inverse_mean`).
+  /// 1 / max(mean count, 5 % of the median mean), normalized to mean 1 over every selected BF pixel (Python
+  /// `inverse_mean`), including those outside the aperture's support, which have no transfer but count in the median
+  /// and the mean. The mean counts are the DC of each pixel's spectrum, as Python's `Re G(0, k)`.
   private func inverseMeanWeights(visit: MetalSSBJointModel.VisitSpectra, isCancelled: () -> Bool)
     throws -> [Float]
   {
     let logical = geometry.logicalBrightfieldCount
-    guard activeIndices.count == logical else {
-      throw MetalSSBError.invalidGeometry(
-        "Inverse-mean weighting needs every BF pixel inside the calibrated aperture; reduce the BF radius or use uniform weighting."
-      )
-    }
-    let dc = try Self.allocate(device, logical * 4, shared: true)
-    var pending: MTLCommandBuffer? = try command()
-    try withoutActuallyEscaping(isCancelled) { cancelled in
-      try visit(Self.batch) { [self] source, offset, half, bfOffset, count in
-        if cancelled() { throw CancellationError() }
-        let commands = try pending ?? command()
-        var p = SIMD3<UInt32>(
-          UInt32(count), UInt32(half ? n * (n / 2 + 1) : n * n), UInt32(bfOffset))
-        let encoder = try self.encoder(commands, dcPipeline)
-        encoder.setBuffer(source, offset: offset, index: 0)
-        encoder.setBuffer(dc, offset: 0, index: 1)
-        encoder.setBytes(&p, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 2)
-        dispatch(encoder, width: count)
-        if half {
-          pending = commands
-        } else {
-          try finish(commands)
-          pending = nil
+    let active = Set(activeIndices)
+    let inactive = (0..<logical).filter { !active.contains($0) }
+    let activeDC = try Self.allocate(device, activeIndices.count * 4, shared: true)
+    let inactiveDC = try Self.allocate(device, inactive.count * 4, shared: true)
+    // The DC of every visited spectrum into `dc` at its position in that visitor's order.
+    func collect(_ visitor: MetalSSBJointModel.VisitSpectra, into dc: MTLBuffer) throws {
+      var pending: MTLCommandBuffer? = try command()
+      try withoutActuallyEscaping(isCancelled) { cancelled in
+        try visitor(Self.batch) { [self] source, offset, half, bfOffset, count in
+          if cancelled() { throw CancellationError() }
+          let commands = try pending ?? command()
+          var p = SIMD3<UInt32>(
+            UInt32(count), UInt32(half ? n * (n / 2 + 1) : n * n), UInt32(bfOffset))
+          let encoder = try self.encoder(commands, dcPipeline)
+          encoder.setBuffer(source, offset: offset, index: 0)
+          encoder.setBuffer(dc, offset: 0, index: 1)
+          encoder.setBytes(&p, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 2)
+          dispatch(encoder, width: count)
+          if half {
+            pending = commands
+          } else {
+            try finish(commands)
+            pending = nil
+          }
         }
       }
+      if let pending { try finish(pending) }
     }
-    if let pending { try finish(pending) }
-    let values = UnsafeBufferPointer(
-      start: dc.contents().assumingMemoryBound(to: Float.self), count: logical)
+    try collect(visit, into: activeDC)
+    try collect(visitInactive, into: inactiveDC)
+    var values = [Float](repeating: 0, count: logical)
+    let activeValues = activeDC.contents().assumingMemoryBound(to: Float.self)
+    let inactiveValues = inactiveDC.contents().assumingMemoryBound(to: Float.self)
+    for (position, index) in activeIndices.enumerated() { values[index] = activeValues[position] }
+    for (position, index) in inactive.enumerated() { values[index] = inactiveValues[position] }
     let positions = Float(n * n)
     let mean = values.map { max($0 / positions, 0) }
     let sorted = mean.sorted()

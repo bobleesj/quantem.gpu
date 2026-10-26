@@ -264,6 +264,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   512 x 512 acquisitions broad equals standard on six and is 0.5 % higher on one, is never below the earlier
   finite-difference broad fit, and repeats bit for bit; it takes 7.3-8.6 s (two larger acquisitions 11.7-12.9 s)
   on an RTX PRO 6000 Blackwell Max-Q instead of about 6 s, of which TPE is 5.0-6.9 s.
+
+- Native (Metal) `phase` and `complex` with `inverse_mean` weighting no longer refuse BF pixels outside the calibrated
+  aperture: as Python, every selected BF pixel enters the median floor and the normalization (those outside have no
+  transfer). The k-only aperture term A(k) now uses CUDA's square-pixel probe geometry, as A(k +- q) does
+  (`ssb-direct` v0.4; about 1 ulp at the aperture edge).
 - Native (Metal) SSB redraw (`ssb-redraw` v0.3, replaces v0.2): the lowest scan frequencies, where the two
   sidebands nearly cancel, are resolved by evaluating chi(k +- q) - chi(k) as polynomials expanded about each BF
   pixel and forming gamma from their half sum and half difference. On five measured 512 x 512 acquisitions, 1x, 2x

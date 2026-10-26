@@ -83,6 +83,8 @@ public final class MetalSSBJointModel {
   private let device: MTLDevice
   private let queue: MTLCommandQueue
   private let visit: VisitSpectra
+  /// The spectra of the BF pixels outside the aperture's support (inverse-mean weights only).
+  private let visitInactive: VisitSpectra
   private let validatePreparation: () throws -> Void
   private let geometry: MetalSSBGeometry
   private let provenance: MetalSSBProvenance
@@ -148,8 +150,8 @@ public final class MetalSSBJointModel {
   init(
     device: MTLDevice, geometry: MetalSSBGeometry, activeIndices: [Int], rotation: Double,
     band: ClosedRange<Float>, provenance: MetalSSBProvenance,
-    visit: @escaping VisitSpectra, validatePreparation: @escaping () throws -> Void,
-    isCancelled: () -> Bool
+    visit: @escaping VisitSpectra, visitInactive: @escaping VisitSpectra,
+    validatePreparation: @escaping () throws -> Void, isCancelled: () -> Bool
   ) throws {
     guard rotation.isFinite, band.lowerBound >= 0, band.upperBound > band.lowerBound else {
       throw MetalSSBError.invalidGeometry(
@@ -159,6 +161,7 @@ public final class MetalSSBJointModel {
     self.geometry = geometry
     self.provenance = provenance
     self.visit = visit
+    self.visitInactive = visitInactive
     self.validatePreparation = validatePreparation
     self.activeIndices = activeIndices
     scanDetectorRotationDegrees = rotation
@@ -801,7 +804,7 @@ public final class MetalSSBJointModel {
     if directSolver == nil {
       directSolver = try SSBDirectSolver(
         device: device, queue: queue, library: library, geometry: geometry,
-        activeIndices: activeIndices)
+        activeIndices: activeIndices, visitInactive: visitInactive)
     }
     let solver = directSolver!
     let (phase, amplitude, n) = try solver.reconstruct(
@@ -917,7 +920,7 @@ public final class MetalSSBJointModel {
     if directSolver == nil {
       directSolver = try SSBDirectSolver(
         device: device, queue: queue, library: library, geometry: geometry,
-        activeIndices: activeIndices)
+        activeIndices: activeIndices, visitInactive: visitInactive)
     }
     return directSolver!
   }
