@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
 
 def _synchronize(backend: str) -> None:
@@ -151,8 +151,8 @@ def _regions(shape: tuple[int, int], sizes: tuple[int, ...]) -> list[tuple[str, 
     return result
 
 
-def run_ssb_preview(
-    ssb: SSB,
+def run_direct_ptycho_preview(
+    ssb: DirectPtycho,
     *,
     upsampling: tuple[int, ...] = (1, 2, 3, 4, 8),
     runs: int = 6,
@@ -194,8 +194,8 @@ def run_ssb_preview(
 
     Examples
     --------
-    >>> from quantem.gpu.benchmark import run_ssb_preview
-    >>> report = run_ssb_preview(ssb, upsampling=(1, 4), runs=11)  # doctest: +SKIP
+    >>> from quantem.gpu.benchmark import run_direct_ptycho_preview
+    >>> report = run_direct_ptycho_preview(ssb, upsampling=(1, 4), runs=11)  # doctest: +SKIP
     """
     if runs < 2:
         raise ValueError("Use runs >= 2 for a first observation and warm timings.")
@@ -284,7 +284,7 @@ def run_ssb_preview(
     return report
 
 
-def run_ssb(
+def run_direct_ptycho(
     source: str | Path,
     *,
     backend: str = "auto",
@@ -343,8 +343,8 @@ def run_ssb(
 
     Examples
     --------
-    >>> from quantem.gpu.benchmark import run_ssb
-    >>> report = run_ssb("scan.qem")  # doctest: +SKIP
+    >>> from quantem.gpu.benchmark import run_direct_ptycho
+    >>> report = run_direct_ptycho("scan.qem")  # doctest: +SKIP
     """
     from quantem.gpu import DirectPtycho, io
     from quantem.gpu.device import resolve
@@ -595,3 +595,8 @@ def run_ssb(
         }
     finally:
         data.close()
+
+
+# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
+run_ssb = run_direct_ptycho
+run_ssb_preview = run_direct_ptycho_preview

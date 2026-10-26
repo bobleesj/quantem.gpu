@@ -14,7 +14,7 @@ from quantem.gpu.direct_ptycho._execution import checkpoint
 from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE, pack_coefficients
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sum_from_complex
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, ifft2_chunked
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho, ifft2_chunked
 from quantem.gpu.direct_ptycho.mps.thick_sample import _THICK_FIT_BATCH_HEADER, _params
 
 # Bound the correction and FFT working arrays independently of the BF count.
@@ -1105,7 +1105,7 @@ _DEPTH_ALIASES = 3
 _DEPTH_UNROLL = 1
 
 
-def _separable_geometry(prepared: PreparedMpsSSB, n: int, params) -> dict:
+def _separable_geometry(prepared: PreparedMpsDirectPtycho, n: int, params) -> dict:
     """Aberration-independent state of the separable path for one output grid, cached on ``prepared``."""
     mx = prepared.mx
     cached = prepared.separable_geometry
@@ -1176,7 +1176,7 @@ def _alias_row_pairs(row_indices: np.ndarray, source_n: int, size: int = 2) -> n
     return np.asarray(pairs, dtype=np.uint32).reshape(-1, size)
 
 
-def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.ndarray, dc, n: int):
+def _separable_spectrum(prepared: PreparedMpsDirectPtycho, qr, qc, params, params_np: np.ndarray, dc, n: int):
     """The complete corrected C10/C12 spectrum (n x n), with every selected BF contribution."""
     mx = prepared.mx
     geometry = _separable_geometry(prepared, n, params)
@@ -1308,7 +1308,7 @@ def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.
 
 
 def _coherent_support(
-    prepared: PreparedMpsSSB, n: int, columns: int,
+    prepared: PreparedMpsDirectPtycho, n: int, columns: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Retain every nonzero aperture frequency, with an outward grid margin."""
     radius = (
@@ -1330,7 +1330,7 @@ def _coherent_support(
 
 
 def _coherent_spectrum(
-    prepared: PreparedMpsSSB, qr, qc, params, dc, probe, coefficients,
+    prepared: PreparedMpsDirectPtycho, qr, qc, params, dc, probe, coefficients,
     higher: bool, n: int, chunk: int, columns: int, has_depth: bool = True,
 ):
     """Accumulate every BF contribution in its original group and sum order."""
@@ -1398,7 +1398,7 @@ def _coherent_spectrum(
     return total
 
 
-def _coherent_columns(prepared: PreparedMpsSSB, n: int) -> int:
+def _coherent_columns(prepared: PreparedMpsDirectPtycho, n: int) -> int:
     """Use the unique half only when both Nyquist edges have zero support."""
     radius = (
         prepared.semiangle_rad
@@ -1415,7 +1415,7 @@ def _coherent_columns(prepared: PreparedMpsSSB, n: int) -> int:
     return n
 
 
-def _alias_inputs(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float,
+def _alias_inputs(prepared: PreparedMpsDirectPtycho, C10: float, C12: float, phi12: float,
                   sample_tilt_mrad: tuple[float, float], thickness: float, n: int,
                   higher_order_magnitudes: np.ndarray | None, higher_order_angles: np.ndarray | None):
     """The n x n output frequencies, kernel scalars, packed coefficients (and the host copy) and the DC value."""
@@ -1435,7 +1435,7 @@ def _alias_inputs(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float
     return qr, qc, params, mx.array(packed), packed, dc
 
 
-def _alias_probe(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float, params, coefficients,
+def _alias_probe(prepared: PreparedMpsDirectPtycho, C10: float, C12: float, phi12: float, params, coefficients,
                  packed: np.ndarray, higher: bool):
     """The per-BF probe terms of ``_alias_probe_kernel``, cached on ``prepared`` for the last optics."""
     stored = int(prepared.g_qk.shape[0])
@@ -1454,7 +1454,7 @@ def _alias_probe(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float,
 
 
 def _reconstruct_upsampled(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     *,
     C10: float,
     C12: float,
@@ -1504,7 +1504,7 @@ def _reconstruct_upsampled(
 
 
 def phase_variance_higher_order(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     *,
     C10: float,
     C12: float,

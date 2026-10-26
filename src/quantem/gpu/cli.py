@@ -16,8 +16,10 @@ def _parser() -> argparse.ArgumentParser:
         description="Accelerated 4D-STEM compute services.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    # benchmark-ssb, the name before the Direct Ptycho rename, stays the same command (release CI calls it)
     benchmark = commands.add_parser(
-        "benchmark-ssb", help="measure full-field and regional SSB joint fits on CUDA or MPS",
+        "benchmark-direct-ptycho", aliases=["benchmark-ssb"],
+        help="measure full-field and regional Direct Ptycho joint fits on CUDA or MPS",
     )
     benchmark.add_argument("source", type=Path, help="local H5 or QEM acquisition")
     benchmark.add_argument("--out", type=Path, required=True, help="write the timing report outside the repository")
@@ -103,9 +105,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the requested QuantEM GPU command."""
     args = _parser().parse_args(argv)
-    if args.command == "benchmark-ssb":
+    if args.command in ("benchmark-direct-ptycho", "benchmark-ssb"):
         import json
-        from quantem.gpu.benchmark import run_ssb
+        from quantem.gpu.benchmark import run_direct_ptycho
 
         calibration = {
             "voltage_kV": args.voltage_kv, "semiangle_mrad": args.semiangle_mrad,
@@ -117,7 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             value = calibration.get(name)
             if value is not None and len(value) == 1:
                 calibration[name] = value[0]
-        report = run_ssb(
+        report = run_direct_ptycho(
             args.source, backend=args.backend, runs=args.runs,
             region_sizes=tuple(args.region_sizes), num_trials=args.trials,
             seed=args.seed, calibration=calibration, progress=print,

@@ -17,11 +17,11 @@ class _Backend:
         self.reconstruct_calls = 0
 
     def fit(self, **settings):
-        from quantem.gpu import SSBResult
+        from quantem.gpu import DirectPtychoResult
 
         self.fit_calls += 1
         trials = int(settings["trials"])
-        return SSBResult(
+        return DirectPtychoResult(
             object_wave=np.full((2, 2), 1 + 2j, dtype=np.complex64),
             backend=self.backend,
             aberrations={"C10": -101.0, "C12": 4.0, "phi12": 0.25},
@@ -365,7 +365,7 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
 
 def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     """write_fit_metadata marks its block and saved_fit returns the exact values; no field of an unmarked block survives."""
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
     from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
@@ -376,7 +376,7 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     config.write_text(json.dumps({"schema": SCREEN_ACQUISITION_SCHEMA, "human": {"notes": "kept"},
                                   "computed": {"bright_field_radius_px": 55.0, "ssb": earlier}}))
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": math.degrees(-0.5)}
-    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+    result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_radius_px=48.0)
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5), "scan_detector_rotation_deg": 200.0, "bright_field_radius_px": None}
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
@@ -411,7 +411,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     """
     import h5py
 
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
     from quantem.gpu.formats.ssb_phase import export_result, read_result
     from quantem.gpu.direct_ptycho import workflow
     from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
@@ -431,7 +431,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     columns = tmp_path / "columns.u16"
     np.zeros((2, 4), dtype=np.uint16).tofile(columns)
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
-    monkeypatch.setattr(workflow, "MpsSSBBackend", RecordingBackend)
+    monkeypatch.setattr(workflow, "MpsDirectPtychoBackend", RecordingBackend)
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.25, 0.25)}
     # an export with its own calibration, then one that records only the disk edge
     for exported, expected in (((0.61, 0.62), (0.61, 0.62)), (None, (30.0 / 48.0, 30.0 / 48.0))):
@@ -449,7 +449,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     with h5py.File(master, "w") as handle:
         handle["entry/data/data_000001"] = h5py.ExternalLink("scan_data.h5", "/data")
     np.save(tmp_path / "ssb_phase.npy", np.zeros((2, 2), np.float32))
-    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps", scan_detector_rotation_deg=192.0,
+    result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps", scan_detector_rotation_deg=192.0,
                        aberrations={"C10_nm": 7.0, "C12_nm": 2.0, "phi12_deg": 5.0}, bright_field_center_px=(1.0, 1.5))
     write_fit_metadata(tmp_path, {**settings, "scan_detector_rotation_deg": 192.0}, result, session.detector_sampling_mrad)
     record, _ = read_result(export_result(tmp_path, master, tmp_path / "out.json"))
@@ -465,13 +465,13 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     """
     import pytest
 
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
     from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
     assert SCREEN_ACQUISITION_SCHEMA == "quantem.screen-acquisition/2"
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": -0.5}
-    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+    result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_center_px=(31.5, 32.5))
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5), "scan_detector_rotation_deg": 200.0}
     # created: the record carries the schema first, and the fit reads back
@@ -507,12 +507,12 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
 
 
 def _saved_joint_fit(tmp_path, monkeypatch):
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
 
     source = tmp_path / "scan.bin"
     source.write_bytes(b"detector counts")
     session = _session(monkeypatch, source, _Backend())
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps",
         aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": 3.0},
         sample_tilt_mrad=(1.0, 2.0), depth_spread_nm=10.0,
@@ -561,7 +561,7 @@ def test_parameter_slices_require_live_ownership_for_saved_array_fit(tmp_path, m
 
 
 def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path, monkeypatch):
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
     from quantem.gpu.direct_ptycho import parameters
     from quantem.gpu.direct_ptycho.persistence import load_result
 
@@ -582,12 +582,12 @@ def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path
     assert metadata["parameter_slices"] == measured
     assert "parameter_slices" not in metadata["result"]
     # The existing scientific payload needs no new constructor keyword.
-    assert SSBResult(object_wave=result.object_wave, **metadata["result"]).parameter_slices is None
+    assert DirectPtychoResult(object_wave=result.object_wave, **metadata["result"]).parameter_slices is None
     restored = load_result(paths=paths, signature=signature, backend="mps")
     assert restored.parameter_slices == measured
     assert session.measure_parameters(restored) == measured
 
-    unsaved = SSBResult(
+    unsaved = DirectPtychoResult(
         object_wave=result.object_wave, backend="mps", aberrations=result.aberrations,
         sample_tilt_mrad=result.sample_tilt_mrad, depth_spread_nm=result.depth_spread_nm,
         scan_detector_rotation_deg=result.scan_detector_rotation_deg,

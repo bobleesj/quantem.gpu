@@ -10,7 +10,7 @@ The examples use one public Python API on supported MPS and CUDA paths.
 | Save or inspect a file | `io.save`, `io.inspect` | Saved acquisition or header report | [Save and share](qem-python.md) |
 | Mean diffraction, BF, ADF, DF | `detector.mean`, `bf`, `adf`, `df` | Reduced NumPy images | [Detectors](images_dpc.md) |
 | CoM and integrated DPC | `dpc.run` | `DPCResult` | [DPC](images_dpc.md) |
-| Find aberrations; reconstruct phase | `SSB.find_aberrations`, `SSB.reconstruct` | `SSBResult` | [SSB](direct_ptycho.md) |
+| Find aberrations; reconstruct phase | `DirectPtycho.find_aberrations`, `DirectPtycho.run` | `DirectPtychoResult` | [Direct Ptycho](direct_ptycho.md) |
 | Measure and correct drift across a series | `drift.drift`, `Drift.show`, `Drift.corrected` | `Drift`; aligned frames and their mean | [Drift](drift.md) |
 | Render a movie | `movie` | Encoded artifact | [Movies](movie.md) |
 

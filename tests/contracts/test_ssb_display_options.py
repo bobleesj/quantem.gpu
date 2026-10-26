@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.workflow import SSB
 
 
@@ -16,7 +16,7 @@ def _saved_result():
     section = dict(column_values=[-1, 0, 1], row_values=[-1, 0, 1],
                    relative_agreement=[[0.3, 0.4, 0.3], [0.7, 1, 0.7], [0.3, 0.4, 0.3]],
                    fitted_point=[0, 0])
-    return SSBResult(
+    return DirectPtychoResult(
         object_wave=np.exp(1j * phase), backend="mps", aberrations={"C10_nm": 0},
         object_sampling_A=(0.5, 0.5), sample_tilt_mrad=(0, 0), depth_spread_nm=0,
         parameter_slices={"scan_detector_rotation_deg": 17,

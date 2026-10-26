@@ -20,8 +20,8 @@ from quantem.gpu.formats import dataset_yaml
 from quantem.gpu.direct_ptycho.contract import auto_refinement
 from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, RESULT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
 from quantem.gpu.direct_ptycho.results import (
-    SSBResult,
-    SSBSeriesResult,
+    DirectPtychoResult,
+    DirectPtychoSeriesResult,
     host_array,
     retired_estimator_note,
 )
@@ -47,7 +47,7 @@ def reconstruct_series(
     save_dir: str | Path | None = None,
     progress: bool = True,
     num_trials: int | None = None,
-) -> SSBSeriesResult:
+) -> DirectPtychoSeriesResult:
     """Reconstruct an SSB series with independent or fixed-probe fitting (``DirectPtycho.reconstruct_series``).
 
     ``cls`` is ``DirectPtycho``.
@@ -103,7 +103,7 @@ def reconstruct_series(
 
     Returns
     -------
-    SSBSeriesResult
+    DirectPtychoSeriesResult
         One independent-fit or fixed-probe phase stack, with its bright- and
         dark-field companions and a ``metadata()`` table.
     """
@@ -234,7 +234,7 @@ def reconstruct_series(
                 "result": "saved" if result.reused else "computed",
             }
         )
-    return SSBSeriesResult(
+    return DirectPtychoSeriesResult(
         phase=np.stack(phases),
         bright_field=np.stack(bright_fields),
         dark_field=np.stack(dark_fields),
@@ -432,7 +432,7 @@ LIVE_BRANCH_DECISION = ("column_sign", "session_moved_180", "session_rotation", 
 def write_fit_metadata(
     screen_path: Path,
     settings: dict[str, object],
-    result: SSBResult,
+    result: DirectPtychoResult,
     detector_sampling_mrad: tuple[float, float],
 ) -> None:
     """Record a fresh GPU fit in ``config.json`` so Live screening and later series runs find it.

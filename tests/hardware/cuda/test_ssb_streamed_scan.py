@@ -11,7 +11,7 @@ pytestmark = pytest.mark.slow
 from quantem.gpu import SSB
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
 from quantem.gpu.resident.cuda.counts import StreamedCounts
-from quantem.gpu.direct_ptycho.cuda.streamed import StreamedSSB
+from quantem.gpu.direct_ptycho.cuda.streamed import StreamedDirectPtycho
 from quantem.gpu.direct_ptycho.units import aberrations_to_engine
 
 SETTINGS = {
@@ -86,7 +86,7 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth, aberra
     coefficients = None if higher is None else pack_coefficients(higher[0] * np.float32(ENGINE_PER_NM), higher[1])
     values = _counts((128, 128, 8, 8))
     with _encoded(values) as data:
-        streamed = StreamedSSB(
+        streamed = StreamedDirectPtycho(
             data, mean_pattern=None, center=SETTINGS["bright_field_center_px"],
             radius=SETTINGS["bright_field_radius_px"], threshold=0., semiangle_mrad=30.,
             detector_sampling_mrad=SETTINGS["detector_sampling_mrad"], scan_detector_rotation_flipped=transposed,

@@ -35,7 +35,7 @@ Numerical candidates, objective scores, probability densities, Hessians,
 eigensolves, and trust-region decisions stay on the GPU. Python supplies fixed
 configuration and dispatches kernels; active-start/design-size flags may return
 for scheduling. Completed fit records return for display and persistence.
-`SSBResult.optimizer` records the execution device, numerical precision, and
+`DirectPtychoResult.optimizer` records the execution device, numerical precision, and
 per-start iteration/evaluation counts; `timings` records search and refinement
 separately. The phase-variance search (`objective="phase_variance"`) is
 retired. The standard fit

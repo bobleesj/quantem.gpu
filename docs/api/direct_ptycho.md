@@ -293,7 +293,7 @@ prepared Fourier data. After editing the array, construct a new `DirectPtycho` s
 Direct Ptycho Fourier-stack preparation and reconstruction are additional work; they
 are not included in a detector-viewer loading-time claim.
 
-`find_aberrations()` returns one `SSBResult`. Its primary field is the complex64
+`find_aberrations()` returns one `DirectPtychoResult`. Its primary field is the complex64
 `object_wave` with shape `(scan_row, scan_column)`. `phase` and `amplitude` are
 derived as `angle(object_wave)` and `abs(object_wave)`. The result also records
 the backend, fitted aberrations, rotation, loss, trial counts, the local
@@ -1097,7 +1097,7 @@ Native application authors should use the {ref}`Swift/Metal integration guide <n
 ## Series reconstruction
 
 `DirectPtycho.run_series()` discovers numbered acquisitions in one directory
-and returns one `SSBSeriesResult`. Inclusive `first_frame` and `last_frame`
+and returns one `DirectPtychoSeriesResult`. Inclusive `first_frame` and `last_frame`
 values select acquisition identifiers, not positional array indices. Set
 `probe_reference_frame` to reuse one fitted probe; omit it to fit each
 acquisition independently. The result retains the phase, bright-field and

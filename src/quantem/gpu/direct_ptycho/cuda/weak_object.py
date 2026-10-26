@@ -16,7 +16,7 @@ from quantem.gpu.direct_ptycho.cuda.kernels.engine import _THICK_GEOMETRY_SOURCE
 from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE, pack_coefficients
 
 if TYPE_CHECKING:
-    from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
+    from quantem.gpu.direct_ptycho.cuda.engine import DirectPtychoEngine
 
 
 _transfer = cp.ElementwiseKernel(
@@ -48,7 +48,7 @@ _transfer = cp.ElementwiseKernel(
 
 
 def transfer(
-    engine: "SSBEngine",
+    engine: "DirectPtychoEngine",
     rows: cp.ndarray,
     cols: cp.ndarray,
     magnitudes_A: np.ndarray,
@@ -69,7 +69,7 @@ def transfer(
 
 
 def transfer_frequencies(
-    engine: "SSBEngine",
+    engine: "DirectPtychoEngine",
     qr: cp.ndarray,
     qc: cp.ndarray,
     magnitudes_A: np.ndarray,

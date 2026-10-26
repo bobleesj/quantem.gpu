@@ -11,7 +11,7 @@ import math
 
 import numpy as np
 
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 ENGINE_PER_NM = 10.0
 PRIMARY = ("C10_nm", "C12_nm", "phi12_deg")
@@ -137,7 +137,7 @@ def refine_lock_to_engine(refine_lock: list[str] | None) -> list[str] | None:
     return [{"C10_nm": "C10", "C12_nm": "C12", "phi12_deg": "phi12"}[name] for name in refine_lock]
 
 
-def result_from_engine(result: SSBResult) -> SSBResult:
+def result_from_engine(result: DirectPtychoResult) -> DirectPtychoResult:
     """Convert a result computed by a backend (Angstrom, radians) to the public nm and degrees, in place."""
     result.aberrations = aberrations_from_engine(result.aberrations)
     if result.trial_records:

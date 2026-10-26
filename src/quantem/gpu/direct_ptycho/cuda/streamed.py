@@ -20,7 +20,7 @@ from quantem.gpu.direct_ptycho.cuda.brightfield import select_bright_field
 from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_wave_sum_add_kernel, thick_wave_sum_full_add_kernel
 
 
-class StreamedSSB:
+class StreamedDirectPtycho:
     """Borrow a complete exact-count resident and retain its immutable chunks."""
 
     def __init__(self, data, *, mean_pattern, center, radius, threshold,
@@ -305,3 +305,7 @@ class StreamedSSB:
         self.timings = {"reconstruct_s": time.perf_counter() - started,
                         "detector_batch_size": batch_size}
         return phase, None
+
+
+# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
+StreamedSSB = StreamedDirectPtycho

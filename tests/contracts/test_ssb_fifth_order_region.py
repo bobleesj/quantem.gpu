@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.workflow import SSB
 
 
@@ -17,12 +17,12 @@ from quantem.gpu.direct_ptycho.workflow import SSB
 def test_regional_fit_keeps_scope_panels_and_parent_state(tmp_path, search, saved):
     region = (64, 192, 128, 256)
     events = []
-    initial = SSBResult(
+    initial = DirectPtychoResult(
         object_wave=np.ones((128, 128), dtype=np.complex64), backend="mps",
         aberrations={"C10_nm": 2.0, "C12_nm": 0.0, "phi12_deg": 0.0},
         sample_tilt_mrad=(1.0, -2.0), depth_spread_nm=12.0,
     )
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=np.ones((128, 128), dtype=np.complex64), backend="mps",
         aberrations={"C10_nm": 2.0, "C12_nm": 0.0, "phi12_deg": 0.0, "C50_nm": 3.0},
         sample_tilt_mrad=(1.0, -2.0), depth_spread_nm=12.0,

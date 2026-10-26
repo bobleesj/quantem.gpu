@@ -10,7 +10,7 @@ per-frame time is dominated by reading the compressed acquisition, far inside th
 Each new phase is also placed live: registered against the frame placed before it by the lattice-safe band
 registration of quantem.gpu.drift, with Bragg-spot bands from the first frame, and added in register to a
 combined image that grows with the drift. On the measured series this adds 0.013 s a frame (median) and
-agrees with the full pairwise drift to 0.09 Å over 107 Å of drift; ``SSBStream.align`` then re-places every frame by that pairwise drift.
+agrees with the full pairwise drift to 0.09 Å over 107 Å of drift; ``DirectPtychoStream.align`` then re-places every frame by that pairwise drift.
 
 With ``save_dir`` each frame's optics and shift are written as it finishes, so a restarted kernel
 reconstructs the finished frames from them, with no refit and no registration, and continues.
@@ -39,7 +39,7 @@ from quantem.gpu.resident.hot_pixels import hot_pixel_outcome
 from quantem.gpu.direct_ptycho.fifth_order_fit import _objective, _refine_with_gradients
 from quantem.gpu.direct_ptycho.fifth_order_parameters import public_params
 from quantem.gpu.direct_ptycho.persistence import _write_atomically, acquisition_identity, json_value, software_signature
-from quantem.gpu.direct_ptycho.results import SSBResult, host_array
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
 
 # Coordinates 0..2 of the fifth-order vector: C10 and the two C12 components.
 VARIED = slice(0, 3)
@@ -55,8 +55,8 @@ REACH_A = 30.0
 RECORD_SCHEMA = "quantem.ssb-stream-frame/3"
 
 
-def stream(ptycho, sources, fit: SSBResult, *, method="ssb", upsampling_factor="auto", save_dir=None,
-           show: bool = True, verbose: bool = True, **strengths) -> "SSBStream":
+def stream(ptycho, sources, fit: DirectPtychoResult, *, method="ssb", upsampling_factor="auto", save_dir=None,
+           show: bool = True, verbose: bool = True, **strengths) -> "DirectPtychoStream":
     """Refit C10, C12 and phi12 on each source with ``fit``'s higher orders, tilt and depth held.
 
     Each source is read compressed onto the reference session's GPU and opened with the reference
@@ -225,7 +225,7 @@ def stream(ptycho, sources, fit: SSBResult, *, method="ssb", upsampling_factor="
     if verbose:
         for outcome, names in flagged.items():
             print(f"Stream: {len(names)} of {len(sources)} frames, {outcome}.")
-    return SSBStream(
+    return DirectPtychoStream(
         frames=tuple(source.name.removesuffix("_master.h5") for source in sources), phase=phase, images=images,
         methods=methods, aberrations=tuple(aberrations), refits=tuple(refits), fits=tuple(fits),
         timings=tuple(timings), reference=fit, object_sampling_A=tuple(float(value) for value in sampling),
@@ -237,7 +237,7 @@ def stream(ptycho, sources, fit: SSBResult, *, method="ssb", upsampling_factor="
 
 
 @dataclass
-class SSBStream:
+class DirectPtychoStream:
     """A streamed series: per frame the low-order optics (``aberrations``, higher orders, tilt and depth
     are ``reference``'s), the exact parameters each reconstruction received (``fits``), the refit's
     bookkeeping (``refits``: evaluations, stop, resumed from a record), the SSB phase every frame is
@@ -252,9 +252,9 @@ class SSBStream:
     methods: tuple[str, ...]
     aberrations: tuple[dict, ...]
     refits: tuple[dict, ...] = field(repr=False)
-    fits: tuple[SSBResult, ...] = field(repr=False)
+    fits: tuple[DirectPtychoResult, ...] = field(repr=False)
     timings: tuple[dict, ...] = field(repr=False)
-    reference: SSBResult = field(repr=False)
+    reference: DirectPtychoResult = field(repr=False)
     object_sampling_A: tuple[float, float]
     shifts_A: np.ndarray = field(repr=False)
     confidence: tuple[float, ...] = field(repr=False)
@@ -643,3 +643,7 @@ def _grow(canvas, whole, shape):
         canvas.total, canvas.cover = cp.pad(canvas.total, width), cp.pad(canvas.cover, width)
         canvas.origin = (canvas.origin[0] + before[0], canvas.origin[1] + before[1])
     return top + before[0], left + before[1]
+
+
+# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
+SSBStream = DirectPtychoStream

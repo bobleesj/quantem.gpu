@@ -66,11 +66,11 @@ def test_phase_of_mean_is_what_ssb_records_and_still_accepted(monkeypatch):
 
 def test_a_result_saved_with_a_retired_estimator_loads_with_a_notice(tmp_path, capsys):
     from quantem.gpu.direct_ptycho.persistence import load_result, result_paths, save_result
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
     paths = result_paths(tmp_path, "find_aberrations")
     signature = {"operation": "find_aberrations"}
-    saved = SSBResult(object_wave=np.exp(1j * np.ones((2, 2), np.float32)), backend="mps",
+    saved = DirectPtychoResult(object_wave=np.exp(1j * np.ones((2, 2), np.float32)), backend="mps",
                       aberrations=dict(ABERRATIONS), phase_estimator="phase_of_mean", amplitude_estimated=False)
     save_result(saved, paths=paths, signature=signature, input_metadata={})
     record = json.loads(paths[1].read_text())
@@ -85,9 +85,9 @@ def test_a_result_saved_with_a_retired_estimator_loads_with_a_notice(tmp_path, c
 
 
 def test_an_unrecorded_estimator_is_not_shown():
-    from quantem.gpu.direct_ptycho.results import SSBResult, retired_estimator_note
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult, retired_estimator_note
 
-    assert "Estimator" not in repr(SSBResult(object_wave=np.ones((2, 2), np.complex64), backend="mps"))
+    assert "Estimator" not in repr(DirectPtychoResult(object_wave=np.ones((2, 2), np.complex64), backend="mps"))
     assert retired_estimator_note("phase_of_mean", "fit.json") is None
     assert retired_estimator_note(None, "fit.json") is None
     assert "method='complex'" in retired_estimator_note("complex_wave", "fit.json")

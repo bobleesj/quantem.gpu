@@ -269,16 +269,16 @@ def test_a_native_phase_view_names_the_auto_factor(capsys):
 
     matplotlib.use("Agg")
     pytest.importorskip("quantem.core")
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
     wave = np.exp(1j * _lattice(n=32))
-    native = SSBResult(object_wave=wave, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
+    native = DirectPtychoResult(object_wave=wave, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
                        object_sampling_A=(0.5, 0.5))
     native.show(axsize=(2, 2))
     assert capsys.readouterr().out.strip() == (
         "SSB: showing this phase at 1x, the grid it was reconstructed on; "
         "ssb.run(result, upsampling_factor='auto') shows it at 4x.")
-    auto = SSBResult(object_wave=np.exp(1j * _lattice(n=128)), backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
+    auto = DirectPtychoResult(object_wave=np.exp(1j * _lattice(n=128)), backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
                      object_sampling_A=(0.125, 0.125), upsampling_factor=4)
     auto.show(axsize=(2, 2))
     assert capsys.readouterr().out == ""

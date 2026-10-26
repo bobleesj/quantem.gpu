@@ -12,13 +12,13 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from quantem.widget import Show2D, Show3D
 
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
     from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
 
 def show_focus(
     session: "DirectPtycho",
-    fit: "SSBResult",
+    fit: "DirectPtychoResult",
     *,
     region: tuple[int, int, int, int] | None = None,
     mode: Literal["interactive", "static"] = "interactive",

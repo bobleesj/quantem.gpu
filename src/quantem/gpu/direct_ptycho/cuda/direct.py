@@ -688,7 +688,7 @@ def solve_streamed(source, optics, factor: int, *, complex_object: bool, smoothn
                    compute_loss: bool):
     """The regularized wave of a scan streamed by detector columns, the systems of `PreparedDirect` without its stack.
 
-    ``source`` (`streamed.StreamedSSB.direct_source`) gives each BF pixel's scan sum, the detector geometry and
+    ``source`` (`streamed.StreamedDirectPtycho.direct_source`) gives each BF pixel's scan sum, the detector geometry and
     ``batches(order, size)``, which decodes and transforms detector columns in the layout's pixel order. Each
     column batch adds its part of every frequency's augmented Gram in float64 (``direct_normal_equations``
     with ACCUMULATE); the float32 per-lane sums cover a batch instead of every BF pixel. When the systems of

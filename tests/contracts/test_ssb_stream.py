@@ -112,14 +112,14 @@ def test_align_replaces_the_live_shifts_with_the_pairwise_drift():
     import cupy
 
     from quantem.gpu.drift import shifted
-    from quantem.gpu.direct_ptycho.stream import SSBStream, _add, _combined, _start
+    from quantem.gpu.direct_ptycho.stream import DirectPtychoStream, _add, _combined, _start
 
     rows, sampling = 256, (0.2, 0.2)
     specimen = lattice_image(rows, sampling[0], seed=3)
     truth = np.array([(0, 0), (2.3, 1.1), (4.45, 2.6), (6.1, 4.35)])
     generator = cupy.random.default_rng(4)
     phase = cupy.stack([shifted(specimen, shift) + 0.3 * generator.standard_normal((rows, rows)) for shift in truth]).astype(cupy.float32)
-    series = SSBStream(frames=tuple("abcd"), phase=phase, images={"ssb": phase}, methods=("ssb",), aberrations=(),
+    series = DirectPtychoStream(frames=tuple("abcd"), phase=phase, images={"ssb": phase}, methods=("ssb",), aberrations=(),
                        refits=(), fits=(), timings=(), reference=None, object_sampling_A=sampling,
                        shifts_A=np.zeros((4, 2)), confidence=(), placed=(True, False, False, False), combined={},
                        cover=None, sources=(), session={})

@@ -11,7 +11,7 @@ import type {
   WebGPUOptimizationOptions,
   WebGPUReconstructionOptions,
   WebGPUSampleOptions,
-  SSBProtocol,
+  DirectPtychoProtocol,
 } from "./protocol";
 import { fit } from "./optimizer";
 import { RansResidentSet } from "../../detector/webgpu/rans";
@@ -361,7 +361,7 @@ type SsbBindGroups = {
   objSumThick: GPUBindGroup[];
 };
 
-export type WebGPUSSBResult = {
+export type WebGPUDirectPtychoResult = {
   phase: Float32Array;
   width: number;
   height: number;
@@ -1520,7 +1520,7 @@ function chooseChunkCapacity(nbf: number, plane: number, device: GPUDevice): num
   return Math.max(REDUCE_BF_GROUP, Math.floor(raw / REDUCE_BF_GROUP) * REDUCE_BF_GROUP);
 }
 
-export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
+export class WebGPUDirectPtychoBackend implements DirectPtychoProtocol<WebGPUDirectPtychoResult> {
   readonly backend = "webgpu" as const;
   readonly precision = {
     real_dtype: "float32",
@@ -2008,7 +2008,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   }
 
   async reconstruct(c10A: number, c12A: number, phi12Rad: number,
-    options: WebGPUReconstructionOptions = {}): Promise<WebGPUSSBResult> {
+    options: WebGPUReconstructionOptions = {}): Promise<WebGPUDirectPtychoResult> {
     const factor = options.upsamplingFactor ?? 1;
     if (![1, 2, 4, 8].includes(factor)) throw new Error("WebGPU SSB upsamplingFactor must be 1, 2, 4, or 8.");
     if (factor > 1 && options.phaseEstimator === "mean_phase") {
@@ -2021,7 +2021,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       const native = wantsLoss || factor === 1
         ? await this.reconstructNative(c10A, c12A, phi12Rad, {...options, computeLoss: wantsLoss}) : null;
       if (options.phaseEstimator === "mean_phase") return native!;
-      let result: WebGPUSSBResult;
+      let result: WebGPUDirectPtychoResult;
       if (factor === 1) {
         result = wantsLoss
           ? await this.reconstructNative(c10A, c12A, phi12Rad, {...options, computeLoss: false}) : native!;
@@ -2034,7 +2034,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   }
 
   private async reconstructOutput(c10: number, c12: number, phi12: number,
-    factor: number, options: WebGPUReconstructionOptions): Promise<WebGPUSSBResult> {
+    factor: number, options: WebGPUReconstructionOptions): Promise<WebGPUDirectPtychoResult> {
     const numBrightFieldPixels = this.clampBfCount(options.numBrightFieldPixels);
     await this.setup(numBrightFieldPixels, options.scanDetectorRotationDeg);
     const device = this.device!, buffers = this.buffers!, n = this.n * factor;
@@ -2118,7 +2118,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     c12: number,
     phi12: number,
     options: WebGPUReconstructionOptions = {},
-  ): Promise<WebGPUSSBResult> {
+  ): Promise<WebGPUDirectPtychoResult> {
     // Engine units: Angstrom and radians. The scientist-facing widget converts nm at its boundary.
     const phi12Deg = phi12 * 180 / Math.PI;
     const numBrightFieldPixels = this.clampBfCount(options.numBrightFieldPixels);
@@ -2289,3 +2289,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     }
   }
 }
+
+// The names before the Direct Ptycho rename, kept for existing imports.
+export { WebGPUDirectPtychoBackend as WebGPUSSBBackend };
+export type { WebGPUDirectPtychoResult as WebGPUSSBResult };

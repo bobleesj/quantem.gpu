@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 from quantem.gpu.direct_ptycho.mps.kernels.radix import small_fft_macros, twiddle_512, twiddle_n
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, pk_batch_from_prepared
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho, pk_batch_from_prepared
 
 
 def _depth_code(thick: bool) -> tuple[str, str, str]:
@@ -366,7 +366,7 @@ def _row_ifft512_dynamic_kernel(
 
 
 def row_ifft512_from_dynamic_geometry(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     *,
     start: int,
     stop: int,
@@ -704,7 +704,7 @@ def _row_ifft_small_dynamic_kernel(
 
 
 def row_ifft_small_from_dynamic_geometry(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     *,
     start: int,
     stop: int,

@@ -10,7 +10,7 @@ import numpy as np
 
 from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import wavelength_A_from_kV
-from quantem.gpu.direct_ptycho.contract import SSBExportState, SSBPrecision
+from quantem.gpu.direct_ptycho.contract import DirectPtychoExportState, DirectPtychoPrecision
 from quantem.gpu.direct_ptycho.mps.frames import (
     MpsBfColumnFrames,
     MpsTensorFrames,
@@ -27,7 +27,7 @@ from quantem.gpu.direct_ptycho.mps.optimizer import fit_sample
 from quantem.gpu.direct_ptycho.mps.optimizer import optimize as optimize_mps
 from quantem.gpu.direct_ptycho.mps.padding import pad_scan
 from quantem.gpu.direct_ptycho.mps.prepared import (
-    PreparedMpsSSB,
+    PreparedMpsDirectPtycho,
     as_sampling,
     prepare_selection,
     resolve_bf_selection,
@@ -38,8 +38,8 @@ from quantem.gpu.direct_ptycho.mps.thick_sample import reconstruct_thick
 from quantem.gpu.direct_ptycho.mps.upsampling import _reconstruct_upsampled, phase_variance_higher_order
 
 
-class MpsSSBBackend:
-    """MLX/Metal implementation of ``quantem.gpu.direct_ptycho.contract.SSBProtocol``.
+class MpsDirectPtychoBackend:
+    """MLX/Metal implementation of ``quantem.gpu.direct_ptycho.contract.DirectPtychoProtocol``.
 
     The prepared state (``prepared.py``) owns MPS preparation and device state. UI and export consumers
     use only the public reconstruction methods and :meth:`browser_state`.
@@ -49,7 +49,7 @@ class MpsSSBBackend:
     """
 
     backend = "mps"
-    precision = SSBPrecision()
+    precision = DirectPtychoPrecision()
 
     def __init__(
         self,
@@ -328,7 +328,7 @@ class MpsSSBBackend:
         if mx.get_active_memory() + reserve_bytes > recommended // 2:
             self.release_prepared()
 
-    def inherit_full_field_preparation(self, source: "MpsSSBBackend") -> None:
+    def inherit_full_field_preparation(self, source: "MpsDirectPtychoBackend") -> None:
         """Share unchanged full-field evidence with an independent fit session.
 
         The caller establishes that both sessions cover the same source
@@ -577,7 +577,7 @@ class MpsSSBBackend:
         self._fit_preview_aberrations = None
         return path.resolve(), time.perf_counter() - started
 
-    def browser_state(self) -> SSBExportState:
+    def browser_state(self) -> DirectPtychoExportState:
         """Return backend-neutral host metadata for a WebGPU consumer."""
 
         # Browser WebGPU constructs its own exact Fourier evidence from the
@@ -633,7 +633,7 @@ class MpsSSBBackend:
                 "MPS WebGPU export requires detector-sum or BF-column DC "
                 "metadata from the source loader."
             )
-        return SSBExportState(
+        return DirectPtychoExportState(
             backend="mps",
             scan_shape=self.scan_shape,
             brightfield=self._selection,
@@ -660,11 +660,11 @@ class MpsSSBBackend:
 
 
 class _MpsBfSubset:
-    """Context manager that swaps an MPS backend onto a reduced-BF ``PreparedMpsSSB`` for drag previews.
+    """Context manager that swaps an MPS backend onto a reduced-BF ``PreparedMpsDirectPtycho`` for drag previews.
 
     Why: the preview cost is linear in the BF count, so a 25 % subset is ~4x faster while dragging. The subset is built
     on first use and rebuilt only when the backend's prepared evidence or rotation geometry changes, so entering the
-    context per preview call is free. ``backend`` is the :class:`MpsSSBBackend` whose prepared evidence is swapped.
+    context per preview call is free. ``backend`` is the :class:`MpsDirectPtychoBackend` whose prepared evidence is swapped.
     """
 
     def __init__(self, backend, num_bright_field_pixels: int) -> None:
@@ -679,7 +679,7 @@ class _MpsBfSubset:
         """Number of BF pixels in the subset (logical, including compacted ones)."""
         return int(self._current().num_bright_field_pixels)
 
-    def _current(self) -> PreparedMpsSSB:
+    def _current(self) -> PreparedMpsDirectPtycho:
         """The subset for the backend's current prepared evidence.
 
         A new preparation or a rotation retarget replaces the prepared arrays, so
@@ -721,7 +721,7 @@ class _MpsBfSubset:
         self._source = None
 
 
-def _subset_prepared(prepared: PreparedMpsSSB, num_bright_field_pixels: int) -> PreparedMpsSSB:
+def _subset_prepared(prepared: PreparedMpsDirectPtycho, num_bright_field_pixels: int) -> PreparedMpsDirectPtycho:
     """``prepared`` restricted to every ``num_bright_field_pixels / count``-th logical BF pixel (the CUDA ``prepare_bf_subset`` rule).
 
     Logical BF pixels that were compacted away (aperture 0, not stored) stay unstored and still count in ``num_bright_field_pixels``,
@@ -823,4 +823,7 @@ def _bf_geometry_1d_numpy(
     )
 
 
-__all__ = ["MpsSSBBackend"]
+# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
+MpsSSBBackend = MpsDirectPtychoBackend
+
+__all__ = ["MpsDirectPtychoBackend", "MpsSSBBackend"]

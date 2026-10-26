@@ -26,7 +26,7 @@ from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
 
 @dataclass
-class PreparedMpsSSB:
+class PreparedMpsDirectPtycho:
     """Device-resident BF FFT stack and geometry for repeated SSB loss calls."""
 
     mx: object
@@ -97,7 +97,7 @@ def prepare_selection(
     chunk_bf: int,
     compact_inactive: bool = False,
     dc_value_override: complex | None = None,
-) -> PreparedMpsSSB:
+) -> PreparedMpsDirectPtycho:
     """Precompute BF-column FFTs and static geometry for MPS SSB fitting."""
     if scan_shape[0] != scan_shape[1]:
         raise ValueError(
@@ -195,7 +195,7 @@ def prepare_selection(
 
     dc_mask_np = np.zeros(scan_shape, dtype=bool)
     dc_mask_np[0, 0] = True
-    return PreparedMpsSSB(
+    return PreparedMpsDirectPtycho(
         mx=mx,
         g_qk=g_qk,
         qx=qx,
@@ -369,7 +369,7 @@ def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_
 
 
 def retarget_prepared_rotation(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     *,
     selection: BrightfieldDisk,
     scan_detector_rotation_deg: float,
@@ -523,7 +523,7 @@ def resolve_bf_selection(
 
 
 def pk_from_prepared(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     *,
     C10: float,
     C12: float,
@@ -546,7 +546,7 @@ def pk_from_prepared(
 
 
 def pk_batch_from_prepared(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     *,
     start: int,
     stop: int,
@@ -576,7 +576,7 @@ def pk_batch_from_prepared(
 
 
 def bf_storage_chunks(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     logical_chunk_bf: int,
 ):
     """Yield packed storage slices without moving logical reduction boundaries."""
@@ -596,7 +596,7 @@ def bf_storage_chunks(
 
 
 def bf_storage_chunk_packs(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     logical_chunk_bf: int,
     max_storage_bf: int,
 ) -> list[list[tuple[int, int]]]:
@@ -621,7 +621,7 @@ def bf_storage_chunk_packs(
     return packs
 
 
-# The cached k, q - k and q + k probe geometry of a PreparedMpsSSB, in the order _pair_geometry computes it.
+# The cached k, q - k and q + k probe geometry of a PreparedMpsDirectPtycho, in the order _pair_geometry computes it.
 _PAIR_GEOMETRY_FIELDS = (
     "alpha_k2", "cos2_k", "sin2_k", "aperture_k",
     "alpha_m2", "cos2_m", "sin2_m", "ap_m",
@@ -723,3 +723,7 @@ def _spatial_frequencies(shape: tuple[int, int], sampling: tuple[float, float]):
 
 def _exp_neg_i(mx, chi):
     return mx.cos(chi) - (1j * mx.sin(chi))
+
+
+# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
+PreparedMpsSSB = PreparedMpsDirectPtycho

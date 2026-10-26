@@ -5,7 +5,7 @@ export interface WebGPUOptimizationOptions {
   readonly seed: number;
 }
 
-export interface SSBPrecision {
+export interface DirectPtychoPrecision {
   readonly real_dtype: "float32";
   readonly complex_dtype: "complex64";
 }
@@ -39,9 +39,9 @@ export interface WebGPUSampleOptions {
   readonly depthSpreadA: number;
 }
 
-export interface SSBProtocol<Result> {
+export interface DirectPtychoProtocol<Result> {
   readonly backend: "webgpu";
-  readonly precision: SSBPrecision;
+  readonly precision: DirectPtychoPrecision;
   prepare(): Promise<void>;
   fit(
     options: WebGPUOptimizationOptions,
@@ -54,3 +54,6 @@ export interface SSBProtocol<Result> {
   ): Promise<Result>;
   close(): void;
 }
+
+// The names before the Direct Ptycho rename, kept for existing imports.
+export type { DirectPtychoPrecision as SSBPrecision, DirectPtychoProtocol as SSBProtocol };

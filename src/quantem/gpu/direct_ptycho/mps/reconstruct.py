@@ -33,7 +33,7 @@ from quantem.gpu.direct_ptycho.mps.kernels.row_ifft import (
     row_ifft_small_from_dynamic_geometry,
 )
 from quantem.gpu.direct_ptycho.mps.prepared import (
-    PreparedMpsSSB,
+    PreparedMpsDirectPtycho,
     bf_storage_chunks,
     ifft2_chunked,
 )
@@ -64,7 +64,7 @@ def fit_loss_tiles():
 
 
 def reconstruct_prepared(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     *,
     C10: float,
     C12: float,

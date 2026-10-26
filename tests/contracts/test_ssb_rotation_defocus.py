@@ -5,7 +5,7 @@ import numpy as np
 
 matplotlib.use("Agg")
 
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.rotation_defocus import RotationDefocusComparison
 
 
@@ -24,8 +24,8 @@ def test_review_shares_contrast_and_retains_unresolved_phase_evidence():
                 scan_detector_rotation_deg=angle, sample_tilt_mrad=(1.0, 2.0),
                 depth_spread_nm=10.0,
             )
-            fits.append(SSBResult(object_wave=wave, object_sampling_A=(0.5, 0.5), **fields))
-            reconstructions.append(SSBResult(
+            fits.append(DirectPtychoResult(object_wave=wave, object_sampling_A=(0.5, 0.5), **fields))
+            reconstructions.append(DirectPtychoResult(
                 object_wave=wave.repeat(2, axis=0).repeat(2, axis=1),
                 object_sampling_A=(0.25, 0.25), upsampling_factor=2, **fields,
             ))
@@ -54,7 +54,7 @@ def test_comparison_defaults_to_table_and_show_displays_one_figure(monkeypatch):
     from quantem.gpu.direct_ptycho import rotation_defocus
     from quantem.gpu.direct_ptycho.workflow import SSB
 
-    fits = tuple(SSBResult(
+    fits = tuple(DirectPtychoResult(
         object_wave=np.exp(1j * np.arange(64).reshape(8, 8) / 100), backend="mps",
         aberrations={"C10_nm": focus}, scan_detector_rotation_deg=angle,
         object_sampling_A=(0.5, 0.5), loss=0.2,

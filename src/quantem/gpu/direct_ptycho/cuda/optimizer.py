@@ -9,7 +9,7 @@ spread at 0, where the model is ordinary SSB exactly.
 import math
 
 
-from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
+from quantem.gpu.direct_ptycho.cuda.engine import DirectPtychoEngine
 from quantem.gpu.direct_ptycho.mps.optimizer import standard_bounds
 
 # where a zero-trial refinement starts when the session has no aberrations (as on MPS)
@@ -17,7 +17,7 @@ _DEFAULT_START = {"C10": 0.0, "C12": 50.0, "phi12": 0.0}
 
 
 def fit_standard(
-    accel: SSBEngine,
+    accel: DirectPtychoEngine,
     *,
     aberrations: dict | None,
     search_ranges: dict | None,
@@ -69,7 +69,7 @@ def fit_standard(
 # =========================================================================
 
 def fit_sample(
-    accel: SSBEngine,
+    accel: DirectPtychoEngine,
     *,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     **options,

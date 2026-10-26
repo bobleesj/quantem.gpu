@@ -18,7 +18,7 @@ import numpy as np
 from quantem.gpu.io.qem import save_streamed
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
-from quantem.gpu.direct_ptycho.contract import SSBExportState
+from quantem.gpu.direct_ptycho.contract import DirectPtychoExportState
 from quantem.gpu.direct_ptycho.cuda.kernels import get_fft_kernel
 from quantem.gpu.direct_ptycho.cuda.kernels.engine import (
     accumulate_phase_moments,
@@ -36,7 +36,7 @@ _CHUNK_TARGET_BYTES = 2 * 1024 ** 3
 class _PreparedCudaBfSubset:
     """Reusable CUDA-owned state for an explicitly approximate drag preview.
 
-    ``engine`` is the :class:`SSBEngine` whose full-BF state this subset
+    ``engine`` is the :class:`DirectPtychoEngine` whose full-BF state this subset
     swaps out while it is entered and restores on exit. What does not depend
     on the rotation (the subset's rows of G, detector indices and work
     buffers) is made once; the per-pixel geometry is taken from the engine's
@@ -136,9 +136,9 @@ class _PreparedCudaBfSubset:
         self._full.clear()
 
 
-class SSBEngine:
+class DirectPtychoEngine:
     """
-    CuPy-accelerated SSB computation with fused CUDA kernels.
+    CuPy-accelerated Direct Ptycho computation (SSB and its fit objectives) with fused CUDA kernels.
 
     All computation is done on GPU using CuPy arrays.
     Pre-computes rotation-dependent quantities and caches them for
@@ -239,7 +239,7 @@ class SSBEngine:
             raise RuntimeError("No exact BF source has been written yet.")
         return self._bf_source_write_seconds
 
-    def export_state(self) -> SSBExportState:
+    def export_state(self) -> DirectPtychoExportState:
         """Return backend-neutral host metadata for a WebGPU consumer."""
 
         cache = self._cache
@@ -267,7 +267,7 @@ class SSBEngine:
             detector_shape=self.detector_shape,
         )
 
-        return SSBExportState(
+        return DirectPtychoExportState(
             backend="cuda",
             scan_shape=self.scan_shape,
             brightfield=selection,
@@ -629,3 +629,7 @@ class SSBEngine:
         var_per_pixel = self._sumsq_buffer / float(num_bright_field_pixels) - self._mean_phase_buffer ** 2
         loss = float(cp.mean(var_per_pixel))
         return self._mean_phase_buffer, loss
+
+
+# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
+SSBEngine = DirectPtychoEngine

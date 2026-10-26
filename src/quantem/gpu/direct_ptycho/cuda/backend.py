@@ -9,19 +9,19 @@ import numpy as np
 from quantem.gpu.detector.cuda.probe import mean_dp
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.detector import disk_edge_radius
-from quantem.gpu.direct_ptycho.contract import SSBExportState, SSBPrecision
+from quantem.gpu.direct_ptycho.contract import DirectPtychoExportState, DirectPtychoPrecision
 from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra, select_bright_field
-from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
+from quantem.gpu.direct_ptycho.cuda.engine import DirectPtychoEngine
 from quantem.gpu.direct_ptycho.cuda.optimizer import fit_sample, fit_standard
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 
-class CudaSSBBackend:
+class CudaDirectPtychoBackend:
     """The CUDA implementation of the Direct Ptycho backend protocol behind :class:`quantem.gpu.DirectPtycho`.
 
     Each bright-field pixel sees the sample through a slightly different probe tilt; correcting every pixel's image
     for the probe aberrations and averaging recovers the object phase at the scan resolution. This class prepares the
-    bright-field spectra ``G_qk`` on the device and runs fits and reconstructions through ``SSBEngine``. Units are the
+    bright-field spectra ``G_qk`` on the device and runs fits and reconstructions through ``DirectPtychoEngine``. Units are the
     engine's (C10, C12 in Angstrom); ``DirectPtycho`` owns the public units, validation and result types.
 
     Parameters
@@ -52,7 +52,7 @@ class CudaSSBBackend:
     """
 
     backend = "cuda"
-    precision = SSBPrecision()
+    precision = DirectPtychoPrecision()
 
     def __init__(
         self,
@@ -187,7 +187,7 @@ class CudaSSBBackend:
         q_col_1d = cp.fft.fftfreq(scan_gpts[1], scan_sampling[1]).astype(cp.float32)
         self.q_row, self.q_col = cp.meshgrid(q_row_1d, q_col_1d, indexing='ij')
         self._best_loss: float = float('inf')
-        self._accelerator: SSBEngine | None = None
+        self._accelerator: DirectPtychoEngine | None = None
         self._elapsed_optimize: float = 0.0
         self._elapsed_refine: float = 0.0
         self._refine_method: str | None = None
@@ -205,7 +205,7 @@ class CudaSSBBackend:
         - Batch caches (optimizer working memory)
 
         After this call, ``result()`` and ``fit()`` will fail - the
-        engine is no longer usable. Previously returned ``SSBResult``
+        engine is no longer usable. Previously returned ``DirectPtychoResult``
         objects remain valid (they hold independent copies of the phase).
 
         Call this when the Direct Ptycho pipeline is done and you need VRAM for
@@ -223,10 +223,10 @@ class CudaSSBBackend:
             self._accelerator = None
         cp.get_default_memory_pool().free_all_blocks()
 
-    def _get_accelerator(self) -> SSBEngine:
+    def _get_accelerator(self) -> DirectPtychoEngine:
         """Get or create CuPy accelerator."""
         if self._accelerator is None:
-            self._accelerator = SSBEngine(
+            self._accelerator = DirectPtychoEngine(
                 G_qk=self.G_qk,
                 bf_inds_row=self.bf_inds_row,
                 bf_inds_col=self.bf_inds_col,
@@ -275,7 +275,7 @@ class CudaSSBBackend:
 
         return self._get_accelerator().prepare_bf_subset(int(num_bright_field_pixels))
 
-    def browser_state(self) -> SSBExportState:
+    def browser_state(self) -> DirectPtychoExportState:
         """Return compact state for browser WebGPU integration."""
 
         return self._get_accelerator().export_state()
@@ -291,7 +291,7 @@ class CudaSSBBackend:
         path = engine.write_exact_bf_source(data, path_stem)
         return path, engine.bf_source_write_seconds
 
-    def result(self, *, compute_loss: bool = True) -> SSBResult:
+    def result(self, *, compute_loss: bool = True) -> DirectPtychoResult:
         """The SSB phase at the current aberrations (``fit()``'s final reconstruction), with the phase-variance loss.
 
         The phase is the native-grid phase of the bright-field mean wave, as ``preview_upsampled`` computes it at
@@ -313,7 +313,7 @@ class CudaSSBBackend:
             )
         elapsed_s = self._elapsed_optimize + self._elapsed_refine
         brightfield = self.browser_state().brightfield
-        return SSBResult(
+        return DirectPtychoResult(
             object_wave=cp.exp(1j * phase),
             backend="cuda",
             aberrations=self.aberrations.copy(),
@@ -347,7 +347,7 @@ class CudaSSBBackend:
         seed: int,
         verbose: bool,
         compute_loss: bool = True,
-    ) -> SSBResult:
+    ) -> DirectPtychoResult:
         """Standard fit (tilt=False) of C10, C12 and phi12, then the complex object and the phase-variance loss there.
 
         Maximizes the least-squares agreement of the SSB model with G(q, k) at sample tilt and depth spread 0
@@ -478,3 +478,7 @@ class CudaSSBBackend:
             f"Try: DirectPtycho(..., bright_field_radius_px=<smaller>) to reduce BF pixel count, "
             f"or restart the kernel to free stale GPU memory."
         )
+
+
+# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
+CudaSSBBackend = CudaDirectPtychoBackend

@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { WebGPUSSBBackend, setSSBLocalFiles } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
+import { WebGPUDirectPtychoBackend, setSSBLocalFiles } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
 
 type Case = { C10_A: number; C12_A: number; phi12_deg: number; higherOrder: Record<string, number> };
 type Reference = {
@@ -37,7 +37,7 @@ export async function runSsbHigherOrderSign(base: string): Promise<Record<string
     const index = reference.order.findIndex(([n, e, s]) => n === name && e === estimator && s === sign);
     return index < 0 ? null : phases.subarray(index * plane, (index + 1) * plane);
   };
-  const engine = new WebGPUSSBBackend(cal, { json: source });
+  const engine = new WebGPUDirectPtychoBackend(cal, { json: source });
   const out: Record<string, number | string> = { numBf };
   try {
     await engine.prepareBfCount(numBf);

@@ -296,7 +296,7 @@ schemas and their reading paths remain unchanged. The series entry point is
 The package is `quantem.gpu.direct_ptycho` (for example
 `from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA`); the old
 `quantem.gpu.ssb` paths are a deprecated alias of the same modules.
-The established `SSBResult` type holds all three direct methods. The older SSB
+The established `DirectPtychoResult` type (formerly `SSBResult`, still importable) holds all three direct methods. The older SSB
 phase estimators are retired: `phase_estimator="mean_phase"` raises naming
 `method="phase"`, and `"complex_wave"` naming `method="complex"`. Results saved
 with them still load as saved, with a one-line notice.

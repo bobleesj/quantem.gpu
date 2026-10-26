@@ -82,7 +82,7 @@ movie = [
     "pillow",
     "PyNvVideoCodec>=2.0; sys_platform != 'darwin'",
 ]
-# SSBResult.show, SSB.show_trials and the rotation histograms draw with Matplotlib and QuantEM's show_2d;
+# DirectPtychoResult.show, DirectPtycho.show_trials and the rotation histograms draw with Matplotlib and QuantEM's show_2d;
 # the histograms display through IPython.
 plot = [
     "ipython",

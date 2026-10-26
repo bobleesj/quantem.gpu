@@ -10,11 +10,11 @@ import pytest
 
 from quantem.gpu.direct_ptycho.calibration import capture_calibration
 from quantem.gpu.direct_ptycho.persistence import load_result, save_result, source_identity
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 
 def _fit():
-    return SSBResult(
+    return DirectPtychoResult(
         object_wave=np.exp(1j * np.arange(16).reshape(4, 4) / 100).astype(np.complex64),
         backend="mps", aberrations={"C10_nm": -8., "C12_nm": 0.2, "phi12_deg": 35., "C50_nm": 10_000.},
         sample_tilt_mrad=(1., -2.), depth_spread_nm=12., phase_estimator="phase_of_mean",

@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.units import validate_aberrations
 
 # drag-window tiles kept per control: a drag back and forth across one tile edge needs two
@@ -318,7 +318,7 @@ def run(
     verbose,
 ):
     """Apply one regularized method with explicit provenance and saved reuse."""
-    if parameters is not None and not isinstance(parameters, SSBResult):
+    if parameters is not None and not isinstance(parameters, DirectPtychoResult):
         raise TypeError(
             "Pass the result of find_aberrations(), or coefficients through aberrations={...}."
         )
@@ -376,7 +376,7 @@ def run(
     )
     if session.backend == "cuda":
         cp.cuda.get_current_stream().synchronize()
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=wave,
         backend=session.backend,
         aberrations=coefs,

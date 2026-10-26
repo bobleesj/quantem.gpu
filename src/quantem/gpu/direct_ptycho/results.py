@@ -56,8 +56,8 @@ def retired_estimator_note(phase_estimator: object, record: str) -> str | None:
 
 
 @dataclass
-class SSBResult(Mapping[str, float]):
-    """Result from SSB ptychographic reconstruction.
+class DirectPtychoResult(Mapping[str, float]):
+    """Result of a Direct Ptycho fit or reconstruction (SSB, phase or complex).
 
     The primary output is ``object_wave``, the complex transmission function.
     Convenience properties ``phase`` and ``amplitude`` are derived from it.
@@ -609,7 +609,7 @@ class SSBResult(Mapping[str, float]):
             Convergence axis. Auto uses recorded elapsed time when every fit
             has it, otherwise evaluations. Time starts before the primary fit;
             loading and plotting are excluded. Missing times are not estimated.
-        compare : SSBResult, sequence of SSBResult, or mapping, optional
+        compare : DirectPtychoResult, sequence of DirectPtychoResult, or mapping, optional
             For convergence, a fit or labeled mapping of fits from the same
             data, calibration, region and objective. The current fit is included
             once. Different refinement methods are supported.
@@ -711,9 +711,9 @@ class SSBResult(Mapping[str, float]):
                 panel_size = (12, 12)
             axsize = (width, width * panel_size[1] / panel_size[0])
         if view == "phase" and (compare is not None or region is not None or show_fft or interactive):
-            others = [] if compare is None else ([compare] if isinstance(compare, SSBResult) else compare)
+            others = [] if compare is None else ([compare] if isinstance(compare, DirectPtychoResult) else compare)
             if (not isinstance(others, Sequence) or (compare is not None and not others)
-                    or not all(isinstance(result, SSBResult) for result in others)):
+                    or not all(isinstance(result, DirectPtychoResult) for result in others)):
                 raise ValueError("Compare phase images with show(compare=other) or show(compare=[second, third]).")
             figure = _phase_comparison(self, *others, axsize=axsize, cmap=cmap,
                                        region=("center" if compare is not None else None) if region is None else region,
@@ -789,8 +789,8 @@ class SSBResult(Mapping[str, float]):
 
 
 @dataclass
-class SSBSeriesResult:
-    """One independent or fixed-probe SSB reconstruction series."""
+class DirectPtychoSeriesResult:
+    """One independent or fixed-probe Direct Ptycho reconstruction series (SSB phase)."""
 
     phase: np.ndarray
     bright_field: np.ndarray
@@ -940,7 +940,7 @@ def _is_cupy_array(value: object) -> bool:
     return cp is not None and isinstance(value, cp.ndarray)
 
 
-def _announce_below_auto(result: SSBResult) -> None:
+def _announce_below_auto(result: DirectPtychoResult) -> None:
     """Say in one line when a shown phase is coarser than ``upsampling_factor="auto"`` and how to get the auto one."""
     from quantem.gpu.optics.physics import ssb_upsampling_factor
 
@@ -1000,7 +1000,7 @@ def _format_aberrations(aberrations: dict) -> str:
     return "\n".join(lines)
 
 
-def _phase_title(result: SSBResult, area: str = "Full field") -> str:
+def _phase_title(result: DirectPtychoResult, area: str = "Full field") -> str:
     """Name the measured channel, reconstruction method and recorded strengths."""
     method = result.reconstruction_method
     options = result.reconstruction_options
@@ -1176,3 +1176,8 @@ def _phase_spectra(phases: list[np.ndarray], sampling: list[np.ndarray]):
     spectra = [20 * np.log10(np.maximum(spectrum / peak, 1e-3)) for spectrum in spectra]
     frequency_sampling = 1 / (np.asarray(phases[0].shape) * sampling[0])
     return spectra, frequency_sampling
+
+
+# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
+SSBResult = DirectPtychoResult
+SSBSeriesResult = DirectPtychoSeriesResult

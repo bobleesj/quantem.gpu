@@ -1,4 +1,7 @@
-"""quantem.gpu.ssb stays importable as an alias of quantem.gpu.direct_ptycho, with no second module copies."""
+"""quantem.gpu.ssb stays importable as an alias of quantem.gpu.direct_ptycho, with no second module copies.
+
+The SSB-named classes and functions of the package are the same objects under their Direct Ptycho names, silently.
+"""
 
 import pickle
 import subprocess
@@ -71,11 +74,77 @@ def test_unknown_old_submodule_is_not_found_under_its_old_name() -> None:
 
 
 def test_pickles_naming_the_old_module_load_the_same_class() -> None:
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult, SSBResult
 
     # protocol 0 GLOBAL opcode: what a pickle written before the rename stores for the class
-    assert pickle.loads(b"cquantem.gpu.ssb.results\nSSBResult\n.") is SSBResult
-    assert b"quantem.gpu.direct_ptycho.results" in pickle.dumps(SSBResult, protocol=0)
+    assert pickle.loads(b"cquantem.gpu.ssb.results\nSSBResult\n.") is SSBResult is DirectPtychoResult
+    assert pickle.loads(b"cquantem.gpu.direct_ptycho.results\nSSBResult\n.") is DirectPtychoResult
+    assert b"quantem.gpu.direct_ptycho.results\nDirectPtychoResult" in pickle.dumps(SSBResult, protocol=0)
+
+
+@pytest.mark.parametrize("module", ["quantem.gpu.direct_ptycho.results", "quantem.gpu.ssb.results"])
+def test_result_pickled_under_the_old_class_name_loads(module: str) -> None:
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+
+    wave = np.exp(1j * np.arange(4, dtype=np.float32).reshape(2, 2)).astype(np.complex64)
+    result = DirectPtychoResult(object_wave=wave, backend="mps", aberrations={"C10": -101.0})
+    # protocol 2 names the class in a text GLOBAL line; write it as a pickle saved before the class rename
+    new = pickle.dumps(result, protocol=2)
+    old = new.replace(b"quantem.gpu.direct_ptycho.results\nDirectPtychoResult\n", module.encode() + b"\nSSBResult\n")
+    assert old != new
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        loaded = pickle.loads(old)
+
+    assert type(loaded) is DirectPtychoResult and loaded.aberrations == {"C10": -101.0}
+    np.testing.assert_array_equal(loaded.object_wave, wave)
+
+
+_RENAMED = [
+    ("quantem.gpu", "DirectPtychoResult", "SSBResult", None),
+    ("quantem.gpu", "DirectPtycho", "SSB", None),
+    ("quantem.gpu.direct_ptycho", "DirectPtychoResult", "SSBResult", None),
+    ("quantem.gpu.direct_ptycho.results", "DirectPtychoResult", "SSBResult", None),
+    ("quantem.gpu.direct_ptycho.results", "DirectPtychoSeriesResult", "SSBSeriesResult", None),
+    ("quantem.gpu.direct_ptycho.stream", "DirectPtychoStream", "SSBStream", None),
+    ("quantem.gpu.direct_ptycho.contract", "DirectPtychoProtocol", "SSBProtocol", None),
+    ("quantem.gpu.direct_ptycho.contract", "DirectPtychoPrecision", "SSBPrecision", None),
+    ("quantem.gpu.direct_ptycho.contract", "DirectPtychoExportState", "SSBExportState", None),
+    ("quantem.gpu.benchmark", "run_direct_ptycho", "run_ssb", None),
+    ("quantem.gpu.benchmark", "run_direct_ptycho_preview", "run_ssb_preview", None),
+    ("quantem.gpu.direct_ptycho.cuda", "CudaDirectPtychoBackend", "CudaSSBBackend", "cupy"),
+    ("quantem.gpu.direct_ptycho.cuda.backend", "CudaDirectPtychoBackend", "CudaSSBBackend", "cupy"),
+    ("quantem.gpu.direct_ptycho.cuda.engine", "DirectPtychoEngine", "SSBEngine", "cupy"),
+    ("quantem.gpu.direct_ptycho.cuda.streamed", "StreamedDirectPtycho", "StreamedSSB", "cupy"),
+    ("quantem.gpu.direct_ptycho.mps", "MpsDirectPtychoBackend", "MpsSSBBackend", "mlx.core"),
+    ("quantem.gpu.direct_ptycho.mps.backend", "MpsDirectPtychoBackend", "MpsSSBBackend", "mlx.core"),
+    ("quantem.gpu.direct_ptycho.mps.prepared", "PreparedMpsDirectPtycho", "PreparedMpsSSB", "mlx.core"),
+]
+
+
+@pytest.mark.parametrize(("module", "new", "old", "library"), _RENAMED)
+def test_old_names_are_the_new_objects_without_a_warning(module: str, new: str, old: str, library: str | None) -> None:
+    if library is not None:
+        pytest.importorskip(library)
+    loaded = import_module(module)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        value = getattr(loaded, old)
+
+    assert value is getattr(loaded, new)
+    assert value.__name__ == new
+
+
+def test_public_namespaces_list_both_names() -> None:
+    import quantem.gpu as qg
+    from quantem.gpu.direct_ptycho import __all__ as package_names
+    from quantem.gpu.direct_ptycho.contract import __all__ as contract_names
+
+    assert {"DirectPtychoResult", "SSBResult", "DirectPtycho", "SSB"} <= set(qg.__all__)
+    assert {"DirectPtychoResult", "SSBResult", "DirectPtycho", "SSB"} <= set(package_names)
+    assert {"DirectPtychoProtocol", "SSBProtocol", "DirectPtychoPrecision", "SSBPrecision"} <= set(contract_names)
 
 
 def test_result_saved_by_the_new_package_loads_through_the_old_one(tmp_path) -> None:

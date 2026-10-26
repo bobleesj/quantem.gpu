@@ -8,7 +8,7 @@ import pytest
 
 from quantem.gpu.direct_ptycho.calibration import capture_calibration
 from quantem.gpu.direct_ptycho.persistence import load_result, save_result, source_identity
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 
 @pytest.mark.parametrize("method", ["phase", "complex"])
@@ -23,7 +23,7 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
     }
     if method == "complex":
         options["amplitude_regularization"] = 0.1
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=np.ones((8, 8), np.complex64), backend="mps",
         source_path=str(source), aberrations={"C10_nm": -8., "C12_nm": 0.2, "phi12_deg": 35.},
         sample_tilt_mrad=(1., -2.), depth_spread_nm=12., num_bright_field_pixels=17,

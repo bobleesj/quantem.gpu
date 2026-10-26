@@ -92,10 +92,10 @@ class _Backend:
         self.angle_deg = math.degrees(angle_rad)
 
     def fit(self, **settings):
-        from quantem.gpu import SSBResult
+        from quantem.gpu import DirectPtychoResult
 
         self.fits.append((self.angle_deg, settings["trials"]))
-        return SSBResult(object_wave=np.ones((2, 2), np.complex64), backend="mps",
+        return DirectPtychoResult(object_wave=np.ones((2, 2), np.complex64), backend="mps",
                          aberrations={"C10": -101.0 + self.angle_deg, "C12": 4.0, "phi12": 0.25},
                          scan_detector_rotation_deg=self.angle_deg, loss=0.125, elapsed_s=1.0,
                          num_trials=settings["trials"], refinement=settings["refinement"],

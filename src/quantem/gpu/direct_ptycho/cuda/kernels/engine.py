@@ -1,7 +1,7 @@
 """CUDA kernels of the Direct Ptycho engine: phase reductions, the probe at each bright-field pixel, and the thick-sample model.
 
 The size-specific inverse-FFT kernels live in the ``fft{128,256,512,1024}`` modules; these are the size-independent
-kernels ``SSBEngine`` and ``ThickSample`` launch around them.
+kernels ``DirectPtychoEngine`` and ``ThickSample`` launch around them.
 """
 
 import cupy as cp

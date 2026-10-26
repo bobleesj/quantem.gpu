@@ -26,12 +26,12 @@ The public units are fixed: kV, mrad, angstrom, nanometres for `C10_nm` and
 `(row, col)` for all coordinates. Missing required data raises a deterministic error; adapters do
 not probe loosely named attributes.
 
-`SSBResult` owns optimizer metadata and the final complex object wave, and
+`DirectPtychoResult` owns optimizer metadata and the final complex object wave, and
 derives object phase and amplitude from that wave. There is no separate fit or
 phase-evaluation result class.
 
 Backend geometry and browser transport use private typed records such as
-`BrightfieldDisk` and `SSBExportState`. They are integration details and are
+`BrightfieldDisk` and `DirectPtychoExportState`. They are integration details and are
 not exported from `quantem.gpu` or `quantem.gpu.direct_ptycho`.
 
 The scientific defaults are 200 trials, the least-squares agreement of the SSB
@@ -47,14 +47,14 @@ methods, on every backend that fits:
 
 The phase-variance search (`objective="phase_variance"`) and the
 finite-difference and Nelder–Mead refinements are retired. `objective` is a
-saved setting and `SSBResult.objective` records it. The phase variance remains
+saved setting and `DirectPtychoResult.objective` records it. The phase variance remains
 the optional diagnostic `result.loss`. A backend may reject a job it cannot
 execute, but may not switch to CPU, crop or subsample the BF evidence, quantize
 values, or change the objective silently.
 
 `find_aberrations()` and `reconstruct()` own saved-result reuse through the same `save_dir`
 and `force` controls. Reuse requires an exact scientific signature and restores
-one `SSBResult`; there is no cache manager, persistence session, or second
+one `DirectPtychoResult`; there is no cache manager, persistence session, or second
 workflow API. The NPZ owns the complex object wave, and its JSON companion owns
 readable provenance and result metadata. Serialization occurs only at this
 artifact boundary and never changes GPU computation.

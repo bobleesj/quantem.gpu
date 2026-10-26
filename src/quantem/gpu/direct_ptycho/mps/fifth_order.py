@@ -67,7 +67,7 @@ class Objective(Coordinates):
 
     Parameters
     ----------
-    prepared : PreparedMpsSSB
+    prepared : PreparedMpsDirectPtycho
         Native-grid Fourier evidence and detector geometry. All stored active
         bright-field pixels contribute; no preview subset is selected here.
     partial_bytes : int, optional

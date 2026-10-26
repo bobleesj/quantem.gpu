@@ -17,7 +17,7 @@ import numpy as np
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.inspect import inspect as inspect_source
 from quantem.gpu.direct_ptycho.branches import RotationBranches
-from quantem.gpu.direct_ptycho.results import SSBResult, host_array, retired_estimator_note
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array, retired_estimator_note
 
 # One number versions everything a saved Direct Ptycho fit means: the layout of its record and the convention its values follow.
 # Bump it when fitted values acquire a different physical meaning or record layout: the automatic
@@ -58,12 +58,12 @@ _ARTIFACT_FIELDS = {"object_wave", "rotation_branches", "reused", "saved_path", 
 
 
 def save_result(
-    result: SSBResult,
+    result: DirectPtychoResult,
     *,
     paths: tuple[Path, Path],
     signature: dict[str, object],
     input_metadata: dict[str, object],
-) -> SSBResult:
+) -> DirectPtychoResult:
     """Persist one result and attach its complete provenance."""
 
     array_path, metadata_path = paths
@@ -107,7 +107,7 @@ def load_result(
     paths: tuple[Path, Path],
     signature: dict[str, object],
     backend: Literal["cuda", "mps"],
-) -> SSBResult | None:
+) -> DirectPtychoResult | None:
     """Load one exact saved result, or return ``None`` on any mismatch."""
 
     array_path, metadata_path = paths
@@ -140,7 +140,7 @@ def load_result(
     note = retired_estimator_note(saved.get("phase_estimator"), f"{array_path.name} in {array_path.parent}")
     if note is not None:
         print(note)
-    return SSBResult(
+    return DirectPtychoResult(
         object_wave=object_wave,
         rotation_branches=rotation_branches,
         reused=True,

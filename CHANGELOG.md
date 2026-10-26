@@ -235,6 +235,17 @@ new `rcN` heading when that rc is published to TestPyPI.
   `direct_ptycho_agreement_gate.py`, `build_metal_ssb_joint_reference.py` →
   `build_metal_direct_ptycho_joint_reference.py` (same arguments and `QUANTEM_SSB_*` variables). Docstrings in
   `direct_ptycho` changed, so `ssb_source_sha256` changes and results saved before are computed again once.
+- Python and WebGPU names of the whole feature are Direct Ptycho names: `DirectPtychoResult`,
+  `DirectPtychoSeriesResult`, `DirectPtychoStream`, `DirectPtychoProtocol`, `DirectPtychoPrecision`,
+  `DirectPtychoExportState`, `CudaDirectPtychoBackend`, `MpsDirectPtychoBackend`, `PreparedMpsDirectPtycho`,
+  `StreamedDirectPtycho`, `DirectPtychoEngine`, `benchmark.run_direct_ptycho` and `run_direct_ptycho_preview`; in
+  `direct_ptycho/webgpu`, `WebGPUDirectPtychoBackend`, `WebGPUDirectPtychoResult`, `DirectPtychoProtocol` and
+  `DirectPtychoPrecision`. The SSB names (`SSBResult`, `CudaSSBBackend`, `run_ssb`, `WebGPUSSBBackend`, ...) stay as
+  aliases of the same objects, without a warning, so imports, `isinstance` checks and pickles keep working; a new
+  pickle names `DirectPtychoResult`. `quantem-gpu benchmark-direct-ptycho` is the benchmark command and
+  `benchmark-ssb` remains the same command. Unchanged: `method="ssb"`, `SSB` (= `DirectPtycho`),
+  `ssb_upsampling_factor`, stored schemas, file names and keys, and `QUANTEM_SSB_*`. `ssb_source_sha256` changes
+  again, so results saved before are computed again once.
 - Python SSB: `upsampling_factor="auto"` still picks the factor from the scan sampling, at most 4×, and now says so
   when the cap lowers it: one line per session, `SSB: auto upsampling capped at 4× (the scan sampling supports 8×);
   pass upsampling_factor=8 for the full factor.` `stream` resolves auto once for the series. Explicit factors are

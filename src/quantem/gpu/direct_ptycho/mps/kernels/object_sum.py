@@ -10,7 +10,7 @@ from functools import lru_cache
 import numpy as np
 
 from quantem.gpu.direct_ptycho.mps.hardware import default_object_redraw_threadgroup, require_mlx
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, pk_from_prepared
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho, pk_from_prepared
 
 
 @lru_cache(maxsize=16)
@@ -197,7 +197,7 @@ def _object_fourier_sum_dynamic_kernel(
 
 
 def object_fourier_sum_dynamic(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
     *,
     C10: float,
     C12: float,
@@ -272,7 +272,7 @@ def object_fourier_sum_dynamic(
 
 
 def _object_redraw_storage_topology(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirectPtycho,
 ) -> tuple[int, bool]:
     """Use compact active rows directly when preparation already packed them."""
     stored_num_bf = int(prepared.g_qk.shape[0])

@@ -3,8 +3,10 @@
 Measure the installed Direct Ptycho fitter on your own H5 or QEM acquisition:
 
 ```bash
-quantem-gpu benchmark-ssb scan.qem --out /tmp/ssb-benchmark.json
+quantem-gpu benchmark-direct-ptycho scan.qem --out /tmp/ssb-benchmark.json
 ```
+
+`quantem-gpu benchmark-ssb` is the same command under its earlier name.
 
 CUDA or MPS is selected automatically. The command uses one seed, 200 trials
 and Newton refinement per fit. An estimated full-field rotation checks both
@@ -21,7 +23,7 @@ Saved acquisition calibration is reused. Supply missing physical calibration
 explicitly when an H5 file does not contain it:
 
 ```bash
-quantem-gpu benchmark-ssb scan_master.h5 --out /tmp/ssb-benchmark.json \
+quantem-gpu benchmark-direct-ptycho scan_master.h5 --out /tmp/ssb-benchmark.json \
   --voltage-kv 300 --semiangle-mrad 30 --scan-sampling-a 0.5
 ```
 
@@ -37,14 +39,14 @@ Without a local acquisition, use the same public gold scan as the release gate
 ```python
 from pathlib import Path
 from huggingface_hub import snapshot_download
-from quantem.gpu.benchmark import run_ssb
+from quantem.gpu.benchmark import run_direct_ptycho
 
 root = snapshot_download(
     "bobleesj/quantem-data", repo_type="dataset",
     revision="5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20",
     allow_patterns="4dstem/gold_512/*",
 )
-report = run_ssb(
+report = run_direct_ptycho(
     Path(root) / "4dstem/gold_512/gold_004_master.h5",
     calibration={"semiangle_mrad": 30, "scan_sampling_A": 0.5,
                  "detector_sampling_mrad": 0.46},
@@ -94,9 +96,9 @@ For a calibrated session that is already open in a notebook, measure live
 defocus changes separately from fitting:
 
 ```python
-from quantem.gpu.benchmark import run_ssb_preview
+from quantem.gpu.benchmark import run_direct_ptycho_preview
 
-report = run_ssb_preview(ssb, upsampling=(1, 2, 3, 4, 8), runs=11)
+report = run_direct_ptycho_preview(ssb, upsampling=(1, 2, 3, 4, 8), runs=11)
 ```
 
 This keeps all active aberrations, tilt, depth and BF pixels. Each observation
@@ -117,7 +119,7 @@ comparison with frozen arrays from the previous implementation.
 Run the command in a new environment installed from the candidate wheel:
 
 ```bash
-quantem-gpu benchmark-ssb scan.qem --require-installed \
+quantem-gpu benchmark-direct-ptycho scan.qem --require-installed \
   --backend mps --out /tmp/ssb-release-mps.json
 ```
 

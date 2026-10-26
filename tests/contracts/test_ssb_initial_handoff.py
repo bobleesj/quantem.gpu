@@ -9,12 +9,12 @@ import pytest
 
 from quantem.gpu.direct_ptycho import fifth_order_fit
 from quantem.gpu.direct_ptycho.fit_display import FitDisplay
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.workflow import SSB
 
 
 def _fit():
-    return SSBResult(
+    return DirectPtychoResult(
         object_wave=np.ones((8, 8), dtype=np.complex64), backend="mps",
         aberrations={"C10_nm": 1.0, "C12_nm": 0.2, "phi12_deg": 17.0},
         sample_tilt_mrad=(0.1, -0.2), depth_spread_nm=10.0,
@@ -60,7 +60,7 @@ def handoff(monkeypatch):
         figures.append(figure)
         return figure
 
-    monkeypatch.setattr(SSBResult, "show", draw)
+    monkeypatch.setattr(DirectPtychoResult, "show", draw)
 
     class Session:
         backend = "mps"
@@ -259,7 +259,7 @@ def test_reused_fit_display_keeps_the_native_session_result(handoff, monkeypatch
 def test_display_failure_keeps_session_result_and_loss(handoff, monkeypatch):
     session = handoff.Session()
     result, loss = session._reconstruction, session.best_loss
-    monkeypatch.setattr(SSBResult, "show", Mock(side_effect=RuntimeError("renderer failed")))
+    monkeypatch.setattr(DirectPtychoResult, "show", Mock(side_effect=RuntimeError("renderer failed")))
     with pytest.raises(RuntimeError, match="renderer failed"):
         FitDisplay(session, enabled=True).update(result, final=False)
     assert session._reconstruction is result

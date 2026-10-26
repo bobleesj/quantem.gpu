@@ -16,18 +16,18 @@ def test_preview_compares_three_final_methods_without_refitting(monkeypatch, siz
     import numpy as np
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
     plt.switch_backend("Agg")
     display = Mock(return_value=Mock())
     monkeypatch.setattr(ipython, "get_ipython", lambda: SimpleNamespace(kernel=object()))
     monkeypatch.setattr(IPython.display, "display", display)
     wave = np.exp(1j * np.arange(256).reshape(16, 16) / 100)
-    image = SSBResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2))
-    complex_image = SSBResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
+    image = DirectPtychoResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2))
+    complex_image = DirectPtychoResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
                               reconstruction_method="complex",
                               reconstruction_options={"phase_regularization": .03, "amplitude_regularization": .03})
-    phase_image = SSBResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
+    phase_image = DirectPtychoResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
                             reconstruction_method="phase", reconstruction_options={"phase_regularization": .03})
     ssb = SimpleNamespace(run=Mock(side_effect=[image, image, complex_image, phase_image]),
                           _accept_result=Mock(), backend="cuda", _streamed=None)
@@ -115,9 +115,9 @@ def test_fit_heading_clears_the_phase_title(size):
     """An inline fit preview keeps its heading above the full image title."""
     import numpy as np
     from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
-    image = SSBResult(
+    image = DirectPtychoResult(
         object_wave=np.exp(1j * np.arange(256).reshape(16, 16) / 100),
         backend="mps", object_sampling_A=(0.2, 0.2), upsampling_factor=3,
     )
@@ -183,17 +183,17 @@ def test_regional_preview_boxes_measured_positions_at_auto_sampling(monkeypatch,
     import IPython
     import IPython.display
     import numpy as np
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
     display = Mock(return_value=Mock())
     monkeypatch.setattr(IPython, "get_ipython", lambda: SimpleNamespace(kernel=object()))
     monkeypatch.setattr(IPython.display, "display", display)
     # A 126-position acquisition was padded to 128; the context omits padding.
-    full = SSBResult(
+    full = DirectPtychoResult(
         object_wave=np.exp(1j * np.arange(256 * 256).reshape(256, 256) / 1e5),
         backend="mps", object_sampling_A=(0.2, 0.2), upsampling_factor=2,
     )
-    fit = SSBResult(object_wave=np.ones((64, 64)), backend="mps", fit_scan_region=(32, 96, 16, 80))
+    fit = DirectPtychoResult(object_wave=np.ones((64, 64)), backend="mps", fit_scan_region=(32, 96, 16, 80))
     session = SimpleNamespace(input_scan_shape=(126, 126), run=Mock(return_value=full),
                               _accept_result=Mock(), backend=backend, _streamed=None)
     view = FitDisplay(session, enabled=True, size=750, columns=columns,

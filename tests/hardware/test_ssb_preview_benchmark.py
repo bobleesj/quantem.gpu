@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from quantem.gpu import SSB
-from quantem.gpu.benchmark import run_ssb_preview
+from quantem.gpu.benchmark import run_direct_ptycho_preview
 
 
 @pytest.mark.parametrize("sample", [False, True])
@@ -55,7 +55,7 @@ def test_changed_defocus_benchmark_preserves_calibration(sample):
         )
         if backend == "cuda":
             reference = cp.asnumpy(reference)
-        report = run_ssb_preview(ssb, upsampling=(1, 2), runs=3)
+        report = run_direct_ptycho_preview(ssb, upsampling=(1, 2), runs=3)
         assert before == (ssb.aberrations, ssb.sample_tilt_mrad, ssb.depth_spread_nm)
         assert report["bright_field_pixels"] == ssb.num_bright_field_pixels
         assert report["browser_paint_measured"] is False

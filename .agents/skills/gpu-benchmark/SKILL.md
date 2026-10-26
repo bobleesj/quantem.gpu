@@ -11,7 +11,8 @@ not authorize publishing, tagging, replacing baselines or stopping other jobs.
 
 ## Choose the existing measurement
 
-- SSB joint fitting and regional correction: `quantem-gpu benchmark-ssb`.
+- Direct Ptycho joint fitting and regional correction: `quantem-gpu benchmark-direct-ptycho`
+  (`benchmark-ssb` is the same command).
   Read [the command and timing boundaries](../../../docs/performance/ssb/joint-fit.md).
 - Other kernels, acquisition IO or native paths: read
   [the test guide](../../../docs/developer/testing.md) and select the existing
