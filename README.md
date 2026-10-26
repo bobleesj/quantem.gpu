@@ -389,15 +389,13 @@ in quantem is heading.
 
 | Call | Method | Use it for |
 |---|---|---|
-| `find_aberrations()` | model-based, tilt-corrected | **the default**: every fit |
-| `find_aberrations(tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
-| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance, the earlier SSB search | a backup: reproducing older results, cross-checking a fit |
+| `find_aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
+| `find_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
 
-Phase variance stays as a backup, not an equal alternative: it scores how well
-the bright-field pixels' phase images agree instead of predicting the data, it
-cannot see sample tilt or depth spread, and it is about 10x slower. On
-simulated crystals with known aberrations the model-based fit lands about 3x
-closer to the true C10. Backend support and evidence: [SSB fit methods](docs/api/ssb.md#fit-methods-model-based-by-default).
+Both refine on exact derivatives of the model agreement. The earlier
+phase-variance search (`objective="phase_variance"`), which scored how well the
+bright-field pixels' phase images agree instead of predicting the data, is
+retired. Backend support and evidence: [SSB fit methods](docs/api/ssb.md#fit-methods-model-based-by-default).
 
 ### Find the aberrations, then reconstruct
 
