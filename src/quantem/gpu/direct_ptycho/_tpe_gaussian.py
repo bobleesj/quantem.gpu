@@ -58,7 +58,6 @@ import math
 
 import numpy as np
 from numba import njit
-from optuna.samplers._tpe import _truncnorm
 
 
 @njit(cache=True)
@@ -81,81 +80,3 @@ def _central_log_cdf(values: np.ndarray) -> np.ndarray:
     return result
 
 
-def _inverse_log_cdf(values: np.ndarray) -> np.ndarray:
-    """Keep Optuna's vector Newton iterations, including its stopping rule."""
-    flipped = values > -1e-2
-    target = values.copy()
-    target[flipped] = np.log(-np.expm1(values[flipped]))
-    result = np.empty_like(values)
-    small = np.nonzero(target < -5)
-    result[small] = -np.sqrt(-2 * (target[small] + _truncnorm._norm_pdf_logC))
-    moderate = np.nonzero(target >= -5)
-    result[moderate] = -_truncnorm._ndtri_exp_approx_C * np.log(np.expm1(-target[moderate]))
-    for _ in range(100):
-        log_cdf = _central_log_cdf(result)
-        tail = result <= -20.0
-        if np.any(tail):
-            log_cdf[tail] = _truncnorm._log_ndtr(result[tail])
-        log_pdf = -0.5 * result**2 - _truncnorm._norm_pdf_logC
-        step = (log_cdf - target) * np.exp(log_cdf - log_pdf)
-        result -= step
-        if np.all(np.abs(step) < 1e-8 * np.abs(result)):
-            break
-    result[flipped] *= -1
-    return result
-
-
-class _CachedGaussianMixture:
-    """Cache bounds and normalization for one unchanged Parzen density."""
-
-    def __init__(self, original):
-        self.weights = original.weights
-        self.distributions = original.distributions
-        self._mu = np.asarray([part.mu for part in self.distributions]).T
-        self._sigma = np.asarray([part.sigma for part in self.distributions]).T
-        self._lower = (np.asarray([part.low for part in self.distributions]) - self._mu) / self._sigma
-        self._upper = (np.asarray([part.high for part in self.distributions]) - self._mu) / self._sigma
-        self._log_mass = _truncnorm._log_gauss_mass(self._lower, self._upper)
-        self._log_scale = np.log(self._sigma)
-        self._log_weights = np.log(self.weights[None])
-        self._log_lower = _truncnorm._log_ndtr(self._lower)
-        self._log_negative_upper = _truncnorm._log_ndtr(-self._upper)
-
-    def sample(self, rng: np.random.RandomState, batch_size: int) -> np.ndarray:
-        """Draw the same mixture choices and quantiles in the original order."""
-        indices = rng.choice(len(self.weights), p=self.weights, size=batch_size)
-        lower = self._lower.T[:, indices]
-        upper = self._upper.T[:, indices]
-        quantiles = rng.uniform(low=0, high=1, size=lower.shape)
-        mass = self._log_mass.T[:, indices]
-        left = lower < 0
-        right = ~left
-        result = np.empty_like(quantiles)
-        if np.any(left):
-            result[left] = _inverse_log_cdf(np.logaddexp(
-                self._log_lower.T[:, indices][left], np.log(quantiles[left]) + mass[left],
-            ))
-        if np.any(right):
-            result[right] = -_inverse_log_cdf(np.logaddexp(
-                self._log_negative_upper.T[:, indices][right], np.log1p(-quantiles[right]) + mass[right],
-            ))
-        result[quantiles == 0] = lower[quantiles == 0]
-        result[quantiles == 1] = upper[quantiles == 1]
-        result[lower == upper] = np.nan
-        return (result * self._sigma.T[:, indices] + self._mu.T[:, indices]).T.copy()
-
-    def log_pdf(self, samples: np.ndarray) -> np.ndarray:
-        """Score all candidates with unchanged float64 accumulation order."""
-        standardized = (samples[:, None, :] - self._mu) / self._sigma
-        density = _truncnorm._norm_logpdf(standardized) - self._log_mass - self._log_scale
-        density = np.select(
-            [self._lower == self._upper, (standardized < self._lower) | (standardized > self._upper)],
-            [np.nan, -np.inf], default=density,
-        )
-        weighted = np.zeros((len(samples), len(self.weights)), dtype=np.float64)
-        weighted += density.sum(axis=-1)
-        weighted += self._log_weights
-        maximum = weighted.max(axis=1)
-        maximum[np.isneginf(maximum)] = 0
-        with np.errstate(divide="ignore"):
-            return np.log(np.exp(weighted - maximum[:, None]).sum(axis=1)) + maximum

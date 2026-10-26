@@ -19,10 +19,6 @@ if TYPE_CHECKING:
 
     from quantem.gpu.direct_ptycho.branches import RotationBranches
 
-# A resolved crystal has sparse positive columns; below this magnitude the phase histogram is too symmetric to tell which
-# 180-degree branch the scan-detector rotation is on, so the branch is left as given.
-COLUMN_SIGN_MIN = 0.2
-
 # SSB reconstructs the phase of the bright-field mean wave, ``phase_of_mean`` (``method="ssb"``). The older estimators
 # were retired on 2026-10-25, each in favour of the regularized method named here. Saved results and records that name
 # one still load as they were saved; asking for one raises an error naming its replacement.

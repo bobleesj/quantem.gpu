@@ -79,14 +79,6 @@ from quantem.gpu.direct_ptycho.units import (
 MAP_OPPOSITE_BRANCH = True
 
 
-def _counted_electrons(dtype: str | None) -> bool:
-    """Whether the session's source holds integer detector counts (electrons), whose noise is Poisson."""
-    try:
-        return dtype is not None and np.dtype(str(dtype).removeprefix("torch.")).kind in "iu"
-    except TypeError:
-        return False
-
-
 def _browser_qem_source(data: object) -> dict[str, object] | None:
     """Retain the identity of an unchanged, native-count QEM acquisition."""
     if not isinstance(data, Dataset4dstemGPU):
@@ -2181,7 +2173,7 @@ class DirectPtycho:
             raise ValueError("on_initial_fit is for standard or broad two-stage fits.")
         return self._find_aberrations(
             "apply" if check_rotation == "both" else "auto" if check_rotation else "off",
-            tilt=tilt, objective=objective, scan_region=scan_region,
+            tilt=tilt, scan_region=scan_region,
             num_trials=resolve_trial_count(trials, num_trials),
             refinement=refinement, search_ranges=search_ranges, refine_lock=refine_lock,
             tilt_limit_mrad=tilt_limit_mrad, seed=42 if seed is None else seed, save_dir=save_dir, force=force, verbose=verbose,
@@ -2333,7 +2325,7 @@ class DirectPtycho:
         if "refinement" in find_aberrations_options:
             find_aberrations_options["refinement"] = auto_refinement(find_aberrations_options["refinement"])
         if "objective" in find_aberrations_options:
-            find_aberrations_options["objective"] = agreement_objective(find_aberrations_options["objective"])
+            agreement_objective(find_aberrations_options.pop("objective"))
         if "higher_order" in find_aberrations_options:
             retired_higher_order(find_aberrations_options.pop("higher_order"))
         find_aberrations_options["num_trials"] = resolve_trial_count(
@@ -2346,7 +2338,6 @@ class DirectPtycho:
         branches: Literal["auto", "off", "apply", "keep"],
         *,
         tilt: bool = True,
-        objective: Literal["agreement"] = "agreement",
         scan_region: tuple[int, int, int, int] | None = None,
         num_trials: int = 200,
         refinement: Literal["auto"] | None = "auto",
@@ -2368,8 +2359,6 @@ class DirectPtycho:
         selected one, and fits once otherwise; ``"off"`` fits once; ``"apply"`` compares and applies; ``"keep"``
         compares and keeps the session's rotation.
         """
-        if objective != "agreement":
-            raise ValueError(f"Every fit maximizes the model agreement (objective='agreement'); got {objective!r}.")
         if tilt and refine_lock is not None:
             raise ValueError(
                 "refine_lock applies to the standard fit (tilt=False). In the joint fit (tilt=True, the default) hold "
@@ -2430,7 +2419,7 @@ class DirectPtycho:
                     "starting_aberrations": self.aberrations,
                     "starting_aberrations_explicit": self._aberrations_explicit,
                     **({"tilt": True, "tilt_limit_mrad": float(tilt_limit_mrad)} if tilt else {}),
-                    "objective": objective,
+                    "objective": "agreement",
                     **({"compute_loss": False} if not compute_loss else {}),
                     **({"compare_standard": False} if tilt and not compare_standard else {}),
                     **({"refined_from": {"sample_tilt_mrad": self.sample_tilt_mrad, "depth_spread_nm": self.depth_spread_nm}}
@@ -2514,7 +2503,7 @@ class DirectPtycho:
                 # refine_rotation refines only an estimated rotation, the region's as the full scan's
                 regional.scan_detector_rotation_source = self.scan_detector_rotation_source
                 result = regional._find_aberrations(
-                    branches, tilt=tilt, objective=objective, num_trials=num_trials, refinement=requested_refinement,
+                    branches, tilt=tilt, num_trials=num_trials, refinement=requested_refinement,
                     search_ranges=requested["search_ranges"] if tilt else search_ranges, refine_lock=refine_lock,
                     tilt_limit_mrad=tilt_limit_mrad,
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
@@ -2557,7 +2546,7 @@ class DirectPtycho:
                 result = self._fit_tilt(
                     trials, refinement, float(tilt_limit_mrad), int(seed), verbose,
                     fixed_aberrations=fixed_aberrations, bounds=tilt_bounds, compute_loss=compute_loss)
-                result.objective = objective
+                result.objective = "agreement"
                 return self._accept_result(result)
             result = result_from_engine(self._backend().fit(
                 aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
@@ -2565,7 +2554,7 @@ class DirectPtycho:
                 search_ranges=search_ranges_to_engine(search_ranges), refine_lock=refine_lock_to_engine(refine_lock),
                 seed=int(seed), verbose=verbose, compute_loss=compute_loss,
             ))
-            result.objective = objective
+            result.objective = "agreement"
             if result.aberrations["C12_nm"] == 0.0:
                 # no astigmatism (C12 held at 0): its azimuth has no effect on the image and is stated as 0
                 result.aberrations["phi12_deg"] = 0.0

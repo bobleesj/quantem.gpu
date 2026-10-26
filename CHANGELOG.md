@@ -67,6 +67,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Removed
 
+- Python SSB: helpers the retired fits left without callers are removed (the MPS row-IFFT and phase-column batch
+  loss entry points and their pair kernel, `exact_pair_row_allocation_bf_512`, `_CachedGaussianMixture`,
+  `_inverse_log_cdf`, `_counted_electrons`, `COLUMN_SIGN_MIN`), with single-value plumbing: the internal
+  `_find_aberrations(objective=...)` and `_resident_search.BASIN_CHECK`. Fits are unchanged.
 - Python SSB (CUDA and MPS): the `higher_order=` subsets of `search="primary"` (coma, trefoil, C30 polished by a
   finite-difference Newton in Angstrom, with its coherence and precision guard) are retired: the default fit fits every
   term through fifth order on exact gradients with the half-band check. `find_aberrations(higher_order=...)` and

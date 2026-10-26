@@ -32,7 +32,6 @@ import torch
 
 from quantem.gpu.direct_ptycho.higher_order import ORDERS
 
-_N = [n for n, _ in ORDERS]
 _M = [m for _, m in ORDERS]
 _POWER = [(n + 1 - m) // 2 for n, m in ORDERS]
 

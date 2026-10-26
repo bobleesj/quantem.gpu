@@ -406,9 +406,6 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
     return _decode(device, history, bounds), scores
 
 
-# Polish once more from starts in other basins (``_exact_newton.other_basins``) and keep the higher agreement.
-BASIN_CHECK = True
-
 
 def fit_resident(
     evaluate,
@@ -531,7 +528,7 @@ def fit_resident(
 
         host_point, fit, exact_starts = _exact_newton.fit(
             derivatives, device.host(points), device.host(scores), lower, upper, start=start,
-            starts=polish_starts, basins=bool(trials) and fixed_aberrations is None and BASIN_CHECK)
+            starts=polish_starts, basins=bool(trials) and fixed_aberrations is None)
     else:
         ranks = _rank(device, scores)
         point, value = device.run(
