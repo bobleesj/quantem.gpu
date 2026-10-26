@@ -19,6 +19,7 @@ second manifest in this directory.
 | [MetalImageFFT](Sources/MetalImageFFT) | Resident `logMagnitude`: `fftshift(log1p(abs(fft2(source))))` |
 | [MetalImageRuntime](Sources/MetalImageRuntime) | Histogram windows, range, and display contracts |
 | [MetalDirectPtychoKernels](Sources/MetalDirectPtychoKernels) | Direct Ptycho: Fourier preparation, aberration fit, and the SSB, Phase and Complex reconstructions |
+| [MetalSSBKernels](Sources/MetalSSBKernels) | Deprecated former name of MetalDirectPtychoKernels: re-exports it with deprecated aliases for the renamed types |
 
 ```text
 native/swift/

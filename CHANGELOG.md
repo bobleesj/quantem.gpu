@@ -212,6 +212,18 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- Native (Swift/Metal): the Direct Ptycho module is `MetalDirectPtychoKernels` (product, target and
+  `native/swift/Sources/MetalDirectPtychoKernels`), and its feature-level types take Direct Ptycho names, for example
+  `MetalSSBJointModel` → `MetalDirectPtychoJointModel`, `SSBModelFit` → `DirectPtychoModelFit`, `SSBFitOptions` →
+  `DirectPtychoFitOptions`, `SSBDirectRegularization` → `DirectPtychoRegularization` and `SSBDirectError` →
+  `DirectPtychoSolveError` (38 public types; the rest are `MetalSSB*` → `MetalDirectPtycho*` and `SSB*` →
+  `DirectPtycho*`). The SSB-method and retired-format types keep their names (`SSBPhaseArtifact`, `MetalSSBSavedRun`,
+  `SSBOptimization*`, `SSBBrightfieldSampling`), as do every Codable key, enum raw value and saved schema, the
+  kernel registry names (`ssb-redraw`, `ssb-direct`, ...) and the `ssb*.metal` sources, whose registered digests are
+  unchanged. The `MetalSSBKernels` product stays for one pin cycle as a deprecated re-export with an alias for each
+  renamed type. A packaged app now copies the resource bundle `MetalKernels_MetalDirectPtychoKernels.bundle` (was
+  `MetalKernels_MetalSSBKernels.bundle`). The benchmarks are `metal-direct-ptycho-fit-benchmark` and
+  `metal-direct-ptycho-redraw-benchmark` (were `metal-ssb-*`), the test target `MetalDirectPtychoKernelsTests`.
 - Python MPS: the low-order Direct Ptycho fit runs as fast as the native Metal fit on the same Mac (2.5 s warm on a
   512 x 512 scan, from 6.9 s): its agreement kernel takes the native arithmetic (exact aperture inside and outside
   the edge ring, uniform phasor anchors, one dispatch per group of eight trials), and the Newton's exact gradient and

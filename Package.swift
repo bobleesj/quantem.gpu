@@ -15,6 +15,8 @@ let package = Package(
     .library(name: "MetalScientificNumerics", targets: ["MetalScientificNumerics"]),
     .library(name: "MetalImageRuntime", targets: ["MetalImageRuntime"]),
     .library(name: "MetalDirectPtychoKernels", targets: ["MetalDirectPtychoKernels"]),
+    // The former name of MetalDirectPtychoKernels: re-exports it with deprecated aliases for the renamed types.
+    .library(name: "MetalSSBKernels", targets: ["MetalSSBKernels"]),
     .library(name: "Native4DSTEMIO", targets: ["Native4DSTEMIO"]),
     .library(
       name: "Metal4DSTEMStreamingIO",
@@ -166,6 +168,11 @@ let package = Package(
       name: "MetalDirectPtychoKernels",
       path: "native/swift/Sources/MetalDirectPtychoKernels",
       resources: [.copy("Resources")]
+    ),
+    .target(
+      name: "MetalSSBKernels",
+      dependencies: ["MetalDirectPtychoKernels"],
+      path: "native/swift/Sources/MetalSSBKernels"
     ),
     .executableTarget(
       name: "MetalDisplayBenchmark",

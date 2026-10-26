@@ -73,6 +73,12 @@ raises rather than silently cropping, binning, changing precision, or falling
 back to CPU. The engine computes in float32/complex64. It retains every
 logical BF term in normalization and skips only the proven-zero aperture union.
 
+The product was named `MetalSSBKernels` until 2026-10-26. That name remains for one pin cycle as a
+deprecated re-export with an alias for each renamed type (for example `SSBFitOptions` for
+`DirectPtychoFitOptions`); the SSB-method types such as `SSBPhaseArtifact` keep their names. A packaged app
+copies the shaders' resource bundle, now `MetalKernels_MetalDirectPtychoKernels.bundle`, into
+`Contents/Resources`.
+
 ```swift
 import Metal
 import MetalDirectPtychoKernels

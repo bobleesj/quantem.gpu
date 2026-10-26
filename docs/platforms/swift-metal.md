@@ -23,6 +23,7 @@ WebGPU paths.
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |
 | `MetalDirectPtychoKernels` | native 128×128, 256×256 and 512×512 SSB: Fourier preparation, model-agreement fitting through fifth order, SSB redraw and regularized phase and complex reconstruction | `.../MetalDirectPtychoKernels` |
+| `MetalSSBKernels` | deprecated former name of `MetalDirectPtychoKernels`: re-exports it with a deprecated alias for each renamed type; no code or resources; removed once no consumer imports it | `.../MetalSSBKernels` |
 
 The native package does not provide the Python `screening.prepare` cache
 contract. It does provide detector, CoM, DPC/iDPC, display, FFT, load, and SSB
