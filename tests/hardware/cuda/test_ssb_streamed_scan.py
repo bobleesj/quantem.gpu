@@ -230,6 +230,13 @@ def test_encoded_1024_scan_keeps_regularized_methods(method):
         with SSB(data, **SETTINGS, aberrations=ABERRATIONS) as session:
             assert session._streamed is not None and not session._streams_full_scan
             actual = session.run(method=method, aberrations=ABERRATIONS, compute_loss=False)
+            assert session._compute is not None
+            # a region fit decodes its own crop: the cached 1024 backend is dropped first, not held beside it
+            session.find_aberrations(search="primary", tilt=False, scan_region=(0, 128, 0, 128), num_trials=0,
+                                     refinement=None, check_rotation=False, verbose=False)
+            assert session._compute is None
+            again = session.run(method=method, aberrations=ABERRATIONS, compute_loss=False)
+            cp.testing.assert_array_equal(cp.asarray(again.object_wave), cp.asarray(actual.object_wave))
         values[..., 2, 3] = 0
         with SSB(values, **SETTINGS, aberrations=ABERRATIONS) as dense:
             expected = dense.run(method=method, aberrations=ABERRATIONS, compute_loss=False)

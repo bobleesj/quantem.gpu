@@ -1416,6 +1416,14 @@ class DirectPtycho:
                 self._compute.release_prepared()
             else:
                 self._compute.release_for_region(region_shape)
+        elif self._streamed is not None and self._compute is not None:
+            # An encoded CUDA session's resident backend only caches its 1024 Fourier stack and is rebuilt on demand.
+            # A region fit decodes its own crop; holding both doubled the memory, so a second fit of a 1024 x 1024
+            # acquisition with ~9300 bright-field pixels ran out of memory on a 96 GB GPU.
+            self._prepared_direct = None
+            self._direct_windows = {}
+            backend, self._compute = self._compute, None
+            backend.close()
 
     def _center_in_data(self) -> tuple[float, float] | None:
         """The bright-field centre in pixels of the array the session holds, which the backends index.

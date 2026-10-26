@@ -15,6 +15,9 @@ new `rcN` heading when that rc is published to TestPyPI.
   1x, 2x and 3x, transposed detectors included. An encoded 1024 x 1024 acquisition keeps `method="phase"` and
   `"complex"` (they were refused because the scan was streamed); above 1024 they still need a resident region.
   Fixed: a large scan with one number for `detector_sampling_mrad`, or none (the estimate), raised a TypeError.
+  Fixed: a second `find_aberrations()` on an encoded 1024 x 1024 acquisition held the session's cached Fourier
+  stack beside the new fit's crop and ran out of memory on a 96 GB GPU with ~9300 bright-field pixels; the cache is now
+  dropped first and rebuilt on demand (a repeat fit there takes 5.4 s, peak 70 GB).
 
 - `io.load` reads a 4D-STEM dataset QuantEM saved as a zipped Zarr v3 store (`Dataset4dstem` serializer) in place,
   without quantem core: chunks decode on parallel threads straight into one array, bit for bit in the stored dtype,
