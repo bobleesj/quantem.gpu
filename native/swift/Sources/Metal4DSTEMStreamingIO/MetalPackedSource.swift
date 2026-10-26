@@ -415,12 +415,6 @@ public final class MetalPackedSource {
     return output
   }
 
-  /// Exact virtual image for a binary detector mask, decoding only the listed pixels.
-  public func maskedVirtualImage(detectorPixels: [Int]) throws -> MTLBuffer {
-    try calibratedImage(
-      codeSums: maskedCodeSums(detectorPixels: detectorPixels), pixelCount: detectorPixels.count)
-  }
-
   /// Restore a bounded consecutive frame region directly into a float32 GPU buffer.
   public func read(_ frames: Range<Int>) throws -> MTLBuffer {
     guard !isReleased, !frames.isEmpty, frames.lowerBound >= 0, frames.upperBound <= readyFrames,

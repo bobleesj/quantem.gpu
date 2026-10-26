@@ -4,13 +4,6 @@ import Foundation
 import Metal
 import Metal4DSTEMKernels
 
-public struct Metal4DSTEMInteractionPrewarmMetrics: Equatable, Sendable {
-  public let wordCount: Int
-  public let touchedBytes: UInt64
-  public let checksum: UInt64
-  public let wallMilliseconds: Double
-}
-
 /// Interactions over one exact sharded 4D-STEM working volume.
 ///
 /// The caller owns scientific detector geometry, interaction scheduling, and
@@ -31,11 +24,6 @@ public final class Metal4DSTEMShardedInteractions {
   private struct SharedDetectorEntries: @unchecked Sendable {
     let pointer: UnsafePointer<QDetectorWordEntry>
     let count: Int
-  }
-
-  private struct SharedPrewarmPointers: @unchecked Sendable {
-    let sources: [UnsafePointer<UInt32>]
-    let checksums: UnsafeMutablePointer<UInt64>
   }
 
   private let device: MTLDevice
@@ -133,85 +121,6 @@ public final class Metal4DSTEMShardedInteractions {
       throw Metal4DSTEMStreamingIOError.commandFailed(error.localizedDescription)
     }
     if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
-  }
-
-  /// Mark the exact detector-word pages needed by nearby detector masks as active.
-  ///
-  /// This reads one value per virtual-memory page without allocating a second
-  /// copy of the working volume. It is intended for shared sharded volumes on
-  /// memory-constrained unified-memory systems, where the full volume is larger
-  /// than the Metal device's recommended working set.
-  public func prewarmVirtualDetector(
-    shards: [MTLBuffer],
-    plan: Metal4DSTEMExactBinningShardPlan,
-    referenceMask: [UInt8],
-    candidateMasks: [[UInt8]]
-  ) throws -> Metal4DSTEMInteractionPrewarmMetrics {
-    try validate(shards: shards, plan: plan)
-    let detectorPixels =
-      plan.provenance.outputDetectorRows * plan.provenance.outputDetectorColumns
-    guard referenceMask.count == detectorPixels,
-      !candidateMasks.isEmpty,
-      candidateMasks.allSatisfy({ $0.count == detectorPixels }),
-      shards.allSatisfy({ $0.storageMode == .shared })
-    else {
-      throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Detector prewarming requires one \(detectorPixels)-pixel reference mask, "
-          + "one or more equally sized candidate masks, and shared resident shards; "
-          + "received reference \(referenceMask.count), candidates "
-          + "\(candidateMasks.map(\.count)), and storage modes "
-          + "\(shards.map { $0.storageMode.rawValue })."
-      )
-    }
-    let words = Set(
-      candidateMasks.flatMap {
-        Self.wordEntries(previousMask: referenceMask, nextMask: $0).map(\.word)
-      }
-    ).sorted()
-    guard !words.isEmpty else {
-      return Metal4DSTEMInteractionPrewarmMetrics(
-        wordCount: 0,
-        touchedBytes: 0,
-        checksum: 0,
-        wallMilliseconds: 0
-      )
-    }
-    let started = CFAbsoluteTimeGetCurrent()
-    let checksums = UnsafeMutablePointer<UInt64>.allocate(capacity: shards.count)
-    checksums.initialize(repeating: 0, count: shards.count)
-    defer {
-      checksums.deinitialize(count: shards.count)
-      checksums.deallocate()
-    }
-    let pointers = SharedPrewarmPointers(
-      sources: shards.map {
-        UnsafePointer($0.contents().assumingMemoryBound(to: UInt32.self))
-      },
-      checksums: checksums
-    )
-    let valuesPerPage = max(1, Int(getpagesize()) / MemoryLayout<UInt32>.stride)
-    DispatchQueue.concurrentPerform(iterations: shards.count) { shardIndex in
-      let scanCount = plan.shards[shardIndex].outputScanPositionCount
-      let source = pointers.sources[shardIndex]
-      var checksum: UInt64 = 0
-      for word in words {
-        let values = source.advanced(by: Int(word) * scanCount)
-        for scan in stride(from: 0, to: scanCount, by: valuesPerPage) {
-          checksum &+= UInt64(values[scan])
-        }
-        checksum &+= UInt64(values[scanCount - 1])
-      }
-      pointers.checksums[shardIndex] = checksum
-    }
-    var checksum: UInt64 = 0
-    for shardIndex in shards.indices { checksum &+= checksums[shardIndex] }
-    let scanCount = plan.provenance.outputScanRows * plan.provenance.outputScanColumns
-    return Metal4DSTEMInteractionPrewarmMetrics(
-      wordCount: words.count,
-      touchedBytes: UInt64(words.count * scanCount * MemoryLayout<UInt32>.stride),
-      checksum: checksum,
-      wallMilliseconds: (CFAbsoluteTimeGetCurrent() - started) * 1_000
-    )
   }
 
   /// Update one exact custom-detector image across every resident shard.
@@ -359,114 +268,6 @@ public final class Metal4DSTEMShardedInteractions {
     return wallMilliseconds
   }
 
-  /// Update an exact detector image from an audited packed-uint8 working volume.
-  ///
-  /// The source still represents every original integer exactly; four samples
-  /// merely share one uint32 storage word. Balanced scan ranges keep the live
-  /// reduction on CPU-accessible unified memory and avoid GPU residency stalls.
-  @discardableResult
-  public func updatePackedUInt8VirtualDetector(
-    volume: MTLBuffer,
-    scanCount: Int,
-    detectorPixels: Int,
-    previousMask: [UInt8]?,
-    nextMask: [UInt8],
-    into output: MTLBuffer,
-    shouldCancel: () -> Bool = { false }
-  ) throws -> Double {
-    let (paddedDetectorPixels, detectorPaddingOverflow) =
-      detectorPixels.addingReportingOverflow(3)
-    let detectorWords = detectorPaddingOverflow ? 0 : paddedDetectorPixels / 4
-    let (volumeWords, volumeWordOverflow) =
-      detectorWords.multipliedReportingOverflow(by: scanCount)
-    let (requiredVolumeBytes, volumeByteOverflow) =
-      volumeWords.multipliedReportingOverflow(by: MemoryLayout<UInt32>.stride)
-    let (requiredOutputBytes, outputByteOverflow) =
-      scanCount.multipliedReportingOverflow(by: MemoryLayout<UInt32>.stride)
-    guard scanCount > 0, detectorPixels > 0,
-      !detectorPaddingOverflow, !volumeWordOverflow, !volumeByteOverflow,
-      !outputByteOverflow,
-      nextMask.count == detectorPixels,
-      previousMask == nil || previousMask?.count == detectorPixels,
-      volume.device.registryID == device.registryID,
-      volume.storageMode == .shared,
-      volume.length >= requiredVolumeBytes
-    else {
-      throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Packed-uint8 interactions require an exact shared word-major volume "
-          + "with matching scan and detector geometry."
-      )
-    }
-    try validateOutput(
-      output,
-      requiredBytes: requiredOutputBytes,
-      label: "packed-uint8 custom virtual detector"
-    )
-    let entries = Self.wordEntries(
-      previousMask: previousMask,
-      nextMask: nextMask,
-      pixelsPerWord: 4
-    )
-    guard !entries.isEmpty else { return 0 }
-    if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
-    if previousMask == nil {
-      memset(output.contents(), 0, requiredOutputBytes)
-    }
-    let started = CFAbsoluteTimeGetCurrent()
-    let source = UnsafePointer(volume.contents().assumingMemoryBound(to: UInt32.self))
-    let destination = output.contents().assumingMemoryBound(to: UInt32.self)
-    let requestedBlockCount = ProcessInfo.processInfo.environment[
-      "QUANTEM_SHARED_U8_BLOCKS"
-    ].flatMap(Int.init)
-    let processorCount = ProcessInfo.processInfo.activeProcessorCount
-    let defaultBlockCount = min(processorCount <= 10 ? 8 : 16, processorCount)
-    let blockCount = min(
-      max(1, requestedBlockCount ?? defaultBlockCount),
-      (scanCount - 1) / 8_192 + 1
-    )
-    let scansPerBlock = scanCount / blockCount
-    let remainder = scanCount % blockCount
-    entries.withUnsafeBytes { entryBytes in
-      let sharedEntries = SharedDetectorEntries(
-        pointer: entryBytes.baseAddress!.assumingMemoryBound(
-          to: QDetectorWordEntry.self),
-        count: entries.count
-      )
-      let sharedPointers = SharedInteractionPointers(
-        sources: [source],
-        destination: destination
-      )
-      DispatchQueue.concurrentPerform(iterations: blockCount) { block in
-        let start = block * scansPerBlock + min(block, remainder)
-        let length = scansPerBlock + (block < remainder ? 1 : 0)
-        q_update_virtual_detector_u8_range(
-          sharedPointers.sources[0],
-          sharedPointers.destination,
-          scanCount,
-          start,
-          length,
-          sharedEntries.pointer,
-          sharedEntries.count
-        )
-      }
-    }
-    if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
-    let wallMilliseconds = (CFAbsoluteTimeGetCurrent() - started) * 1_000
-    if ProcessInfo.processInfo.environment["QUANTEM_METAL_SHARDED_PROFILE"] == "1" {
-      let line = String(
-        format:
-          "SHARED_INTERACTION_U8 entries=%d blocks=%d wall_ms=%.3f allocated_bytes=%llu recommended_bytes=%llu\n",
-        entries.count,
-        blockCount,
-        wallMilliseconds,
-        device.currentAllocatedSize,
-        device.recommendedMaxWorkingSetSize
-      )
-      FileHandle.standardError.write(Data(line.utf8))
-    }
-    return wallMilliseconds
-  }
-
   private func updateVirtualDetectorOnCPU(
     shards: [MTLBuffer],
     plan: Metal4DSTEMExactBinningShardPlan,
@@ -573,12 +374,13 @@ public final class Metal4DSTEMShardedInteractions {
     }
   }
 
+  /// Two detector pixels per uint32 word of the uint16 working volume.
   private static func wordEntries(
     previousMask: [UInt8]?,
-    nextMask: [UInt8],
-    pixelsPerWord: Int = 2
+    nextMask: [UInt8]
   ) -> [DetectorWordEntry] {
-    (0..<((nextMask.count + pixelsPerWord - 1) / pixelsPerWord)).compactMap { word in
+    let pixelsPerWord = 2
+    return (0..<((nextMask.count + pixelsPerWord - 1) / pixelsPerWord)).compactMap { word in
       var coefficients: UInt32 = 0
       for lane in 0..<pixelsPerWord {
         let pixel = word * pixelsPerWord + lane

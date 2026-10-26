@@ -509,12 +509,6 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
     return outputs[priorityIndex]
   }
 
-  /// Decode one exact DP from every acquisition in one residency-qualified command.
-  public func extractAllRawDiffraction(scanRow: Int, scanColumn: Int) throws -> [[UInt32]] {
-    let buffers = try updateDiffractionBuffers(scanRow: scanRow, scanColumn: scanColumn)
-    return zip(sources, buffers).map { $0.diffractionValues(from: $1) }
-  }
-
   /// Update every series-owned DP buffer in one residency-qualified command.
   /// Returned buffers remain owned by this series and must not be released or mutated.
   public func updateDiffractionBuffers(scanRow: Int, scanColumn: Int) throws -> [MTLBuffer] {

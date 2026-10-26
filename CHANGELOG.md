@@ -72,6 +72,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 - Native (Metal) SSB: `MetalSSBJointModel.loss` and `losses`, the negative agreement of `SSBJointParameters` left from
   the earlier native optimizer, are removed; `agreements(_:)` (larger is better) is the one objective call, with
   `SSBModelPoint(parameters)` for a parameter set.
+- Native IO: entry points with no caller in the package, its tests or the app are removed:
+  `Metal4DSTEMShardedInteractions.prewarmVirtualDetector` with `Metal4DSTEMInteractionPrewarmMetrics`,
+  `updatePackedUInt8VirtualDetector` with its C reduction `q_update_virtual_detector_u8_range` (and its
+  `QUANTEM_SHARED_U8_BLOCKS` knob), `MetalPackedSource.maskedVirtualImage` (use
+  `calibratedImage(codeSums: maskedCodeSums(detectorPixels:), pixelCount:)`),
+  `MetalRuntimeANSSeries.extractAllRawDiffraction` (use `updateDiffractionBuffers`) and `MetalFloat32SurfaceState`.
 - Native (Metal) SSB is model-based only: the engine's own non-model reconstruction and the phase-variance fit are
   retired. Removed: `MetalSSBEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`, `phaseVariance`,
   `optimize` and `MetalSSBPhaseVarianceResult`; `SSBOptimizer` and `SSBOptimizationProgress`; the phase-variance

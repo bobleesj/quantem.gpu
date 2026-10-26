@@ -2936,11 +2936,6 @@ private final class BinnedOutputContext {
   private(set) var completedShardCount = 0
   private(set) var peakWorkingMetalBytes: UInt64 = 0
 
-  var retainsAllDestinations: Bool {
-    if case .resident = storage { return true }
-    return false
-  }
-
   init(
     resident plan: Metal4DSTEMIndexedBinnedLoadPlan,
     destinations: [MTLBuffer],
