@@ -24,6 +24,31 @@ final class SSBKernelRegistryTests: XCTestCase {
     }
   }
 
+  /// A packaged app copies this target's SwiftPM bundle into `Contents/Resources`, where the loader looks it up by
+  /// name: that name must be the bundle SwiftPM builds, and the packaged copy must give the registered digests.
+  func testPackagedAppLayoutLoadsTheBuiltBundle() throws {
+    let built = Bundle.module.bundleURL
+    XCTAssertEqual(built.lastPathComponent, MetalDirectPtychoShaderSource.packagedBundleName)
+    let files = FileManager.default
+    let resources = files.temporaryDirectory.appendingPathComponent(
+      "direct-ptycho-packaged-\(UUID().uuidString)", isDirectory: true)
+    try files.createDirectory(at: resources, withIntermediateDirectories: true)
+    defer { try? files.removeItem(at: resources) }
+    let packaged = resources.appendingPathComponent(
+      MetalDirectPtychoShaderSource.packagedBundleName)
+    try files.copyItem(at: built, to: packaged)
+    for entry in entries {
+      let source = try MetalDirectPtychoShaderSource.load(entry.files, packagedResources: resources)
+      XCTAssertEqual(
+        MetalKernelIdentity.sha256(Data(source.utf8)), entry.registeredSourceSHA256, entry.name)
+    }
+    // The packaged copy is read before the package's own bundle.
+    let marker = "// packaged copy\n"
+    try Data(marker.utf8).write(to: packaged.appendingPathComponent("Resources/ssb_redraw.metal"))
+    XCTAssertEqual(
+      try MetalDirectPtychoShaderSource.load(["ssb_redraw"], packagedResources: resources), marker)
+  }
+
   func testRegistryDocumentListsEveryVersion() throws {
     let document = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

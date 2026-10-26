@@ -428,6 +428,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- Native (Swift/Metal): measuring the bright-field disk (`MetalDirectPtychoBrightfieldEstimate.measure`) in a packaged
+  app read `ssb_calibration.metal` through SwiftPM's `Bundle.module`, which looks only beside the app and in the
+  build folder and stops the process when neither exists. It now reads the app's copy in `Contents/Resources`
+  through the shader loader, like every other kernel of the module; a test checks that the loader's packaged
+  bundle name is the bundle SwiftPM builds and that a packaged copy gives the registered digests.
 - Python MPS SSB: the bright-field frequencies k are formed in float64 and rounded once to float32
   (`ssb.mps.prepared.bright_field_frequencies`, used at preparation and on a rotation change, and by the direct
   methods). They were formed from a float32-rounded disk centre, which shifts every k by the same amount. Fits move by

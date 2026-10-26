@@ -45,16 +45,12 @@ public struct MetalDirectPtychoBrightfieldEstimate: Sendable {
       throw MetalDirectPtychoError.invalidGeometry(
         "Detector sums and exclusions must match the full detector shape.")
     }
-    guard
-      let url = Bundle.module.url(
-        forResource: "ssb_calibration", withExtension: "metal", subdirectory: "Resources")
-    else {
-      throw MetalDirectPtychoError.missingResource("ssb_calibration.metal")
-    }
+    // Through the shader loader, which reads a packaged app's copy of the bundle: `Bundle.module` alone looks only
+    // beside the app and in the build folder, and stops the process when neither exists.
+    let source = try MetalDirectPtychoShaderSource.load(["ssb_calibration"])
     let options = MTLCompileOptions()
     options.fastMathEnabled = false
-    let library = try device.makeLibrary(
-      source: String(contentsOf: url, encoding: .utf8), options: options)
+    let library = try device.makeLibrary(source: source, options: options)
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
       guard let function = library.makeFunction(name: name) else {
         throw MetalDirectPtychoError.missingFunction(name)

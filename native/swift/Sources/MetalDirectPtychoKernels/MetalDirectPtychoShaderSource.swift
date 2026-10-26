@@ -2,10 +2,17 @@ import Foundation
 
 /// Load the same resources from a Swift package or a bundled native app.
 enum MetalDirectPtychoShaderSource {
-  static func load(_ names: [String]) throws -> String {
+  /// This target's SwiftPM resource bundle (`<package>_<target>`), which a packaged app copies into
+  /// `Contents/Resources`. Before the module was renamed it was `MetalKernels_MetalSSBKernels.bundle`.
+  static let packagedBundleName = "MetalKernels_MetalDirectPtychoKernels.bundle"
+
+  /// `packagedResources` is a packaged app's resource folder; the package's own bundle is the fallback.
+  static func load(
+    _ names: [String], packagedResources: URL? = Bundle.main.resourceURL
+  ) throws -> String {
     try names.map { name in
-      let packaged = Bundle.main.resourceURL?.appendingPathComponent(
-        "MetalKernels_MetalDirectPtychoKernels.bundle/Resources/\(name).metal")
+      let packaged = packagedResources?.appendingPathComponent(
+        "\(packagedBundleName)/Resources/\(name).metal")
       let url =
         packaged.flatMap {
           FileManager.default.fileExists(atPath: $0.path) ? $0 : nil
