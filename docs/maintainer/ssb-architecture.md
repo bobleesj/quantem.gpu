@@ -4,7 +4,7 @@
 
 `quantem.gpu.SSB` is the scientist-facing SSB compute entry point. CUDA and
 MPS are its execution backends, not separate APIs. The browser engine in
-`ssb/webgpu` is a separate runtime that applications bundle; it is not an
+`direct_ptycho/webgpu` is a separate runtime that applications bundle; it is not an
 `DirectPtycho(backend=...)` option.
 
 ```python
@@ -32,7 +32,7 @@ phase-evaluation result class.
 
 Backend geometry and browser transport use private typed records such as
 `BrightfieldDisk` and `SSBExportState`. They are integration details and are
-not exported from `quantem.gpu` or `quantem.gpu.ssb`.
+not exported from `quantem.gpu` or `quantem.gpu.direct_ptycho`.
 
 The scientific defaults are 200 trials, the least-squares agreement of the SSB
 model with the full-BF evidence fitted with the sample tilt and depth spread
@@ -78,7 +78,7 @@ Each result records its backend, `phase_of_mean` and output factor
 | --- | --- | --- |
 | `quantem.gpu.SSB` | validation, public units, backend selection, fit/reconstruct/preview lifecycle, shared results | device kernels, viewer rendering |
 | CUDA/MPS backend modules | preparation, device buffers, exact objective, reconstruction kernels | public parameter names, result schemas |
-| `ssb/webgpu` browser engine | WebGPU execution of an exported bright-field plan with the same units and parameter names | aberration search, silent preview substitution |
+| `direct_ptycho/webgpu` browser engine | WebGPU execution of an exported bright-field plan with the same units and parameter names | aberration search, silent preview substitution |
 | Applications and viewers | rendering, export folders, provenance presentation, acquisition integration | copied SSB optics, optimizers, or result classes |
 
 Python CUDA and MPS run in process. The browser engine runs asynchronously and
@@ -97,8 +97,8 @@ after parity passes.
 ## Kernel selection by scan size
 
 Each backend selects its kernels by square scan size (128, 256, 512 and 1024)
-in one place: `ssb/cuda/kernels`, `ssb/mps/kernels` and
-`ssb/webgpu/backend.ts`. Shape dispatch is not scattered through optimizer or
-viewer code. SSB-specific WebGPU code lives under `ssb/webgpu`; generic browser
+in one place: `direct_ptycho/cuda/kernels`, `direct_ptycho/mps/kernels` and
+`direct_ptycho/webgpu/backend.ts`. Shape dispatch is not scattered through optimizer or
+viewer code. SSB-specific WebGPU code lives under `direct_ptycho/webgpu`; generic browser
 device utilities live under `device`, and HDF5 decoder utilities live under
 `io/hdf5/webgpu`.

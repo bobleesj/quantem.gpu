@@ -117,12 +117,12 @@ jobs:
               "quantem/gpu/dpc/workflow.py",
               "quantem/gpu/dpc/webgpu/kernels.ts",
               "quantem/gpu/movie/mps.py",
-              "quantem/gpu/ssb/workflow.py",
-              "quantem/gpu/ssb/results.py",
-              "quantem/gpu/ssb/contract.py",
-              "quantem/gpu/ssb/cuda/backend.py",
-              "quantem/gpu/ssb/mps/backend.py",
-              "quantem/gpu/ssb/webgpu/backend.ts",
+              "quantem/gpu/direct_ptycho/workflow.py",
+              "quantem/gpu/direct_ptycho/results.py",
+              "quantem/gpu/direct_ptycho/contract.py",
+              "quantem/gpu/direct_ptycho/cuda/backend.py",
+              "quantem/gpu/direct_ptycho/mps/backend.py",
+              "quantem/gpu/direct_ptycho/webgpu/backend.ts",
           }
           with zipfile.ZipFile(wheel) as zf:
               names = set(zf.namelist())

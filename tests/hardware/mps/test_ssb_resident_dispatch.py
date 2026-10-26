@@ -11,8 +11,8 @@ from .test_ssb_upsampling import _disk_session
 def test_runtime_batch_matches_specialized_shader(batch, monkeypatch):
     """Search and changing Newton active sets retain every score bit."""
     _require_mps()
-    from quantem.gpu.ssb._resident_search import _Device, _trial
-    from quantem.gpu.ssb.mps import resident_fit
+    from quantem.gpu.direct_ptycho._resident_search import _Device, _trial
+    from quantem.gpu.direct_ptycho.mps import resident_fit
 
     device = _Device("mps")
     reference = device.xp.fast.metal_kernel(
@@ -44,8 +44,8 @@ def test_runtime_batch_matches_specialized_shader(batch, monkeypatch):
 def test_cached_probe_geometry_matches_trial_kernel_and_rotation():
     """Reuse exact detector geometry, rebuilding it after rotation changes."""
     _require_mps()
-    from quantem.gpu.ssb._resident_search import _Device, _trial
-    from quantem.gpu.ssb.mps import resident_fit
+    from quantem.gpu.direct_ptycho._resident_search import _Device, _trial
+    from quantem.gpu.direct_ptycho.mps import resident_fit
 
     device = _Device("mps")
     mx = device.xp
@@ -78,7 +78,7 @@ def test_cached_probe_geometry_matches_trial_kernel_and_rotation():
 
         # A separate BF selection cannot inherit geometry indexed by the full
         # detector selection, even when its source has already been fitted.
-        from quantem.gpu.ssb.mps.backend import _subset_prepared
+        from quantem.gpu.direct_ptycho.mps.backend import _subset_prepared
 
         count = int(prepared.num_bright_field_pixels) // 2
         subset = _subset_prepared(prepared, count)

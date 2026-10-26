@@ -134,7 +134,7 @@ def _chi_max(prepared, row) -> float:
 
 
 def _mps_preview(case, row):
-    from quantem.gpu.ssb.mps.thick_sample import reconstruct_thick
+    from quantem.gpu.direct_ptycho.mps.thick_sample import reconstruct_thick
 
     return reconstruct_thick(case["prepared"], C10=row[0], C12=row[1], phi12=row[2], sample_tilt_mrad=(row[3], row[4]),
                              thickness=row[5], chunk_bf=case["chunk_bf"])
@@ -147,7 +147,7 @@ def _phase_errors(phase, reference_phase):
 
 def test_fit_objective_matches_torch_reference(gold):
     """The fused batch objective equals ``fit_power`` for eight parameter sets around the gold fit."""
-    from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
+    from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
 
     rows, reference = gold["rows"], gold["reference"]
     fused = thick_fit_batch(gold["prepared"], rows)
@@ -161,8 +161,8 @@ def test_fit_objective_matches_torch_reference(gold):
 
 def test_resident_fit_objective_matches_torch_reference(gold):
     """The resident fit's objective (angle-sum phases advanced along detector rows) equals ``fit_power`` too."""
-    from quantem.gpu.ssb._resident_search import _Device, _trial
-    from quantem.gpu.ssb.mps import resident_fit
+    from quantem.gpu.direct_ptycho._resident_search import _Device, _trial
+    from quantem.gpu.direct_ptycho.mps import resident_fit
 
     rows, reference = gold["rows"], gold["reference"]
     device = _Device("mps")
@@ -196,7 +196,7 @@ def test_each_float32_path_is_within_its_bound_of_float64(gold):
     float32 bound, so neither side of the parity above hides an error behind the other."""
     import torch
 
-    from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
+    from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
     from tests.parity.torch_ssb import TorchSSB
 
     prepared, row = gold["prepared"], gold["rows"][0]

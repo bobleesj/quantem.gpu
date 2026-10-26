@@ -62,7 +62,7 @@ def _simulated(scan_detector_rotation_deg: float):
 @pytest.fixture
 def estimate(monkeypatch):
     """Set the centre-of-mass estimate a session starts from (the curl knows it only modulo 180 degrees)."""
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     def set_estimate(rotation):
         monkeypatch.setattr(workflow, "_estimate_rotation", lambda *args: (rotation, False))
@@ -85,7 +85,7 @@ def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp
     By default the branch at 0 deg is the exact image of the fit at 180 deg; ``MAP_OPPOSITE_BRANCH=False`` fits it
     independently, with the direct fit's settings and start.
     """
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     _require_cuda()
     monkeypatch.setattr(workflow, "MAP_OPPOSITE_BRANCH", mapped)
@@ -116,7 +116,7 @@ def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp
     # the phase-tail panel (log axis) sits below the two branch phases
     assert any(axis.get_yscale() == "log" for axis in figure.axes)
 
-    from quantem.gpu.ssb.persistence import load_result, result_paths, save_result
+    from quantem.gpu.direct_ptycho.persistence import load_result, result_paths, save_result
 
     paths = result_paths(tmp_path / "rotation", "find_aberrations")
     save_result(checked, paths=paths, signature={"test": "rotation"}, input_metadata={})
@@ -140,7 +140,7 @@ def test_simulated_crystal_estimated_on_the_right_branch_is_left_exactly_as_fitt
 def test_a_given_rotation_is_kept():
     """A given rotation is fitted once and kept, dark atoms included, with no branch comparison."""
     _require_cuda()
-    from quantem.gpu.ssb.results import column_sign
+    from quantem.gpu.direct_ptycho.results import column_sign
 
     result = _simulated(180.0).find_aberrations(search="primary", verbose=False)
     assert result.scan_detector_rotation_deg == pytest.approx(180.0, abs=1e-9)
@@ -196,8 +196,8 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
     ``MAP_OPPOSITE_BRANCH=False`` runs two fresh searches.
     """
     from quantem.gpu import SSB
-    from quantem.gpu.ssb import workflow
-    from quantem.gpu.ssb.persistence import load_result, result_paths
+    from quantem.gpu.direct_ptycho import workflow
+    from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
 
     _require_cuda()
     monkeypatch.setattr(workflow, "MAP_OPPOSITE_BRANCH", mapped)

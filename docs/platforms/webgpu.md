@@ -11,7 +11,7 @@ maps WebGPU to Metal internally.
 | Local HDF5 read/decode | `src/quantem/gpu/io/hdf5/webgpu` |
 | BF/DF/ADF and moments | `src/quantem/gpu/detector/webgpu` |
 | DPC/iDPC | `src/quantem/gpu/dpc/webgpu` |
-| SSB | `src/quantem/gpu/ssb/webgpu` |
+| SSB | `src/quantem/gpu/direct_ptycho/webgpu` |
 
 quantem.gpu ships no WebGPU display kernels (statistics, FFT, color); the
 browser client owns display and receives exact counts as `Uint32ImageView` from

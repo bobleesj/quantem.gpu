@@ -99,7 +99,7 @@ def test_higher_order_preview_matches_float64_chi_reference():
         )
         magnitudes, angles = _packed(*coefficients)
         aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
-        from quantem.gpu.ssb.units import ENGINE_PER_NM, aberrations_to_engine, higher_order_arrays, validate_aberrations
+        from quantem.gpu.direct_ptycho.units import ENGINE_PER_NM, aberrations_to_engine, higher_order_arrays, validate_aberrations
 
         image, loss = ssb.preview(_aberrations(*coefficients))
         dragged, no_loss = ssb.preview(_aberrations(*coefficients), compute_loss=False)

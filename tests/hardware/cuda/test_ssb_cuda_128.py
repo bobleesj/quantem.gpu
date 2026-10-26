@@ -213,7 +213,7 @@ def _make_engine(
     bright_field_center_px: tuple[float, float] = (15.5, 15.5),
 ):
     cp = _cupy()
-    from quantem.gpu.ssb.cuda.engine import SSBEngine
+    from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
 
     if g_qk is None:
         rng = np.random.default_rng(1234)
@@ -301,7 +301,7 @@ def _expand_hermitian_cp(half_gqk):
 
 def test_cuda_128_rejects_mismatched_bf_count() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb.cuda.engine import SSBEngine
+    from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
 
     q = cp.fft.fftfreq(128, d=0.5).astype(cp.float32)
     q_row, q_col = cp.meshgrid(q, q, indexing="ij")
@@ -437,7 +437,7 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
     """
     cp = _cupy()
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.units import aberrations_to_engine
+    from quantem.gpu.direct_ptycho.units import aberrations_to_engine
 
     counts = np.random.RandomState(3).poisson(5, (256, 256, 16, 16)).astype(np.uint16)
     aberrations = {"C10_nm": -8.0, "C12_nm": 3.0, "phi12_deg": math.degrees(0.4)}
@@ -492,7 +492,7 @@ def test_cuda_512_chunked_calibration_matches_unfused_gpu_reference() -> None:
 
 def test_extract_gqk_hermitian_storage_keeps_nonredundant_columns() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb.cuda.brightfield import bright_field_spectra
+    from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra
 
     data = cp.arange(8 * 8 * 6 * 6, dtype=cp.uint16).reshape(8, 8, 6, 6)
     bright_field_rows = cp.asarray([2, 2, 3, 3], dtype=cp.int32)
@@ -550,7 +550,7 @@ def test_cuda_phase_loss_accepts_hermitian_gqk(size: int, num_bright_field_pixel
 
 def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(123)
     data = rng.poisson(4.0, size=(128, 128, 16, 16)).astype(np.uint16)
@@ -608,7 +608,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
 
 def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(124)
     data = rng.poisson(4.0, size=(128, 128, 16, 16)).astype(np.uint16)
@@ -653,7 +653,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
 def test_ssb_default_hermitian_optimize_keeps_half_plane() -> None:
     cp = _cupy()
     pytest.importorskip("optuna")
-    from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(125)
     data = rng.poisson(4.0, size=(128, 128, 16, 16)).astype(np.uint16)
@@ -694,7 +694,7 @@ def test_cuda_128_variance_loss_matches_reference() -> None:
 def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
     cp = _cupy()
     from quantem.gpu.io import load
-    from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     _clean_gpu()
     path = _realdata_master()
@@ -733,7 +733,7 @@ def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
 def test_ssb_roi96_auto_pads_to_128_not_256(capsys) -> None:
     """The padding keeps every measured position and announces itself with how to avoid it."""
     cp = _cupy()
-    from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(5)
     data = rng.poisson(4.0, size=(96, 96, 16, 16)).astype(np.uint16)
@@ -760,7 +760,7 @@ def test_ssb_roi96_auto_pads_to_128_not_256(capsys) -> None:
 def test_ssb_refuses_to_crop_a_scan_larger_than_1024() -> None:
     """A scan beyond the largest CUDA FFT is refused, never center-cropped to 1024 positions."""
     cp = _cupy()
-    from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     data = cp.ones((1025, 2, 8, 8), dtype=cp.uint16)
     with pytest.raises(ValueError, match="at most 1024 x 1024 positions; got 1025x2"):

@@ -2,7 +2,7 @@
 
 ## Question
 
-Live placement (`ssb/stream.py`, `_lattice`) finds its Bragg spots and its notch (every other spot, cut from the aperiodic part) on frame 0's power spectrum alone. One frame's spectrum is speckled: frame 0 of frames 151-191 gives 2860 notch peaks where the series mean gives 80, and the notch keeps 61 % of the coarse band (periods 3 to 50 Å) instead of 99.7 %. Does that hurt placement, and would a notch from the running mean power of the frames so far (refreshed every frame) do better, especially at low dose?
+Live placement (`direct_ptycho/stream.py`, `_lattice`) finds its Bragg spots and its notch (every other spot, cut from the aperiodic part) on frame 0's power spectrum alone. One frame's spectrum is speckled: frame 0 of frames 151-191 gives 2860 notch peaks where the series mean gives 80, and the notch keeps 61 % of the coarse band (periods 3 to 50 Å) instead of 99.7 %. Does that hurt placement, and would a notch from the running mean power of the frames so far (refreshed every frame) do better, especially at low dose?
 
 ## Setup
 

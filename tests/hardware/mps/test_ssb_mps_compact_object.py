@@ -5,7 +5,7 @@ import numpy as np
 
 def test_compact_active_redraw_avoids_sparse_logical_scan() -> None:
     """Packed active BF rows should launch exactly the stored row count."""
-    from quantem.gpu.ssb.mps.kernels.object_sum import _object_redraw_storage_topology
+    from quantem.gpu.direct_ptycho.mps.kernels.object_sum import _object_redraw_storage_topology
 
     compact = SimpleNamespace(
         num_bright_field_pixels=12,
@@ -31,7 +31,7 @@ def test_compact_active_redraw_avoids_sparse_logical_scan() -> None:
 
 def test_compact_active_redraw_preserves_logical_dc_and_parity(monkeypatch) -> None:
     """Compact active accumulation must match the logical sparse reference."""
-    from quantem.gpu.ssb.mps.kernels import object_sum as mps
+    from quantem.gpu.direct_ptycho.mps.kernels import object_sum as mps
 
     class FakeFFT:
         @staticmethod

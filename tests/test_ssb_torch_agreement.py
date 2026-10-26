@@ -1,4 +1,4 @@
-"""The plain-torch SSB agreement (``ssb.torch_agreement``): float64 CPU ground truth for the fit's derivatives.
+"""The plain-torch SSB agreement (``direct_ptycho.torch_agreement``): float64 CPU ground truth for the fit's derivatives.
 
 The scene is the weak-phase simulation of ``tests/hardware/thin_object`` (64 x 64 scan, known probe), built on the
 CPU; no GPU is used. The kernels and searches are checked against this reference in
@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 import torch
 
-from quantem.gpu.ssb.fifth_order_parameters import Coordinates
-from quantem.gpu.ssb.torch_agreement import TorchAgreement, band_frequencies, fifth_from_low
+from quantem.gpu.direct_ptycho.fifth_order_parameters import Coordinates
+from quantem.gpu.direct_ptycho.torch_agreement import TorchAgreement, band_frequencies, fifth_from_low
 from tests.hardware.thin_object import SIDE, STEP_A, TRUTH, simulate
 
 
@@ -76,7 +76,7 @@ def test_hessian_is_symmetric_and_matches_gradient_differences(scene, point):
 def test_opposite_branch_image_has_the_same_agreement(scene, point):
     """A 180-degree rotation negates k: even-degree chi terms (C10, C12, C30, C32, C34, C50, ...) and the tilt
     change sign, odd-degree terms (C21, C23, C41, C43, C45) and the depth spread are kept."""
-    from quantem.gpu.ssb.higher_order import ORDERS
+    from quantem.gpu.direct_ptycho.higher_order import ORDERS
 
     mapped = point.copy()
     mapped[0:5] = -point[0:5]
@@ -122,8 +122,8 @@ def test_band_frequencies_follow_the_half_plane_rule():
 @pytest.mark.slow
 def test_float64_search_recovers_the_probe(scene):
     """The exact-gradient search on the reference's own float64 values and gradients finds the simulated probe."""
-    from quantem.gpu.ssb._gradient_refinement import Settings, refine
-    from quantem.gpu.ssb.fifth_order_parameters import public_params
+    from quantem.gpu.direct_ptycho._gradient_refinement import Settings, refine
+    from quantem.gpu.direct_ptycho.fifth_order_parameters import public_params
 
     reference = scene()
     coordinates = Coordinates()

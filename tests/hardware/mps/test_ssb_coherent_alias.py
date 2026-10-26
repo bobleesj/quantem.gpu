@@ -12,8 +12,8 @@ pytest.importorskip("mlx.core", reason="Physical Apple Metal backend required")
 @pytest.mark.parametrize("anisotropic", [False, True])
 def test_coherent_sum_matches_per_detector_correction(monkeypatch, factor, anisotropic):
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps import upsampling as up
-    from quantem.gpu.ssb.mps.thick_sample import _params
+    from quantem.gpu.direct_ptycho.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps.thick_sample import _params
 
     with _session(constant=False) as ssb:
         ssb.preview({"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}, compute_loss=False)
@@ -69,7 +69,7 @@ def test_coherent_sum_matches_per_detector_correction(monkeypatch, factor, aniso
 @pytest.mark.parametrize("native", [128, 256, 512, 1024])
 def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
     """Fine-grid tilt previews retain the full phase when zero support is omitted."""
-    from quantem.gpu.ssb.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsampling as up
     from .test_ssb_upsampling import _disk_session
 
     coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}

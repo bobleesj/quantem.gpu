@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.results import SSBResult
-from quantem.gpu.ssb.workflow import SSB
+from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.workflow import SSB
 
 
 def _saved_result():
@@ -167,7 +167,7 @@ def test_compare_regularization_strengths_uses_one_contrast_and_region():
 
 def test_crop_fft_uses_selected_region_and_preserves_relative_signal():
     """A lattice outside the crop cannot create peaks in the crop spectrum."""
-    from quantem.gpu.ssb.results import _phase_spectra
+    from quantem.gpu.direct_ptycho.results import _phase_spectra
 
     row, col = np.indices((128, 128))
     lattice = 0.2 * np.cos(2 * np.pi * col / 8)

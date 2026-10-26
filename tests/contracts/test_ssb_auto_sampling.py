@@ -90,7 +90,7 @@ def test_a_capped_auto_factor_is_announced_once_per_session(capsys):
     """Sampling that wants 8x gives 4x and one line, once; 2x and 3x print nothing; an explicit 8 gives 8."""
     from types import SimpleNamespace
 
-    from quantem.gpu.ssb.workflow import SSB
+    from quantem.gpu.direct_ptycho.workflow import SSB
 
     coarse = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(1.0, 1.0))
     assert SSB._resolve_upsampling_factor(coarse, "auto") == 4

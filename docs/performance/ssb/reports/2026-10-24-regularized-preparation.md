@@ -14,7 +14,7 @@
 
 ## Code path
 
-`DirectPtycho.run` -> `direct_workflow.run` -> `direct_workflow.solve` -> `PreparedDirect.prepare` (`ssb/cuda/direct.py`) on a cache miss, then `PreparedDirect.solve(strengths)`.
+`DirectPtycho.run` -> `direct_workflow.run` -> `direct_workflow.solve` -> `PreparedDirect.prepare` (`direct_ptycho/cuda/direct.py`) on a cache miss, then `PreparedDirect.solve(strengths)`.
 
 `prepare` loops in Python over alias counts (3, 4, 5, 6 here) and, inside each, over chunks of 128 scan frequencies: 130560 frequencies -> 1022 chunks. Per chunk it gathers `G_qk` at the frequencies, evaluates the transfer `_transfer` (an ElementwiseKernel over (frequency, alias, BF pixel)), casts it to complex128, forms the Gram `T^H W T` and right side `T^H W g` with batched `@`, and for `phase` runs a batched `eigh` so that any strength is a diagonal evaluation later. `complex` keeps the Gram and solves `(G + diag(penalty)) x = rhs` at each strength.
 

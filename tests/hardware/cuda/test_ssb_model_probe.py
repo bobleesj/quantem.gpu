@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from quantem.gpu.ssb.results import SSBResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 cp = pytest.importorskip("cupy")
 
@@ -39,7 +39,7 @@ def test_probe_matches_quantem_optics_and_centered_fourier_pair():
 
 
 def test_reconstruction_keeps_model_probe_and_saves_calibration(tmp_path):
-    from quantem.gpu.ssb.persistence import load_result, result_paths, save_result
+    from quantem.gpu.direct_ptycho.persistence import load_result, result_paths, save_result
     from .test_ssb_thick_sample import _synthetic_session
 
     ssb, _ = _synthetic_session()

@@ -184,7 +184,7 @@ def _thick_fit_full_plane(
     chunk_bytes: int = 1 << 30,
 ) -> float:
     """Reference for ``ThickSample.fit``: the same sum over the full q plane (G expanded from its half-plane)."""
-    from quantem.gpu.ssb.cuda.kernels.engine import thick_fit_kernel
+    from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_fit_kernel
 
     c = engine._cache
     num_bright_field_pixels, ny, nx = int(c["num_bright_field_pixels"]), int(c["ny"]), int(c["nx"])

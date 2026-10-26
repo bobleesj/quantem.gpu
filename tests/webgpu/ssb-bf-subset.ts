@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { WebGPUSSBBackend, setSSBLocalFiles } from "../../src/quantem/gpu/ssb/webgpu/backend";
+import { WebGPUSSBBackend, setSSBLocalFiles } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
 
 /** A synthetic SSB folder: square n x n scan, a bright-field disk of `radius` detector pixels with
  * uint16 counts, and the calibration fields the browser engine reads. */

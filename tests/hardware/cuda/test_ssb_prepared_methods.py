@@ -24,9 +24,9 @@ import pytest
 cp = pytest.importorskip("cupy")
 
 from quantem.gpu import DirectPtycho  # noqa: E402
-from quantem.gpu.ssb.cuda.direct import PreparedDirect  # noqa: E402
-from quantem.gpu.ssb.cuda.weak_object import transfer_frequencies  # noqa: E402
-from quantem.gpu.ssb.units import higher_order_arrays  # noqa: E402
+from quantem.gpu.direct_ptycho.cuda.direct import PreparedDirect  # noqa: E402
+from quantem.gpu.direct_ptycho.cuda.weak_object import transfer_frequencies  # noqa: E402
+from quantem.gpu.direct_ptycho.units import higher_order_arrays  # noqa: E402
 
 pytestmark = pytest.mark.slow
 

@@ -24,9 +24,9 @@ CUDA) runs the usual fit: search, both 180-degree branches, optional rotation
 refinement. Then one trust-region Newton polish runs from that fit. It moves
 C10, C12 (as a vector), the tilt, the depth spread and the higher orders (each as
 a Cartesian vector, C30 as a signed number), starting with the higher orders
-at 0 (`ssb/higher_order_fit.py`). The objective is the joint fit's. A per-term
+at 0 (`direct_ptycho/higher_order_fit.py`). The objective is the joint fit's. A per-term
 kernel evaluates it, computing the probe phase from the Krivanek polynomial
-(`ssb/mps/higher_order_agreement.py`, `ssb/cuda/higher_order_agreement.py`); the
+(`direct_ptycho/mps/higher_order_agreement.py`, `direct_ptycho/cuda/higher_order_agreement.py`); the
 joint fit's angle-sum kernel needs a quadratic χ. `tilt=False` holds the tilt
 and depth spread at 0.
 

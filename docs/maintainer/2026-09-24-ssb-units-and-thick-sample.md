@@ -19,7 +19,7 @@ refinement="nelder-mead")`. Script: study folder `c10_unit_test.py` (same setup 
 MPS `engine.py` factor, WebGPU `makeParams` f[12], Swift `MetalSSBKernels`) with no conversion, so the numbers are Angstrom.
 The 14-coefficient magnitudes follow the same convention. Sign convention matches abTEM.
 
-**Fix.** The public `SSB` session (`ssb/workflow.py`) converts at its boundary: nm in -> x10 to the engine; results,
+**Fix.** The public `SSB` session (`direct_ptycho/workflow.py`) converts at its boundary: nm in -> x10 to the engine; results,
 trial histories and `fit_sample` outputs /10 back to nm (`_ENGINE_PER_NM`, `ABERRATION_UNIT = "nm"`). Kernels, backend-level
 parity tests and fixtures keep Angstrom unchanged. `_persistence.SCHEMA = 2` (schema-1 saved results are not reused). Live
 fit records written by `_write_series_fit_metadata` carry `"aberration_unit": "nm"`; records without it are read /10.
@@ -104,7 +104,7 @@ through `preview_context(num_bf // 4)`. Fit = `SSB.find_aberrations(trials=200, 
   kernels: 1.6x the standard preview at 128^2, 15x at 512^2 (394 ms: the ShowPtycho tilt slider is not interactive at
   full field).
 - MPS fuses the depth weights into the row-IFFT kernel, but that kernel exists only for 128/256/1024 scans
-  (then `backends/mps/_thick_sample.py:39` and `engine.py:1587`, now `ssb/mps/thick_sample.py`); 512^2, the common full scan, falls back to the MLX reference graph
+  (then `backends/mps/_thick_sample.py:39` and `engine.py:1587`, now `direct_ptycho/mps/thick_sample.py`); 512^2, the common full scan, falls back to the MLX reference graph
   (2.8 s, 22x standard).
 - CUDA drag (25 % BF) is slower than the full preview at 512^2 (44 vs 27 ms): the drag path does not scale with the subset.
 - Crop-to-full tilt is stable on both samples (logic -10.3/-9.8/-9.1 row; film about 5 mrad along -col).

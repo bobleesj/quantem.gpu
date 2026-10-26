@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.optimize import minimize, rosen
 
-from quantem.gpu.ssb.batch_refinement import _minimize_batch
+from quantem.gpu.direct_ptycho.batch_refinement import _minimize_batch
 
 
 def test_refinement_preserves_each_scipy_trajectory():

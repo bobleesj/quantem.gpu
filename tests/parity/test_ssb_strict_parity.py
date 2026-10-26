@@ -173,7 +173,7 @@ def test_gate_gives_the_session_each_setting_in_nm_and_degrees() -> None:
     """
     import numpy as np
 
-    from quantem.gpu.ssb.units import aberrations_to_engine
+    from quantem.gpu.direct_ptycho.units import aberrations_to_engine
     from ssb_parity_gate import _aberration_dict
 
     for case in CASES.values():

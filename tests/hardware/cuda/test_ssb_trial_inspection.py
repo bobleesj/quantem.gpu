@@ -13,7 +13,7 @@ pytestmark = pytest.mark.slow
 
 def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
     import cupy as cp
-    from quantem.gpu.ssb.persistence import load_result, result_paths
+    from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
 
     ssb, _ = _synthetic_session()
     source = tmp_path / 'counts.npy'
@@ -81,7 +81,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
 
 def test_branch_comparison_keeps_original_trial_geometry(monkeypatch):
     import cupy as cp
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     ssb, _ = _synthetic_session()
     compare = workflow.compare_branches

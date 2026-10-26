@@ -14,7 +14,7 @@ import pytest
 cp = pytest.importorskip("cupy")
 
 from quantem.gpu import DirectPtycho  # noqa: E402
-from quantem.gpu.ssb.cuda.thick import ThickSample  # noqa: E402
+from quantem.gpu.direct_ptycho.cuda.thick import ThickSample  # noqa: E402
 
 pytestmark = pytest.mark.slow
 

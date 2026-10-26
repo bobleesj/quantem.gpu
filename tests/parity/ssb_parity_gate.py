@@ -113,7 +113,7 @@ def _aberration_dict(case: SSBParityCase, index: int) -> dict[str, float]:
     The case holds ``(C10_A, C12_A, phi12_rad)``, the engine units the oracle evaluates. Passing
     those numbers under the nm keys would give the session ten times the oracle's defocus and astigmatism.
     """
-    from quantem.gpu.ssb.units import aberrations_from_engine
+    from quantem.gpu.direct_ptycho.units import aberrations_from_engine
 
     c10_A, c12_A, phi12_rad = (float(value) for value in case.aberrations_A_rad[index])
     return aberrations_from_engine({"C10": c10_A, "C12": c12_A, "phi12": phi12_rad})
@@ -169,7 +169,7 @@ def run_reference(
 def open_mps_session(case: SSBParityCase, meta: dict[str, object]):
     """Open the production public MPS session on the exported exact artifact."""
 
-    from quantem.gpu.ssb import SSB
+    from quantem.gpu.direct_ptycho import SSB
 
     root = case_root(case)
     return SSB.open(

@@ -13,12 +13,12 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb import _exact_newton, fifth_order_fit, fifth_order_parameters
-from quantem.gpu.ssb._gradient_refinement import Settings, bounded_step, projected_gradient, refine
-from quantem.gpu.ssb.fifth_order_parameters import Coordinates, aperture_phase, aperture_rms, packed_coefficients
-from quantem.gpu.ssb.higher_order import ORDERS
-from quantem.gpu.ssb.results import SSBResult
-from quantem.gpu.ssb.workflow import SSB
+from quantem.gpu.direct_ptycho import _exact_newton, fifth_order_fit, fifth_order_parameters
+from quantem.gpu.direct_ptycho._gradient_refinement import Settings, bounded_step, projected_gradient, refine
+from quantem.gpu.direct_ptycho.fifth_order_parameters import Coordinates, aperture_phase, aperture_rms, packed_coefficients
+from quantem.gpu.direct_ptycho.higher_order import ORDERS
+from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.workflow import SSB
 
 FIFTH_BOUNDS = np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-2, 2)] * 22, dtype=float)
 

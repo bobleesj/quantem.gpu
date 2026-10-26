@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.higher_order_fit import (
+from quantem.gpu.direct_ptycho.higher_order_fit import (
     COHERENCE_MIN,
     assess,
     edge_phase,

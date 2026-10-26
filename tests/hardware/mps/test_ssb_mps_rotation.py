@@ -81,7 +81,7 @@ def _settings(detector_mrad, **extra):
 @pytest.fixture
 def estimate_180_degrees_off(monkeypatch):
     """The centre-of-mass estimate lands on the wrong 180-degree branch: 180 degrees for a crystal simulated at 0."""
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     monkeypatch.setattr(workflow, "_estimate_rotation", lambda *args: (180.0, False))
 
@@ -120,7 +120,7 @@ def test_unresolved_columns_leave_the_choice_to_the_phase_tail(estimate_180_degr
     """With a dark field that shows no columns (no contrast), the larger mean-centred phase skewness decides."""
     pytest.importorskip("mlx.core")
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.results import phase_skewness
+    from quantem.gpu.direct_ptycho.results import phase_skewness
 
     frames, detector_mrad = _astigmatic_crystal()
     with SSB(frames, **_settings(detector_mrad)) as session:
@@ -215,7 +215,7 @@ def test_a_region_fit_keeps_its_branch_panels_after_its_region_session_closes(tm
     """
     pytest.importorskip("mlx.core")
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.persistence import load_result
+    from quantem.gpu.direct_ptycho.persistence import load_result
 
     rows, cols = np.indices((32, 32))
     counts = np.zeros((128, 128, 32, 32), np.uint16)
@@ -371,7 +371,7 @@ def test_refine_rotation_recovers_a_two_degree_offset(monkeypatch, estimate_deg)
     """
     pytest.importorskip("mlx.core")
     from quantem.gpu import SSB
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     monkeypatch.setattr(workflow, "_estimate_rotation", lambda *args: (estimate_deg, False))
     frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)

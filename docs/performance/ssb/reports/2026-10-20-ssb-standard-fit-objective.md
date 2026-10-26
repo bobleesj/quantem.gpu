@@ -38,7 +38,7 @@ runs it (Optuna TPE in candidate pairs on the exact loss, then Nelder–Mead), a
 | `find_aberrations(tilt=False, objective="phase_variance")` | the older SSB search, minimum phase variance |
 
 With `tilt=True` the phase variance raises: it cannot see the tilt. On MPS its
-files (`ssb/mps/loss.py`, the pair kernels, the 512 × 512 pair-pack policy,
+files (`direct_ptycho/mps/loss.py`, the pair kernels, the 512 × 512 pair-pack policy,
 `bf_storage_chunk_packs`, the search in `mps/optimizer.py` and
 `scripts/benchmark_ssb_mps_scaling.py`) are restored unchanged, so the
 restored search reproduces the removed one bit for bit: on gold (both branches,
@@ -51,7 +51,7 @@ above the encoded data in most runs, the overnight 18.6 GiB;
 and `tilt=False` fits are unchanged bit for bit.
 CUDA runs the same standard fit since the same day
 (`2026-10-20-ssb-cuda-standard-fit.md`); its phase-variance fit is the same
-search, in `ssb/phase_variance_fit.py`.
+search, in `direct_ptycho/phase_variance_fit.py`.
 
 ## Evidence
 

@@ -271,9 +271,9 @@ cache that the newer preview kernels leave, not the search.
    either side means rerun on a quiet GPU before blaming the change.
 2. Rerun the one failing metric's stage two or three times. A real
    regression repeats; contention does not.
-3. A slower `preview_*` points at `ssb/mps/upsampling.py`; a slower
-   `search_candidate` or `find_aberrations` at `ssb/mps/thick_sample.py` (the agreement kernel) and
-   `ssb/_resident_search.py`; a slower `*_phase_variance` at `ssb/mps/loss.py` and the row and column kernels; `detector_*` at `detector/counts.py` and
+3. A slower `preview_*` points at `direct_ptycho/mps/upsampling.py`; a slower
+   `search_candidate` or `find_aberrations` at `direct_ptycho/mps/thick_sample.py` (the agreement kernel) and
+   `direct_ptycho/_resident_search.py`; a slower `*_phase_variance` at `direct_ptycho/mps/loss.py` and the row and column kernels; `detector_*` at `detector/counts.py` and
    `resident/mps/spatial.py`; `ssb_session` at the rotation estimate and the
    source decode.
 4. Bisect with the harness: it runs on any checkout that has the paths.

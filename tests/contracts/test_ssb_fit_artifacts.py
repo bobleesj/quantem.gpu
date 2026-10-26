@@ -8,9 +8,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.calibration import capture_calibration
-from quantem.gpu.ssb.persistence import load_result, save_result, source_identity
-from quantem.gpu.ssb.results import SSBResult
+from quantem.gpu.direct_ptycho.calibration import capture_calibration
+from quantem.gpu.direct_ptycho.persistence import load_result, save_result, source_identity
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 
 def _fit():
@@ -91,7 +91,7 @@ def test_calibration_survives_result_roundtrip_without_session(tmp_path, monkeyp
     assert "calibration_context" not in metadata["result"]  # older result readers ignore optional metadata
     restored = load_result(paths=paths, signature=signature, backend="mps")
     # The persisted fingerprint is sufficient even after closing the source/session.
-    monkeypatch.setattr("quantem.gpu.ssb.persistence.source_identity",
+    monkeypatch.setattr("quantem.gpu.direct_ptycho.persistence.source_identity",
                         lambda **kwargs: pytest.fail("export rehashed a saved acquisition"))
     second = json.loads(restored.save_calibration(tmp_path / "restored.json").read_text())
     for key in ("aberrations", "session_identity", "sample_tilt_mrad", "depth_spread_nm", "scan_region"):

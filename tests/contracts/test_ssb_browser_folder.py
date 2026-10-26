@@ -10,7 +10,7 @@ import json
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.mps.frames import load_bf_columns_mps
+from quantem.gpu.direct_ptycho.mps.frames import load_bf_columns_mps
 
 COLUMNS = np.arange(3 * 16, dtype=np.uint8).reshape(3, 16)
 
@@ -124,8 +124,8 @@ def test_a_scan_region_that_does_not_span_the_scan_shape_is_refused(tmp_path):
 
 def test_python_fit_calibration_does_not_block_acquisition_loading(tmp_path):
     """Reopening saved Python optics falls back to the original acquisition."""
-    from quantem.gpu.ssb.calibration import CALIBRATION_SCHEMA
-    from quantem.gpu.ssb.mps.frames import find_bf_columns
+    from quantem.gpu.direct_ptycho.calibration import CALIBRATION_SCHEMA
+    from quantem.gpu.direct_ptycho.mps.frames import find_bf_columns
 
     calibration = tmp_path / "calibration.json"
     calibration.write_text(json.dumps({"schema": CALIBRATION_SCHEMA}))
@@ -133,7 +133,7 @@ def test_python_fit_calibration_does_not_block_acquisition_loading(tmp_path):
 
 
 def test_python_calibration_cannot_disguise_a_broken_column_declaration(tmp_path):
-    from quantem.gpu.ssb.calibration import CALIBRATION_SCHEMA
+    from quantem.gpu.direct_ptycho.calibration import CALIBRATION_SCHEMA
 
     write_widget_folder(tmp_path / "showptycho", schema=CALIBRATION_SCHEMA)
     with pytest.raises(ValueError, match="quantem.ssb-browser-calibration/3"):

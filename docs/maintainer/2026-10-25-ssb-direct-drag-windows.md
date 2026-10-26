@@ -1,7 +1,7 @@
 # Drag previews of the regularized direct reconstructions (native Metal)
 
-Status: implemented 2026-10-25 (`ssb-direct` v0.2). Port of Python's CUDA `DragWindow` (`ssb/cuda/direct.py`,
-`ssb/cuda/chebyshev.py`, `ssb/direct_workflow.py` `drag`/`prepare`/`advance`).
+Status: implemented 2026-10-25 (`ssb-direct` v0.2). Port of Python's CUDA `DragWindow` (`direct_ptycho/cuda/direct.py`,
+`direct_ptycho/cuda/chebyshev.py`, `direct_ptycho/direct_workflow.py` `drag`/`prepare`/`advance`).
 
 ## Problem
 

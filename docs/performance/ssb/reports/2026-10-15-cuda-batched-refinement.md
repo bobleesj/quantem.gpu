@@ -79,10 +79,10 @@ rounding issue was corrected before retaining the implementation.
 
 | Responsibility | Source |
 | --- | --- |
-| Independent SciPy searches and batched scheduling | `src/quantem/gpu/ssb/batch_refinement.py` |
-| Joint model search orchestration | `src/quantem/gpu/ssb/thick_sample_fit.py` |
-| CUDA model scoring and singleton reduction | `src/quantem/gpu/ssb/cuda/thick.py` |
-| Enabling the CUDA refinement batch | `src/quantem/gpu/ssb/cuda/optimizer.py` |
+| Independent SciPy searches and batched scheduling | `src/quantem/gpu/direct_ptycho/batch_refinement.py` |
+| Joint model search orchestration | `src/quantem/gpu/direct_ptycho/thick_sample_fit.py` |
+| CUDA model scoring and singleton reduction | `src/quantem/gpu/direct_ptycho/cuda/thick.py` |
+| Enabling the CUDA refinement batch | `src/quantem/gpu/direct_ptycho/cuda/optimizer.py` |
 
 From a checkout with the CUDA and development dependencies installed, run:
 

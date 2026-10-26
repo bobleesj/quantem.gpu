@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantem.gpu.ssb.results import SSBResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 
 def test_inspect_all_fitted_coefficients_and_export_without_rounding():

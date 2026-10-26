@@ -1,4 +1,4 @@
-"""Checks of a backend's exact-derivative fit against the plain-torch float64 reference (``ssb.torch_agreement``).
+"""Checks of a backend's exact-derivative fit against the plain-torch float64 reference (``direct_ptycho.torch_agreement``).
 
 Used by ``tests/hardware/{cuda,mps}/test_ssb_exact_derivatives.py`` on the weak-phase simulation of ``thin_object``.
 The reference reads the session's own float32 G, k and band (``TorchAgreement.from_session``) and computes in float64
@@ -17,13 +17,13 @@ LOW_SCALE = np.array([100.0, 100.0, 100.0, 5.0, 5.0, 100.0])
 
 
 def reference(ssb, chunk=256):
-    from quantem.gpu.ssb.torch_agreement import TorchAgreement
+    from quantem.gpu.direct_ptycho.torch_agreement import TorchAgreement
 
     return TorchAgreement.from_session(ssb, chunk=chunk)
 
 
 def fifth_objective(ssb):
-    from quantem.gpu.ssb.fifth_order_fit import _objective
+    from quantem.gpu.direct_ptycho.fifth_order_fit import _objective
 
     return _objective(ssb, gradients=True)
 
@@ -31,10 +31,10 @@ def fifth_objective(ssb):
 def low_order(ssb):
     backend = ssb._backend()
     if ssb.backend == "cuda":
-        from quantem.gpu.ssb.cuda.exact_derivatives import LowOrderDerivatives
+        from quantem.gpu.direct_ptycho.cuda.exact_derivatives import LowOrderDerivatives
 
         return LowOrderDerivatives(backend._get_accelerator())
-    from quantem.gpu.ssb.mps.exact_derivatives import LowOrderDerivatives
+    from quantem.gpu.direct_ptycho.mps.exact_derivatives import LowOrderDerivatives
 
     backend.cache_rotation(math.radians(ssb.scan_detector_rotation_deg))
     return LowOrderDerivatives(backend._prepared)
@@ -72,7 +72,7 @@ def check_fifth_order_gradient(ssb, stride):
 def check_band_halves(ssb):
     """The two ring halves of the half-band check partition the band: their values and gradients add up to the full
     objective's, and unit weights change nothing."""
-    from quantem.gpu.ssb.fifth_order_fit import ring_parity
+    from quantem.gpu.direct_ptycho.fifth_order_fit import ring_parity
 
     objective = fifth_objective(ssb)
     z = away_from_the_optimum()
@@ -89,7 +89,7 @@ def check_band_halves(ssb):
 
 def check_low_order_derivatives(ssb):
     """Value, exact gradient and exact Hessian of the low-order kernel against float64 autograd."""
-    from quantem.gpu.ssb.torch_agreement import fifth_from_low
+    from quantem.gpu.direct_ptycho.torch_agreement import fifth_from_low
 
     low = low_order(ssb)
     phi = math.radians(TRUTH["phi12_deg"] + 7) * 2
@@ -124,7 +124,7 @@ def check_opposite_branch(simulation, backend):
 def float64_optimum(truth, start, bounds=BOUNDS):
     """The float64 maximum near ``start`` inside ``bounds`` (equal bounds hold a coordinate): the exact-gradient
     search on the reference's own values and gradients."""
-    from quantem.gpu.ssb._gradient_refinement import Settings, refine
+    from quantem.gpu.direct_ptycho._gradient_refinement import Settings, refine
 
     norm = truth.agreement(start)
 
@@ -166,7 +166,7 @@ def check_fit(simulation, backend):
 def check_wide_fit(simulation, backend):
     """The default fit is wide (+-20) and checked on two ring halves of the band; on the weak-phase simulation the
     halves agree, so +-20 is shown, and each half is the masked refit from the same low-order start."""
-    from quantem.gpu.ssb.fifth_order_fit import _refine_with_gradients, fifth_order_bounds, ring_parity
+    from quantem.gpu.direct_ptycho.fifth_order_fit import _refine_with_gradients, fifth_order_bounds, ring_parity
 
     data, _, detector_mrad = simulation
     with session(data, detector_mrad, backend) as ssb:

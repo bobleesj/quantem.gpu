@@ -2,7 +2,7 @@ import Foundation
 import Metal
 import MetalPerformanceShadersGraph
 
-/// The regularized direct reconstructions (`phase`, `complex`) of Python's CUDA `ssb.cuda.direct.PreparedDirect` on
+/// The regularized direct reconstructions (`phase`, `complex`) of Python's CUDA `direct_ptycho.cuda.direct.PreparedDirect` on
 /// Metal (`ssb_direct.metal`).
 ///
 /// Per scan frequency Q of the source half plane (DC and, on even grids, the Nyquist row and column excluded) the

@@ -1,8 +1,8 @@
 import Foundation
 
-/// The model-based SSB fit: Python's resident multivariate TPE search (`quantem.gpu.ssb._resident_search`),
+/// The model-based SSB fit: Python's resident multivariate TPE search (`quantem.gpu.direct_ptycho._resident_search`),
 /// ported line by line to host double precision, the arithmetic of its CUDA build, then a trust-region Newton on
-/// the exact gradient and Hessian of the same objective (Python `ssb._exact_newton`). The objective is the
+/// the exact gradient and Hessian of the same objective (Python `direct_ptycho._exact_newton`). The objective is the
 /// least-squares agreement of the transfer model with the measured double-overlap data
 /// (`MetalSSBJointModel.agreements`), larger is better.
 ///

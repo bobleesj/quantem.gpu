@@ -108,7 +108,7 @@ def test_saved_alternatives_survive_and_reload_without_solving(
     acquisition, tmp_path, monkeypatch
 ):
     """Reopen saved phase and complex results and preserve earlier strengths."""
-    from quantem.gpu.ssb.cuda.direct import PreparedDirect
+    from quantem.gpu.direct_ptycho.cuda.direct import PreparedDirect
 
     source, calibration = acquisition
     options = dict(backend="cuda", **calibration)

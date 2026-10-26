@@ -8,8 +8,8 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.results import SSBResult
-from quantem.gpu.ssb.workflow import SSB
+from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.workflow import SSB
 
 
 @pytest.mark.parametrize("search", ["standard", "broad"])

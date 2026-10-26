@@ -36,7 +36,7 @@ def test_trials_reuses_the_fit_saved_with_the_legacy_keyword(tmp_path, monkeypat
 def test_rotation_reviews_accept_the_same_trial_budget(monkeypatch):
     from types import SimpleNamespace
     from quantem.gpu import SSB
-    from quantem.gpu.ssb import rotation_defocus
+    from quantem.gpu.direct_ptycho import rotation_defocus
 
     budgets = []
     def record(*args, **kwargs):

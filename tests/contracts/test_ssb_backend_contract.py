@@ -43,7 +43,7 @@ class _Backend:
 
 
 def _selection():
-    from quantem.gpu.ssb.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
 
     return BrightfieldDisk(
         rows=np.asarray([1], dtype=np.int32),
@@ -78,7 +78,7 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
 
 def test_mps_preview_honors_compute_loss(monkeypatch) -> None:
     """MPS returns the SSB phase at the output factor and evaluates the native phase variance only when asked."""
-    from quantem.gpu.ssb.mps import backend as mps_backend
+    from quantem.gpu.direct_ptycho.mps import backend as mps_backend
 
     calls = []
     prepared = object()
@@ -113,7 +113,7 @@ def test_mps_rotation_retargets_geometry_without_repreparing_source(
     monkeypatch,
 ) -> None:
     """Changed rotation must retain the existing source FFT evidence object."""
-    from quantem.gpu.ssb.mps import backend as mps_backend
+    from quantem.gpu.direct_ptycho.mps import backend as mps_backend
 
     prepared = object()
     calls = []
@@ -149,7 +149,7 @@ def test_mps_rotation_retargets_geometry_without_repreparing_source(
 
 def test_mps_rotation_geometry_keeps_exact_source_fft_identity() -> None:
     """Rotation changes k geometry while retaining the exact prepared G(q,k)."""
-    from quantem.gpu.ssb.mps.prepared import retarget_prepared_rotation
+    from quantem.gpu.direct_ptycho.mps.prepared import retarget_prepared_rotation
 
     class FakeMlx:
         float32 = np.float32
@@ -191,7 +191,7 @@ def test_mps_rotation_geometry_keeps_exact_source_fft_identity() -> None:
 
 def test_mps_bright_field_frequencies_round_once() -> None:
     """k is the float64 offset, scaling and rotation rounded once to float32, never from a float32-rounded centre."""
-    from quantem.gpu.ssb.mps.prepared import bright_field_frequencies
+    from quantem.gpu.direct_ptycho.mps.prepared import bright_field_frequencies
 
     rows, cols = (index.ravel().astype(np.int32) for index in np.indices((24, 24)))
     center = (99.68301, 95.12007)
@@ -212,7 +212,7 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
     monkeypatch,
 ) -> None:
     """Backends may apply their canonical fit start only when none was given."""
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
     data = np.zeros((2, 2, 2, 2), dtype=np.uint8)
@@ -261,8 +261,8 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
 
 def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
     """Logical BF membership and nonzero probe support are distinct evidence."""
-    from quantem.gpu.ssb.brightfield import BrightfieldDisk
-    from quantem.gpu.ssb.contract import SSBExportState
+    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.contract import SSBExportState
 
     selection = BrightfieldDisk(
         rows=np.asarray([0, 1, 2], dtype=np.int32),
@@ -297,7 +297,7 @@ def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
 
 def test_float32_precision_contract_is_strict_and_backend_neutral() -> None:
     """C3: every backend advertises immutable float32 storage."""
-    from quantem.gpu.ssb.contract import SSBPrecision
+    from quantem.gpu.direct_ptycho.contract import SSBPrecision
 
     precision = PRECISION
     assert isinstance(precision, SSBPrecision)
@@ -310,8 +310,8 @@ def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> 
     """``SSB`` reaches its CUDA or MPS backend only through ``SSBProtocol`` members."""
     import ast
 
-    from quantem.gpu.ssb import workflow
-    from quantem.gpu.ssb.contract import SSBProtocol
+    from quantem.gpu.direct_ptycho import workflow
+    from quantem.gpu.direct_ptycho.contract import SSBProtocol
 
     called = set()
     for node in ast.walk(ast.parse(inspect.getsource(workflow))):

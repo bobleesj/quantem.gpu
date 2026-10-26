@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("scipy")
 
-from quantem.gpu.ssb.rotation_refinement import refine_rotation, refinement_summary
+from quantem.gpu.direct_ptycho.rotation_refinement import refine_rotation, refinement_summary
 
 
 def _agreement(true_deg, width_deg=0.45):
@@ -121,7 +121,7 @@ class _Backend:
 
 
 def _session(monkeypatch, tmp_path, backend, *, estimated):
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     source = tmp_path / "scan.bin"
     if not source.exists():

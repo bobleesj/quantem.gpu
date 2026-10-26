@@ -26,7 +26,7 @@ the same result for all three fits once CUDA runs the same code?
 - The CUDA kernel already skipped the depth weights at depth spread 0
   (`if (t > 0.0f)`), so the tilt has no effect there, bit for bit
   (`test_ssb_standard_agreement.py::test_depth_zero_objective_matches_torch_reference`).
-- `objective="phase_variance"` runs `ssb/phase_variance_fit.py`, the search
+- `objective="phase_variance"` runs `direct_ptycho/phase_variance_fit.py`, the search
   MPS used before 2026-10-20 moved into a backend-neutral module: the start
   point (C10 0, C12 5 nm, phi12 0) evaluated first, Optuna TPE asked two
   trials at a time, then Nelder-Mead with step floors of 2 Angstrom in C12 and

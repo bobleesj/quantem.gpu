@@ -15,7 +15,7 @@ launch details through the public API.
 | Detector dispatch | `src/quantem/gpu/detector/session.py` | select resident CUDA reducers and normalize small results |
 | Detector kernels | `src/quantem/gpu/detector/cuda/dense.py` and `cuda/kernels/virtual_image.cu` | masks, exact sums, selected frames, and moments |
 | DPC | `src/quantem/gpu/dpc/workflow.py` | CoM/DPC from the detector session's CUDA moments |
-| SSB | `src/quantem/gpu/ssb/cuda` | prepared geometry, size-specific FFT kernels, objective, optimizer |
+| SSB | `src/quantem/gpu/direct_ptycho/cuda` | prepared geometry, size-specific FFT kernels, objective, optimizer |
 
 The ordinary IO call path is:
 

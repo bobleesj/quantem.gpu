@@ -130,8 +130,8 @@ artifacts = [
     "src/quantem/gpu/detector/cuda/kernels/*.cu",
     "src/quantem/gpu/detector/webgpu/*.ts",
     "src/quantem/gpu/dpc/webgpu/*.ts",
-    "src/quantem/gpu/ssb/webgpu/*.ts",
-    "src/quantem/gpu/ssb/webgpu/kernels/*.ts",
+    "src/quantem/gpu/direct_ptycho/webgpu/*.ts",
+    "src/quantem/gpu/direct_ptycho/webgpu/kernels/*.ts",
 ]
 
 [tool.hatch.build.targets.sdist]

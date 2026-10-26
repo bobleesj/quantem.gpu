@@ -18,7 +18,7 @@ def device(request):
         cp = pytest.importorskip("cupy")
         if not cp.cuda.runtime.getDeviceCount():
             pytest.skip("CUDA hardware is unavailable")
-    from quantem.gpu.ssb._resident_search import _Device
+    from quantem.gpu.direct_ptycho._resident_search import _Device
 
     return _Device(request.param)
 
@@ -27,7 +27,7 @@ def test_probability_precision_and_random_stream(device):
     """Bounded scalar references qualify decisions, never full CPU SSB."""
     from scipy.special import ndtr, ndtri
 
-    from quantem.gpu.ssb._resident_search import _random
+    from quantem.gpu.direct_ptycho._resident_search import _random
 
     checks = [
         ("cdf", np.linspace(-10, 10, 41), ndtr),
@@ -67,7 +67,7 @@ class _QuadraticDerivatives:
     resident test objective's: C10 100, C12 60, phi12 0, tilt (3, -4) mrad, depth spread 150 (engine units)."""
 
     def __init__(self):
-        from quantem.gpu.ssb import _exact_newton
+        from quantem.gpu.direct_ptycho import _exact_newton
 
         self.maximum = _exact_newton.encode([100.0, 60.0, 0.0, 3.0, -4.0, 150.0])
         self.scales = np.array([50.0, 50.0, 50.0, 10.0, 10.0, 100.0])
@@ -89,8 +89,8 @@ def test_joint_newton_recovers_the_solution_of_the_resident_search(device, monke
     """The resident search's 200 trials and the Newton on the objective's exact derivatives find the maximum."""
     import scipy.optimize
 
-    from quantem.gpu.ssb import thick_sample_fit
-    from quantem.gpu.ssb._resident_search import fit_resident
+    from quantem.gpu.direct_ptycho import thick_sample_fit
+    from quantem.gpu.direct_ptycho._resident_search import fit_resident
 
     def forbidden(*args, **kwargs):
         raise AssertionError("The joint fitter called a SciPy optimizer")
@@ -150,7 +150,7 @@ store_real(out0,b,Real(100)-sum);
 def test_model_scores_and_public_joint_fit_remain_on_device(device, monkeypatch):
     """Use the complete synthetic scan/BF: model scores on the device and the public joint fit."""
     from quantem.gpu import SSB
-    from quantem.gpu.ssb._resident_search import _trial
+    from quantem.gpu.direct_ptycho._resident_search import _trial
 
     rng = np.random.default_rng(7)
     counts = rng.poisson(40.0, size=(128, 128, 32, 32)).astype(np.uint16)
@@ -173,7 +173,7 @@ def test_model_scores_and_public_joint_fit_remain_on_device(device, monkeypatch)
         expected = backend.sample_agreement(rows, (0.2, 0.9))
         trial = _trial(device, device.pack(rows))
         if device.backend == "mps":
-            from quantem.gpu.ssb.mps import resident_fit
+            from quantem.gpu.direct_ptycho.mps import resident_fit
 
             actual = device.host(resident_fit.evaluate(backend._prepared, trial))
             # Both eight-point search batches and the initial three-start

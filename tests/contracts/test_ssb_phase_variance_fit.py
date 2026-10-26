@@ -1,4 +1,4 @@
-"""The phase-variance standard fit's search (``ssb.phase_variance_fit``), shared by the backends, on analytic losses."""
+"""The phase-variance standard fit's search (``direct_ptycho.phase_variance_fit``), shared by the backends, on analytic losses."""
 
 import math
 
@@ -8,7 +8,7 @@ import pytest
 
 def test_nelder_mead_keeps_first_vertex_for_tied_losses() -> None:
     """Stable tie ordering keeps a flat seeded fit at its input point."""
-    from quantem.gpu.ssb.phase_variance_fit import _nelder_mead
+    from quantem.gpu.direct_ptycho.phase_variance_fit import _nelder_mead
 
     start = {"C10": -20.0, "C12": 22.0, "phi12": 0.46}
     first = _nelder_mead(start, 1.0, lambda params: 1.0, lock=set(), max_iter=4)
@@ -21,7 +21,7 @@ def test_nelder_mead_keeps_first_vertex_for_tied_losses() -> None:
 def test_search_and_locked_refinement_on_a_quadratic_loss() -> None:
     """A seeded fit finds the minimum of a smooth loss, repeats bit for bit, and holds a locked coefficient."""
     pytest.importorskip("optuna")
-    from quantem.gpu.ssb.phase_variance_fit import fit_phase_variance
+    from quantem.gpu.direct_ptycho.phase_variance_fit import fit_phase_variance
 
     truth = np.array([-85.0, 30.0, math.radians(25.0)])
 

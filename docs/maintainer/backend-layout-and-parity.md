@@ -9,7 +9,7 @@ public workflow or result type.
 ## Ownership rules
 
 - Public Python callers enter through `quantem.gpu.io`, `quantem.gpu.detector`,
-  `quantem.gpu.dpc`, `quantem.gpu.display`, and `quantem.gpu.ssb`.
+  `quantem.gpu.dpc`, `quantem.gpu.display`, and `quantem.gpu.direct_ptycho`.
 - Backend modules implement those contracts and are not consumer APIs.
 - Native clients consume the repository-root Swift package. Swift and
   Swift-only Metal sources live in `native/swift`, outside the Python wheel;

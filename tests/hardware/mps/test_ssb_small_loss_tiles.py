@@ -11,7 +11,7 @@ from .test_ssb_upsampling import _disk_session
 def test_tiled_diagnostic_preserves_every_phase_and_loss_bit(size, monkeypatch):
     """Review a fitted sample with the same loss while bounding its FFT stack."""
     _require_mps()
-    from quantem.gpu.ssb.mps import reconstruct
+    from quantem.gpu.direct_ptycho.mps import reconstruct
 
     optics = {"C10_nm": 8.0, "C12_nm": 1.0, "phi12_deg": 30.0}
     # the same optics in the backend's units, and the sample as the phase-variance objective takes it

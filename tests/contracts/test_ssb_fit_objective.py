@@ -103,7 +103,7 @@ def test_implicit_reconstruction_uses_default_fifth_order_fit(tmp_path, monkeypa
     backend = _Recording()
     backend.fit_sample = _fit_sample
     session = _session(monkeypatch, _source(tmp_path), backend)
-    from quantem.gpu.ssb import fifth_order_fit
+    from quantem.gpu.direct_ptycho import fifth_order_fit
 
     def fitted(ssb, **options):
         assert options["search"] == "standard" and options["trials"] == 200

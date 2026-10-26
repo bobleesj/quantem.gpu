@@ -96,7 +96,7 @@ def test_ssb_calibration_dict_holds_the_table_rows():
     import pandas as pd
 
     from quantem.gpu.io.metadata_display import calibration_rows
-    from quantem.gpu.ssb.workflow import DirectPtycho
+    from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
     recorded = {"voltage_kV": 200.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
                 "detector_sampling_mrad": [0.55, 0.55]}

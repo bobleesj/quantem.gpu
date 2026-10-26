@@ -24,7 +24,7 @@ def test_quantem_gpu_root_import_without_cupy() -> None:
         assert qg.io.__name__ == "quantem.gpu.io"
         assert qg.parallax.__name__ == "quantem.gpu.parallax"
         assert qg.screening.__name__ == "quantem.gpu.screening"
-        assert qg.SSB.__module__ == "quantem.gpu.ssb.workflow"
+        assert qg.SSB.__module__ == "quantem.gpu.direct_ptycho.workflow"
         assert "load" not in qg.__all__
         assert "bf" not in qg.__all__
         assert "dpc" in qg.__all__

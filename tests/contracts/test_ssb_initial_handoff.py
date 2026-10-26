@@ -7,10 +7,10 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb import fifth_order_fit
-from quantem.gpu.ssb.fit_display import FitDisplay
-from quantem.gpu.ssb.results import SSBResult
-from quantem.gpu.ssb.workflow import SSB
+from quantem.gpu.direct_ptycho import fifth_order_fit
+from quantem.gpu.direct_ptycho.fit_display import FitDisplay
+from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.workflow import SSB
 
 
 def _fit():
@@ -29,7 +29,7 @@ def handoff(monkeypatch):
     """Exercise real handoff code with a bounded, deterministic CPU control stub."""
     ipython = pytest.importorskip("IPython")
     import IPython.display
-    from quantem.gpu.ssb import fifth_order_parameters
+    from quantem.gpu.direct_ptycho import fifth_order_parameters
 
     clock = SimpleNamespace(now=0.0)
     monkeypatch.setattr(fifth_order_fit.time, "perf_counter", lambda: clock.now)
@@ -265,7 +265,7 @@ def test_display_failure_keeps_session_result_and_loss(handoff, monkeypatch):
 
 def test_mps_objective_preserves_prepared_source_and_selected_rotation(monkeypatch):
     """MPS handoff must reuse physical-backend preparation without a CUDA fallback."""
-    from quantem.gpu.ssb.mps import fifth_order
+    from quantem.gpu.direct_ptycho.mps import fifth_order
 
     prepared = object()
     constructor = Mock(return_value=object())

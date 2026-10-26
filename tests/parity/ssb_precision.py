@@ -1,6 +1,6 @@
 """Shared float32 parity requirements for SSB backend tests."""
 
-from quantem.gpu.ssb.contract import SSBPrecision
+from quantem.gpu.direct_ptycho.contract import SSBPrecision
 
 
 PRECISION = SSBPrecision()

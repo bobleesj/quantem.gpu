@@ -14,7 +14,7 @@ MLX/PyObjC/Metal and chunk-backed unified-memory representations.
 | Detector adapter | `src/quantem/gpu/resident/mps/frames.py`, `virtual_image.py` and `src/quantem/gpu/detector/mps/dense.py` | chunk-backed frame and reduction interface |
 | Detector shader | `src/quantem/gpu/resident/mps/kernels/reductions.msl` | exact sums and detector moments |
 | DPC | `src/quantem/gpu/dpc/workflow.py` | CoM/DPC from the detector session's Metal moments |
-| SSB | `src/quantem/gpu/ssb/mps` | MLX preparation, size-specific kernels, exact objective, optimizer |
+| SSB | `src/quantem/gpu/direct_ptycho/mps` | MLX preparation, size-specific kernels, exact objective, optimizer |
 
 The IO call path is:
 

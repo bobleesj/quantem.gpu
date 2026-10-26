@@ -16,8 +16,8 @@ import pytest
 cp = pytest.importorskip("cupy")
 
 from quantem.gpu import DirectPtycho  # noqa: E402
-from quantem.gpu.ssb import direct_workflow  # noqa: E402
-from quantem.gpu.ssb.cuda.direct import DragWindow, PreparedDirect  # noqa: E402
+from quantem.gpu.direct_ptycho import direct_workflow  # noqa: E402
+from quantem.gpu.direct_ptycho.cuda.direct import DragWindow, PreparedDirect  # noqa: E402
 
 pytestmark = pytest.mark.slow
 

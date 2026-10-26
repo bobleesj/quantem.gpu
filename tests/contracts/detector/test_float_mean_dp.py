@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from quantem.gpu.detector import masked_sum, mean as detector_mean
-from quantem.gpu.ssb.mps.prepared import resolve_bf_selection
+from quantem.gpu.direct_ptycho.mps.prepared import resolve_bf_selection
 
 SCALE = 1000.0
 

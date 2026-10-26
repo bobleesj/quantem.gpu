@@ -16,7 +16,7 @@ phase output are unchanged.
 
 The hardware is an RTX PRO 6000 Blackwell Max-Q Workstation Edition. The
 backend baseline is `e8750f3e3652`; the candidate changes
-`ssb/cuda/kernels/engine.py` and `ssb/cuda/thick.py` on that checkout.
+`direct_ptycho/cuda/kernels/engine.py` and `direct_ptycho/cuda/thick.py` on that checkout.
 The browser frontend baseline is `5dc84772dc4b` with the existing ShowPtycho
 upsampling and histogram changes. Both runs use the same full acquisition and
 saved calibration.

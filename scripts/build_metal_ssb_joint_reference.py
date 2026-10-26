@@ -12,10 +12,10 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.ssb.brightfield import BrightfieldDisk
-from quantem.gpu.ssb.mps.frames import ArrayFrames
-from quantem.gpu.ssb.mps.prepared import prepare_selection
-from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
+from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+from quantem.gpu.direct_ptycho.mps.frames import ArrayFrames
+from quantem.gpu.direct_ptycho.mps.prepared import prepare_selection
+from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
 
 
 def _floats(array: object) -> list[float]:

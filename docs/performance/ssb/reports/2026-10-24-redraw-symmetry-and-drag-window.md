@@ -34,7 +34,7 @@ w1 = sinc(D/2 [-pi lambda (|k - q|^2 - |k|^2) - 2 pi q . theta]),  w2 = sinc(D/2
 
 Under q -> -q: t1(-q, k) = P(k + q) conj P(k) = conj t2(q, k) and t2(-q, k) = conj t1(q, k) for any chi (no parity of the aberrations is used), and the sinc is even, so w1(-q) = w2(q), w2(-q) = w1(q). Hence gamma(-q, k) = -conj gamma(q, k). The counts are real, so G(-q, k) = conj G(q, k). Each corrected term at -q is therefore -conj of the term at q, and so is the sum: the kernel needs only half the plane (plus the columns without a mirror, which the existing Nyquist guard keeps).
 
-The pairing already existed for two-term optics. It was disabled for higher orders on the assumption that odd orders break it; they do not. Removing that condition is the whole change (`ssb/cuda/thick.py`).
+The pairing already existed for two-term optics. It was disabled for higher orders on the assumption that odd orders break it; they do not. Removing that condition is the whole change (`direct_ptycho/cuda/thick.py`).
 
 | Preview, 3x, C10 changed per call | before | after |
 |---|---|---|
@@ -47,7 +47,7 @@ What remains in the 30 ms: the 14-term chi is evaluated twice per (q, k) pair; w
 
 ## 2. Regularized methods: the drag window
 
-Along one control c with everything else held, every Gram entry and right side of the per-frequency normal equations is sum_k f_k exp(i (c - c0) u_k), an entire function of c. On [c0 - h, c0 + h] its Chebyshev series converges like 2 (z/2)^(N+1) / (N+1)!, z = h max|u|. `DragWindow` (`ssb/cuda/direct.py`) prepares the statistics exactly at the N + 1 = 13 Chebyshev nodes and keeps the coefficients c_n = (2/(N+1)) sum_j T_n(x_j) F(x_j). Any c in the window is then one matrix-vector product, F = sum_n c_n T_n(x), followed by a float64 Cholesky solve per frequency, the scatter and one inverse FFT.
+Along one control c with everything else held, every Gram entry and right side of the per-frequency normal equations is sum_k f_k exp(i (c - c0) u_k), an entire function of c. On [c0 - h, c0 + h] its Chebyshev series converges like 2 (z/2)^(N+1) / (N+1)!, z = h max|u|. `DragWindow` (`direct_ptycho/cuda/direct.py`) prepares the statistics exactly at the N + 1 = 13 Chebyshev nodes and keeps the coefficients c_n = (2/(N+1)) sum_j T_n(x_j) F(x_j). Any c in the window is then one matrix-vector product, F = sum_n c_n T_n(x), followed by a float64 Cholesky solve per frequency, the scatter and one inverse FFT.
 
 max|u| is the spread of d chi / dc over the aperture (chi enters every product as a difference of two pupil points): (2 pi / lambda) alpha^(n+1) / (n + 1) for a magnitude C_nm, doubled for m > 0; m C_nm times that, doubled, for an azimuth. h = 3 / max|u| with N = 12 in the first version (the numbers in this section); section 4 widens the windows.
 
@@ -94,7 +94,7 @@ Cost:
 
 A complex window holds the phase statistics as its lower-right block (phase from it: 2.1 ms per update, within 3.6e-7 of an exact phase preparation), so one build serves both methods.
 
-How it is used (`ssb/direct_workflow.py`): `drag(session, control, ...)` serves a frame from the prepared system when the optics are those already prepared (a strength drag), from the window when it is complete and covers the value, and otherwise exactly. It starts a new window, centred on the current value, when the dragged control changes, a held input changes, or the value leaves the window. `advance(session)` adds one node and is meant to run between frames, so a drag shows exact frames for its first 13 steps and window frames after. The session keeps one window per control, valid while every other input is unchanged; `prepare(session, controls, ...)` asks for windows (C10, C12, phi12 typically) after a release, and `advance` builds them while the sliders are idle, the dragged control first, so the next grab starts on window frames (`test_prepared_windows_serve_the_first_frame_of_a_grab`). Moving one control drops the windows of the others, whose held inputs include it. `run()`, the public `preview()` and committed frames never use the window; saved results remain the exact model. Tests: `tests/hardware/cuda/test_direct_drag_window.py` (nodes at 1e-6, between nodes at 2e-6 of the largest phase, phase from a complex window, and the drag/rebuild sequence).
+How it is used (`direct_ptycho/direct_workflow.py`): `drag(session, control, ...)` serves a frame from the prepared system when the optics are those already prepared (a strength drag), from the window when it is complete and covers the value, and otherwise exactly. It starts a new window, centred on the current value, when the dragged control changes, a held input changes, or the value leaves the window. `advance(session)` adds one node and is meant to run between frames, so a drag shows exact frames for its first 13 steps and window frames after. The session keeps one window per control, valid while every other input is unchanged; `prepare(session, controls, ...)` asks for windows (C10, C12, phi12 typically) after a release, and `advance` builds them while the sliders are idle, the dragged control first, so the next grab starts on window frames (`test_prepared_windows_serve_the_first_frame_of_a_grab`). Moving one control drops the windows of the others, whose held inputs include it. `run()`, the public `preview()` and committed frames never use the window; saved results remain the exact model. Tests: `tests/hardware/cuda/test_direct_drag_window.py` (nodes at 1e-6, between nodes at 2e-6 of the largest phase, phase from a complex window, and the drag/rebuild sequence).
 
 ## 3. SSB drags: interpolate the single-sideband terms, sum the triple overlap
 
@@ -102,7 +102,7 @@ Serves: SSB drags of C10, C12, phi12 (or any term) with the 14-term fit held, 3x
 
 A term (q, k) has one of three supports: neither sideband aperture open (zero), one open, or both open (triple overlap). With one open, gamma = w1 t1 alone and gamma / |gamma| = sign(w1) exp(-i (chi(k - q) - chi(k))): the sinc weight does not depend on the aberrations, so this term is an entire function of the control, like the regularized statistics. With both open, |gamma| depends on the optics and vanishes on the real axis where the two terms cancel, so no polynomial in the control fits it. The kernel now takes a class switch (`SSB_WAVE_PAIRS` 1 = one sideband, 2 = both); their sum is the full spectrum to 1.2e-18 of its largest value (float64 summation order). The scan mean is counted in class 1 only.
 
-`WaveWindow` (`ssb/cuda/thick.py`) keeps the class-1 spectrum as a Chebyshev series (the same h and N as section 2) and sums class 2 exactly every frame. On the test field class 2 holds 3.3e8 of the 2.2e9 nonzero terms (15 %), all at |q| <= R (136k of the 543k frequencies in the support).
+`WaveWindow` (`direct_ptycho/cuda/thick.py`) keeps the class-1 spectrum as a Chebyshev series (the same h and N as section 2) and sums class 2 exactly every frame. On the test field class 2 holds 3.3e8 of the 2.2e9 nonzero terms (15 %), all at |q| <= R (136k of the 543k frequencies in the support).
 
 | GPU 0, 3x, 14-term fit | exact preview | drag frame | build (13 nodes) | memory |
 |---|---|---|---|---|

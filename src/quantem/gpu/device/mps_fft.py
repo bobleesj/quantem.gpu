@@ -11,7 +11,7 @@ import struct
 from functools import lru_cache
 
 import torch
-from quantem.gpu.ssb._resident_precision import HEADER
+from quantem.gpu.direct_ptycho._resident_precision import HEADER
 
 
 def _parts(value):

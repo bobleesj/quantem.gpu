@@ -94,7 +94,7 @@ def test_depth_zero_objective_matches_torch_reference():
     if not torch.backends.mps.is_available():
         pytest.skip("needs the Apple GPU (MPS)")
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
+    from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
     from tests.parity.torch_ssb import TorchSSB
 
     frames, detector_mrad = _astigmatic_crystal()

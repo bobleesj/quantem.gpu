@@ -8,7 +8,7 @@ import numpy as np
 def test_close_releases_backend_state_and_mlx_cache(monkeypatch) -> None:
     """Closing an MPS backend returns allocator-owned unified memory and leaves its source to the owner."""
 
-    from quantem.gpu.ssb.mps import backend as backend_module
+    from quantem.gpu.direct_ptycho.mps import backend as backend_module
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -39,7 +39,7 @@ def test_close_releases_backend_state_and_mlx_cache(monkeypatch) -> None:
 def test_workflow_drops_shared_source_before_mps_allocator_flush() -> None:
     """The MPS close hook must run only after the workflow drops its reference to the data."""
 
-    from quantem.gpu.ssb.workflow import SSB
+    from quantem.gpu.direct_ptycho.workflow import SSB
 
     workflow = SSB.__new__(SSB)
     workflow._device = None

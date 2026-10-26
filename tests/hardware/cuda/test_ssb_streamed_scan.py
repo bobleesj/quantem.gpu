@@ -11,8 +11,8 @@ pytestmark = pytest.mark.slow
 from quantem.gpu import SSB
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
 from quantem.gpu.resident.cuda.counts import StreamedCounts
-from quantem.gpu.ssb.cuda.streamed import StreamedSSB
-from quantem.gpu.ssb.units import aberrations_to_engine
+from quantem.gpu.direct_ptycho.cuda.streamed import StreamedSSB
+from quantem.gpu.direct_ptycho.units import aberrations_to_engine
 
 SETTINGS = {
     "backend": "cuda", "voltage_kV": 300., "semiangle_mrad": 30.,

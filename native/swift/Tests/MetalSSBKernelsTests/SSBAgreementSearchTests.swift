@@ -5,10 +5,10 @@ import XCTest
 @testable import MetalSSBKernels
 
 /// The Swift port of the resident TPE search against the Python implementation
-/// (`ssb._resident_search.fit_resident` and `fit_standard_resident`, seed 42, 200 trials) on a synthetic float32
+/// (`direct_ptycho._resident_search.fit_resident` and `fit_standard_resident`, seed 42, 200 trials) on a synthetic float32
 /// objective that both sides evaluate from the same float32 trial rows: the digests pin the 200 search rows Python
 /// evaluated, in order. The trust-region Newton after the search climbs on exact derivatives (Python
-/// `ssb._exact_newton`); here they are the analytic derivatives of the same objective in double precision, whose
+/// `direct_ptycho._exact_newton`); here they are the analytic derivatives of the same objective in double precision, whose
 /// maximum is known exactly.
 final class SSBAgreementSearchTests: XCTestCase {
   /// A smooth float32 objective with its maximum at C10 37.25 A, C12 (cos, sin) (30, -12) A, tilt (3.5, -1.25)

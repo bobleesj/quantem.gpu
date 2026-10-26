@@ -72,7 +72,7 @@ def test_ssb_auto_backend_never_falls_back_to_cpu(monkeypatch) -> None:
     import pytest
 
     from quantem.gpu.device import select as device
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     monkeypatch.setattr(device, "_cuda_probe", lambda: (False, "no CUDA device"))
     monkeypatch.setattr(device, "_mps_probe", lambda: (False, "no Apple GPU"))
@@ -92,7 +92,7 @@ def test_reconstruct_series_reuses_only_exact_results(
     import numpy as np
 
     from quantem.gpu import SSB, SSBResult
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
     screen = raw / "live" / "screen"
@@ -234,7 +234,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
     import numpy as np
 
     from quantem.gpu import SSB, SSBResult, screening
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
     raw.mkdir()
@@ -313,7 +313,7 @@ def test_series_discovery_keeps_raw_acquisitions_after_partial_screening(
     tmp_path,
 ) -> None:
     """One saved screen result must not hide later raw acquisitions."""
-    from quantem.gpu.ssb.series import screen_paths
+    from quantem.gpu.direct_ptycho.series import screen_paths
 
     raw = tmp_path / "raw"
     raw.mkdir()
@@ -336,7 +336,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
     import numpy as np
 
     from quantem.gpu import SSB, SSBResult
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
     screen = raw / "live" / "screen"
@@ -421,7 +421,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     import numpy as np
 
     from quantem.gpu import SSB, SSBResult
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
     reference = raw / "live" / "screen" / "scan_1"
@@ -520,7 +520,7 @@ def test_series_reads_dataset_yaml_schema_2_only(tmp_path) -> None:
     """
     import pytest
 
-    from quantem.gpu.ssb.series import acquisition_settings, read_dataset_yaml
+    from quantem.gpu.direct_ptycho.series import acquisition_settings, read_dataset_yaml
 
     raw = tmp_path / "raw"
     raw.mkdir()
@@ -567,7 +567,7 @@ def test_series_matches_dataset_yaml_entries_by_master_name_and_range(tmp_path) 
     keyed by name took the session default: 0.5 A here where quantem.live fits 0.264 and 0.373 A.
     """
     from quantem.gpu.formats import dataset_yaml
-    from quantem.gpu.ssb.series import acquisition_settings, read_dataset_yaml
+    from quantem.gpu.direct_ptycho.series import acquisition_settings, read_dataset_yaml
 
     raw = tmp_path / "raw"
     raw.mkdir()
@@ -691,7 +691,7 @@ files:
 def test_mps_source_companion_precedes_historical_calibration(tmp_path) -> None:
     """C4: source-local exact columns, expect authoritative source ordering."""
 
-    from quantem.gpu.ssb.mps.frames import bf_column_locations
+    from quantem.gpu.direct_ptycho.mps.frames import bf_column_locations
 
     export = tmp_path / "current"
     source = export / "source" / "scan_master.h5"
@@ -707,7 +707,7 @@ def test_mps_source_companion_precedes_historical_calibration(tmp_path) -> None:
 def test_mps_fit_calibration_restores_exact_export_brightfield(tmp_path) -> None:
     """C4: fit-only calibration, expect sibling exact BF geometry first."""
 
-    from quantem.gpu.ssb.mps.frames import bf_column_locations
+    from quantem.gpu.direct_ptycho.mps.frames import bf_column_locations
 
     source = tmp_path / "raw" / "scan_master.h5"
     source.parent.mkdir()
@@ -735,8 +735,8 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
     import pytest
 
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA
-    from quantem.gpu.ssb.series import open_screen_record, screen_record_settings
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
+    from quantem.gpu.direct_ptycho.series import open_screen_record, screen_record_settings
 
     source = tmp_path / "scan_018_master.h5"
     source.write_bytes(b"raw")
@@ -773,8 +773,8 @@ def test_open_screen_record_opens_at_the_tilt_corrected_fit(tmp_path, monkeypatc
     from types import SimpleNamespace
 
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA
-    from quantem.gpu.ssb.series import open_screen_record, screen_record_sample, screen_record_settings
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
+    from quantem.gpu.direct_ptycho.series import open_screen_record, screen_record_sample, screen_record_settings
 
     source = tmp_path / "scan_018_master.h5"
     source.write_bytes(b"raw")

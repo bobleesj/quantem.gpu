@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.workflow import SSB
+from quantem.gpu.direct_ptycho.workflow import SSB
 
 
 @pytest.mark.parametrize("shape, scan_shape, expected", [
@@ -28,7 +28,7 @@ def test_input_dimensions_reject_ambiguous_flattened_scan():
 
 
 def test_column_export_keeps_measured_scan_dimensions():
-    from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames
+    from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
 
     session = SSB.__new__(SSB)
     session._data = MpsBfColumnFrames.__new__(MpsBfColumnFrames)

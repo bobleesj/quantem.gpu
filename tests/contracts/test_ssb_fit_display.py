@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from quantem.gpu.ssb.fit_display import FitDisplay
+from quantem.gpu.direct_ptycho.fit_display import FitDisplay
 
 
 @pytest.mark.parametrize("size", ["small", "medium", "large", "xlarge", 750, 900])
@@ -16,7 +16,7 @@ def test_preview_compares_three_final_methods_without_refitting(monkeypatch, siz
     import numpy as np
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from quantem.gpu.ssb.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
     plt.switch_backend("Agg")
     display = Mock(return_value=Mock())
@@ -85,7 +85,7 @@ def test_large_convergence_is_live_throttled_and_does_not_reconstruct(monkeypatc
     monkeypatch.setattr(IPython, "get_ipython", lambda: SimpleNamespace(kernel=object()))
     monkeypatch.setattr(IPython.display, "display", display)
     clock = [1.0]
-    monkeypatch.setattr("quantem.gpu.ssb.fit_display.time.perf_counter", lambda: clock[0])
+    monkeypatch.setattr("quantem.gpu.direct_ptycho.fit_display.time.perf_counter", lambda: clock[0])
     ssb = SimpleNamespace(run=Mock())
     view = FitDisplay(ssb, enabled=False, size=size, show_convergence=True)
     view.progress(0)
@@ -115,7 +115,7 @@ def test_fit_heading_clears_the_phase_title(size):
     """An inline fit preview keeps its heading above the full image title."""
     import numpy as np
     from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from quantem.gpu.ssb.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
     image = SSBResult(
         object_wave=np.exp(1j * np.arange(256).reshape(16, 16) / 100),
@@ -138,7 +138,7 @@ def test_fit_heading_clears_the_phase_title(size):
 
 def test_progress_does_not_change_the_refinement_or_its_evaluation_count():
     import numpy as np
-    from quantem.gpu.ssb._gradient_refinement import refine
+    from quantem.gpu.direct_ptycho._gradient_refinement import refine
 
     start = np.zeros(6)
     start[5] = 1.0
@@ -161,7 +161,7 @@ def test_progress_does_not_change_the_refinement_or_its_evaluation_count():
 
 def test_showptycho_rotation_handoff_preserves_prepared_equations():
     import inspect
-    from quantem.gpu.ssb.workflow import DirectPtycho
+    from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
     prepared = object()
     backend = Mock()
@@ -183,7 +183,7 @@ def test_regional_preview_boxes_measured_positions_at_auto_sampling(monkeypatch,
     import IPython
     import IPython.display
     import numpy as np
-    from quantem.gpu.ssb.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
     display = Mock(return_value=Mock())
     monkeypatch.setattr(IPython, "get_ipython", lambda: SimpleNamespace(kernel=object()))

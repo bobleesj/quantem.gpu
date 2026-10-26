@@ -50,7 +50,7 @@ def _original_phase_sum(mx, obj):
     "layout", ["contiguous", "column_fft", "transpose", "slice", "reverse", "broadcast"]
 )
 def test_phase_reduction_matches_original_gpu_for_strided_objects(mx, batch, layout):
-    from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sum_from_complex
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sum_from_complex
 
     rng = np.random.default_rng(73)
     shape = (batch, 7, 24, 32)

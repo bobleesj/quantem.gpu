@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import "./fake-gpu";
-import { makeParams, packAberrations } from "../../src/quantem/gpu/ssb/webgpu/backend";
+import { makeParams, packAberrations } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
 
 const calibration = {
   num_bright_field_pixels: 4, wavelength_A: 0.019687, semiangle_rad: 0.03, angular_sampling_rad: [0.002, 0.002],

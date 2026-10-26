@@ -1,6 +1,6 @@
 /// <reference types="@webgpu/types" />
-import { WebGPUSSBBackend, setSSBLocalFiles } from "../../src/quantem/gpu/ssb/webgpu/backend";
-import type { WebGPUReconstructionOptions } from "../../src/quantem/gpu/ssb/webgpu/protocol";
+import { WebGPUSSBBackend, setSSBLocalFiles } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
+import type { WebGPUReconstructionOptions } from "../../src/quantem/gpu/direct_ptycho/webgpu/protocol";
 
 /** The exported-folder consumer must receive the same phase from streamed QEM and raw BF columns. */
 export async function runSsbQemParity(base: string): Promise<Record<string, number>> {

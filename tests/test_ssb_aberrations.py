@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.units import (
+from quantem.gpu.direct_ptycho.units import (
     aberrations_from_engine,
     aberrations_to_engine,
     higher_order_arrays,
@@ -56,7 +56,7 @@ def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monk
     """
     from types import SimpleNamespace
 
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     received = {}
 

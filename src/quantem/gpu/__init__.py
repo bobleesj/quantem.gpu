@@ -8,7 +8,7 @@ from quantem.gpu.device import cuda_runtime
 # before anything imports CuPy's FFT/BLAS: see device.cuda_runtime (torch's CUDA 13 cuFFT otherwise shadows CuPy's CUDA 12 one)
 cuda_runtime.preload_libraries()
 
-from quantem.gpu.ssb import DirectPtycho, SSB, SSBResult
+from quantem.gpu.direct_ptycho import DirectPtycho, SSB, SSBResult
 
 __version__ = version("quantem.gpu")
 

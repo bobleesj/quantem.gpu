@@ -157,7 +157,7 @@ def test_calibration_from_a_resident_acquisition_opens_no_file(tmp_path, monkeyp
 
     from quantem.gpu import SSB, detector, dpc
     from quantem.gpu.io import load
-    from quantem.gpu.ssb.results import column_sign
+    from quantem.gpu.direct_ptycho.results import column_sign
 
     settings = dict(SETTINGS, scan_sampling_A=(0.264, 0.264), detector_sampling_mrad=(0.5554, 0.5554), scan_detector_rotation_deg=158.9)
     by_path = SSB.open(str(source), **settings)

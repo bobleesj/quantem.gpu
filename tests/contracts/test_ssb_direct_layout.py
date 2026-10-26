@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from quantem.gpu.optics.physics import wavelength_A_from_kV
-from quantem.gpu.ssb import chebyshev
-from quantem.gpu.ssb.mps.direct import _alias_groups, _detector_weights, _Series, _solve_group, wave_phase
+from quantem.gpu.direct_ptycho import chebyshev
+from quantem.gpu.direct_ptycho.mps.direct import _alias_groups, _detector_weights, _Series, _solve_group, wave_phase
 
 
 def _scene_groups(factor, smoothness=1.0):

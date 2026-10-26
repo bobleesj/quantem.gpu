@@ -1,7 +1,7 @@
 // CPU reference for the WebGPU SSB thick-sample correction (backend.ts gamma_mul with params.thickness > 0).
 //
 // Mirrors the WGSL line by line in float64 so it can be compared with the CUDA reference kernel
-// (ssb/cuda/kernels/engine.py thick_correct_kernel) on the same (q, k) grid. run_ssb_thick_sample.py writes the
+// (direct_ptycho/cuda/kernels/engine.py thick_correct_kernel) on the same (q, k) grid. run_ssb_thick_sample.py writes the
 // fixture with CuPy and runs this file with Node (type stripping):
 //
 //   node tests/webgpu/ssb-thick-sample.ts <fixture.json>

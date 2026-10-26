@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { WebGPUSSBBackend, setSSBLocalFiles } from "../../src/quantem/gpu/ssb/webgpu/backend";
+import { WebGPUSSBBackend, setSSBLocalFiles } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
 
 type Case = { C10_A: number; C12_A: number; phi12_deg: number; higherOrder: Record<string, number> };
 type Reference = {

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from quantem.gpu.ssb.stream import _refit
+from quantem.gpu.direct_ptycho.stream import _refit
 
 
 class PeakedObjective:
@@ -68,7 +68,7 @@ def test_place_recovers_each_shift_and_sums_the_frames_in_register():
     import cupy
 
     from quantem.gpu.drift import shifted
-    from quantem.gpu.ssb.stream import (
+    from quantem.gpu.direct_ptycho.stream import (
         CONFIDENCE,
         _add,
         _guess,
@@ -112,7 +112,7 @@ def test_align_replaces_the_live_shifts_with_the_pairwise_drift():
     import cupy
 
     from quantem.gpu.drift import shifted
-    from quantem.gpu.ssb.stream import SSBStream, _add, _combined, _start
+    from quantem.gpu.direct_ptycho.stream import SSBStream, _add, _combined, _start
 
     rows, sampling = 256, (0.2, 0.2)
     specimen = lattice_image(rows, sampling[0], seed=3)
@@ -167,7 +167,7 @@ class FakeSession:
         self.data = None
 
     def _resolve_upsampling_factor(self, upsampling_factor):
-        from quantem.gpu.ssb.workflow import SSB
+        from quantem.gpu.direct_ptycho.workflow import SSB
 
         return SSB._resolve_upsampling_factor(self, upsampling_factor)
 
@@ -193,7 +193,7 @@ def fake_stream(monkeypatch, tmp_path, rows=256, noise_frames=()):
     import cupy
 
     from quantem.gpu.drift import shifted
-    from quantem.gpu.ssb import stream as stream_module
+    from quantem.gpu.direct_ptycho import stream as stream_module
 
     specimen = lattice_image(rows, 0.2, seed=5)
     truth = [(0, 0), (1.3, -0.7), (3.45, 1.2), (5.1, 2.85), (6.6, 4.3)]
@@ -230,7 +230,7 @@ def fake_stream(monkeypatch, tmp_path, rows=256, noise_frames=()):
 
 
 def streamed(sources, fit, save_dir, **options):
-    from quantem.gpu.ssb.stream import stream
+    from quantem.gpu.direct_ptycho.stream import stream
 
     FrameObjective.calls = 0
     FakeSession.runs, FakeSession.open = [], 0
@@ -321,7 +321,7 @@ def test_a_corrupt_record_is_computed_again(monkeypatch, tmp_path):
 def placed_by_hand(images, shifts_A, placed, sampling=0.2, cover=False):
     """The combined image built frame by frame at the given shifts, the frames in ``placed`` only
     (or, with cover, how many frames reach each pixel)."""
-    from quantem.gpu.ssb.stream import _add, _combined, _start
+    from quantem.gpu.direct_ptycho.stream import _add, _combined, _start
 
     canvas = _start(images[0])
     for image, shift, keep in zip(images[1:], shifts_A[1:], placed[1:]):
@@ -363,7 +363,7 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
 def test_a_capped_auto_factor_is_announced_once_per_stream(monkeypatch, tmp_path, capsys):
     """At a 1 A step (300 kV, 30 mrad) the scan sampling supports 8x: auto is resolved once to 4x, one line
     says so, and every frame runs at 4x; an explicit 8 runs at 8x without the line."""
-    from quantem.gpu.ssb.stream import stream
+    from quantem.gpu.direct_ptycho.stream import stream
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     monkeypatch.setattr(FakeSession, "scan_sampling_A", 1.0)
@@ -427,7 +427,7 @@ def test_resume_with_methods_refits_nothing(monkeypatch, tmp_path):
 def test_near_threshold_flags_confidence_just_above_the_cut(monkeypatch, tmp_path):
     """Near threshold marks a frame whose confidence lies in [CONFIDENCE, 1.1 CONFIDENCE): placed,
     but close enough to the cut to deserve a look."""
-    from quantem.gpu.ssb.stream import CONFIDENCE
+    from quantem.gpu.direct_ptycho.stream import CONFIDENCE
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     series, _ = streamed(sources, fit, None)
@@ -468,7 +468,7 @@ def test_a_frame_of_another_scan_shape_stops_the_stream(monkeypatch, tmp_path):
     it, naming both shapes, before any refit or reconstruction of it."""
     import pytest
 
-    from quantem.gpu.ssb import stream as stream_module
+    from quantem.gpu.direct_ptycho import stream as stream_module
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     load = stream_module.io.load
@@ -492,7 +492,7 @@ def test_a_frame_below_confidence_stays_out_of_every_combined_image(monkeypatch,
     raised to 0.1 here to put the noise frame below it."""
     import cupy
 
-    from quantem.gpu.ssb import stream as stream_module
+    from quantem.gpu.direct_ptycho import stream as stream_module
 
     monkeypatch.setattr(stream_module, "CONFIDENCE", 0.1)
     sources, fit = fake_stream(monkeypatch, tmp_path, noise_frames=(3,))
@@ -538,8 +538,8 @@ def test_flagged_pixel_handling_is_announced_once_for_the_series(monkeypatch, tm
     """Each frame's load is quiet, so a long series prints no line per frame; what the loads did with
     the detector's flagged pixels still changes the data, so it is announced once, by outcome."""
     from quantem.gpu.resident.hot_pixels import hot_pixel_record
-    from quantem.gpu.ssb import stream as stream_module
-    from quantem.gpu.ssb.stream import stream
+    from quantem.gpu.direct_ptycho import stream as stream_module
+    from quantem.gpu.direct_ptycho.stream import stream
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     load = stream_module.io.load

@@ -9,7 +9,7 @@ from tests.parity.ssb_precision import PRECISION
 
 def test_mps_phase_loss_default_chunk_is_size_aware() -> None:
     """MPS exact phase/loss default must avoid oversized 1024 Metal outputs."""
-    from quantem.gpu.ssb.mps.hardware import (
+    from quantem.gpu.direct_ptycho.mps.hardware import (
         _default_phase_loss_chunk_bf,
         default_object_redraw_threadgroup,
         default_phase_col_k_bf,
@@ -24,7 +24,7 @@ def test_mps_phase_loss_default_chunk_is_size_aware() -> None:
 
 def test_mps_exact_nelder_mead_uses_rounded_wide_simplex_steps() -> None:
     """Exact refinement must not collapse C12/phi steps near a good TPE seed."""
-    from quantem.gpu.ssb.mps.optimizer import _nelder_mead_refine
+    from quantem.gpu.direct_ptycho.mps.optimizer import _nelder_mead_refine
 
     seed = {"C10": 68.9103129988, "C12": 10.1981172003, "phi12": 0.3873672179}
     evaluated = []
@@ -60,7 +60,7 @@ def test_mps_exact_nelder_mead_uses_rounded_wide_simplex_steps() -> None:
 
 def test_mps_exact_refinement_caches_identical_float32_inputs() -> None:
     """Distinct simplex coordinates must share an identical Metal evaluation."""
-    from quantem.gpu.ssb.mps.optimizer import _evaluate_exact_float32_cached
+    from quantem.gpu.direct_ptycho.mps.optimizer import _evaluate_exact_float32_cached
 
     calls = []
     cache = {}
@@ -89,8 +89,8 @@ def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> Non
     """C1: exact BF companion, expect MPS sums and coordinate-only gathers."""
     pytest.importorskip("mlx.core")
     from quantem.gpu.detector import mean as detector_mean
-    from quantem.gpu.ssb.mps.frames import load_bf_columns_mps
-    from quantem.gpu.ssb.mps.prepared import resolve_bf_selection
+    from quantem.gpu.direct_ptycho.mps.frames import load_bf_columns_mps
+    from quantem.gpu.direct_ptycho.mps.prepared import resolve_bf_selection
 
     folder = tmp_path / "showptycho"
     source = folder / "source"
@@ -164,8 +164,8 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     2026-10-05 a session opened on the columns ignored ``detector_sampling_mrad`` and divided the semiangle by it.
     """
     pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.backend import MpsSSBBackend
-    from quantem.gpu.ssb.mps.frames import load_bf_columns_mps
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
+    from quantem.gpu.direct_ptycho.mps.frames import load_bf_columns_mps
 
     source = tmp_path / "source"
     source.mkdir()
@@ -203,8 +203,8 @@ def test_ssb_open_does_not_swallow_declared_companion_error(
 ) -> None:
     """Invalid declared exact data cannot silently become a full-stack load."""
     from quantem.gpu import io
-    from quantem.gpu.ssb import workflow
-    from quantem.gpu.ssb.mps import frames
+    from quantem.gpu.direct_ptycho import workflow
+    from quantem.gpu.direct_ptycho.mps import frames
 
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
     monkeypatch.setattr(
@@ -252,9 +252,9 @@ def test_mps_backend_writes_exact_integer_bf_columns(
 ) -> None:
     """C1: export uses the smallest lossless dtype without changing counts."""
     pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.brightfield import BrightfieldDisk
-    from quantem.gpu.ssb.mps.backend import MpsSSBBackend
-    from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames
+    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
+    from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
 
     class RawFrames:
         dtype = np.dtype(np.uint16)
@@ -350,9 +350,9 @@ def test_mps_numpy_session_exports_exact_columns_and_keeps_its_reconstruction(tm
 def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) -> None:
     """C1: exact BF columns expose the same neutral contract as CUDA."""
     pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.brightfield import BrightfieldDisk
-    from quantem.gpu.ssb.mps.backend import MpsSSBBackend
-    from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames
+    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
+    from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
 
     rows = np.asarray([1, 1, 2, 2], dtype=np.int32)
     cols = np.asarray([1, 2, 1, 2], dtype=np.int32)
@@ -401,7 +401,7 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
 
 def test_brightfield_selection_is_validated_and_immutable() -> None:
     """C1a: one typed BF value owns validated row/column geometry."""
-    from quantem.gpu.ssb.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
 
     rows = np.asarray([0, 1, 2], dtype=np.int64)
     cols = np.asarray([1, 2, 3], dtype=np.int64)
@@ -426,7 +426,7 @@ def test_brightfield_selection_is_validated_and_immutable() -> None:
 
 def test_brightfield_selection_rejects_duplicate_coordinates() -> None:
     """C1b: duplicate scientific evidence fails at construction."""
-    from quantem.gpu.ssb.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
 
     with pytest.raises(ValueError, match="duplicates"):
         BrightfieldDisk(
@@ -441,7 +441,7 @@ def test_brightfield_selection_rejects_duplicate_coordinates() -> None:
 
 def test_load_bf_columns_mps_requires_authoritative_center(tmp_path) -> None:
     """C1c: incomplete BF metadata fails before loading scientific data."""
-    from quantem.gpu.ssb.mps.frames import load_bf_columns_mps
+    from quantem.gpu.direct_ptycho.mps.frames import load_bf_columns_mps
 
     snapshots = tmp_path / "snapshots"
     snapshots.mkdir()
@@ -622,10 +622,10 @@ def _phase_cols512_reduced_batch_kernel(
 def test_mps_radix8_batch_phase_loss_matches_radix4_reference() -> None:
     """Radix-8 column FFT must preserve phase/loss numerical parity."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.phase_columns_512 import (
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_columns_512 import (
         phase_cols512_scalar_loss_batch_from_row_ifft,
     )
-    from quantem.gpu.ssb.mps.kernels.radix import twiddle_512
+    from quantem.gpu.direct_ptycho.mps.kernels.radix import twiddle_512
 
     rng = np.random.default_rng(41)
     row_ifft_np = (
@@ -676,7 +676,7 @@ def test_mps_radix8_batch_phase_loss_matches_radix4_reference() -> None:
 def test_mps_tiled_row_intermediate_preserves_exact_column_result() -> None:
     """The 8-column 512 cache layout must only permute row-IFFT storage."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.phase_columns_512 import (
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_columns_512 import (
         phase_cols512_scalar_loss_batch_from_row_ifft,
     )
 
@@ -717,7 +717,7 @@ def test_mps_tiled_row_intermediate_preserves_exact_column_result() -> None:
 
 def test_mps_exact_pair_row_policy_selects_m5_max(monkeypatch) -> None:
     """The measured topology must not spread to unmeasured high-memory chips."""
-    from quantem.gpu.ssb.mps import hardware
+    from quantem.gpu.direct_ptycho.mps import hardware
 
     monkeypatch.setattr(
         hardware,
@@ -748,7 +748,7 @@ def test_mps_exact_pair_row_policy_selects_m5_max(monkeypatch) -> None:
 
 def test_mps_simd_column_stage_is_scoped_to_m5_max(monkeypatch) -> None:
     """The register transpose stays on its measured hardware family."""
-    from quantem.gpu.ssb.mps import hardware
+    from quantem.gpu.direct_ptycho.mps import hardware
 
     monkeypatch.setattr(
         hardware,
@@ -767,7 +767,7 @@ def test_mps_simd_column_stage_is_scoped_to_m5_max(monkeypatch) -> None:
 
 def test_mps_exact_pair_keeps_512_logical_boundaries_on_large_memory_hosts() -> None:
     """High-memory phase chunks must not overflow pair row storage classes."""
-    from quantem.gpu.ssb.mps.loss import _EXACT_PAIR_LOGICAL_BOUNDARY_BF_512
+    from quantem.gpu.direct_ptycho.mps.loss import _EXACT_PAIR_LOGICAL_BOUNDARY_BF_512
 
     assert min(4096, _EXACT_PAIR_LOGICAL_BOUNDARY_BF_512) == 512
 
@@ -776,7 +776,7 @@ def test_mps_1024_candidate_pair_uses_fused_exact_path(monkeypatch) -> None:
     """Native 1024 Optuna pairs must share geometry and evidence reads."""
     from types import SimpleNamespace
 
-    from quantem.gpu.ssb.mps import loss as mps_loss
+    from quantem.gpu.direct_ptycho.mps import loss as mps_loss
 
     expected = np.asarray([0.125, 0.25], dtype=np.float32)
 
@@ -809,7 +809,7 @@ def test_mps_1024_candidate_pair_uses_fused_exact_path(monkeypatch) -> None:
 def test_mps_column_subrange_matches_standalone_storage() -> None:
     """Packed row storage must not change a boundary's column reduction."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.phase_columns_512 import (
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_columns_512 import (
         phase_cols512_scalar_loss_batch_from_row_ifft,
     )
 
@@ -839,7 +839,7 @@ def test_mps_column_subrange_matches_standalone_storage() -> None:
 def test_mps_zero_aperture_bf_skip_preserves_exact_phase_sums() -> None:
     """Analytic positive-DC BF rows must contribute exactly zero phase."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.phase_columns_512 import (
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_columns_512 import (
         phase_cols512_scalar_loss_batch_from_row_ifft,
         phase_cols512_sum_from_row_ifft,
     )
@@ -881,7 +881,7 @@ def test_mps_zero_aperture_bf_skip_preserves_exact_phase_sums() -> None:
 def test_mps_hermitian_expand_matches_fft2_reference() -> None:
     """MPS half-plane storage must expand to the exact full FFT grid."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.prepared import _fft2_hermitian, expand_hermitian_mx
+    from quantem.gpu.direct_ptycho.mps.prepared import _fft2_hermitian, expand_hermitian_mx
 
     rng = np.random.default_rng(17)
     stack = rng.standard_normal((3, 16, 16)).astype(np.float32)
@@ -901,7 +901,7 @@ def test_mps_hermitian_expand_matches_fft2_reference() -> None:
 
 def test_mps_array_frame_columns_match_direct_detector_indexing() -> None:
     """Optimized detector-column gather must preserve exact BF evidence."""
-    from quantem.gpu.ssb.mps.frames import ArrayFrames
+    from quantem.gpu.direct_ptycho.mps.frames import ArrayFrames
 
     data = np.arange(4 * 5 * 6 * 7, dtype=np.uint16).reshape(4, 5, 6, 7)
     frames = ArrayFrames(data)
@@ -918,10 +918,10 @@ def test_mps_array_frame_columns_match_direct_detector_indexing() -> None:
 def test_mps_object_fourier_sum_matches_looped_reference() -> None:
     """MPS object Fourier sum must match the looped corrected-object path."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.corrected import corrected_from_dynamic_geometry
-    from quantem.gpu.ssb.mps.kernels.object_sum import object_fourier_sum_dynamic
-    from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB, ifft2_chunked
-    from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
+    from quantem.gpu.direct_ptycho.mps.kernels.corrected import corrected_from_dynamic_geometry
+    from quantem.gpu.direct_ptycho.mps.kernels.object_sum import object_fourier_sum_dynamic
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, ifft2_chunked
+    from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
 
     n = 16
     num_bright_field_pixels = 5
@@ -1049,11 +1049,11 @@ def test_mps_object_fourier_sum_matches_looped_reference() -> None:
 def test_mps_phase_cols512_reduced_modes_match_mlx_reference() -> None:
     """Reduced 512-column phase/loss modes must preserve phase and scalar loss."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.phase_columns_512 import (
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_columns_512 import (
         phase_cols512_scalar_loss_from_row_ifft,
         phase_cols512_sum_from_row_ifft,
     )
-    from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sums_from_complex
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sums_from_complex
 
     rng = np.random.default_rng(37)
     row_ifft_np = (
@@ -1095,10 +1095,10 @@ def test_mps_phase_cols512_reduced_modes_match_mlx_reference() -> None:
 def test_mps_reconstruct_cached_geometry_512_loss_matches_mlx_reference() -> None:
     """Cached-geometry 512 phase/loss must not broadcast scalar sumsq as an image."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.corrected import corrected_from_cached_geometry
-    from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sums_from_complex
-    from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB, compute_geometry
-    from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
+    from quantem.gpu.direct_ptycho.mps.kernels.corrected import corrected_from_cached_geometry
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sums_from_complex
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, compute_geometry
+    from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
 
     n = 512
     num_bright_field_pixels = 5
@@ -1218,11 +1218,11 @@ def test_mps_reconstruct_cached_geometry_512_loss_matches_mlx_reference() -> Non
 def test_mps_phase_cols_small_reduced_modes_match_mlx_reference(n: int) -> None:
     """Reduced 128/256/1024-column phase/loss modes must match MLX IFFT reference."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.phase_columns import (
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_columns import (
         phase_cols_small_scalar_loss_from_row_ifft,
         phase_cols_small_sum_from_row_ifft,
     )
-    from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sums_from_complex
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sums_from_complex
 
     rng = np.random.default_rng(37 + n)
     row_ifft_np = (
@@ -1264,9 +1264,9 @@ def test_mps_phase_cols_small_reduced_modes_match_mlx_reference(n: int) -> None:
 def test_mps_row_ifft512_dynamic_matches_mlx_reference() -> None:
     """Fused 512 correction + row-IFFT must match the MLX reference path."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.corrected import corrected_from_dynamic_geometry
-    from quantem.gpu.ssb.mps.kernels.row_ifft import row_ifft512_from_dynamic_geometry
-    from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB
+    from quantem.gpu.direct_ptycho.mps.kernels.corrected import corrected_from_dynamic_geometry
+    from quantem.gpu.direct_ptycho.mps.kernels.row_ifft import row_ifft512_from_dynamic_geometry
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB
 
     n = 512
     num_bright_field_pixels = 3
@@ -1354,9 +1354,9 @@ def test_mps_batched_exact_loss512_matches_single_candidate_path(
 ) -> None:
     """Batched 512 exact loss must match the single-candidate MPS path."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.loss import reconstruct_prepared_batch_exact_loss
-    from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB
-    from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
+    from quantem.gpu.direct_ptycho.mps.loss import reconstruct_prepared_batch_exact_loss
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB
+    from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
 
     n = 512
     num_bright_field_pixels = 4
@@ -1405,7 +1405,7 @@ def test_mps_batched_exact_loss512_matches_single_candidate_path(
         ap_p=None,
     )
 
-    from quantem.gpu.ssb.mps import loss as mps_module
+    from quantem.gpu.direct_ptycho.mps import loss as mps_module
 
     observed_kernel_batches = []
     observed_probe_batches = []
@@ -1485,7 +1485,7 @@ def test_mps_small_exact_batches_use_parallel_stream_workers(
     """Native small batches wider than a pair must not serialize loss calls."""
     from types import SimpleNamespace
 
-    from quantem.gpu.ssb.mps import loss as mps
+    from quantem.gpu.direct_ptycho.mps import loss as mps
 
     calls = []
 
@@ -1536,7 +1536,7 @@ def test_mps_small_exact_pair_uses_fused_path(size: int, monkeypatch) -> None:
     """Native 128/256 candidate pairs must share exact Metal row inputs."""
     from types import SimpleNamespace
 
-    from quantem.gpu.ssb.mps import loss as mps
+    from quantem.gpu.direct_ptycho.mps import loss as mps
 
     calls = []
 
@@ -1586,15 +1586,15 @@ def test_mps_small_exact_pair_uses_fused_path(size: int, monkeypatch) -> None:
 def test_mps_row_ifft_small_dynamic_matches_mlx_reference(n: int) -> None:
     """Fused 128/256/1024 correction + row-IFFT must match the MLX reference."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.corrected import corrected_from_dynamic_geometry
-    from quantem.gpu.ssb.mps.kernels.phase_columns import (
+    from quantem.gpu.direct_ptycho.mps.kernels.corrected import corrected_from_dynamic_geometry
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_columns import (
         phase_cols_small_scalar_loss_from_row_ifft,
     )
-    from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sums_from_complex
-    from quantem.gpu.ssb.mps.kernels.row_ifft import (
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sums_from_complex
+    from quantem.gpu.direct_ptycho.mps.kernels.row_ifft import (
         row_ifft_small_from_dynamic_geometry,
     )
-    from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB
 
     num_bright_field_pixels = 3
     q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
@@ -1696,10 +1696,10 @@ def test_mps_row_ifft_small_dynamic_matches_mlx_reference(n: int) -> None:
 def test_mps_reconstruct_prepared_uses_scalar_loss_for_small_fused_path() -> None:
     """Top-level fused MPS loss accumulation must not broadcast scalar loss tiles."""
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.ssb.mps.kernels.corrected import corrected_from_dynamic_geometry
-    from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sums_from_complex
-    from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB
-    from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
+    from quantem.gpu.direct_ptycho.mps.kernels.corrected import corrected_from_dynamic_geometry
+    from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sums_from_complex
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB
+    from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
 
     n = 128
     num_bright_field_pixels = 5
@@ -1795,7 +1795,7 @@ def test_mps_fit_reads_the_prepared_session_evidence(objective) -> None:
     """
     pytest.importorskip("mlx.core")
     pytest.importorskip("optuna")
-    from quantem.gpu.ssb.mps.backend import MpsSSBBackend
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
 
     rng = np.random.default_rng(61)
     data = rng.poisson(4, size=(8, 8, 12, 12)).astype(np.uint16)
@@ -1853,7 +1853,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     assert result.object_wave.dtype == np.complex64
     assert result.phase.dtype == np.float32
 
-    from quantem.gpu.ssb.mps import backend as mps_backend
+    from quantem.gpu.direct_ptycho.mps import backend as mps_backend
 
     def reject_duplicate_reconstruction(*_args, **_kwargs):
         raise AssertionError("the fit's final phase-variance pass should be retained")
@@ -1871,7 +1871,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
 
 def test_mps_auto_bf_applies_detected_probe_disk(monkeypatch) -> None:
     """Automatic BF selection must not include positive pixels outside the probe."""
-    from quantem.gpu.ssb.mps import prepared as mps
+    from quantem.gpu.direct_ptycho.mps import prepared as mps
 
     dp = np.ones((9, 9), dtype=np.float32)
     monkeypatch.setattr(mps, "detector_mean", lambda _data: dp)
@@ -1897,7 +1897,7 @@ def test_mps_auto_bf_applies_detected_probe_disk(monkeypatch) -> None:
 
 def test_mps_auto_bf_can_reuse_the_computed_mean_dp(monkeypatch) -> None:
     """Exact fit setup should not launch the mean-DP reduction twice."""
-    from quantem.gpu.ssb.mps import prepared as mps
+    from quantem.gpu.direct_ptycho.mps import prepared as mps
 
     dp = np.ones((9, 9), dtype=np.float32)
 
@@ -1920,7 +1920,7 @@ def test_mps_auto_bf_can_reuse_the_computed_mean_dp(monkeypatch) -> None:
 
 def test_mps_sparse_storage_keeps_logical_chunk_boundaries() -> None:
     """Packed active BF planes must retain the original reduction grouping."""
-    from quantem.gpu.ssb.mps.prepared import bf_storage_chunks
+    from quantem.gpu.direct_ptycho.mps.prepared import bf_storage_chunks
 
     class Prepared:
         num_bright_field_pixels = 12
@@ -1931,7 +1931,7 @@ def test_mps_sparse_storage_keeps_logical_chunk_boundaries() -> None:
 
 def test_mps_sparse_row_packs_preserve_reduction_boundaries() -> None:
     """Row packs may share storage without merging exact column reductions."""
-    from quantem.gpu.ssb.mps.prepared import bf_storage_chunk_packs
+    from quantem.gpu.direct_ptycho.mps.prepared import bf_storage_chunk_packs
 
     class Prepared:
         num_bright_field_pixels = 12

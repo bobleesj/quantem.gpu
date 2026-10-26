@@ -170,7 +170,7 @@ they finish, and a region session returns its own on close.
 
 ## The loss route: tiles by default, the whole chunk on request
 
-`quantem.gpu.ssb.mps.reconstruct.LOSS_ROW_IFFT_TILE_BF` (default 1024) sends a
+`quantem.gpu.direct_ptycho.mps.reconstruct.LOSS_ROW_IFFT_TILE_BF` (default 1024) sends a
 512² loss chunk larger than the tile through the tiled path a cancellable
 preview takes: the same reduction boundaries and float32 order, so the same
 loss and phase bits, with one tile of row IFFT alive at a time. On a Mac with

@@ -59,10 +59,10 @@ operation accepts a representation on a given runtime.
 
 | Runtime | Discovery/dispatch | IO/decode | Detector and DPC | Reconstruction/display | Primary tests |
 |---|---|---|---|---|---|
-| Python MPS | `device/select.py`, operation protocols | `io/hdf5/mps`, `resident/mps` | `detector/counts.py`, `detector/mps`, `resident/mps` | `ssb/mps` | `test_mps_*`, MPS sections of parity tests |
-| CUDA | `device/select.py`, operation protocols | `io/hdf5/cuda`, `resident/cuda` | `detector/cuda` | `ssb/cuda` | `test_cuda_*`, `test_realdata_parity.py` |
+| Python MPS | `device/select.py`, operation protocols | `io/hdf5/mps`, `resident/mps` | `detector/counts.py`, `detector/mps`, `resident/mps` | `direct_ptycho/mps` | `test_mps_*`, MPS sections of parity tests |
+| CUDA | `device/select.py`, operation protocols | `io/hdf5/cuda`, `resident/cuda` | `detector/cuda` | `direct_ptycho/cuda` | `test_cuda_*`, `test_realdata_parity.py` |
 | Swift/Metal | SwiftPM products in `Package.swift` | `Native4DSTEMIO`, `Metal4DSTEMKernels` | `Metal4DSTEMKernels` | `MetalImageFFT`, `MetalDisplayKernels`, `MetalImageRuntime` | `native/swift/Tests` |
-| WebGPU | `device/webgpu.ts` and TypeScript adapters | `io/hdf5/webgpu` | detector/DPC WebGPU modules | `ssb/webgpu`; the browser client owns display | `test_webgpu_*`, browser hardware gates |
+| WebGPU | `device/webgpu.ts` and TypeScript adapters | `io/hdf5/webgpu` | detector/DPC WebGPU modules | `direct_ptycho/webgpu`; the browser client owns display | `test_webgpu_*`, browser hardware gates |
 | CPU reference | explicit `backend="cpu"` | `io/hdf5/cpu.py` | NumPy paths in detector/DPC workflows | small independent reference fixtures | product/parity tests |
 
 Open the runtime page for exact source files, call path, memory behavior,

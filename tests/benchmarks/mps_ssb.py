@@ -307,7 +307,7 @@ def alternating(session, first, second):
 def measure(master, reps=20, load_reps=3, log=print):
     """One report of every stage on ``master`` (the gold scan)."""
     from quantem.gpu import SSB, detector, io
-    from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
+    from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
 
     report = {"schema": "quantem.gpu.mps-benchmark/1", "dataset": {"id": DATASET, "revision": REVISION,
                                                                    "file": MASTER},

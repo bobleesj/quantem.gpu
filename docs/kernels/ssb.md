@@ -408,11 +408,11 @@ comparison with the earlier finite-difference refinement.
 
 | Layer | Source |
 |---|---|
-| Public workflow/results | `src/quantem/gpu/ssb` |
-| CUDA engine and optimizer | `src/quantem/gpu/ssb/cuda` |
-| Python MPS engine and optimizer | `src/quantem/gpu/ssb/mps` |
+| Public workflow/results | `src/quantem/gpu/direct_ptycho` |
+| CUDA engine and optimizer | `src/quantem/gpu/direct_ptycho/cuda` |
+| Python MPS engine and optimizer | `src/quantem/gpu/direct_ptycho/mps` |
 | Native Swift/Metal preparation, joint model, fit and direct methods | `native/swift/Sources/MetalSSBKernels` |
-| WebGPU kernels | `src/quantem/gpu/ssb/webgpu` |
+| WebGPU kernels | `src/quantem/gpu/direct_ptycho/webgpu` |
 
 Parity uses the same source, bright-field selection, physical calibration,
 aberrations, precision, and objective. Reports include complex-object or phase

@@ -1,8 +1,8 @@
 """Gate the native SSB fit on the agreement objective: the Swift port must draw the Python search's trials.
 
 The default fit (``find_aberrations()``, tilt-corrected) and ``find_aberrations(tilt=False)`` maximize the model
-agreement with the resident multivariate TPE of ``ssb._resident_search``, then a trust-region Newton on the
-exact gradient and Hessian (``ssb._exact_newton``). The native ``SSBAgreementSearch`` ports both. This gate runs
+agreement with the resident multivariate TPE of ``direct_ptycho._resident_search``, then a trust-region Newton on the
+exact gradient and Hessian (``direct_ptycho._exact_newton``). The native ``SSBAgreementSearch`` ports both. This gate runs
 them on one synthetic float32 objective, which each side's search evaluates from the same float32 trial rows,
 with the same analytic derivatives for the Newton, and requires the 200 search rows to be identical and the
 fitted points to agree to 1e-6:
@@ -80,7 +80,7 @@ class SyntheticDerivatives:
 
 def python_reference(backend: str) -> dict:
     """Run the Python resident fits on the synthetic objective and digest their search rows."""
-    from quantem.gpu.ssb._resident_search import _Device, fit_resident, fit_standard_resident
+    from quantem.gpu.direct_ptycho._resident_search import _Device, fit_resident, fit_standard_resident
 
     xp = _Device(backend).xp
     rows: list[np.ndarray] = []

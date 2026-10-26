@@ -4,7 +4,7 @@ import numpy as np
 import optuna
 import pytest
 
-from quantem.gpu.ssb._tpe_independent import _batch_quantiles, make_independent_sampler
+from quantem.gpu.direct_ptycho._tpe_independent import _batch_quantiles, make_independent_sampler
 
 
 @pytest.mark.parametrize("seed", [17, 42, 87])

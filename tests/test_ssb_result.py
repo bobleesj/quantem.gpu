@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from quantem.gpu.formats.ssb_phase import SCHEMA, read_result
-from quantem.gpu.ssb.persistence import FIT_SCHEMA
+from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
 
 def _fit(**changes):

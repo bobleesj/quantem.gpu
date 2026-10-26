@@ -37,8 +37,8 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
     import matplotlib.pyplot as plt
 
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.persistence import load_result, result_paths
-    from quantem.gpu.ssb.results import host_array
+    from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
+    from quantem.gpu.direct_ptycho.results import host_array
 
     counts = np.random.default_rng(7).poisson(40, size=(128, 128, 32, 32)).astype(np.uint16)
     rows, columns = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
@@ -101,7 +101,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
         # Image comparisons keep every fitted correction, including nonzero tilt/depth.
         shown = ssb.reconstruct(fit, upsampling_factor="auto", compute_loss=False)
         # Matplotlib consumes host images even when both fitted waves stay on CUDA.
-        from quantem.gpu.ssb.rotation_defocus import RotationDefocusComparison
+        from quantem.gpu.direct_ptycho.rotation_defocus import RotationDefocusComparison
 
         comparison = RotationDefocusComparison((fit,) * 4, (shown,) * 4, ((-30, 0), (0, 30)))
         review = comparison.show(view_fraction=1)

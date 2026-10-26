@@ -5,7 +5,7 @@ small portions of third-party source code listed below.
 
 ## Optuna Gaussian sampling for SSB
 
-File: `src/quantem/gpu/ssb/_tpe_gaussian.py`
+File: `src/quantem/gpu/direct_ptycho/_tpe_gaussian.py`
 
 The cached Gaussian mixture and inverse CDF are adapted from Optuna 4.9.0
 (`probability_distributions.py` and `_truncnorm.py`). The modifications cache
@@ -153,7 +153,7 @@ limitations under the License.
 
 ## Resident normal CDF
 
-The rational CDF coefficients in `ssb/_resident_precision.py` are adapted from
+The rational CDF coefficients in `direct_ptycho/_resident_precision.py` are adapted from
 SciPy/xsf `include/xsf/cephes/ndtr.h`, Cephes Math Library Release 2.2.
 Copyright 1984, 1987, 1988, 1992 by Stephen L. Moshier.
 Source: https://github.com/scipy/xsf/blob/main/include/xsf/cephes/ndtr.h

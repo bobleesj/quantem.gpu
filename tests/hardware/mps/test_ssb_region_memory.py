@@ -11,7 +11,7 @@ from .test_ssb_upsampling import _disk_session
 def test_region_fit_preserves_overview_with_memory_budget(monkeypatch, retain):
     """Fit a region and return to the identical full-field correction."""
     _require_mps()
-    from quantem.gpu.ssb.mps.hardware import require_mlx
+    from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
     mx = require_mlx()
     info = mx.device_info()
@@ -71,7 +71,7 @@ def test_full_field_region_shares_evidence_but_keeps_fit_state_independent():
 def test_rectangular_region_reserves_its_actual_padded_grid(monkeypatch):
     """A 129 by 128 selection must budget the 256-square FFT it will build."""
     _require_mps()
-    from quantem.gpu.ssb.mps.hardware import require_mlx
+    from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
     mx = require_mlx()
     with _disk_session(n=256) as session:

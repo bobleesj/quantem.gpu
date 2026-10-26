@@ -1,6 +1,6 @@
 """Single-sideband (SSB) ptychography in plain torch: the readable reference for the fast backends.
 
-Same formulation as the CUDA engine (``quantem.gpu.ssb.cuda.engine`` and ``kernels.common``), written as ordinary tensor code so it
+Same formulation as the CUDA engine (``quantem.gpu.direct_ptycho.cuda.engine`` and ``kernels.common``), written as ordinary tensor code so it
 runs on any torch device (CUDA, MPS, CPU) and so the fused kernels have one exact reference to be tested against.
 
 Data: ``G[k, q]`` = 2-D Fourier transform over scan positions of the intensity recorded by bright-field detector pixel k,

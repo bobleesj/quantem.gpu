@@ -22,7 +22,7 @@ def test_fft_kernel_sets_are_built_for_the_current_gpu(monkeypatch):
     wrong aberrations with loss 0 and no error. The set is now looked up by size and current device.
     """
     _require_cuda()
-    from quantem.gpu.ssb.cuda import kernels
+    from quantem.gpu.direct_ptycho.cuda import kernels
 
     requested = []
     monkeypatch.setattr(kernels, "_kernel_set", lambda size, device: requested.append((size, device)))

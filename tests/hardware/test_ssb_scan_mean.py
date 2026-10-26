@@ -65,8 +65,8 @@ def test_shared_default_retains_native_diagnostic_and_saved_policy(tmp_path):
 def _mean_free_reference(ssb, factor, depth):
     """The SSB phase with the scan mean subtracted before zero insertion, on the physical GPU."""
     if ssb.backend == "mps":
-        from quantem.gpu.ssb.mps.prepared import expand_hermitian_mx
-        from quantem.gpu.ssb.mps.thick_sample import _compiled_terms, _params
+        from quantem.gpu.direct_ptycho.mps.prepared import expand_hermitian_mx
+        from quantem.gpu.direct_ptycho.mps.thick_sample import _compiled_terms, _params
 
         prepared = ssb._backend()._prepared
         mx = prepared.mx

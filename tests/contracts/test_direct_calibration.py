@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.calibration import capture_calibration
-from quantem.gpu.ssb.persistence import load_result, save_result, source_identity
-from quantem.gpu.ssb.results import SSBResult
+from quantem.gpu.direct_ptycho.calibration import capture_calibration
+from quantem.gpu.direct_ptycho.persistence import load_result, save_result, source_identity
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 
 @pytest.mark.parametrize("method", ["phase", "complex"])

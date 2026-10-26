@@ -12,8 +12,8 @@ import pytest
 
 from quantem.gpu.formats import publish
 from quantem.gpu.formats.ssb_phase import _publish, export_result, read_result
-from quantem.gpu.ssb.persistence import FIT_SCHEMA
-from quantem.gpu.ssb.units import HIGHER_ORDER
+from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
+from quantem.gpu.direct_ptycho.units import HIGHER_ORDER
 
 
 def _deny_hardlinks(*args):

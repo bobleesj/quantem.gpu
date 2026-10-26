@@ -44,7 +44,7 @@ jobs:
           node-version: "22"
       - name: Install browser contract tools
         run: npm ci
-      # sources.json lists every file quantem.widget bundles; the entry point alone never reached ssb/webgpu.
+      # sources.json lists every file quantem.widget bundles; the entry point alone never reached direct_ptycho/webgpu.
       # npm run typecheck uses the widget's compiler options, so an unused parameter fails here, not in the widget.
       - name: Type-check the bundled browser sources
         run: npm run typecheck

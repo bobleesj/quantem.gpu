@@ -7,8 +7,8 @@ polarity check ran, the angle before it. Transposition exchanges the detector ax
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb import SSB
-from quantem.gpu.ssb.results import SSBResult
+from quantem.gpu.direct_ptycho import SSB
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 # ---
 
@@ -43,7 +43,7 @@ def test_angle_below_180_with_reversal_flag_is_not_a_result_field(retired):
 
 def test_transposition_preserves_original_detector_coordinates(monkeypatch):
     """A rectangular crop exchanges axes without changing the public calibration."""
-    monkeypatch.setattr("quantem.gpu.ssb.workflow.resolve", lambda backend: "mps")
+    monkeypatch.setattr("quantem.gpu.direct_ptycho.workflow.resolve", lambda backend: "mps")
     patterns = np.arange(2 * 3 * 4 * 5, dtype=np.uint16).reshape(2, 3, 4, 5)
     session = SSB(patterns, backend="mps", voltage_kV=300, semiangle_mrad=20,
                   scan_sampling_A=(.5, .6), detector_sampling_mrad=(2., 3.),

@@ -66,7 +66,7 @@ class _Backend:
 
 
 def _session(monkeypatch, source, backend, device="mps"):
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     monkeypatch.setattr(workflow, "resolve", lambda _backend: device)
     monkeypatch.setattr(workflow.SSB, "_backend", lambda _self: backend)
@@ -258,7 +258,7 @@ def test_fixed_reconstruction_reuses_only_matching_aberrations(
 def test_saved_result_requires_source_identity(tmp_path, monkeypatch) -> None:
     """In-memory arrays cannot be reused from shape alone."""
 
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     backend = _Backend()
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
@@ -337,8 +337,8 @@ def test_cuda_reuse_restores_object_wave_to_cuda(tmp_path, monkeypatch) -> None:
 
 def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
     """A stored fit counts only with the current schema marker; any other block reads as no fit, without an error."""
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA, RESULT_SCHEMA, RESULT_VERSION, SCHEMA
-    from quantem.gpu.ssb.series import saved_fit, stored_fit
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, RESULT_SCHEMA, RESULT_VERSION, SCHEMA
+    from quantem.gpu.direct_ptycho.series import saved_fit, stored_fit
 
     aberrations = {"C10_nm": 10.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)}
     block = {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0, "scan_detector_rotation_flipped": False}
@@ -364,8 +364,8 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
 def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     """write_fit_metadata marks its block and saved_fit returns the exact values; no field of an unmarked block survives."""
     from quantem.gpu import SSBResult
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
-    from quantem.gpu.ssb.series import saved_fit, write_fit_metadata
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
+    from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
     config = tmp_path / "config.json"
     earlier = {"aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "rotation_angle_deg": 0.0, "com_reversed": True,
@@ -411,10 +411,10 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
 
     from quantem.gpu import SSBResult
     from quantem.gpu.formats.ssb_phase import export_result, read_result
-    from quantem.gpu.ssb import workflow
-    from quantem.gpu.ssb.brightfield import BrightfieldDisk
-    from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames
-    from quantem.gpu.ssb.series import write_fit_metadata
+    from quantem.gpu.direct_ptycho import workflow
+    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
+    from quantem.gpu.direct_ptycho.series import write_fit_metadata
 
     received = []
 
@@ -464,8 +464,8 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     import pytest
 
     from quantem.gpu import SSBResult
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
-    from quantem.gpu.ssb.series import saved_fit, write_fit_metadata
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
+    from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
     assert SCREEN_ACQUISITION_SCHEMA == "quantem.screen-acquisition/2"
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": -0.5}
@@ -560,8 +560,8 @@ def test_parameter_slices_require_live_ownership_for_saved_array_fit(tmp_path, m
 
 def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path, monkeypatch):
     from quantem.gpu import SSBResult
-    from quantem.gpu.ssb import parameters
-    from quantem.gpu.ssb.persistence import load_result
+    from quantem.gpu.direct_ptycho import parameters
+    from quantem.gpu.direct_ptycho.persistence import load_result
 
     session, result, paths = _saved_joint_fit(tmp_path, monkeypatch)
     signature = result.metadata["signature"]
@@ -668,7 +668,7 @@ def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_
 
 def test_save_dir_is_a_results_directory_and_refuses_a_file_name(tmp_path):
     """save_dir names a folder; a path ending in .npz or .json is a file, not a folder of that name."""
-    from quantem.gpu.ssb.persistence import result_paths
+    from quantem.gpu.direct_ptycho.persistence import result_paths
 
     assert result_paths(tmp_path / "results", "reconstruct") == (
         (tmp_path / "results" / "ssb-reconstruct.npz").resolve(),
@@ -682,7 +682,7 @@ def test_save_dir_is_a_results_directory_and_refuses_a_file_name(tmp_path):
 
 def test_a_result_record_of_an_earlier_schema_is_refused_with_one_line(tmp_path, capsys):
     """quantem.ssb-result/9 named its source by absolute path; /10 reads only its own layout and says so."""
-    from quantem.gpu.ssb.persistence import RESULT_SCHEMA, load_result, result_paths
+    from quantem.gpu.direct_ptycho.persistence import RESULT_SCHEMA, load_result, result_paths
 
     assert RESULT_SCHEMA == "quantem.ssb-result/10"
     paths = result_paths(tmp_path / "fit", "find_aberrations")
@@ -715,7 +715,7 @@ def test_saved_result_is_reused_after_its_folder_moves_and_holds_no_absolute_pat
     """
     import shutil
 
-    from quantem.gpu.ssb.persistence import acquisition_identity
+    from quantem.gpu.direct_ptycho.persistence import acquisition_identity
 
     folder = tmp_path / "session"
     source = folder / "data" / "scan.bin"

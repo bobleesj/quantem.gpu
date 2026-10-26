@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.workflow import SSB
+from quantem.gpu.direct_ptycho.workflow import SSB
 
 
 def call(session, **options):
@@ -23,7 +23,7 @@ def test_primary_preserves_budget_seed_and_options():
 
 
 def test_standard_default_and_explicit_broad_dispatch(monkeypatch):
-    from quantem.gpu.ssb import fifth_order_fit
+    from quantem.gpu.direct_ptycho import fifth_order_fit
     run = Mock(return_value="broad fit")
     monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", run)
     assert call(object()) == "broad fit"
@@ -48,7 +48,7 @@ def test_invalid_options_fail_before_computation(options):
 
 
 def test_mps_uses_same_default_model(monkeypatch):
-    from quantem.gpu.ssb import fifth_order_fit
+    from quantem.gpu.direct_ptycho import fifth_order_fit
     run = Mock(return_value="fifth-order fit")
     monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", run)
     session = SimpleNamespace(backend="mps")
@@ -59,7 +59,7 @@ def test_mps_uses_same_default_model(monkeypatch):
 
 @pytest.mark.parametrize("refinement", ["newton", "nelder-mead", "bfgs"])
 def test_a_retired_refinement_prints_one_line_and_runs_auto(monkeypatch, capsys, refinement):
-    from quantem.gpu.ssb import fifth_order_fit
+    from quantem.gpu.direct_ptycho import fifth_order_fit
     run = Mock(return_value="fit")
     monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", run)
     assert call(object(), search="broad", refinement=refinement) == "fit"
@@ -82,7 +82,7 @@ def test_no_refinement_is_for_the_primary_search_only(capsys):
 
 
 def test_auto_prints_nothing(monkeypatch, capsys):
-    from quantem.gpu.ssb import fifth_order_fit
+    from quantem.gpu.direct_ptycho import fifth_order_fit
     monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", Mock(return_value="fit"))
     call(object(), refinement="auto")
     assert capsys.readouterr().out == ""
@@ -90,7 +90,7 @@ def test_auto_prints_nothing(monkeypatch, capsys):
 
 def _exact_session(monkeypatch, start, refine, *, study=None, **session):
     """A CUDA session stub whose fifth-order fit runs on a constant objective with ``refine`` as the refinement."""
-    from quantem.gpu.ssb import fifth_order_fit, fifth_order_parameters
+    from quantem.gpu.direct_ptycho import fifth_order_fit, fifth_order_parameters
 
     objective = SimpleNamespace(evaluate=lambda points, order: np.ones(len(np.atleast_2d(points))),
                                 p=SimpleNamespace(wavelength=0.019687489006849, semiangle_rad=0.03))
@@ -115,7 +115,7 @@ def _record(point, stop="test stop"):
 
 def test_broad_records_the_exact_gradient_budget(monkeypatch, tmp_path):
     """The refinement, the persisted result and the cache signature share one budget."""
-    from quantem.gpu.ssb import fifth_order_fit
+    from quantem.gpu.direct_ptycho import fifth_order_fit
 
     start = np.zeros(28)
     start[5] = 1.
@@ -176,7 +176,7 @@ def test_trial_budget_comparison_keeps_start_and_saved_results_independent(tmp_p
 
 def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch):
     """Default initialization reaches the same joint solver without an extra study."""
-    from quantem.gpu.ssb import fifth_order_fit
+    from quantem.gpu.direct_ptycho import fifth_order_fit
 
     start = np.zeros(28)
     start[5] = 1.

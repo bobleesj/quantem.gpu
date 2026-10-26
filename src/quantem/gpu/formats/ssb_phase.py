@@ -21,8 +21,8 @@ import numpy as np
 
 from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.publish import publish_file
-from quantem.gpu.ssb.series import screen_record_fit, stored_fit
-from quantem.gpu.ssb.units import HIGHER_ORDER, PRIMARY
+from quantem.gpu.direct_ptycho.series import screen_record_fit, stored_fit
+from quantem.gpu.direct_ptycho.units import HIGHER_ORDER, PRIMARY
 
 # Carried by every portable phase record under "schema"; another value is refused.
 # 2: the shared vocabulary (scan_sampling_A, detector_sampling_mrad, bright_field_center_px, aberrations in

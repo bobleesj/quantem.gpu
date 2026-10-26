@@ -14,7 +14,7 @@ about 1e-6 of its largest phase. log|w| of a complex64 wave near |w| = 1 is quan
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb import direct_workflow
+from quantem.gpu.direct_ptycho import direct_workflow
 
 from .test_ssb_direct_mps import POINTS, _reference_prepare, _reference_solve, _scene, _session
 from .test_ssb_thick_sample_mps import _require_mps
@@ -67,7 +67,7 @@ def _check(wave, expected, complex_object, relative, reference=None, order=None)
 @pytest.mark.parametrize("control", ["C10_nm", "phi12_deg", "C30_nm"])
 def test_window_matches_exact_preparation(ptycho, control):
     """Nodes, window edges and a point between nodes, both methods, and phase from a complex window."""
-    from quantem.gpu.ssb.mps.direct import DragWindow, PreparedDirect
+    from quantem.gpu.direct_ptycho.mps.direct import DragWindow, PreparedDirect
 
     backend = _backend(ptycho)
     data = _scene()

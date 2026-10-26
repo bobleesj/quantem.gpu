@@ -24,7 +24,7 @@ class _Backend:
 
 
 def _session(monkeypatch):
-    from quantem.gpu.ssb import workflow
+    from quantem.gpu.direct_ptycho import workflow
 
     backend = _Backend()
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
@@ -65,8 +65,8 @@ def test_phase_of_mean_is_what_ssb_records_and_still_accepted(monkeypatch):
 
 
 def test_a_result_saved_with_a_retired_estimator_loads_with_a_notice(tmp_path, capsys):
-    from quantem.gpu.ssb.persistence import load_result, result_paths, save_result
-    from quantem.gpu.ssb.results import SSBResult
+    from quantem.gpu.direct_ptycho.persistence import load_result, result_paths, save_result
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
     paths = result_paths(tmp_path, "find_aberrations")
     signature = {"operation": "find_aberrations"}
@@ -85,7 +85,7 @@ def test_a_result_saved_with_a_retired_estimator_loads_with_a_notice(tmp_path, c
 
 
 def test_an_unrecorded_estimator_is_not_shown():
-    from quantem.gpu.ssb.results import SSBResult, retired_estimator_note
+    from quantem.gpu.direct_ptycho.results import SSBResult, retired_estimator_note
 
     assert "Estimator" not in repr(SSBResult(object_wave=np.ones((2, 2), np.complex64), backend="mps"))
     assert retired_estimator_note("phase_of_mean", "fit.json") is None

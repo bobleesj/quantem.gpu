@@ -32,8 +32,8 @@ _KEYWORDS = {"phase_damping": "phase_regularization", "amplitude_damping": "ampl
 
 def _session(root: Path, rotation_deg: float):
     from quantem.gpu import DirectPtycho
-    from quantem.gpu.ssb.brightfield import BrightfieldDisk
-    from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames
+    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
 
     case = json.loads((root / "case.json").read_text())
     calibration = case["calibration"]

@@ -248,7 +248,7 @@ holds `C12_nm=0`:
 It searches `phi12_deg` over its whole period, so a `phi12_deg` range or a
 nonzero held `C12_nm` alone raises and names what to pass; holding all three
 coefficients needs `check_rotation=False`. The joint fit searches depth
-spreads in `quantem.gpu.ssb.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ptycho.aberrations = {...}` to
+spreads in `quantem.gpu.direct_ptycho.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ptycho.aberrations = {...}` to
 state a known calibration, which `reconstruct()` then applies without fitting.
 `detector_sampling_mrad` is detector angular sampling in
 mrad per pixel, `(row, col)`. Calibrate it as its own step before SSB:
@@ -300,7 +300,7 @@ that fit's coefficients, so `report()` shows the suggested rotation and
 holds no absolute path: it names its source by file name (and its path
 relative to the results folder when the data lives under it), and it is reused
 when the acquisition's portable identity matches
-(`quantem.gpu.ssb.persistence.acquisition_identity`: file name, size and the
+(`quantem.gpu.direct_ptycho.persistence.acquisition_identity`: file name, size and the
 SHA-256 of the first MiB of the master and of each data file, the scan and
 detector shapes, and how flagged pixels were filled). A results folder moved or
 copied with its data is therefore reused; another acquisition is fitted again.
@@ -767,7 +767,7 @@ branch is chosen in two steps:
 2. **Phase tail.** When the column test is not decisive, or the session has no
    dark field, the branch with the larger mean-centred third-moment ratio
    `S = mean(p³) / mean(p²)^1.5`, `p = phase − mean(phase)`
-   (`quantem.gpu.ssb.results.phase_skewness`) is kept: a few bright columns
+   (`quantem.gpu.direct_ptycho.results.phase_skewness`) is kept: a few bright columns
    over a flatter background.
 
 One line says which branch was kept and why, for example
@@ -1091,7 +1091,7 @@ backend request, optimizer settings, and per-acquisition records.
 unflipped for a recorded rotation), and an acquisition with no recorded
 rotation is estimated by `DirectPtycho.open`. `scan_sampling_A` may be one number.
 
-`quantem.gpu.ssb.series.screen_record_settings(record)` returns the
+`quantem.gpu.direct_ptycho.series.screen_record_settings(record)` returns the
 `DirectPtycho.open` keywords a QuantEM Live screening record's stored fit used (beam,
 `(row, col)` scan and detector sampling, physical rotation and flip,
 bright-field centre and radius, aberrations), and
@@ -1109,7 +1109,7 @@ acquisition's `files` entry by QuantEM Live's rules (its master name, a
 
 A fit stored in `live/screen/<dataset>/config.json` is read only when its
 `computed.ssb` block carries `"schema": "quantem.ssb-fit/7"`
-(`quantem.gpu.ssb.persistence.FIT_SCHEMA`), which `reconstruct_series` writes
+(`quantem.gpu.direct_ptycho.persistence.FIT_SCHEMA`), which `reconstruct_series` writes
 with every fit. A block with another schema or none is treated as absent: its
 aberrations, rotation and recorded settings are not read or converted, the
 probe reference is fitted again, and the physical settings come from
@@ -1118,7 +1118,7 @@ probe reference is fitted again, and the physical settings come from
 
 That `config.json` is QuantEM Live's screening record, which Live reads only
 with `"schema": "quantem.screen-acquisition/2"` at its top level
-(`quantem.gpu.ssb.persistence.SCREEN_ACQUISITION_SCHEMA`). A record that
+(`quantem.gpu.direct_ptycho.persistence.SCREEN_ACQUISITION_SCHEMA`). A record that
 `reconstruct_series` creates carries that key. In a record that exists it
 changes nothing outside `computed.ssb`; a record with another top-level
 schema, or none, raises `ValueError` before anything is written and names

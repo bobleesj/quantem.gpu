@@ -10,7 +10,7 @@ pytestmark = pytest.mark.slow
 def objective():
     pytest.importorskip("mlx.core")
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.mps.fifth_order import Objective
+    from quantem.gpu.direct_ptycho.mps.fifth_order import Objective
 
     counts = np.random.default_rng(617).poisson(
         10, size=(128, 128, 16, 16)
@@ -45,7 +45,7 @@ def test_batched_candidates_preserve_scores(objective):
     batched = objective.evaluate(candidates, 5)
     single = np.array([objective.evaluate(z, 5)[0] for z in candidates])
     np.testing.assert_array_equal(batched, single)
-    from quantem.gpu.ssb.mps.fifth_order import Objective
+    from quantem.gpu.direct_ptycho.mps.fifth_order import Objective
 
     small = Objective(objective.p, partial_bytes=1)
     np.testing.assert_array_equal(small.evaluate(candidates, 5), batched)
@@ -53,8 +53,8 @@ def test_batched_candidates_preserve_scores(objective):
 
 def test_matches_existing_higher_order_model(objective):
     """Compare the new GPU reduction with the established Metal optics model."""
-    from quantem.gpu.ssb.higher_order import ORDERS
-    from quantem.gpu.ssb.mps.higher_order_agreement import agreement_batch
+    from quantem.gpu.direct_ptycho.higher_order import ORDERS
+    from quantem.gpu.direct_ptycho.mps.higher_order_agreement import agreement_batch
 
     candidates = np.random.default_rng(619).uniform(-0.25, 0.25, (9, 28))
     candidates[:, 5] = 1.2
@@ -70,7 +70,7 @@ def test_matches_existing_higher_order_model(objective):
 
 def test_zero_higher_orders_match_primary_model(objective):
     """The fifth-order polynomial includes the existing primary model exactly."""
-    from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
+    from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
 
     z = np.array([[-0.4, 0.1, -0.08, 0.4, -0.6, 1.2]])
     primary, _ = objective.encode(z, 1)

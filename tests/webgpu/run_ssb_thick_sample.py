@@ -16,7 +16,7 @@ from pathlib import Path
 import cupy as cp
 import numpy as np
 
-from quantem.gpu.ssb.cuda.kernels.engine import thick_correct_kernel
+from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_correct_kernel
 
 
 def run(thickness_A: float, sample_tilt_mrad: tuple[float, float], num_points: int = 20000, seed: int = 0) -> dict:

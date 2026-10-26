@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("scipy")
 
-from quantem.gpu.ssb.branches import (
+from quantem.gpu.direct_ptycho.branches import (
     COLUMN_EFFECT_MIN,
     COLUMN_Z_MIN,
     RotationBranches,
@@ -16,7 +16,7 @@ from quantem.gpu.ssb.branches import (
     compare_branches,
     locate_atomic_columns,
 )
-from quantem.gpu.ssb.results import column_sign, phase_skewness
+from quantem.gpu.direct_ptycho.results import column_sign, phase_skewness
 
 
 def _lattice(n=96, period_px=12, width_px=1.5):
@@ -250,7 +250,7 @@ def test_display_helpers_default_to_the_auto_factor():
     """show_trials and branch panels resolve "auto" as reconstruct does: 2x at 0.264 Å, 3x at 0.373 Å, 4x at 0.5 Å."""
     import inspect
 
-    from quantem.gpu.ssb.workflow import SSB
+    from quantem.gpu.direct_ptycho.workflow import SSB
 
     assert inspect.signature(SSB.show_trials).parameters["upsampling_factor"].default == "auto"
     assert inspect.signature(RotationBranches.show).parameters["upsampling_factor"].default == "auto"
@@ -269,7 +269,7 @@ def test_a_native_phase_view_names_the_auto_factor(capsys):
 
     matplotlib.use("Agg")
     pytest.importorskip("quantem.core")
-    from quantem.gpu.ssb.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
     wave = np.exp(1j * _lattice(n=32))
     native = SSBResult(object_wave=wave, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,

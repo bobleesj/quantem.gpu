@@ -12,8 +12,8 @@ from .test_ssb_thick_sample_mps import _require_mps
 def test_alias_aperture_bounds_preserve_soft_edges(angular_sampling):
     """Check open, closed and anisotropic soft edges against the GPU model."""
     _require_mps()
-    from quantem.gpu.ssb.mps.hardware import require_mlx
-    from quantem.gpu.ssb.mps.upsampling import _ALIAS_GEOMETRY, _HEADER
+    from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
+    from quantem.gpu.direct_ptycho.mps.upsampling import _ALIAS_GEOMETRY, _HEADER
 
     mx = require_mlx()
     wavelength, semiangle = 0.02, 0.03
@@ -79,8 +79,8 @@ def _disk_session(n=128, source_path=None, detector_sampling=(10.0, 10.0)):
 
 def _zero_inserted_reference(prepared, factor, coefs, tilt, depth):
     """Independent GPU scan construction, followed by the existing model graph: the phase of the mean wave."""
-    from quantem.gpu.ssb.mps.prepared import expand_hermitian_mx
-    from quantem.gpu.ssb.mps.thick_sample import _compiled_terms, _params
+    from quantem.gpu.direct_ptycho.mps.prepared import expand_hermitian_mx
+    from quantem.gpu.direct_ptycho.mps.thick_sample import _compiled_terms, _params
 
     mx = prepared.mx
     native = prepared.scan_shape[0]
@@ -149,7 +149,7 @@ def test_alias_sampling_preserves_gpu_model_and_native_loss(factor, depth_nm):
 )
 def test_fused_depth_model_at_all_native_sizes(n, atol):
     _require_mps()
-    from quantem.gpu.ssb.mps.thick_sample import reconstruct_thick_reference
+    from quantem.gpu.direct_ptycho.mps.thick_sample import reconstruct_thick_reference
 
     with _disk_session(n) as ssb:
         coefs = {"C10_nm": 3.0, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)}
@@ -232,7 +232,7 @@ def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch)
     from concurrent.futures import CancelledError
 
     _require_mps()
-    from quantem.gpu.ssb.mps import upsampling
+    from quantem.gpu.direct_ptycho.mps import upsampling
 
     from .test_ssb_thick_sample_mps import _poisson_disk_session
 
@@ -267,7 +267,7 @@ def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch)
 @pytest.mark.parametrize("depth_nm", [0., 18.])
 def test_interruptible_native_loss_keeps_exact_full_bf_sums(monkeypatch, depth_nm):
     """Persist accumulators across partial BF tiles, including a short last tile."""
-    from quantem.gpu.ssb.mps import reconstruct
+    from quantem.gpu.direct_ptycho.mps import reconstruct
 
     _require_mps()
     coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
@@ -315,7 +315,7 @@ def test_automatic_sampling_rotation_and_saved_result(tmp_path):
 def test_coherent_half_spectrum_retains_full_complex_result(monkeypatch, depth_nm):
     """Reduce paired frequencies only when the complete soft aperture fits."""
     _require_mps()
-    from quantem.gpu.ssb.mps import upsampling
+    from quantem.gpu.direct_ptycho.mps import upsampling
 
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     sample = {"sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": depth_nm}
@@ -339,7 +339,7 @@ def test_coherent_reduction_keeps_partial_bf_groups(
 ):
     """Every BF contribution survives grouping, including an incomplete tail."""
     _require_mps()
-    from quantem.gpu.ssb.mps import upsampling
+    from quantem.gpu.direct_ptycho.mps import upsampling
 
     from .test_ssb_thick_sample_mps import _poisson_disk_session
 
@@ -414,7 +414,7 @@ def test_coherent_reconstruction_preserves_anisotropic_aperture(depth_nm):
 def test_zero_depth_specialization_preserves_all_phase_bits(monkeypatch, higher):
     """Turning depth off retains the full phase of the general optical model, and with higher orders its loss."""
     _require_mps()
-    from quantem.gpu.ssb.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsampling as up
 
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     if higher:
@@ -445,7 +445,7 @@ def test_zero_depth_specialization_preserves_all_phase_bits(monkeypatch, higher)
 def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detector_sampling):
     """The separable C10/C12 phasors reproduce the per-term transfer to float32 rounding."""
     _require_mps()
-    from quantem.gpu.ssb.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsampling as up
 
     cases = [
         {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0},
@@ -472,7 +472,7 @@ def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detec
 def test_separable_depth_weights_match_per_term_transfer(monkeypatch, factor, detector_sampling):
     """With sample tilt and depth spread the separable kernel reproduces the per-term transfer to float32 rounding."""
     _require_mps()
-    from quantem.gpu.ssb.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsampling as up
 
     cases = [
         ({"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}, (-9.0, 5.0), 18.0),
@@ -503,7 +503,7 @@ def test_separable_depth_weights_match_per_term_transfer(monkeypatch, factor, de
 def test_odd_region_spectrum_matches_full_gpu_transfer(monkeypatch, factor, depth_nm):
     """Odd-sized regions retain every frequency at native and automatic sampling."""
     _require_mps()
-    from quantem.gpu.ssb.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsampling as up
 
     with _disk_session(n=165) as ssb:
         ssb.set_rotation(165.8)
@@ -533,7 +533,7 @@ def test_odd_region_spectrum_matches_full_gpu_transfer(monkeypatch, factor, dept
 def test_paired_rows_at_2x_keep_every_phase_bit(monkeypatch):
     """At 2x one thread computes both fine rows of a source row; each output keeps its own arithmetic."""
     _require_mps()
-    from quantem.gpu.ssb.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsampling as up
 
     rows = np.array([0, 1, 2, 126, 127, 128, 129, 254, 255], np.uint32)
     pairs = up._alias_row_pairs(rows, 128)
@@ -554,8 +554,8 @@ def test_paired_rows_at_2x_keep_every_phase_bit(monkeypatch):
 def test_separable_phasor_tables_reduce_exactly():
     """Each table phasor equals the float64 phase m * P reduced modulo 2 pi."""
     _require_mps()
-    from quantem.gpu.ssb.mps import upsampling as up
-    from quantem.gpu.ssb.mps.hardware import require_mlx
+    from quantem.gpu.direct_ptycho.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
     mx = require_mlx()
     rng = np.random.default_rng(3)

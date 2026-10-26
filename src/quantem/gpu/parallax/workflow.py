@@ -28,7 +28,7 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.parallax.cuda.alignment import align_vbf_stack_multiscale_cp
 from quantem.gpu.parallax.results import ParallaxResult
-from quantem.gpu.ssb.units import sampling_pair
+from quantem.gpu.direct_ptycho.units import sampling_pair
 
 # GPU bytes one batch holds: decoded detector values while reading the
 # bright-field images, tiled spectra while summing them.

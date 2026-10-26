@@ -19,7 +19,7 @@ def test_webgpu_ssb_builds_its_pipelines_asynchronously() -> None:
     """Native 512/1024 SSB shaders are large: a synchronous pipeline build can freeze
     Chromium's renderer for minutes on a cold Metal shader cache."""
 
-    source = source_text("ssb/webgpu/backend.ts")
+    source = source_text("direct_ptycho/webgpu/backend.ts")
     assert ".createComputePipeline(" not in source
     assert ".createComputePipelineAsync(" in source
 

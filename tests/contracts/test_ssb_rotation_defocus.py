@@ -5,8 +5,8 @@ import numpy as np
 
 matplotlib.use("Agg")
 
-from quantem.gpu.ssb.results import SSBResult
-from quantem.gpu.ssb.rotation_defocus import RotationDefocusComparison
+from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.rotation_defocus import RotationDefocusComparison
 
 
 def test_review_shares_contrast_and_retains_unresolved_phase_evidence():
@@ -51,8 +51,8 @@ def test_comparison_defaults_to_table_and_show_displays_one_figure(monkeypatch):
     import IPython.display
     from types import SimpleNamespace
     import pandas as pd
-    from quantem.gpu.ssb import rotation_defocus
-    from quantem.gpu.ssb.workflow import SSB
+    from quantem.gpu.direct_ptycho import rotation_defocus
+    from quantem.gpu.direct_ptycho.workflow import SSB
 
     fits = tuple(SSBResult(
         object_wave=np.exp(1j * np.arange(64).reshape(8, 8) / 100), backend="mps",
@@ -82,7 +82,7 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
     """Four independent starts retain all trial budgets and leave the caller unchanged."""
     from contextlib import contextmanager
     from types import SimpleNamespace
-    from quantem.gpu.ssb.rotation_defocus import compare_rotation_defocus
+    from quantem.gpu.direct_ptycho.rotation_defocus import compare_rotation_defocus
 
     calls, selections, closed = [], [], []
     initial = {"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0}

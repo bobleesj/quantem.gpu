@@ -3,8 +3,8 @@
 ## 0. Merging main's joint-calibration commits, and a shared kernel cache that hid it
 
 main's bbe978e1, dee4a1e4 and c33b8e8e (coalesced 512 calibration FFT writes, shared probe geometry in the thick-sample
-batch kernel, joint-fit reuse for the 180-degree check) merged into `ssb/cuda/engine.py`, `ssb/cuda/kernels/engine.py`
-and `ssb/cuda/kernels/fft512.py`. With the default CuPy kernel cache (`~/.cupy/kernel_cache`) the SSB fingerprints
+batch kernel, joint-fit reuse for the 180-degree check) merged into `direct_ptycho/cuda/engine.py`, `direct_ptycho/cuda/kernels/engine.py`
+and `direct_ptycho/cuda/kernels/fft512.py`. With the default CuPy kernel cache (`~/.cupy/kernel_cache`) the SSB fingerprints
 (scratch `probes/ssb_fingerprint.py`: previews, reconstructions, batch losses and fits at 128, 256 and 512) of main and
 of the restructure base 059ada7c differed at 128 and 256, and the merged tree differed from both at 512.
 
@@ -46,15 +46,15 @@ so R is the radius where the disk falls to half its plateau.
 
 | path | radius | formula |
 |---|---|---|
-| CUDA array (`ssb/cuda/backend.py`) | integer half-maximum of the azimuthal profile (`detector.cuda.probe.detect_bf_radius`) | 2 alpha / R |
-| CUDA dataset and `SSB.open` (`ssb/workflow.py`) | same, on the full-detector mean | 2 alpha / R |
+| CUDA array (`direct_ptycho/cuda/backend.py`) | integer half-maximum of the azimuthal profile (`detector.cuda.probe.detect_bf_radius`) | 2 alpha / R |
+| CUDA dataset and `SSB.open` (`direct_ptycho/workflow.py`) | same, on the full-detector mean | 2 alpha / R |
 | MPS array, no `bf_radius` | equal-area radius of the pixels above mean + std (`detector.fit_probe`) | 2 alpha / R |
 | MPS array with `bf_radius` | NumPy copy of the integer half-maximum | 2 alpha / R |
 | MPS dataset and `SSB.open` | integer half-maximum of the bright-field CROP (no disk edge in it) | 2 alpha / R |
 | CUDA WebGPU export (`detected_radius_px`) | inverse of the above | 2 alpha / det |
 | regional fit (`find_aberrations(scan_region=...)`) | `bf_radius` or the equal-area radius | alpha / R |
 
-**After.** One radius, one formula, both backends and every input: `ssb.brightfield.disk_edge_radius(mean_pattern)`
+**After.** One radius, one formula, both backends and every input: `direct_ptycho.brightfield.disk_edge_radius(mean_pattern)`
 is the radius of a disk with the area of the pixels brighter than half the plateau (the median of the pixels above
 mean + std), computed on the host from the full-detector mean pattern, and `det_sampling = semiangle_mrad / R`.
 Loaded datasets and `SSB.open` calibrate on the full detector before cropping the disk; the regional fit uses the
@@ -130,7 +130,7 @@ is deleted (section 6).
 `MpsSSBBackend.fit` called `optimizer.optimize(source, ...)`, which recomputed the mean pattern, the selection and the
 whole G(q, k) stack with its own DC rule, then replaced the session's prepared state. `optimize` now takes the session's
 prepared state and selection, so previews before and after a fit and the fit itself read one preparation
-(`test_mps_fit_reads_the_prepared_session_evidence`). The test-only `ssb.mps.reconstruct.reconstruct`, a second
+(`test_mps_fit_reads_the_prepared_session_evidence`). The test-only `direct_ptycho.mps.reconstruct.reconstruct`, a second
 from-source preparation, is deleted with its environment-gated test (that test passed an encoded resident, which SSB
 refuses since the restructure).
 

@@ -57,7 +57,7 @@ def test_open_encoded_source_keeps_mps_crop_encoded(tmp_path, monkeypatch):
     import h5py
     import hdf5plugin
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.mps.frames import EncodedBrightFieldCrop
+    from quantem.gpu.direct_ptycho.mps.frames import EncodedBrightFieldCrop
 
     counts = _counts()
     source = tmp_path / "counts.h5"

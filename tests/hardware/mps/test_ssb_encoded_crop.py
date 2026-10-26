@@ -48,7 +48,7 @@ def _resident(counts, valid):
 
 
 def _backend(data, center, flipped):
-    from quantem.gpu.ssb.mps.backend import MpsSSBBackend
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
 
     return MpsSSBBackend(
         data, voltage_kV=300.0, semiangle_mrad=24.0, scan_sampling=(0.5, 0.5),
@@ -65,11 +65,11 @@ def _backend(data, center, flipped):
 def test_encoded_crop_prepares_the_decoded_crop_bit_for_bit(flipped, scan_region, chunk_bf, block_rows, monkeypatch):
     """G(q, k), the selection, the DC value and a preview equal the decoded crop's: odd chunks pair FFT rows across
     scan rows, a rectangular region is padded with its mean pattern, a flipped session swaps the detector axes."""
-    from quantem.gpu.ssb import mps
-    from quantem.gpu.ssb.brightfield import bright_field_crop_region, crop_bright_field
-    from quantem.gpu.ssb.mps.frames import EncodedBrightFieldCrop
+    from quantem.gpu.direct_ptycho import mps
+    from quantem.gpu.direct_ptycho.brightfield import bright_field_crop_region, crop_bright_field
+    from quantem.gpu.direct_ptycho.mps.frames import EncodedBrightFieldCrop
 
-    from quantem.gpu.ssb.mps.frames import EncodedBrightFieldFrames
+    from quantem.gpu.direct_ptycho.mps.frames import EncodedBrightFieldFrames
 
     monkeypatch.setattr(mps.backend, "default_object_setup_chunk_bf", lambda: chunk_bf)
     # Vary scan-row blocks independently of BF chunks: reducing temporary
@@ -118,8 +118,8 @@ def test_encoded_crop_prepares_the_decoded_crop_bit_for_bit(flipped, scan_region
 def test_resident_session_keeps_the_crop_encoded_and_its_identity():
     """SSB(data) on an encoded MPS acquisition holds no decoded crop and records the decoded crop's identity sums."""
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.brightfield import crop_bright_field
-    from quantem.gpu.ssb.mps.frames import EncodedBrightFieldCrop
+    from quantem.gpu.direct_ptycho.brightfield import crop_bright_field
+    from quantem.gpu.direct_ptycho.mps.frames import EncodedBrightFieldCrop
 
     counts, valid = _counts()
     loaded = _resident(counts, valid)
@@ -156,7 +156,7 @@ def test_tiled_512_loss_route_matches_the_whole_chunk(monkeypatch):
     """LOSS_ROW_IFFT_TILE_BF sends a 512 x 512 loss chunk through the tiled route (the default), None keeps the whole
     chunk: the same loss and phase bits."""
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.mps import reconstruct
+    from quantem.gpu.direct_ptycho.mps import reconstruct
 
     rng = np.random.default_rng(3)
     rows, cols = np.mgrid[:16, :16]
@@ -183,7 +183,7 @@ def test_region_session_frees_and_rebuilds_the_full_field_bit_for_bit(monkeypatc
     """A region session frees the full field's G(q, k); the next full-field preview rebuilds the same bits, also after
     a rotation change retargeted the geometry."""
     from quantem.gpu import SSB
-    from quantem.gpu.ssb.mps.hardware import require_mlx
+    from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
     mx = require_mlx()
     info = mx.device_info()

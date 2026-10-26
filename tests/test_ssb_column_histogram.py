@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from quantem.gpu.ssb.results import column_histogram, column_sign
+from quantem.gpu.direct_ptycho.results import column_histogram, column_sign
 
 
 def test_histogram_matches_original_notebook_and_keeps_outside_pixels():

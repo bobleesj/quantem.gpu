@@ -6,7 +6,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from quantem.gpu.ssb.persistence import acquisition_identity, portable_source
+from quantem.gpu.direct_ptycho.persistence import acquisition_identity, portable_source
 
 
 def _master(folder: Path, counts: np.ndarray) -> Path:

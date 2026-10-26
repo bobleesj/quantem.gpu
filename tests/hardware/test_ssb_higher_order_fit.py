@@ -128,7 +128,7 @@ def test_fit_recovers_coma_trefoil_and_spherical_aberration(simulation, tilt, co
 
 
 def test_saved_fit_keeps_the_higher_orders_and_their_setting(simulation, tmp_path):
-    from quantem.gpu.ssb.persistence import load_result, result_paths
+    from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
 
     backend_name, data, _, detector_mrad = simulation
     np.save(tmp_path / "counts.npy", data)          # an array input records its source for provenance

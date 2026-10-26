@@ -87,8 +87,8 @@ def test_joint_fit_rejects_scan_with_no_fitting_frequencies():
 def test_batch_fit_matches_reference_fit(monkeypatch):
     """The fused Metal batch objective (half-plane band, shared geometry, skipped non-overlap pairs) equals ``thick_fit``."""
     _require_mps()
-    from quantem.gpu.ssb.mps import thick_sample
-    from quantem.gpu.ssb.mps.thick_sample import thick_fit, thick_fit_batch
+    from quantem.gpu.direct_ptycho.mps import thick_sample
+    from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit, thick_fit_batch
 
     ssb = _poisson_disk_session()
     backend = ssb._backend()
@@ -144,7 +144,7 @@ def test_zero_depth_weighting_is_standard_ssb():
 def test_newton_candidate_tiles_preserve_objectives(monkeypatch, batch_size):
     """Parallel Newton tiles preserve serial values, tails and bounded batches."""
     _require_mps()
-    from quantem.gpu.ssb.mps import thick_sample
+    from quantem.gpu.direct_ptycho.mps import thick_sample
 
     rng = np.random.default_rng(47)
     rows = rng.uniform(
@@ -179,7 +179,7 @@ def test_fused_thick_preview_matches_reference_model():
     alone puts both paths 2.5e-6 (reference) to 7e-6 (fused) from float64, on phases of ~5e-3.
     """
     _require_mps()
-    from quantem.gpu.ssb.mps.thick_sample import (
+    from quantem.gpu.direct_ptycho.mps.thick_sample import (
         reconstruct_thick,
         reconstruct_thick_reference,
     )

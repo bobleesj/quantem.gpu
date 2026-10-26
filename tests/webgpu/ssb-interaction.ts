@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { WebGPUSSBBackend } from "../../src/quantem/gpu/ssb/webgpu/backend";
+import { WebGPUSSBBackend } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
 
 /** A stopped diagnostic must leave the next complete reconstruction usable. */
 export async function runSsbInteractionParity(base: string): Promise<Record<string, number>> {

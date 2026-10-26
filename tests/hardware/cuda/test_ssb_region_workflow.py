@@ -44,7 +44,7 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
         assert full.reconstruct().phase.shape == (256, 256)
         assert full._data.shape == data.shape
 
-        from quantem.gpu.ssb.persistence import load_result, result_paths
+        from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
 
         restored = load_result(
             paths=result_paths(tmp_path / "region", "find_aberrations"),
