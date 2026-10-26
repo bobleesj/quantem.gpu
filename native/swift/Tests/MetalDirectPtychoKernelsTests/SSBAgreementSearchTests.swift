@@ -70,7 +70,7 @@ final class SSBAgreementSearchTests: XCTestCase {
     }
   }
 
-  /// `scripts/ssb_agreement_gate.py` runs the current Python fits (`fit_resident`, `fit_standard_resident`, with
+  /// `scripts/direct_ptycho_agreement_gate.py` runs the current Python fits (`fit_resident`, `fit_standard_resident`, with
   /// `exact` as their derivatives) and passes their records here, so a change on either side fails without editing
   /// the pins below.
   struct Reference: Decodable {
@@ -91,7 +91,8 @@ final class SSBAgreementSearchTests: XCTestCase {
   func testCurrentPythonFitsWhenGiven() throws {
     guard let path = ProcessInfo.processInfo.environment["SSB_AGREEMENT_REFERENCE"] else {
       throw XCTSkip(
-        "scripts/ssb_agreement_gate.py sets SSB_AGREEMENT_REFERENCE to the current Python records.")
+        "scripts/direct_ptycho_agreement_gate.py sets SSB_AGREEMENT_REFERENCE to the current Python records."
+      )
     }
     let reference = try JSONDecoder().decode(
       Reference.self, from: Data(contentsOf: URL(fileURLWithPath: path)))

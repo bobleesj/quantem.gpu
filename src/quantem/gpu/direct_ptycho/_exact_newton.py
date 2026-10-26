@@ -6,7 +6,7 @@ exact derivatives only where the step uses them: not at a rejected step, which k
 not at the starts that the second iteration's pruning stops. The trust region, bounds, acceptance, start pruning
 and the second polish from other basins (``_other_basins``) are those of the resident Newton; the convergence
 tolerances are a tenth of its (the steps converge quadratically). The host controller of the native Metal fit
-(``SSBAgreementSearch``), in float64 on the CPU; the objective and its derivatives run on the session's GPU.
+(``DirectPtychoAgreementSearch``), in float64 on the CPU; the objective and its derivatives run on the session's GPU.
 
 Points are (C10, C12, phi12, tilt row, tilt column, depth spread) in engine units (A, A, rad, mrad, mrad, A); the
 Newton coordinates z replace (C12, phi12) by (C12 cos 2 phi12, C12 sin 2 phi12).

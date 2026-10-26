@@ -3,7 +3,7 @@
 #
 #   scripts/check_direct_ptycho_fit_trajectory.sh
 #
-# The agreement objective, which the default fit and tilt=False use: the native SSBAgreementSearch must
+# The agreement objective, which the default fit and tilt=False use: the native DirectPtychoAgreementSearch must
 # draw the search trials of the Python resident search and reach its exact-derivative Newton's fits
 # (scripts/direct_ptycho_agreement_gate.py; measured parity too when SSB_PARITY_FIXTURE and SSB_PARITY_REFERENCE are
 # set). GPU commands share a per-user lock; an optional site GPU launcher can wrap the invocation.

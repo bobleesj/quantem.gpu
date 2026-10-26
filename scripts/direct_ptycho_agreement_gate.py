@@ -2,9 +2,9 @@
 
 The default fit (``find_aberrations()``, tilt-corrected) and ``find_aberrations(tilt=False)`` maximize the model
 agreement with the resident multivariate TPE of ``direct_ptycho._resident_search``, then a trust-region Newton on the
-exact gradient and Hessian (``direct_ptycho._exact_newton``). The native ``SSBAgreementSearch`` ports both. This gate runs
-them on one synthetic float32 objective, which each side's search evaluates from the same float32 trial rows,
-with the same analytic derivatives for the Newton, and requires the 200 search rows to be identical and the
+exact gradient and Hessian (``direct_ptycho._exact_newton``). The native ``DirectPtychoAgreementSearch`` ports both.
+This gate runs them on one synthetic float32 objective, which each side's search evaluates from the same float32 trial
+rows, with the same analytic derivatives for the Newton, and requires the 200 search rows to be identical and the
 fitted points to agree to 1e-6:
 
 1. Python ``fit_resident`` and ``fit_standard_resident`` (seed 42, 200 trials) on MPS or CUDA record the

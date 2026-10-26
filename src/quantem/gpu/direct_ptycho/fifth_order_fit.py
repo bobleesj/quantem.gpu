@@ -166,7 +166,7 @@ def higher_order_consistency(objective, start, checked, limit, cap):
     and depth not; ``fifth_order_parameters.aperture_phase``). Real higher-order aberrations are the probe's and the
     same in both halves; terms that fit noise or scattering the model does not describe are not. The fit is trusted
     when the statistic is at most MAX_HALF_BAND_RMS_RAD; ``shown_limit`` is then ``limit``, else 2. The record
-    names match the native ``SSBHigherOrderConsistency``.
+    names match the native ``DirectPtychoHigherOrderConsistency``.
     """
     from .fifth_order_parameters import aperture_phase, aperture_rms
 

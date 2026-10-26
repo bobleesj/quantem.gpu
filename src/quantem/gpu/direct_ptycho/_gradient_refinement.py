@@ -9,8 +9,8 @@ increases. A coarse stage climbs the agreement of every m-th BF pixel first. On 
 only when the full objective increases, the result is the best full-data point, and the search stops when the
 bounded model step predicts a full-data gain below ``gain_tolerance`` (normalized by the initial agreement).
 
-The host controller of the native Metal search (``SSBFifthOrderGradientSearch``), in float64 on the CPU; the
-objective and its gradient run on the session's GPU.
+The host controller of the native Metal search (``DirectPtychoFifthOrderGradientSearch``), in float64 on the CPU;
+the objective and its gradient run on the session's GPU.
 """
 
 import time
