@@ -8,6 +8,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- `io.load` reads a 4D-STEM dataset QuantEM saved as a zipped Zarr v3 store (`Dataset4dstem` serializer) in place,
+  without quantem core: chunks decode on parallel threads straight into one array, bit for bit in the stored dtype,
+  and the saved sampling, units and origin become `scan_sampling_A`, the detector sampling and `origin`. On a saved
+  724 MB float32 (126, 126, 120, 120) archive the warm read takes 0.27 s on 16 threads (dense CPU) and 0.67 s
+  including ANS encoding and a full CUDA read. Blosc chunks need the new `zarr` extra (`numcodecs`).
 - Python MPS: drag windows for the regularized `phase` and `complex` methods (`ssb.mps.direct.DragWindow`), the CUDA
   `DragWindow` design. `direct_workflow.drag`, `prepare` and `advance` now serve MPS slider frames from a Chebyshev
   series of the prepared normal equations along the dragged control (29 exact preparations over C10 +-6.8 nm or

@@ -83,39 +83,56 @@ def dataset_metadata(data: h5py.Dataset, metadata: dict) -> dict:
     result["source_metadata_coverage"] = "reader-retained"
     if len(data.shape) != 4:
         return result
-    scan_units = {
-        "m": 1e10,
-        "mm": 1e7,
-        "um": 1e4,
-        "µm": 1e4,
-        "nm": 10,
-        "pm": 0.01,
-        "A": 1,
-        "Å": 1,
-        "angstrom": 1,
-    }
-    detector_units = {
-        "1/m": (1e-10, "1/angstrom"),
-        "1/nm": (0.1, "1/angstrom"),
-        "nm^-1": (0.1, "1/angstrom"),
-        "nm⁻¹": (0.1, "1/angstrom"),
-        "1/A": (1, "1/angstrom"),
-        "1/Å": (1, "1/angstrom"),
-        "1/angstrom": (1, "1/angstrom"),
-        "Å^-1": (1, "1/angstrom"),
-        "Å⁻¹": (1, "1/angstrom"),
-        "rad": (1000, "mrad"),
-        "mrad": (1, "mrad"),
-    }
+    result.update(axis_calibration(dimensions))
+    return result
+
+
+SCAN_UNITS = {
+    "m": 1e10,
+    "mm": 1e7,
+    "um": 1e4,
+    "µm": 1e4,
+    "nm": 10,
+    "pm": 0.01,
+    "A": 1,
+    "Å": 1,
+    "angstrom": 1,
+}
+DETECTOR_UNITS = {
+    "1/m": (1e-10, "1/angstrom"),
+    "1/nm": (0.1, "1/angstrom"),
+    "nm^-1": (0.1, "1/angstrom"),
+    "nm⁻¹": (0.1, "1/angstrom"),
+    "1/A": (1, "1/angstrom"),
+    "1/Å": (1, "1/angstrom"),
+    "1/angstrom": (1, "1/angstrom"),
+    "Å^-1": (1, "1/angstrom"),
+    "Å⁻¹": (1, "1/angstrom"),
+    "rad": (1000, "mrad"),
+    "mrad": (1, "mrad"),
+}
+
+
+def axis_calibration(dimensions: list) -> dict:
+    """Map ``(spacing, unit)`` per 4D axis to ``scan_sampling_A`` and a detector sampling key.
+
+    Unknown units, missing spacings or mixed detector units leave that key out.
+
+    Examples
+    --------
+    >>> axis_calibration([(0.5, "nm"), (0.5, "nm"), (1.0, "mrad"), (1.0, "mrad")])
+    {'scan_sampling_A': [5.0, 5.0], 'detector_sampling_mrad': [1.0, 1.0]}
+    """
+    result = {}
     scan, detector, units = [], [], []
     for index, dimension in enumerate(dimensions):
         if dimension is None or dimension[0] is None:
             continue
         spacing, unit = dimension
-        if index < 2 and unit in scan_units:
-            scan.append(spacing * scan_units[unit])
-        elif index >= 2 and unit in detector_units:
-            factor, normalized = detector_units[unit]
+        if index < 2 and unit in SCAN_UNITS:
+            scan.append(spacing * SCAN_UNITS[unit])
+        elif index >= 2 and unit in DETECTOR_UNITS:
+            factor, normalized = DETECTOR_UNITS[unit]
             detector.append(spacing * factor)
             units.append(normalized)
     if len(scan) == 2 and all(math.isfinite(value) for value in scan):

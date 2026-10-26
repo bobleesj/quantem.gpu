@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 from quantem.gpu.device import select
-from quantem.gpu.formats import empad
+from quantem.gpu.formats import empad, zarr_zip
 from quantem.gpu.formats.float8 import FLOAT8_DTYPES, is_float8
 from quantem.gpu.formats.qem.snapshot import is_qem_file
 from quantem.gpu.io import arrays, digitalmicrograph, encoded, paired, qem
@@ -135,8 +135,10 @@ def load(
     Parameters
     ----------
     source
-        One master/data HDF5 path, a folder, a list of master paths, or a
-        standalone QuantEM encoded file.
+        One master/data HDF5 path, a folder, a list of master paths, a
+        standalone QuantEM encoded file, a NumPy/EMPAD array, or a 4D-STEM
+        dataset QuantEM saved as a zipped Zarr store (read in place; Blosc
+        chunks need ``quantem.gpu[zarr]``).
     dtype
         Omit (or ``"native"``) to keep stored values. Integer counts are held
         in the narrowest unsigned type that holds every value (on MPS and in
@@ -218,16 +220,17 @@ def load(
             backend=selected_backend, device=device, verbose=verbose,
         )
 
-    # NumPy and EMPAD arrays: complete original measurements, encoded on the GPU.
+    # NumPy, EMPAD and saved QuantEM Zarr arrays: complete measurements, encoded on the GPU.
     array_sources = [isinstance(path, (str, os.PathLike))
-                     and Path(path).suffix.lower() in {".npy", ".xml", ".raw"}
+                     and (Path(path).suffix.lower() in {".npy", ".xml", ".raw"}
+                          or zarr_zip.is_zarr_zip(path))
                      for path in sources]
     if any(array_sources) and not precision:
         array_backend = select.resolve_backend(backend)
         allowed = (None, "dense") if array_backend == "cpu" else (None, "encoded")
         if not all(array_sources) or representation not in allowed:
             raise NotImplementedError(
-                "Load NumPy/EMPAD separately with encoded GPU residency; "
+                "Load NumPy/EMPAD/Zarr separately with encoded GPU residency; "
                 "CPU dense access is explicit reference-only."
             )
         if (any(value is not None for value in (dataset_path, scan_region, detector_region))
@@ -241,12 +244,15 @@ def load(
         results = []
         try:
             for path in sources:
-                data, metadata = empad.load_array_source(path, scan_shape)
+                reader = zarr_zip if zarr_zip.is_zarr_zip(path) else empad
+                data, metadata = reader.load_array_source(path, scan_shape)
                 if array_backend == "cpu":
                     results.append(Dataset4dstemGPU(data, metadata))
                 else:
                     try:
-                        source_files = {Path(path), Path(data.filename)}
+                        source_files = {Path(path)}
+                        if getattr(data, "filename", None):
+                            source_files.add(Path(data.filename))
                         if metadata.get("source_metadata_path"):
                             source_files.add(Path(metadata["source_metadata_path"]))
                         signatures = {
@@ -275,7 +281,7 @@ def load(
                     finally:
                         # Array sources are NumPy memory maps; close the file
                         # mapping now rather than when garbage is collected.
-                        mapping = data._mmap
+                        mapping = getattr(data, "_mmap", None)
                         if mapping is not None:
                             mapping.close()
         except BaseException:

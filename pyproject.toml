@@ -68,6 +68,10 @@ mps = [
     "optuna<5",
     "scipy",
 ]
+# Saved QuantEM Zarr archives store Blosc-compressed chunks.
+zarr = [
+    "numcodecs>=0.13",
+]
 remote = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
@@ -89,6 +93,7 @@ plot = [
 dev = [
     "matplotlib>=3.8",
     "fastapi>=0.115",
+    "numcodecs>=0.13",
     "httpx2",
     "opencv-python-headless",
     "optuna<5",
