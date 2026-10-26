@@ -1,4 +1,6 @@
-# MPS coherent SSB dispatch
+# MPS coherent SSB dispatch, 2026-10-18
+
+> **Historical:** describes the code as of 2026-10-18; the phase-variance fit trajectory it checked is retired. See the [current fit methods](../../../api/ssb.md).
 
 The coherent Auto reconstruction now uses a `16 × 8` Metal threadgroup
 instead of `32 × 8`. This changes scheduling only. The optical calculation,

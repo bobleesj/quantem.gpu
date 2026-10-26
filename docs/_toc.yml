@@ -83,6 +83,8 @@ parts:
           title: Original HDF5 packed loading
         - file: api/native_resident
       - file: api/metal_image
+      - file: maintainer/native-joint-ssb
+        title: Native SSB fit
       - file: developer/metal-compressed-region-mean
         title: Regional mean diffraction from compressed residents
     - file: developer/file-formats
@@ -104,6 +106,8 @@ parts:
         sections:
         - file: api/native_lossless_pack_v1_producer
           title: Native Lossless Pack Format v1 producer
+      - file: maintainer/arina-stem-metadata
+        title: Paired ARINA microscope metadata
       - file: developer/count-ans
         title: Count-ANS container
       - file: developer/paired-resident
@@ -186,6 +190,7 @@ parts:
           - file: performance/ssb/reports/2026-10-20-mps-performance
           - file: performance/ssb/reports/2026-10-20-mps-memory
           - file: performance/ssb/reports/2026-10-18-mps-ssb-source-addressing
+          - file: performance/ssb/reports/2026-10-18-mps-ssb-coherent-dispatch
           - file: performance/ssb/reports/2026-10-18-cuda-ssb-group-support
           - file: performance/ssb/reports/mps-ssb-preview-reuse-2026-10-17
           - file: performance/ssb/reports/mps-ssb-optical-shortcuts-2026-10-17
@@ -217,6 +222,8 @@ parts:
           - file: performance/rendering/reports/2026-10-24-ssb-c10-cache-transfer
       - file: performance/parity/index
         title: Cross-backend parity
+      - file: performance/kernels
+        title: Kernel registry
       - file: performance/methodology
       - file: developer/testing
       - file: performance/results
@@ -239,6 +246,8 @@ parts:
       - file: developer/reproducing-resident-analysis
         title: Reproducing resident count analysis
       - file: maintainer/ssb-architecture
+      - file: maintainer/ssb-resident-joint-fit
+        title: Resident joint SSB fitting
       - file: developer/writing
         title: Writing, notation, and units
     - file: maintainer/index
@@ -286,6 +295,16 @@ parts:
         title: Stored SSB fit schema (2026-10-11)
       - file: maintainer/2026-10-13-calibrate-speed-on-main
         title: Calibration speed-up on main (2026-10-13)
+      - file: maintainer/2026-10-16-screening-residency
+        title: Screening and SSB share acquisition storage (2026-10-16)
+      - file: maintainer/2026-10-18-mps-wave-fft
+        title: MPS Fourier transforms for iterative waves (2026-10-18)
+      - file: maintainer/2026-10-23-native-median-contract
+        title: Native detector median contract (2026-10-23)
+      - file: maintainer/2026-10-25-original-load-median-fill
+        title: Original-load median fill (2026-10-25)
+      - file: maintainer/2026-10-25-ssb-direct-drag-windows
+        title: Native direct drag windows (2026-10-25)
       - file: maintainer/native-metal-ssb-migration
         title: Native Metal SSB migration
       - file: maintainer/ssb-performance
