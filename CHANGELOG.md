@@ -43,11 +43,7 @@ new `rcN` heading when that rc is published to TestPyPI.
   over the aperture (`half_band_rms_rad`) the ±2 fit is returned instead with its higher orders marked not trusted
   (`trusted`, `shown_limit`). On measured frames of a thin two-dimensional crystal the halves agree to 0.16-0.35 rad;
   a thick crystalline acquisition (1.33 rad) falls back. The check adds two fifth-order fits (a third on fallback); `onRefinedFit` hands a viewer the
-  ±20 fit first. An opt-in record (`computeHigherOrderGuard`, default false) adds `SSBFit.higherOrderGuard`
-  (`SSBHigherOrderGuard`, Python `higher_order_fit.assess`): the coherence with Poisson noise floors from G(0, k) and
-  each term's standard and edge-phase error from the Hessian covariance (0.65-0.9 s on a 512 x 512 scan); its
-  simulation thresholds do not separate measured data, so nothing acts on it. `MetalSSBJointModel.bandPowerSummary()`
-  gives P, the band weight and the noise variance.
+  ±20 fit first.
 
 - Native (Metal) drag previews of the regularized `phase` and `complex` reconstructions (`ssb-direct` v0.2):
   `MetalSSBJointModel.buildDragWindow(along:at:upsamplingFactor:method:regularization:nodes:)` builds a Chebyshev
@@ -71,6 +67,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   loss entry points and their pair kernel, `exact_pair_row_allocation_bf_512`, `_CachedGaussianMixture`,
   `_inverse_log_cdf`, `_counted_electrons`, `COLUMN_SIGN_MIN`), with single-value plumbing: the internal
   `_find_aberrations(objective=...)` and `_resident_search.BASIN_CHECK`. Fits are unchanged.
+- Native SSB (Metal): the opt-in coherence and precision guard is retired: `SSBHigherOrderGuard`,
+  `SSBFitOptions.computeHigherOrderGuard`, `SSBFit.higherOrderGuard`, `MetalSSBJointModel.bandPowerSummary()`,
+  `SSBBandPower` and the benchmark's `--higher-order-guard`. It ported the retired Python `higher_order_fit.assess`,
+  was off by default and nothing acted on it; the half-band check (`SSBHigherOrderConsistency`) is the guard. Options
+  and fits saved with those keys still decode, ignoring them.
 - Python SSB (CUDA and MPS): the `higher_order=` subsets of `search="primary"` (coma, trefoil, C30 polished by a
   finite-difference Newton in Angstrom, with its coherence and precision guard) are retired: the default fit fits every
   term through fifth order on exact gradients with the half-band check. `find_aberrations(higher_order=...)` and

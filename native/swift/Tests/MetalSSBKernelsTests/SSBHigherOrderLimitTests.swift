@@ -4,8 +4,8 @@ import XCTest
 
 @testable import MetalSSBKernels
 
-/// The higher-order box (`SSBFitOptions.higherOrderLimit`) and the opt-in guard of a fifth-order fit
-/// (`SSBFitOptions.computeHigherOrderGuard`, `SSBHigherOrderGuard`, Python `higher_order_fit.assess`).
+/// The higher-order box (`SSBFitOptions.higherOrderLimit`) and the half-band check of a wide fifth-order fit
+/// (`SSBFitOptions.checkHigherOrderConsistency`, `SSBHigherOrderConsistency`).
 final class SSBHigherOrderLimitTests: XCTestCase {
   // MARK: Options
 
@@ -41,12 +41,13 @@ final class SSBHigherOrderLimitTests: XCTestCase {
         SSBFitOptions.self, from: JSONSerialization.data(withJSONObject: legacy)
       )
       .checkHigherOrderConsistency)
-    // The guard is opt-in; options saved without the key do not compute it.
-    XCTAssertFalse(SSBFitOptions().computeHigherOrderGuard)
-    let guarded = SSBFitOptions(computeHigherOrderGuard: true)
+    // Options saved with the retired coherence guard's key decode, ignoring it.
+    var guarded = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    guarded["computeHigherOrderGuard"] = true
     XCTAssertEqual(
-      try JSONDecoder().decode(SSBFitOptions.self, from: JSONEncoder().encode(guarded)), guarded)
-    XCTAssertFalse(restored.computeHigherOrderGuard)
+      try JSONDecoder().decode(
+        SSBFitOptions.self, from: JSONSerialization.data(withJSONObject: guarded)), wide)
+    XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("computeHigherOrderGuard"))
   }
 
   func testBoundsKeepTheLowOrderBoxAndScaleTheHigherOrders() {
@@ -111,88 +112,6 @@ final class SSBHigherOrderLimitTests: XCTestCase {
       try SSBModelFit.fit(model: model, options: SSBFitOptions(trials: 20, higherOrderLimit: 4)))
   }
 
-  // MARK: Guard arithmetic
-
-  /// The guard's arithmetic against hand-computed values: a diagonal Hessian gives variances 2 sigma^2 / |H_ii|.
-  func testAssessComputesCoherenceAndEdgePhaseErrors() {
-    let band = SSBBandPower(
-      power: 1_000, bandWeight: 10, noiseVariance: 2, brightFieldPixelCount: 30)
-    // signal = 1000 - 10 * 2 * 30 = 400; coherence = (A - 20) / 400.
-    var hessian = (0..<28).map { i in (0..<28).map { j in i == j ? -4.0 * Double(i + 1) : 0 } }
-    let wavelength = 0.019687
-    let semiangle = 0.03
-    let check = SSBHigherOrderGuard.assess(
-      agreement: 380, band: band, hessian: hessian, wavelengthAngstroms: wavelength,
-      semiangleRadians: semiangle)
-    XCTAssertEqual(check.coherence, 0.9, accuracy: 1e-15)
-    XCTAssertEqual(
-      check.terms.map(\.name),
-      [
-        "C21", "C23", "C30", "C32", "C34", "C41", "C43", "C45", "C50", "C52", "C54", "C56",
-      ])
-    var column = 6
-    for term in check.terms {
-      let width = term.symmetry == 0 ? 1 : 2
-      // var_i = 2 sigma^2 / (4 (i + 1)) = 1 / (i + 1)
-      let expected = (column..<(column + width)).reduce(0.0) { $0 + 1 / Double($1 + 1) }
-        .squareRoot()
-      XCTAssertEqual(term.edgePhaseErrorRadians!, expected, accuracy: 1e-12 * expected, term.name)
-      let n = Double(term.order)
-      let nanometers =
-        expected * (n + 1) * wavelength / (2 * Double.pi * pow(semiangle, n + 1)) / 10
-      XCTAssertEqual(
-        term.standardErrorNanometers!, nanometers, accuracy: 1e-12 * nanometers, term.name)
-      // The definition (2 pi / lambda) sigma_C alpha^(n+1) / (n+1) returns the edge phase.
-      let edge =
-        2 * Double.pi / wavelength * term.standardErrorNanometers! * 10 * pow(semiangle, n + 1)
-        / (n + 1)
-      XCTAssertEqual(edge, expected, accuracy: 1e-12 * expected)
-      column += width
-    }
-    XCTAssertFalse(check.trusted)
-    XCTAssertEqual(check.reasons.count, 1)
-    XCTAssertTrue(
-      check.reasons[0].hasPrefix("C21 is uncertain by 0.52 rad at the aperture edge (above 0.1)"))
-    XCTAssertEqual(check.largestEdgePhaseErrorRadians, check.terms[0].edgePhaseErrorRadians)
-
-    // Below the coherence minimum, and a curvature that is not a maximum: both reasons, errors not determined.
-    hessian[10][10] = 1
-    let failed = SSBHigherOrderGuard.assess(
-      agreement: 300, band: band, hessian: hessian, wavelengthAngstroms: wavelength,
-      semiangleRadians: semiangle)
-    XCTAssertEqual(failed.coherence, 0.7, accuracy: 1e-15)
-    XCTAssertTrue(
-      failed.terms.allSatisfy {
-        $0.edgePhaseErrorRadians == nil && $0.standardErrorNanometers == nil
-      })
-    XCTAssertEqual(failed.largestEdgePhaseErrorRadians, .infinity)
-    XCTAssertEqual(
-      failed.reasons,
-      [
-        "the model explains 0.70 of the bright-field signal (below 0.9): scattering it does not describe, as in a thick or strongly scattering crystal",
-        "C21 is uncertain by inf rad at the aperture edge (above 0.1): too little signal for its precision",
-      ])
-    // The record survives JSON with undetermined errors.
-    let decoded = try? JSONDecoder().decode(
-      SSBHigherOrderGuard.self, from: JSONEncoder().encode(failed))
-    XCTAssertEqual(decoded, failed)
-
-    // Precise and coherent: trusted. No signal above the noise floors: coherence 0.
-    let precise = (0..<28).map { i in (0..<28).map { j in i == j ? -1e6 : 0.0 } }
-    XCTAssertTrue(
-      SSBHigherOrderGuard.assess(
-        agreement: 390, band: band, hessian: precise, wavelengthAngstroms: wavelength,
-        semiangleRadians: semiangle
-      ).trusted)
-    let noise = SSBBandPower(
-      power: 600, bandWeight: 10, noiseVariance: 2, brightFieldPixelCount: 30)
-    XCTAssertEqual(
-      SSBHigherOrderGuard.assess(
-        agreement: 390, band: noise, hessian: precise, wavelengthAngstroms: wavelength,
-        semiangleRadians: semiangle
-      ).coherence, 0)
-  }
-
   // MARK: Synthetic weak-phase scene
 
   /// A weak-phase object (0.05 rad rms, one slice) probed with coma, trefoil and a C30 of 5 um, whose phase at the
@@ -201,7 +120,7 @@ final class SSBHigherOrderLimitTests: XCTestCase {
     (1, 0, -5, 0), (1, 2, 2, 30), (2, 1, 40, 60), (2, 3, 30, -20), (3, 0, 5000, 0),
   ]
 
-  func testWideLimitReproducesTheFreeBoxAndTheGuardTrustsAWeakPhaseFit() throws {
+  func testWideLimitReproducesTheFreeBoxAndTheHalvesAgreeOnAWeakPhaseFit() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let scene = try WeakPhaseScene(aberrations: Self.truth, dose: 2e5, seed: 7)
     let engine = try MetalSSBEngine(device: device, geometry: scene.geometry)
@@ -209,41 +128,15 @@ final class SSBHigherOrderLimitTests: XCTestCase {
     try engine.prepare(brightfield: input, countType: .uint16)
     let model = try engine.jointModel(scanDetectorRotationDegrees: 0)
 
-    // The band summary against the evidence and the integer counts.
-    let band = try model.bandPowerSummary()
-    let arrays = try model.objectiveArrays()
-    var power = 0.0
-    for (i, w) in arrays.weights.enumerated() {
-      var sum = 0.0
-      for k in 0..<band.brightFieldPixelCount {
-        let g = arrays.evidence[k * arrays.weights.count + i]
-        sum += Double(g.x) * Double(g.x) + Double(g.y) * Double(g.y)
-      }
-      power += Double(w) * sum
-    }
-    XCTAssertEqual(band.power, power, accuracy: 1e-12 * power)
-    XCTAssertEqual(band.bandWeight, arrays.weights.reduce(0.0) { $0 + Double($1) })
-    XCTAssertEqual(band.brightFieldPixelCount, scene.pixels.count)
-    let counts =
-      Double(scene.pixels.reduce(UInt64(0)) { $0 + scene.detectorSum[$1] })
-      / Double(scene.pixels.count)
-    XCTAssertEqual(band.noiseVariance, counts, accuracy: 1e-5 * counts)
-
     let low = try SSBModelFit.findAberrations(
       model: model, rotationDegrees: 0, darkField: nil,
       scanSampling: (WeakPhaseScene.step, WeakPhaseScene.step),
       options: SSBFitOptions(trials: 60, maximumOrder: 1), checkRotation: false)
-    XCTAssertNil(low.fit.higherOrderGuard)
-    // Off by default: the same refinement without the guard.
-    let unguarded = try SSBModelFit.refineToFifthOrder(
-      low, model: model, options: SSBFitOptions(trials: 60, higherOrderLimit: 20))
-    XCTAssertNil(unguarded.fit.higherOrderGuard)
-    XCTAssertNil(unguarded.fit.timings["higher_order_guard_s"])
     var fits: [Double: SSBFit] = [:]
     for limit in SSBFitOptions.higherOrderLimits {
       let refined = try SSBModelFit.refineToFifthOrder(
         low, model: model,
-        options: SSBFitOptions(trials: 60, higherOrderLimit: limit, computeHigherOrderGuard: true))
+        options: SSBFitOptions(trials: 60, higherOrderLimit: limit))
       XCTAssertEqual(refined.fit.options.higherOrderLimit, limit)
       fits[limit] = refined.fit
     }
@@ -288,7 +181,6 @@ final class SSBHigherOrderLimitTests: XCTestCase {
     XCTAssertEqual(boxed.result.coordinates, free.result.coordinates)
     XCTAssertEqual(boxed.agreement64, free.agreement64)
     XCTAssertEqual(wide.higherOrderRefinement?.coordinates, free.result.coordinates)
-    XCTAssertEqual(unguarded.fit.point, wide.point)
     XCTAssertTrue(free.result.coordinates.dropFirst(6).allSatisfy { abs($0) < 20 })
     // The standard box holds C30 (the 9th coordinate, z 3.2 rad) at its bound.
     let c30 = 6 + 4
@@ -307,59 +199,30 @@ final class SSBHigherOrderLimitTests: XCTestCase {
     XCTAssertEqual(try XCTUnwrap(term(wide, 3, 0)).magnitudeAngstroms / 10, 5000, accuracy: 500)
     XCTAssertGreaterThan(wide.sampleAgreement!, standard.sampleAgreement!)
 
-    // The guard: a weak-phase object is the SSB model, so the fit explains its signal and is precise.
-    let check = try XCTUnwrap(wide.higherOrderGuard)
-    XCTAssertTrue(check.trusted, "\(check.reasons)")
-    XCTAssertGreaterThan(check.coherence, 0.95)
-    XCTAssertLessThanOrEqual(check.coherence, 1.02)
-    XCTAssertEqual(check.terms.count, 12)
-    XCTAssertTrue(check.terms.allSatisfy { ($0.edgePhaseErrorRadians ?? .infinity) < 0.1 })
-    XCTAssertEqual(check.band, band)
-    XCTAssertNotNil(wide.timings["higher_order_guard_s"])
-    // Its coherence is the definition on the fitted agreement, and its precision the covariance of the diagnostic
-    // central-difference Hessian, inverted independently.
-    let z = wide.higherOrderRefinement!.coordinates
-    let agreement = try SSBModelFit.fifthOrderAgreement64(model: model, z: z)
-    XCTAssertEqual(check.agreement, agreement, accuracy: 1e-12 * agreement)
-    let floor = band.bandWeight * band.noiseVariance
-    XCTAssertEqual(
-      check.coherence,
-      (agreement - floor) / (band.power - floor * Double(band.brightFieldPixelCount)),
-      accuracy: 1e-12)
-    let hessian = try SSBModelFit.fifthOrderHessian(model: model, z: z)
-    let covariance = try Self.inverse(hessian.map { $0.map { -$0 } }).map {
-      $0.map { 2 * band.noiseVariance * $0 }
-    }
-    var column = 6
-    for term in check.terms {
-      let width = term.symmetry == 0 ? 1 : 2
-      let expected = (column..<(column + width)).reduce(0.0) { $0 + covariance[$1][$1] }
-        .squareRoot()
-      XCTAssertEqual(term.edgePhaseErrorRadians!, expected, accuracy: 0.02 * expected, term.name)
-      column += width
-    }
+    // A fit saved with the retired coherence guard's record decodes, ignoring it.
+    var saved = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(wide)) as? [String: Any])
+    saved["higherOrderGuard"] = ["coherence": 0.97, "trusted": true]
+    let restored = try JSONDecoder().decode(
+      SSBFit.self, from: JSONSerialization.data(withJSONObject: saved))
+    XCTAssertEqual(restored.point, wide.point)
+    XCTAssertEqual(restored.higherOrderConsistency, wide.higherOrderConsistency)
     print("weak-phase halves disagree by \(consistency.halfBandRMSRadians) rad")
     print(
-      "weak-phase guard: coherence standard \(standard.higherOrderGuard!.coherence), wide \(check.coherence); "
-        + "largest edge-phase error \(check.largestEdgePhaseErrorRadians) rad; C30 wide "
-        + "\(term(wide, 3, 0)!.magnitudeAngstroms / 10) nm, standard \(term(standard, 3, 0)!.magnitudeAngstroms / 10) nm"
-    )
+      "weak-phase C30 wide \(term(wide, 3, 0)!.magnitudeAngstroms / 10) nm, standard "
+        + "\(term(standard, 3, 0)!.magnitudeAngstroms / 10) nm")
   }
 
-  /// The lattice of `SSBModelReconstructionTests.scene` is not a probe-object measurement: the model explains little
-  /// of its signal (the opt-in coherence guard) and the ring halves of a wide fit disagree (the default check).
-  func testGuardsRejectASceneTheModelDoesNotDescribe() throws {
+  /// The lattice of `SSBModelReconstructionTests.scene` is not a probe-object measurement: the ring halves of a wide
+  /// fit disagree, so the half-band check rejects it.
+  func testHalfBandCheckRejectsASceneTheModelDoesNotDescribe() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let model = try SSBFifthOrderGradientTests.model(device)
     var primary: SSBModelPoint?
     let fitted = try SSBModelFit.findAberrations(
       model: model, rotationDegrees: 17.25, darkField: nil, scanSampling: (0.5, 0.5),
-      options: SSBFitOptions(trials: 40, computeHigherOrderGuard: true), checkRotation: false,
+      options: SSBFitOptions(trials: 40), checkRotation: false,
       onInitialFit: { primary = $0.point })
-    let check = try XCTUnwrap(fitted.fit.higherOrderGuard)
-    XCTAssertFalse(check.trusted)
-    XCTAssertLessThan(check.coherence, 0.9)
-    XCTAssertTrue(check.reasons[0].hasPrefix("the model explains"))
     // Its ring halves disagree (8.2 rad), so the fit falls back to the standard box, flagged, and keeps the checked
     // wide fit in the record.
     let consistency = try XCTUnwrap(fitted.fit.higherOrderConsistency)
@@ -393,23 +256,6 @@ final class SSBHigherOrderLimitTests: XCTestCase {
         SSBHigherOrderConsistency.self, from: JSONEncoder().encode(consistency)), consistency)
   }
 
-  /// Gauss-Jordan inverse with partial pivoting.
-  static func inverse(_ matrix: [[Double]]) throws -> [[Double]] {
-    let n = matrix.count
-    var a = matrix.enumerated().map { i, row in row + (0..<n).map { $0 == i ? 1.0 : 0.0 } }
-    for column in 0..<n {
-      let pivot = (column..<n).max { abs(a[$0][column]) < abs(a[$1][column]) }!
-      guard abs(a[pivot][column]) > 0 else { throw XCTSkip("singular") }
-      a.swapAt(column, pivot)
-      let p = a[column][column]
-      a[column] = a[column].map { $0 / p }
-      for row in 0..<n where row != column {
-        let f = a[row][column]
-        if f != 0 { a[row] = zip(a[row], a[column]).map { $0 - f * $1 } }
-      }
-    }
-    return a.map { Array($0[n...]) }
-  }
 }
 
 /// Python `tests/hardware/thin_object.py` on a 32 x 32 probe window at 0.25 A, tiled to the 128 x 128 scan the native
