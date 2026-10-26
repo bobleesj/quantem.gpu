@@ -212,6 +212,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- Python MPS: Direct Ptycho prepares G(q, k) from exact bright-field columns (a ShowPtycho or `export_brightfield`
+  export) at native speed: 0.68-0.72 s warm and 0.83-0.85 s from disk on five 512 x 512 scans with 8,800-9,300
+  bright-field pixels on an M5 Max, from 1.49-1.54 s and 2.3-2.6 s (native Metal about 1 s). The stored uint8/uint16
+  counts are read on four threads straight into GPU memory (`MpsBfColumnFrames.columns_into`) and become float32 on
+  the GPU, instead of memmap reads converted 4 bytes per count on one host thread; G(q, k) and the fits are bit for
+  bit unchanged. An export without a stored DC value sums its detector columns the same way, in uint64 (0.21 s from
+  0.84 s). `io.load` sessions already decoded and converted on the GPU (0.92-0.98 s) and are unchanged.
+  `ssb_source_sha256` changes, so results saved before are computed again once.
 - Native (Swift/Metal): the Direct Ptycho module is `MetalDirectPtychoKernels` (product, target and
   `native/swift/Sources/MetalDirectPtychoKernels`), and its feature-level types take Direct Ptycho names, for example
   `MetalSSBJointModel` → `MetalDirectPtychoJointModel`, `SSBModelFit` → `DirectPtychoModelFit`, `SSBFitOptions` →

@@ -21,6 +21,7 @@ from quantem.gpu.direct_ptycho.mps.frames import (
     MpsBfColumnFrames,
     MpsTensorFrames,
     TensorChunkedFrames,
+    mlx_count_type,
 )
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
@@ -259,7 +260,7 @@ def _encoded_g_qk(mx, frames: EncodedBrightFieldFrames, rows: np.ndarray, cols: 
     half = scan_cols // 2 + 1
     g_qk = mx.zeros((count, scan_rows, half), dtype=mx.complex64)
     _eval_in_place(mx, g_qk)
-    stored = {1: mx.uint8, 2: mx.uint16, 4: mx.uint32}[frames.dtype.itemsize]
+    stored = mlx_count_type(mx, frames.dtype)
     for row_start, row_stop, counts in frames.scan_row_blocks(rows, cols):
         block_rows = row_stop - row_start
         staged = staged_tensor(mx, counts, stored)
@@ -323,6 +324,21 @@ def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_
         if isinstance(frames, ArrayFrames):
             stack_mx = None
             stack_np = frames.columns(rows, cols).reshape(int(rows.size), *scan_shape).astype(np.float32, copy=False)
+        elif isinstance(frames, MpsBfColumnFrames):
+            # The stored counts are read into GPU memory as they are and become float32 there: the values a host
+            # conversion would write (uint8 and uint16 are exact in float32), so G(q, k) keeps every bit, while the
+            # host writes 1 or 2 bytes per count in parallel reads instead of converting 4 bytes per count on one
+            # thread (most of the 1.5 s a 512 x 512 scan took to prepare; it takes 0.7 s).
+            counts_mx = mx.empty((int(rows.size), *scan_shape), dtype=mlx_count_type(mx, frames.dtype))
+            mx.eval(counts_mx)
+            frames.columns_into(rows, cols, out=np.asarray(counts_mx).reshape(int(rows.size), -1))
+            stack_mx = counts_mx.astype(mx.float32)
+            del counts_mx
+            stack_np = None
+            if compact_inactive and dc_value_override is None:
+                # the DC sums below are host sums of these float32 values
+                mx.eval(stack_mx)
+                stack_np = np.asarray(stack_mx)
         else:
             # Gather into MLX-owned storage: a resident gather without an output allocates a Metal buffer that
             # nothing releases, so every preparation would strand one chunk of driver memory.
