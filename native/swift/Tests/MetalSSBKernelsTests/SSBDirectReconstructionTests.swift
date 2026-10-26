@@ -74,7 +74,8 @@ final class SSBDirectReconstructionTests: XCTestCase {
       hypot(g.brightfieldKX[$0], g.brightfieldKY[$0]) * g.wavelengthAngstroms <= outer
     }
     precondition(
-      k.count == active.count, "the model's BF frequencies are the pixels inside the aperture's support")
+      k.count == active.count,
+      "the model's BF frequencies are the pixels inside the aperture's support")
     let wl = Double(g.wavelengthAngstroms)
     let semi = Double(g.semiangleRadians)
     let angular = Double(g.angularSamplingXRadians)
@@ -365,21 +366,25 @@ final class SSBDirectReconstructionTests: XCTestCase {
     let outside = g.brightfieldKX.indices.filter {
       hypot(g.brightfieldKX[$0], g.brightfieldKY[$0]) * g.wavelengthAngstroms > outer
     }
-    XCTAssertGreaterThan(outside.count, 8, "the scene must select BF pixels beyond the aperture's support")
+    XCTAssertGreaterThan(
+      outside.count, 8, "the scene must select BF pixels beyond the aperture's support")
     let spectra = Self.spectra(s)
     let point = SSBModelPoint(
-      c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4, sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140)
+      c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4, sampleTiltMrad: [2.5, -4],
+      depthSpreadAngstroms: 140)
     for (factor, method) in [(1, SSBReconstructionMethod.phase), (2, .complex)] {
       let regularization = SSBDirectRegularization(detectorWeighting: .inverseMean)
       let model = try model(s, device: device)
       let result = try model.reconstruct(
         point, upsamplingFactor: factor, method: method, regularization: regularization)
       let expected = try Self.reference(
-        s, spectra: spectra, model: model, point: point, factor: factor, complex: method == .complex,
+        s, spectra: spectra, model: model, point: point, factor: factor,
+        complex: method == .complex,
         regularization: regularization)
       let count = result.rows * result.columns
       let phase = values(result.phase, count)
-      var squared = 0.0, maximum = 0.0
+      var squared = 0.0
+      var maximum = 0.0
       for i in 0..<count {
         var d = phase[i] - expected.phase[i]
         d -= 2 * .pi * (d / (2 * .pi)).rounded()
@@ -387,7 +392,9 @@ final class SSBDirectReconstructionTests: XCTestCase {
         maximum = max(maximum, abs(d))
       }
       let rms = (squared / Double(count)).squareRoot()
-      print("DIRECT inverse_mean, \(outside.count) of \(g.logicalBrightfieldCount) BF pixels outside: \(method.rawValue) \(factor)x phase rms \(rms) max \(maximum)")
+      print(
+        "DIRECT inverse_mean, \(outside.count) of \(g.logicalBrightfieldCount) BF pixels outside: \(method.rawValue) \(factor)x phase rms \(rms) max \(maximum)"
+      )
       XCTAssertLessThan(rms, 5e-7)
       XCTAssertLessThan(maximum, 2e-6)
     }
