@@ -500,7 +500,7 @@ public enum SSBModelFit {
         primary.point, model: model, search: options.higherOrderSearch,
         maxEvaluations: options.maxHigherOrderEvaluations,
         bounds: fifthOrderBounds(higherOrderLimit: limit),
-        progress: { progress("Fifth-order Newton", $0, $1) }, isCancelled: isCancelled)
+        progress: { progress("Fifth-order fit", $0, $1) }, isCancelled: isCancelled)
       var fitOptions = options
       fitOptions.higherOrderLimit = limit
       var fit = SSBFit(
