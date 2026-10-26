@@ -6,8 +6,8 @@
 > `quantem.widget` so the compute repository retains the experimental setup,
 > formulas, measurements, rejected ideas, and debugging lessons. It is not a
 > claim that every flag, source path, transport, or timing below still matches
-> the current runtime. [SSB performance](../ssb-performance.md) holds the later
-> (also historical) backend notes; use [SSB architecture](../ssb-architecture.md)
+> the current runtime. [SSB performance](../direct-ptycho-performance.md) holds the later
+> (also historical) backend notes; use [SSB architecture](../direct-ptycho-architecture.md)
 > for current ownership and API contracts.
 
 ## What must be reverified

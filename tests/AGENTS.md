@@ -28,7 +28,7 @@ The repository-wide rules for this public repository are in `../AGENTS.md`.
   CPU numerical checks, when useful, must be tiny and bounded. Large CPU-oracle
   runs require an explicit user request and the opt-in flag/environment switch.
   CPU orchestration, input validation, hashes, and comparisons remain permitted.
-- Run `bash scripts/check_ssb_parity.sh` for the GPU agreement-search gate and
+- Run `bash scripts/check_direct_ptycho_parity.sh` for the GPU agreement-search gate and
   `swift test --filter MetalSSBKernelsTests` for native reconstruction, fit and
   saved-result checks. These do not resolve recorded strict MPS oracle
   findings.

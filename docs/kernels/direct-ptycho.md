@@ -1,4 +1,4 @@
-# Single-sideband ptychography
+# Direct ptychography
 
 Single-sideband (SSB) ptychography uses scan-frequency interference from a
 4D-STEM acquisition to reconstruct a complex transmission function. This page
@@ -362,7 +362,7 @@ result = workflow.run(
 
 ## Optimization model
 
-SSB performance is governed by data preparation, FFT layout, active
+Direct Ptycho performance is governed by data preparation, FFT layout, active
 bright-field count, phase evaluation, and optimizer trial scheduling. Reusable
 optimizations include:
 

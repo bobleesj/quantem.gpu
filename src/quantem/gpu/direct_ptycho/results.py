@@ -864,7 +864,7 @@ def column_sign(phase: object) -> float:
 def phase_skewness(phase: object) -> float:
     """Mean-centred third-moment ratio of the phase, ``mean(p**3) / mean(p**2)**1.5`` with ``p = phase - mean(phase)``.
 
-    The phase-tail test of the 180-degree branch choice (``SSB.compare_rotation_branches``): positive when a few bright
+    The phase-tail test of the 180-degree branch choice (``DirectPtycho.compare_rotation_branches``): positive when a few bright
     atomic columns sit over a flatter background. Unlike ``column_sign`` it centres on the mean, not the median.
 
     Examples

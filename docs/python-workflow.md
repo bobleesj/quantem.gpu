@@ -108,10 +108,10 @@ Each panel uses independent contrast: square-root for BF/ADF and linear for DPC.
 
 DPC estimates the scan–detector rotation, known only modulo 180 degrees. This
 Gold acquisition reports `scan_detector_rotation_flipped=False`, so pass the angle and the
-flag directly to SSB; `find_aberrations(check_rotation=True)` settles the
-180-degree branch. SSB raises if `scan_detector_rotation_flipped` is True. For other data,
+flag directly to `DirectPtycho`; `find_aberrations(check_rotation=True)` settles the
+180-degree branch. `DirectPtycho` raises if `scan_detector_rotation_flipped` is True. For other data,
 check that value first: a detector-axis swap must be resolved before reusing
-the angle. SSB does not run DPC automatically.
+the angle. `DirectPtycho` does not run DPC automatically.
 
 (reconstruct-phase)=
 ## Reconstruct SSB phase
@@ -136,7 +136,7 @@ show_2d(
 )
 ```
 
-SSB finds the bright-field disk automatically. `find_aberrations()` is the
+`DirectPtycho` finds the bright-field disk automatically. `find_aberrations()` is the
 default model-based, tilt-corrected fit: on the native grid it fits defocus and
 twofold astigmatism together with the sample tilt and a depth spread, keeping
 the parameters whose predicted bright-field data agree best with the
@@ -149,7 +149,7 @@ search. Voltage, sampling, and convergence angle stay fixed.
 | `find_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
 
 Both refine on exact derivatives of the model agreement
-({ref}`SSB fit methods <ssb-fit-methods>`).
+({ref}`Direct Ptycho fit methods <ssb-fit-methods>`).
 
 ![Gold native SSB phase](_static/gold-ssb-native.png)
 
@@ -189,7 +189,7 @@ data.close()
 
 ## Review rotation and defocus together
 
-For a calibrated SSB session, compare the two 180-degree rotation candidates
+For a calibrated Direct Ptycho session, compare the two 180-degree rotation candidates
 with negative and positive C10 search intervals:
 
 ```python
@@ -215,7 +215,7 @@ with the convention `f = -C10`. Depth spread is a fitted model parameter.
 
 `ptycho.show("focus")` uses the existing Show2D gallery. Pass `layout="stack"`
 to scroll through defocus in Show3D, or `interactive=False` for static core
-views. See the [SSB view options](api/ssb.md) for focus spacing, depth values,
+views. See the [Direct Ptycho view options](api/direct_ptycho.md) for focus spacing, depth values,
 region selection and panel sizes.
 
 Detector calibration plots use the same display vocabulary:

@@ -55,7 +55,7 @@ _loss_tile_override: ContextVar[int | None] = ContextVar("loss_row_ifft_tile_bf"
 
 @contextmanager
 def fit_loss_tiles():
-    """Run the enclosed loss evaluations with ``FIT_LOSS_ROW_IFFT_TILE_BF`` tiles (``SSB.find_aberrations``)."""
+    """Run the enclosed loss evaluations with ``FIT_LOSS_ROW_IFFT_TILE_BF`` tiles (``DirectPtycho.find_aberrations``)."""
     token = _loss_tile_override.set(FIT_LOSS_ROW_IFFT_TILE_BF)
     try:
         yield

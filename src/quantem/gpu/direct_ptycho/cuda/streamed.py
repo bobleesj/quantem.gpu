@@ -2,7 +2,7 @@
 
 Only detector columns are batched. Every forward transform spans every scan
 position; no scan tiles are reconstructed or stitched. The correction kernel
-is the same one used by the resident-spectrum SSB implementation.
+is the same one used by the resident-spectrum Direct Ptycho implementation.
 """
 
 import math

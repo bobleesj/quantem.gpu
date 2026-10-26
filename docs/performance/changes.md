@@ -320,7 +320,7 @@ The current values and distributions live only in
 Accepted and rejected performance experiments remain in the
 [optimization ledger](../maintainer/backend-optimization-matrix.md); older SSB
 layout experiments remain in the
-[SSB performance history](../maintainer/ssb-performance.md).
+[SSB performance history](../maintainer/direct-ptycho-performance.md).
 
 ## Adding a new revision
 

@@ -1,8 +1,8 @@
-# SSB architecture
+# Direct Ptycho architecture
 
 ## Public contract
 
-`quantem.gpu.SSB` is the scientist-facing SSB compute entry point. CUDA and
+`quantem.gpu.DirectPtycho` is the scientist-facing Direct Ptycho compute entry point. CUDA and
 MPS are its execution backends, not separate APIs. The browser engine in
 `direct_ptycho/webgpu` is a separate runtime that applications bundle; it is not an
 `DirectPtycho(backend=...)` option.
@@ -76,10 +76,10 @@ Each result records its backend, `phase_of_mean` and output factor
 
 | Layer | Owns | Must not own |
 | --- | --- | --- |
-| `quantem.gpu.SSB` | validation, public units, backend selection, fit/reconstruct/preview lifecycle, shared results | device kernels, viewer rendering |
+| `quantem.gpu.DirectPtycho` | validation, public units, backend selection, fit/reconstruct/preview lifecycle, shared results | device kernels, viewer rendering |
 | CUDA/MPS backend modules | preparation, device buffers, exact objective, reconstruction kernels | public parameter names, result schemas |
 | `direct_ptycho/webgpu` browser engine | WebGPU execution of an exported bright-field plan with the same units and parameter names | aberration search, silent preview substitution |
-| Applications and viewers | rendering, export folders, provenance presentation, acquisition integration | copied SSB optics, optimizers, or result classes |
+| Applications and viewers | rendering, export folders, provenance presentation, acquisition integration | copied Direct Ptycho optics, optimizers, or result classes |
 
 Python CUDA and MPS run in process. The browser engine runs asynchronously and
 reconstructs from exported bright-field columns and calibration; it does not
@@ -99,6 +99,6 @@ after parity passes.
 Each backend selects its kernels by square scan size (128, 256, 512 and 1024)
 in one place: `direct_ptycho/cuda/kernels`, `direct_ptycho/mps/kernels` and
 `direct_ptycho/webgpu/backend.ts`. Shape dispatch is not scattered through optimizer or
-viewer code. SSB-specific WebGPU code lives under `direct_ptycho/webgpu`; generic browser
+viewer code. Direct Ptycho WebGPU code lives under `direct_ptycho/webgpu`; generic browser
 device utilities live under `device`, and HDF5 decoder utilities live under
 `io/hdf5/webgpu`.

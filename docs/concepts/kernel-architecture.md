@@ -31,7 +31,7 @@ or consumer application to learn another load mode.
 | BF/DF/ADF and mean diffraction | `src/quantem/gpu/detector` | `detector/{cuda,mps,webgpu}`, `resident/mps` | `Metal4DSTEMKernels` |
 | CoM, DPC, and iDPC | `src/quantem/gpu/dpc` | `dpc/webgpu`; CUDA and MPS through the detector session | `Metal4DSTEMKernels`, `MetalImageFFT` |
 | Display statistics and transforms | `src/quantem/gpu/display` | none; browser clients own display | `MetalDisplayKernels`, `MetalImageRuntime` |
-| Single-sideband ptychography | `src/quantem/gpu/direct_ptycho` | `direct_ptycho/{cuda,mps,webgpu}` | `MetalSSBKernels` |
+| Direct ptychography | `src/quantem/gpu/direct_ptycho` | `direct_ptycho/{cuda,mps,webgpu}` | `MetalSSBKernels` |
 
 `detector/session.py` selects the detector implementation for each resident
 storage type in `resident/` and for arrays. Runtime implementations live in a `cuda/`, `mps/`, or

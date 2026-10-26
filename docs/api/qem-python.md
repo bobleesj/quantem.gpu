@@ -169,7 +169,7 @@ CUDA native reads normally return CuPy arrays. FP8 uses an owned byte wrapper
 with `dtype`, `shape`, `get()`, `to_torch()`, and `release()`, because CuPy has
 no corresponding numeric dtype. Default reads return typed Torch tensors on
 either accelerator. See {ref}`original FP8 input <original-fp8-input>`.
-Metal display and SSB products round to
+Metal display and Direct Ptycho products round to
 float32 on the GPU without modifying the saved float64 measurements.
 
 ## Review calibration once
@@ -190,7 +190,7 @@ io.save("calibrated.qem", data)
 Use measured values for your acquisition. Values you set are kept beside the recorded
 metadata and survive save, move, reopen and resave. Nothing saves automatically.
 Recreate an existing reconstruction session after editing its calibration.
-SSB needs voltage and scan sampling, plus detector sampling or a calibrated
+Direct Ptycho needs voltage and scan sampling, plus detector sampling or a calibrated
 convergence angle from which the disk radius can determine detector sampling.
 It cannot determine an absolute angular scale from the disk radius alone.
 

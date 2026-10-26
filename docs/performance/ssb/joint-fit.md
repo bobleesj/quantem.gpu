@@ -1,6 +1,6 @@
-# Full-field and regional SSB benchmark
+# Full-field and regional Direct Ptycho benchmark
 
-Measure the installed SSB fitter on your own H5 or QEM acquisition:
+Measure the installed Direct Ptycho fitter on your own H5 or QEM acquisition:
 
 ```bash
 quantem-gpu benchmark-ssb scan.qem --out /tmp/ssb-benchmark.json

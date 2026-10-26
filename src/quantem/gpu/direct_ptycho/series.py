@@ -1,4 +1,4 @@
-"""SSB reconstruction of an acquisition series (``SSB.reconstruct_series``) and the Live layout it reads and writes.
+"""SSB reconstruction of an acquisition series (``DirectPtycho.reconstruct_series``) and the Live layout it reads and writes.
 
 A series directory holds raw ``*_master.h5`` acquisitions and, under ``live/screen/<dataset>`` (or the ``save_dir``
 a caller names, such as Live's ``<output>/live/screen``), the products QuantEM Live already made: ``config.json`` with the fitted SSB settings, bright- and dark-field images, and saved SSB results.
@@ -48,14 +48,16 @@ def reconstruct_series(
     progress: bool = True,
     num_trials: int | None = None,
 ) -> SSBSeriesResult:
-    """Reconstruct an SSB series with independent or fixed-probe fitting (``SSB.reconstruct_series``; ``cls`` is ``SSB``).
+    """Reconstruct an SSB series with independent or fixed-probe fitting (``DirectPtycho.reconstruct_series``).
+
+    ``cls`` is ``DirectPtycho``.
 
     Existing QuantEM Live products under ``save_dir`` (default
     ``<source>/live/screen``) are discovered and reused automatically. Missing
-    products run through :class:`SSB` and are saved to the same location. When
+    products run through :class:`DirectPtycho` and are saved to the same location. When
     no Live screening exists, physical settings are read from ``dataset.yaml``
     or from explicit keyword arguments; an acquisition with no recorded
-    rotation has it estimated by ``SSB.open``. A stored fit counts only when it carries
+    rotation has it estimated by ``DirectPtycho.open``. A stored fit counts only when it carries
     the current fit schema (``stored_fit``); any other is treated as absent, so
     a probe reference stored by an earlier version is fitted again.
 
@@ -76,7 +78,7 @@ def reconstruct_series(
     voltage_kV, semiangle_mrad, scan_detector_rotation_deg : float, optional
         Physical microscope settings; each wins over prior Live metadata and
         ``dataset.yaml``. A rotation none of them records is estimated per
-        acquisition (``SSB.open``).
+        acquisition (``DirectPtycho.open``).
     scan_detector_rotation_flipped : bool, optional
         Whether the detector row and column axes are exchanged with the
         rotation. None takes the saved fit's flag, else unflipped for a
@@ -91,7 +93,7 @@ def reconstruct_series(
         ``"auto"``, the exact-derivative fit (``find_aberrations``), or None for no local refinement; another value
         is retired and prints one line.
     backend : {"auto", "cuda", "mps"}, default "auto"
-        Accelerated SSB backend. CPU is never used.
+        Accelerated Direct Ptycho backend. CPU is never used.
     save_dir : str or Path, optional
         Directory holding one folder per acquisition (``<dataset>/config.json``
         and its saved fits), the layout ``live screen --output OUT`` writes as
@@ -371,7 +373,7 @@ def acquisition_settings(
 
     Each value comes from the caller, else the saved Live SSB fit, else ``dataset.yaml``; a beam or scan step none of
     them gives is an error that names the three places to fix it. A rotation none of them gives stays None, and
-    ``SSB.open`` estimates it with its detector axes. The flip is the caller's, else the saved fit's when the
+    ``DirectPtycho.open`` estimates it with its detector axes. The flip is the caller's, else the saved fit's when the
     rotation is the saved one, else unflipped for a recorded rotation.
     """
     config_path = screen_path / "config.json"
@@ -407,10 +409,10 @@ def acquisition_settings(
 
 
 def open_settings(settings: dict[str, object]) -> dict[str, object]:
-    """``SSB.open`` keywords for one acquisition's resolved settings.
+    """``DirectPtycho.open`` keywords for one acquisition's resolved settings.
 
     A saved bright-field radius is passed as it was fitted: rounding it to whole pixels (53.4 to 53) reconstructed with
-    a different disk than the stored fit. A rotation of None is estimated by ``SSB.open``.
+    a different disk than the stored fit. A rotation of None is estimated by ``DirectPtycho.open``.
     """
     rotation = settings["scan_detector_rotation_deg"]
     return {
@@ -440,7 +442,7 @@ def write_fit_metadata(
     without which no reader accepts it. Fields Live added to a block of the
     current schema are kept, except quantem.live's 180-degree decision on the earlier fit (``LIVE_BRANCH_DECISION``),
     which a new fit invalidates; a block of any other schema is replaced whole, so none of its values pass as current.
-    ``detector_sampling_mrad`` is the session's after ``SSB.open``, which holds one on every backend; a block
+    ``detector_sampling_mrad`` is the session's after ``DirectPtycho.open``, which holds one on every backend; a block
     without it cannot be exported.
 
     The file is quantem.live's screening record. A record this function creates carries
@@ -607,14 +609,14 @@ def _dataset_yaml_settings(
 
 
 def screen_record_settings(record: str | Path) -> dict[str, object]:
-    """The ``SSB.open`` keywords a QuantEM Live screening record holds for its acquisition's stored SSB fit.
+    """The ``DirectPtycho.open`` keywords a QuantEM Live screening record holds for its acquisition's stored SSB fit.
 
     ``record`` is one acquisition's screening folder (``<output>/live/screen/<dataset>``) or its ``config.json``.
     The keywords are everything the fit used: the beam (``voltage_kV``, ``semiangle_mrad``), ``scan_sampling_A`` and
     ``detector_sampling_mrad`` as ``(row, col)`` pairs, the physical ``scan_detector_rotation_deg`` with
     ``scan_detector_rotation_flipped``, the bright-field centre and radius, and the fitted ``aberrations``
     (``C10_nm``, ``C12_nm``, ``phi12_deg``). The fit is the record's result, its tilt-corrected fit when it has one
-    (``screen_record_fit``); its sample tilt and depth spread are not ``SSB.open`` keywords and are
+    (``screen_record_fit``); its sample tilt and depth spread are not ``DirectPtycho.open`` keywords and are
     ``screen_record_sample``'s. Opening with all of them reproduces the fit's geometry; opening with
     the rotation alone (``series.open_settings``) let the session derive another detector sampling and disk.
 
@@ -676,7 +678,7 @@ def open_screen_record(
     backend: Literal["auto", "cuda", "mps"] = "auto",
     verbose: bool = False,
 ):
-    """Open an ``SSB`` session on a QuantEM Live screened acquisition, at its stored fit (``screen_record_settings``).
+    """Open a ``DirectPtycho`` session on a QuantEM Live screened acquisition, at its stored fit (``screen_record_settings``).
 
     The bridge from a microscope session to the notebook: the screening record names the raw source
     (``source_master``) and every calibration of its fit, so the session opens with the fitted aberrations, the

@@ -22,7 +22,7 @@ parts:
       title: Load data and select patterns
     - file: api/images_dpc
       title: BF, ADF, and DPC images
-    - file: api/ssb
+    - file: api/direct_ptycho
       title: Direct ptychography and aberrations
       sections:
       - file: api/direct-ptycho
@@ -51,8 +51,8 @@ parts:
         title: BF, DF, and ADF reductions
       - file: kernels/com-dpc-idpc
         title: CoM, DPC, and iDPC
-      - file: kernels/ssb
-        title: Single-sideband ptychography
+      - file: kernels/direct-ptycho
+        title: Direct ptychography
       - file: kernels/scan-regions
         title: Explicit scan regions
       - file: kernels/display-export
@@ -83,8 +83,8 @@ parts:
           title: Original HDF5 packed loading
         - file: api/native_resident
       - file: api/metal_image
-      - file: maintainer/native-joint-ssb
-        title: Native SSB fit
+      - file: maintainer/direct-ptycho-native-fit
+        title: Native Direct Ptycho fit
       - file: developer/metal-compressed-region-mean
         title: Regional mean diffraction from compressed residents
     - file: developer/file-formats
@@ -147,11 +147,11 @@ parts:
           - file: performance/io/reports/2026-10-23-cuda-qem-loader-fix
           - file: performance/io/reports/2026-10-23-cuda-qem-cache-recheck
       - file: performance/ssb/index
-        title: SSB
+        title: Direct Ptycho
         sections:
         - file: performance/ssb/joint-fit
         - file: performance/ssb/reports/index
-          title: SSB reports
+          title: Direct Ptycho reports
           sections:
           - file: performance/ssb/reports/2026-10-26-direct-ptycho-backend-parity
           - file: performance/ssb/reports/2026-10-25-ssb-exact-derivative-fit
@@ -246,9 +246,9 @@ parts:
         title: Count and Fourier representation integration
       - file: developer/reproducing-resident-analysis
         title: Reproducing resident count analysis
-      - file: maintainer/ssb-architecture
-      - file: maintainer/ssb-resident-joint-fit
-        title: Resident joint SSB fitting
+      - file: maintainer/direct-ptycho-architecture
+      - file: maintainer/direct-ptycho-resident-joint-fit
+        title: Resident joint Direct Ptycho fitting
       - file: developer/writing
         title: Writing, notation, and units
     - file: maintainer/index
@@ -308,8 +308,8 @@ parts:
         title: Native direct drag windows (2026-10-25)
       - file: maintainer/native-metal-ssb-migration
         title: Native Metal SSB migration
-      - file: maintainer/ssb-performance
-        title: SSB performance notes (to 2026-10-18)
+      - file: maintainer/direct-ptycho-performance
+        title: Direct Ptycho performance notes (to 2026-10-18)
       - file: maintainer/history/index
         title: Historical experiments
         sections:

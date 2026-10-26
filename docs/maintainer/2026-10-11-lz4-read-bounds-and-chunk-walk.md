@@ -1,6 +1,6 @@
 # LZ4 read bounds, the bounded chunk walk and the rc15 to rc16 timing comparison - 2026-10-11
 
-> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/direct_ptycho.md).
 
 ## Question
 

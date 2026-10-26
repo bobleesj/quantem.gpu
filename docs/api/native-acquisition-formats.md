@@ -197,7 +197,7 @@ endianness, missing reciprocal-axis calibration and incomplete payloads.
 Native detector products use uint32 accumulation on this path. A uint16 camera
 geometry whose possible detector sum exceeds UInt32.max is rejected rather than
 overflowing; Python MPS provides a separate uint64 product path. Successfully
-opening a K3 file does not imply SSB supports its scan size: native SSB currently
+opening a K3 file does not imply Direct Ptycho supports its scan size: native Direct Ptycho currently
 accepts 128×128, 256×256 and 512×512, not arbitrary 100×100 or 210×210 scans.
 
 ### Saved compressed acquisitions (`.qem`)

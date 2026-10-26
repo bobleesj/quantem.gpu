@@ -1,4 +1,4 @@
-"""Generate independent synthetic fixtures for native joint SSB validation.
+"""Generate independent synthetic fixtures for native joint Direct Ptycho validation.
 
 Run with the installed QuantEM MPS implementation. Writes the geometry, the
 selected BF counts and the agreement objective of three cases, which

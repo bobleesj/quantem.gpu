@@ -142,5 +142,5 @@ complete Swift/Metal signoff.
 
 Read [Native 4D-STEM IO](../api/native_4dstem_io.md) and
 [Metal image APIs](../api/metal_image.md) for image and IO types. Read the
-[SSB API](../api/ssb.md) for `MetalSSBGeometry`, `MetalSSBEngine`, result
+[SSB API](../api/direct_ptycho.md) for `MetalSSBGeometry`, `MetalSSBEngine`, result
 provenance, and the application boundary.

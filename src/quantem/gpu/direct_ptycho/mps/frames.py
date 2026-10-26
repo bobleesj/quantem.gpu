@@ -268,7 +268,7 @@ class MpsBfColumnFrames:
         verbose: bool = False,
     ) -> None:
         self.source_path = Path(path).expanduser().resolve()
-        # (row, col) mrad per detector pixel the columns were exported with; SSB uses it when given none
+        # (row, col) mrad per detector pixel the columns were exported with; DirectPtycho uses it when given none
         self.detector_sampling_mrad = detector_sampling_mrad
         self.metadata = dict(metadata or {})
         self.scan_shape = tuple(int(value) for value in scan_shape)
@@ -457,7 +457,7 @@ class MpsBfColumnFrames:
 class EncodedBrightFieldCrop:
     """The bright-field crop of an encoded acquisition, left encoded: what ``crop_bright_field`` decodes, never decoded whole.
 
-    It stands in an SSB session where the decoded crop stood, with the same 4D shape (scan rows, scan columns, crop
+    It stands in a Direct Ptycho session where the decoded crop stood, with the same 4D shape (scan rows, scan columns, crop
     rows, crop columns), dtype and counts (invalid detector pixels read 0). MPS SSB reads its bright-field columns from
     the encoded source a few scan rows at a time, only while it builds G(q, k) (``EncodedBrightFieldFrames``), so a
     512 x 512 scan holds no 6 GB decoded copy. Slicing the scan axes (``crop[r0:r1, c0:c1]``) or swapping the

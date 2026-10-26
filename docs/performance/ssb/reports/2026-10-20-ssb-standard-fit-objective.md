@@ -1,6 +1,6 @@
 # The MPS standard SSB fit uses the agreement objective (2026-10-20)
 
-> **Historical:** describes the code as of 2026-10-20; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired; its comparison is the evidence for retiring them. See the [current fit methods](../../../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-20; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired; its comparison is the evidence for retiring them. See the [current fit methods](../../../api/direct_ptycho.md).
 
 ## Question
 

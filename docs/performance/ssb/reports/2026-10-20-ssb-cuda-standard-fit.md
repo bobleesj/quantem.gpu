@@ -1,6 +1,6 @@
 # CUDA standard fit on the agreement objective, and one phase-variance search (2026-10-20)
 
-> **Historical:** describes the code as of 2026-10-20; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired. See the [current fit methods](../../../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-20; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired. See the [current fit methods](../../../api/direct_ptycho.md).
 
 ## Question
 

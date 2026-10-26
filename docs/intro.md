@@ -2,7 +2,7 @@
 
 GPU-accelerated 4D-STEM analysis for scientists using Python. Load measurements,
 select diffraction patterns, make detector images, and reconstruct phase with
-single-sideband ptychography (SSB).
+model-based direct ptychography (SSB, phase and complex).
 
 > **Active development.** These examples use the current source checkout.
 > APIs may change; follow the [installation guide](install.md) and record
@@ -41,14 +41,14 @@ with your file; the acquisition is not bundled. Keep `data` open while working,
 then call `data.close()`. The [README](https://github.com/bobleesj/quantem.gpu#load-diffraction-patterns)
 contains the same short workflow and additional static image examples.
 
-## SSB in quantem.gpu
+## Direct Ptycho in quantem.gpu
 
-quantem fits SSB aberrations with a physical model of the measurement, not an
+quantem fits the aberrations with a physical model of the measurement, not an
 image-quality score: for each trial set of aberrations, sample tilt and depth
 spread it predicts the bright-field data the detector should have recorded and
 keeps the parameters whose prediction agrees best (least squares). This
-model-based, tilt-corrected fit is the default everywhere, and it is where SSB
-in quantem is heading.
+model-based, tilt-corrected fit is the default everywhere, and it is where Direct
+Ptycho in quantem is heading.
 
 | Call | Method | Use it for |
 |---|---|---|
@@ -58,7 +58,7 @@ in quantem is heading.
 Both refine on exact derivatives of the model agreement. The earlier
 phase-variance search (`objective="phase_variance"`), which scored how well the
 bright-field pixels' phase images agree instead of predicting the data, is
-retired. Backend support and evidence: {ref}`SSB fit methods <ssb-fit-methods>`.
+retired. Backend support and evidence: {ref}`Direct Ptycho fit methods <ssb-fit-methods>`.
 
 ## What stays consistent
 

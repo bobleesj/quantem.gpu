@@ -225,6 +225,16 @@ new `rcN` heading when that rc is published to TestPyPI.
   every `quantem.gpu.ssb.<module>` are the same module objects as `quantem.gpu.direct_ptycho.<module>` (no second
   copies, so `isinstance` checks and pickles naming the old path still work), and the first import warns once with a
   DeprecationWarning. Browser bundles that copy the WebGPU sources read them from `direct_ptycho/webgpu`.
+- Docs and scripts call the whole feature (fit, the three reconstructions, sessions, backends) Direct Ptycho; SSB
+  names the single-sideband method only. Moved pages keep their old URLs as redirects: `api/ssb` →
+  `api/direct_ptycho`, `kernels/ssb` → `kernels/direct-ptycho`, and `maintainer/ssb-architecture`, `ssb-performance`,
+  `native-joint-ssb`, `ssb-resident-joint-fit` → `maintainer/direct-ptycho-architecture`, `-performance`,
+  `-native-fit`, `-resident-joint-fit`. The `performance/ssb/` topic and its dated reports keep their paths. Scripts:
+  `benchmark_ssb.py` → `benchmark_direct_ptycho.py`, `check_ssb_parity.sh` → `check_direct_ptycho_parity.sh`,
+  `check_ssb_fit_trajectory.sh` → `check_direct_ptycho_fit_trajectory.sh`, `ssb_agreement_gate.py` →
+  `direct_ptycho_agreement_gate.py`, `build_metal_ssb_joint_reference.py` →
+  `build_metal_direct_ptycho_joint_reference.py` (same arguments and `QUANTEM_SSB_*` variables). Docstrings in
+  `direct_ptycho` changed, so `ssb_source_sha256` changes and results saved before are computed again once.
 - Python SSB: `upsampling_factor="auto"` still picks the factor from the scan sampling, at most 4×, and now says so
   when the cap lowers it: one line per session, `SSB: auto upsampling capped at 4× (the scan sampling supports 8×);
   pass upsampling_factor=8 for the full factor.` `stream` resolves auto once for the series. Explicit factors are

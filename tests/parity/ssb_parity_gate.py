@@ -232,7 +232,7 @@ def run_case(
     if not (root / "source" / "bf_columns.u16").is_file():
         raise FileNotFoundError(
             f"Case {case.name!r} has no exported exact inputs at {root}. Run "
-            f"`scripts/check_ssb_parity.sh --cpu-oracle --export` first."
+            f"`scripts/check_direct_ptycho_parity.sh --cpu-oracle --export` first."
         )
     meta = _case_meta(case)
     report: dict[str, object] = {
@@ -478,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.cpu_oracle:
         parser.error(
-            "CPU reconstruction is opt-in; use scripts/check_ssb_parity.sh "
+            "CPU reconstruction is opt-in; use scripts/check_direct_ptycho_parity.sh "
             "for frozen GPU parity, or explicitly pass --cpu-oracle for diagnosis"
         )
 
@@ -496,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             "--force-export only rewrites an existing artifact when --export is "
             "also given; pass --export --force-export (or use "
-            "`scripts/check_ssb_parity.sh --cpu-oracle --export --force-export`)."
+            "`scripts/check_direct_ptycho_parity.sh --cpu-oracle --export --force-export`)."
         )
     reports = []
     passed = True

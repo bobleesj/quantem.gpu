@@ -6,7 +6,7 @@ engine's C10 unit (Angstrom); phi12 rad; tilt mrad, scan frame (row, col).
 """
 
 PARAMETERS = ("C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "depth_spread_A")
-# The depth spreads the joint fit searches, in nm (public) and in the engine's Angstrom: SSB.find_aberrations(tilt=True)
+# The depth spreads the joint fit searches, in nm (public) and in the engine's Angstrom: DirectPtycho.find_aberrations(tilt=True)
 # returns a depth_spread_nm inside it, and its parameter slices span it.
 DEPTH_SPREAD_RANGE_NM = (2.0, 60.0)
 DEPTH_SPREAD_RANGE_A = (20.0, 600.0)

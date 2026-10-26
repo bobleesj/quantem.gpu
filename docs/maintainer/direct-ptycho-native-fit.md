@@ -1,4 +1,4 @@
-# Native SSB: the model-based, tilt-corrected fit
+# Native Direct Ptycho: the model-based, tilt-corrected fit
 
 `MetalSSBKernels` runs Python's `SSB.find_aberrations` on a prepared native session: the same transfer model,
 objective, search and branch test, so a native app gives the Python MPS result. The app owns selection and
@@ -57,7 +57,7 @@ joint models; `retarget` moves a model to another rotation without gathering its
 
 The TPE port is checked trial by trial: on a synthetic float32 objective that both sides evaluate from the same
 float32 trial rows, the 200 search trials equal Python's (`SSBAgreementSearchTests`, which
-`scripts/ssb_agreement_gate.py` also feeds with the current Python records). The Newton after the search has
+`scripts/direct_ptycho_agreement_gate.py` also feeds with the current Python records). The Newton after the search has
 exact derivatives only: on the same objective, given its analytic derivatives, the tilt and `tilt=False` fits reach
 its known maximum, and the staged Newton reaches the one-stage Newton's point with fewer derivative passes.
 The exact-gradient fifth-order search is checked for a maximum of the Double-summed agreement on the synthetic
@@ -98,7 +98,7 @@ complex object) still opens; `MetalSSBEngine.phase(of:)` converts its object to 
 
 ```sh
 swift test -c release -Xswiftc -enable-testing --filter MetalSSBKernelsTests
-PYTHONPATH=src python scripts/ssb_agreement_gate.py        # the same search trials and exact-Newton fits
+PYTHONPATH=src python scripts/direct_ptycho_agreement_gate.py        # the same search trials and exact-Newton fits
 SSB_PARITY_FIXTURE=... SSB_PARITY_REFERENCE=... swift test -c release -Xswiftc -enable-testing \
   --filter MetalSSBMeasuredParityTests                     # a measured acquisition, kept outside this repository
 SSB_DIRECT_FIXTURE=... [SSB_DIRECT_ALL=1] swift test -c release -Xswiftc -enable-testing \
@@ -107,7 +107,7 @@ SSB_DIRECT_FIXTURE=... [SSB_DIRECT_ALL=1] swift test -c release -Xswiftc -enable
 
 The joint fixtures (`SSB_JOINT_REFERENCE`, `SSB_JOINT_CALIBRATED_REFERENCE`) gate the objective (loss relative
 error < 5e-5). Their phase images were of the retired `mean_phase` estimator; they are not compared, and
-`scripts/build_metal_ssb_joint_reference.py` no longer writes them (nor needs an upsampling source). Missing
+`scripts/build_metal_direct_ptycho_joint_reference.py` no longer writes them (nor needs an upsampling source). Missing
 external fixtures are reported as skips, never passes. Keep acquisitions, screenshots and raw logs outside this
 repository.
 

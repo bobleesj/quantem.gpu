@@ -1,4 +1,4 @@
-"""Gate the native SSB fit on the agreement objective: the Swift port must draw the Python search's trials.
+"""Gate the native Direct Ptycho fit on the agreement objective: the Swift port must draw the Python search's trials.
 
 The default fit (``find_aberrations()``, tilt-corrected) and ``find_aberrations(tilt=False)`` maximize the model
 agreement with the resident multivariate TPE of ``direct_ptycho._resident_search``, then a trust-region Newton on the
@@ -14,7 +14,7 @@ fitted points to agree to 1e-6:
 3. with ``SSB_PARITY_FIXTURE`` and ``SSB_PARITY_REFERENCE`` set, ``MetalSSBMeasuredParityTests`` also compares
    the native fits, branch decision and phases with an MPS reference on a measured acquisition.
 
-Usage: PYTHONPATH=src python scripts/ssb_agreement_gate.py [--backend mps] [--json out.json]
+Usage: PYTHONPATH=src python scripts/direct_ptycho_agreement_gate.py [--backend mps] [--json out.json]
 """
 
 import argparse
@@ -125,7 +125,7 @@ def main() -> int:
     print(json.dumps(record, indent=1), flush=True)
     if args.json:
         args.json.write_text(json.dumps(record, indent=1))
-    with tempfile.TemporaryDirectory(prefix="ssb-agreement-gate-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="direct-ptycho-agreement-gate-") as scratch:
         reference = Path(scratch) / "agreement-reference.json"
         reference.write_text(json.dumps(record))
         environment = {**os.environ, "SSB_AGREEMENT_REFERENCE": str(reference)}

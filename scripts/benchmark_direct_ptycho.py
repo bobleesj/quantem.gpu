@@ -1,10 +1,10 @@
-"""Time the CUDA SSB, DPC and parallax hot paths of this checkout on real acquisitions.
+"""Time the CUDA Direct Ptycho, DPC and parallax hot paths of this checkout on real acquisitions.
 
 A cleanup or refactor must neither slow these paths nor change a value. This prints, per acquisition and stage,
 the first (cold, includes kernel compilation) and the median warm wall time, and the sha256 of every output array,
 so two checkouts compared back to back show both. Each fit starts from a fresh session with a fixed seed.
 
-Stages: ``session`` (SSB construction, bright-field crop and Fourier preparation), ``reconstruct`` (fixed probe,
+Stages: ``session`` (``DirectPtycho`` construction, bright-field crop and Fourier preparation), ``reconstruct`` (fixed probe,
 without and with the loss), ``fit`` (``find_aberrations(search="primary", tilt=False)``, the standard model fit:
 200 trials and the exact-derivative Newton), ``tilt`` (``find_aberrations()``, the default tilt-corrected fit
 through fifth order), ``dpc`` (``dpc.run``) and ``parallax`` (``parallax.run`` with the aberration fit).
@@ -14,8 +14,8 @@ makes a temporary one when it is unset), or one tree's cached binaries time the 
 
 Examples
 --------
-CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_ssb.py scan_master.h5 --voltage-kV 300 --semiangle-mrad 30
-CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_ssb.py a_master.h5 b_master.h5 --stages session,reconstruct
+CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_direct_ptycho.py scan_master.h5 --voltage-kV 300 --semiangle-mrad 30
+CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_direct_ptycho.py a_master.h5 b_master.h5 --stages session,reconstruct
 """
 
 import argparse
@@ -48,7 +48,7 @@ def main() -> None:
     unknown = set(stages) - set(STAGES)
     if unknown:
         parser.error(f"unknown stages {sorted(unknown)}; choose from {', '.join(STAGES)}")
-    with tempfile.TemporaryDirectory(prefix="benchmark-ssb-cupy-") as cache:
+    with tempfile.TemporaryDirectory(prefix="benchmark-direct-ptycho-cupy-") as cache:
         os.environ.setdefault("CUPY_CACHE_DIR", cache)
         run(arguments, stages)
 
@@ -63,7 +63,7 @@ def run(arguments, stages) -> None:
     import numpy as np
     import torch
 
-    from quantem.gpu import SSB, dpc, io, parallax
+    from quantem.gpu import DirectPtycho, dpc, io, parallax
     from quantem.gpu.device import release_cached_memory
 
     if not Path(quantem.gpu.__file__).resolve().is_relative_to(ROOT / "src"):
@@ -105,8 +105,8 @@ def run(arguments, stages) -> None:
               f"   (n={len(times)})   {outputs}", flush=True)
 
     def session(data):
-        return SSB(data, voltage_kV=arguments.voltage_kV, semiangle_mrad=arguments.semiangle_mrad,
-                   scan_sampling_A=(arguments.scan_sampling_A, arguments.scan_sampling_A))
+        return DirectPtycho(data, voltage_kV=arguments.voltage_kV, semiangle_mrad=arguments.semiangle_mrad,
+                            scan_sampling_A=(arguments.scan_sampling_A, arguments.scan_sampling_A))
 
     def prepared(data):
         ssb = session(data)

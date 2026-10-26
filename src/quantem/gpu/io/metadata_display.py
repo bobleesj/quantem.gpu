@@ -1,7 +1,7 @@
 """Compact acquisition calibration tables, without reading detector values.
 
 One label set. Every calibration table of quantem.gpu (``data.calibration.table()``, ``data.metadata_table()``,
-``io.inspect``, ``SSB.calibration()``) and of applications built on it names its rows, units and sources
+``io.inspect``, ``DirectPtycho.calibration()``) and of applications built on it names its rows, units and sources
 with the constants below, so the same quantity reads the same in every table.
 """
 

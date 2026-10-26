@@ -1,6 +1,6 @@
 # Initial fitting before fifth-order refinement
 
-> **Historical:** describes the code as of 2026-10-22; the finite-difference Newton and Nelder–Mead refinements it compares are retired. See the [current fit methods](../../../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-22; the finite-difference Newton and Nelder–Mead refinements it compares are retired. See the [current fit methods](../../../api/direct_ptycho.md).
 
 ## Decision and scope
 

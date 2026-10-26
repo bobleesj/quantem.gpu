@@ -1,4 +1,4 @@
-"""Reproducible SSB workflow timings using the installed compute backend."""
+"""Reproducible Direct Ptycho workflow timings using the installed compute backend."""
 
 from __future__ import annotations
 
@@ -159,7 +159,7 @@ def run_ssb_preview(
     defocus_step_nm: float = 0.1,
     progress: Callable[[str], None] | None = None,
 ) -> dict:
-    """Measure changed-defocus redraws of an existing full-field SSB session.
+    """Measure changed-defocus redraws of an existing full-field Direct Ptycho session.
 
     Retain the session's aberrations, rotation, tilt, depth and complete
     bright-field support. Only C10 changes along a deterministic trajectory;
@@ -169,7 +169,7 @@ def run_ssb_preview(
 
     Parameters
     ----------
-    ssb : quantem.gpu.SSB
+    ssb : quantem.gpu.DirectPtycho
         Calibrated session, normally restored from a reviewed joint fit.
     upsampling : tuple of int
         Output factors to measure. Supported factors are 1, 2, 3, 4 and 8.

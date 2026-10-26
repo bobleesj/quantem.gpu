@@ -28,6 +28,8 @@ sphinx:
       - sphinx_book_theme
       - sphinx_reredirects
     redirects:
+      api/ssb: direct_ptycho.html
+      kernels/ssb: direct-ptycho.html
       maintainer/2026-09-11-ssb-performance-checkpoints: ../performance/ssb/reports/2026-09-11-ssb-performance-checkpoints.html
       maintainer/2026-10-15-cuda-batched-refinement: ../performance/ssb/reports/2026-10-15-cuda-batched-refinement.html
       maintainer/2026-10-15-mps-ssb-upsampling: ../performance/ssb/reports/2026-10-15-mps-ssb-upsampling.html
@@ -55,6 +57,10 @@ sphinx:
       maintainer/mps-ssb-full-bf-redraw-2026-10-17: ../performance/ssb/reports/mps-ssb-full-bf-redraw-2026-10-17.html
       maintainer/mps-ssb-optical-shortcuts-2026-10-17: ../performance/ssb/reports/mps-ssb-optical-shortcuts-2026-10-17.html
       maintainer/mps-ssb-preview-reuse-2026-10-17: ../performance/ssb/reports/mps-ssb-preview-reuse-2026-10-17.html
+      maintainer/native-joint-ssb: direct-ptycho-native-fit.html
+      maintainer/ssb-architecture: direct-ptycho-architecture.html
+      maintainer/ssb-performance: direct-ptycho-performance.html
+      maintainer/ssb-resident-joint-fit: direct-ptycho-resident-joint-fit.html
       maintainer/virtual-image-kernel-checklist: ../performance/virtual-detectors/validation.html
       performance/2026-10-21-ssb-region-latency: ssb/reports/2026-10-21-ssb-region-latency.html
       performance/2026-10-22-broad-fifth-cuda-study: ssb/reports/2026-10-22-broad-fifth-cuda-study.html

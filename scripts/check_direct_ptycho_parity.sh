@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# GPU-first SSB parity gate.
+# GPU-first Direct Ptycho parity gate.
 #
-#   scripts/check_ssb_parity.sh                      # native agreement-search gate
-#   scripts/check_ssb_parity.sh --cpu-oracle         # expensive opt-in: MPS against the CPU oracle
-#   scripts/check_ssb_parity.sh --cpu-oracle --full  # every case, the 512x512 one included
+#   scripts/check_direct_ptycho_parity.sh                      # native agreement-search gate
+#   scripts/check_direct_ptycho_parity.sh --cpu-oracle         # expensive opt-in: MPS against the CPU oracle
+#   scripts/check_direct_ptycho_parity.sh --cpu-oracle --full  # every case, the 512x512 one included
 #
 # The optional CPU oracle reports the MPS findings of this experiment as failures.
 # The native engine's non-model reconstruction and phase-variance search, which
@@ -29,17 +29,17 @@ for argument in "$@"; do
     --full) FULL=1 ;;
     --cpu-oracle) CPU_ORACLE=1 ;;
     --export|--force-export|--all-cases) EXTRA+=("$argument") ;;
-    *) echo "check_ssb_parity: unknown argument $argument" >&2; exit 2 ;;
+    *) echo "check_direct_ptycho_parity: unknown argument $argument" >&2; exit 2 ;;
   esac
 done
 
 if [ "$CPU_ORACLE" = 0 ]; then
   if [ "${#EXTRA[@]}" -gt 0 ] || [ "$FULL" = 1 ]; then
-    echo "check_ssb_parity: oracle-specific flags require explicit --cpu-oracle; the default is the GPU agreement gate" >&2
+    echo "check_direct_ptycho_parity: oracle-specific flags require explicit --cpu-oracle; the default is the GPU agreement gate" >&2
     exit 2
   fi
   echo "GPU acceptance: native agreement search against the Python resident search; no CPU oracle."
-  exec bash scripts/check_ssb_fit_trajectory.sh
+  exec bash scripts/check_direct_ptycho_fit_trajectory.sh
 fi
 
 if [ "$FULL" = 1 ]; then

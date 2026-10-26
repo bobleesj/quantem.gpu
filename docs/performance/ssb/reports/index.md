@@ -1,4 +1,4 @@
-# SSB reports
+# Direct Ptycho reports
 
 Dated records retain their original workload, backend, source revision and
 acceptance limits. They are evidence, not a statement of current release speed.

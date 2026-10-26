@@ -1,6 +1,6 @@
 # Coherent SSB reconstruction and scan-mean aliases
 
-> **Historical:** describes the code as of 2026-10-16; the `mean_phase` estimator is retired. See the [current fit methods](../../../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-16; the `mean_phase` estimator is retired. See the [current fit methods](../../../api/direct_ptycho.md).
 
 Reconstruction uses `phase_of_mean` on both Python MPS and CUDA.
 The corrected complex waves are summed before phase is extracted. Explicit

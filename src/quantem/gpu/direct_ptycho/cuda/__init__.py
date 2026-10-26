@@ -1,4 +1,4 @@
-"""CUDA implementation of the private SSB compute protocol."""
+"""CUDA implementation of the private Direct Ptycho compute protocol."""
 
 from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 

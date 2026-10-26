@@ -627,7 +627,7 @@ class WaveWindow:
         return self.thick._wave_phase(spectrum, self.qrow.size, self.qcol.size)
 
     def _spectrum(self, value: float, *, pairs: int) -> cp.ndarray:
-        """``_wave_spectrum`` at the control value, with the engine arguments ``SSB.preview`` derives."""
+        """``_wave_spectrum`` at the control value, with the engine arguments ``DirectPtycho.preview`` derives."""
         aberrations = validate_aberrations({**self.aberrations, self.control: value}, higher_order=True)
         coefs = aberrations_to_engine(aberrations)
         magnitudes, angles = higher_order_arrays(aberrations) or (None, None)

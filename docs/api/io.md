@@ -20,7 +20,7 @@ For ordinary work, load once and read metadata from the returned acquisition.
 polling, or metadata access without an accelerator.
 
 Leave the loaded dataset as the last expression in a notebook cell to show
-its calibration table before starting SSB, ptychography, or another algorithm:
+its calibration table before starting Direct Ptycho, ptychography, or another algorithm:
 
 ```python
 data = io.load("acquisition.qem")
@@ -33,7 +33,7 @@ and pixel-correction metadata without decoding detector values. Missing
 rotation is shown as **Not recorded**, not as a measured zero. `data.calibration`
 (and `data.calibration.table()`) shows the four microscope calibrations alone,
 with **Value**, **Unit** and **Source** columns. Every calibration table,
-including `SSB.calibration()`, uses one label set
+including `DirectPtycho.calibration()`, uses one label set
 (`quantem.gpu.io.metadata_display.CALIBRATION_LABELS`): **Accelerating
 voltage** (kV), **Convergence semiangle** (mrad), **Scan step (row, col)**
 (angstrom), **Detector step (row, col)** (mrad per pixel, or 1/angstrom per
@@ -359,7 +359,7 @@ Use `backend="cuda"` for an NVIDIA device. Gzip HDF5 uses bounded host reads
 followed by GPU ANS encoding; this is not GPU gzip decompression. Float64 input
 retains all original IEEE bits in typed ANS on both CUDA and MPS. Torch MPS
 cannot represent float64 tensors: use `loaded.read(output="native")` for an
-owned Metal array, and call its `release()` after use. Display and SSB products
+owned Metal array, and call its `release()` after use. Display and Direct Ptycho products
 use float32 arithmetic on Metal; that conversion leaves stored values intact.
 Reconstruction objects, probes and result TIFFs are not diffraction acquisitions.
 These Python paths do not certify the native Swift reader, which still limits
@@ -384,7 +384,7 @@ with io.load(original_fp8_array, backend="mps") as loaded:
 
 Use `backend="cuda"` on NVIDIA. Default reads retain every FP8 byte; inspect
 their bits through `original_pattern.view(torch.uint8)` when the caller's
-tensor library lacks FP8 arithmetic. Detector products and SSB interpret the
+tensor library lacks FP8 arithmetic. Detector products and Direct Ptycho interpret the
 original values in float32 with CUDA/Metal kernels. They do not change stored
 precision. The E8M0 format includes no zero or negative finite values; it is
 not a signed measurement substitute. External tensor or block scales are not
@@ -855,5 +855,5 @@ The loaded acquisition's metadata table also separates **QEM file size** on
 disk, **ANS resident size** (or **Resident size** for other representations),
 and **Uncompressed size** from shape and dtype. All three use decimal GB
 (1 GB = 1,000,000,000 bytes). Resident storage includes the encoded representation
-and its indexes, not temporary SSB workspaces or total device memory. Inspecting
+and its indexes, not temporary Direct Ptycho workspaces or total device memory. Inspecting
 these sizes does not decode the acquisition.

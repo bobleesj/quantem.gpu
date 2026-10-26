@@ -46,4 +46,4 @@ Details, method and open items: the
 [backend parity report](../../../../docs/performance/ssb/reports/2026-10-26-direct-ptycho-backend-parity.md).
 Other fitting and reconstruction measurements:
 [Direct Ptycho performance](../../../../docs/performance/ssb/index.md).
-The public contract is the [Direct Ptycho API](../../../../docs/api/ssb.md).
+The public contract is the [Direct Ptycho API](../../../../docs/api/direct_ptycho.md).

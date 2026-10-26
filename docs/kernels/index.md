@@ -10,7 +10,7 @@ WebGPU, and the CPU reference.
 | [Load, decode, and bin](load-decode-bin.md) | move compressed detector data into an accelerator-resident representation | resident 4D-STEM data and load provenance |
 | [BF, DF, and ADF](virtual-detectors.md) | reduce detector counts with circular, annular, or arbitrary masks | scan-shaped scalar images |
 | [CoM, DPC, and iDPC](com-dpc-idpc.md) | compute detector first moments, align the vector field, and integrate phase | two-component vector fields and phase |
-| [Single-sideband ptychography](ssb.md) | reconstruct complex object information from overlapping diffraction information | object amplitude, phase, loss, aberrations |
+| [Direct ptychography](direct-ptycho.md) | reconstruct complex object information from overlapping diffraction information | object amplitude, phase, loss, aberrations |
 | [Explicit scan regions](scan-regions.md) | intentionally analyze a half-open real-space subset | labeled scan subset |
 | [Display and export kernels](display-export.md) | compute ranges, histograms, colors, FFT views, or encoded frames | presentation-ready derived buffers |
 

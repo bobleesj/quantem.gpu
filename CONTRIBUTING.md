@@ -117,7 +117,7 @@ evidence to the pull request.
 Before a performance change, time the touched hot path on the base and the
 candidate back to back with the repository-owned entry point listed in the
 [test guide](docs/developer/testing.md), for example
-`python scripts/benchmark_ssb.py` for CUDA SSB, DPC and parallax. Record the
+`python scripts/benchmark_direct_ptycho.py` for CUDA Direct Ptycho, DPC and parallax. Record the
 experiment in the private evidence archive (manifest and `RUNS.md` row) before
 launch, and keep its raw logs there, never in this repository. Write the dated
 summary under `docs/` (question, setup, numbers, conclusion) and keep all

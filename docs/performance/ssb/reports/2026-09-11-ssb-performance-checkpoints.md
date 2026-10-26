@@ -1,8 +1,8 @@
 # Later SSB performance checkpoints
 
-> **Historical:** describes the code as of 2026-09-11; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired. See the [current fit methods](../../../api/ssb.md).
+> **Historical:** describes the code as of 2026-09-11; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired. See the [current fit methods](../../../api/direct_ptycho.md).
 
-These updates follow the [frozen SSB evidence](../../../maintainer/ssb-performance.md).
+These updates follow the [frozen SSB evidence](../../../maintainer/direct-ptycho-performance.md).
 
 ## 2026-09-11 full-aperture Apple M5 floor checkpoint
 

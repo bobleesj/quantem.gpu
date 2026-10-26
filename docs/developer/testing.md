@@ -8,10 +8,10 @@ Run the smallest gate that can disprove the change first, then widen coverage.
 python -m pip install -e ".[dev,movie]"
 npm ci
 PYTHONPATH=src python -m pytest -q          # interactive tier, about a minute on one GPU
-PYTHONPATH=src python -m pytest -q -m ""    # everything, including the slow SSB fits (about 12 minutes)
+PYTHONPATH=src python -m pytest -q -m ""    # everything, including the slow Direct Ptycho fits (about 12 minutes)
 ```
 
-Plain `pytest` skips tests marked `slow` (SSB fits and long hardware checks,
+Plain `pytest` skips tests marked `slow` (Direct Ptycho fits and long hardware checks,
 each several seconds or more). Mark a new test `@pytest.mark.slow` when it
 takes more than about 3 s. CI and every release run the full set.
 
@@ -33,20 +33,20 @@ both the timings and the output hashes the script prints.
 
 | Operation | Entry point | Primary output |
 |---|---|---|
-| CUDA SSB, DPC and parallax | `scripts/benchmark_ssb.py` | First and median warm wall time per stage (session, reconstruct, standard fit, default fit, DPC, parallax) and the SHA-256 of every output array |
+| CUDA Direct Ptycho, DPC and parallax | `scripts/benchmark_direct_ptycho.py` | First and median warm wall time per stage (session, reconstruct, standard fit, default fit, DPC, parallax) and the SHA-256 of every output array |
 | Complete CUDA/MPS/native IO scale matrix | `scripts/benchmark_io_scale.py` | Three repetitions per acquisition, separate HDF5/encoding/write/QEM-reopen stages, full verification, and explicit unsupported cases |
 | Routine CUDA/MPS/Swift IO regression check | `scripts/benchmark_io_scale.py --load-only` | First observation, five cold and five cached loads per format, frozen references, optional matched-baseline slowdown flag |
 | IO benchmark history | `scripts/benchmark_io_history.py` or `--history-dir` | Immutable private reports, source/device/cache provenance, CSV timing history and Markdown index |
 | QEM conversion and full source verification | `scripts/benchmark_qem.py` | Separate CUDA/MPS/native conversion stages, exact count coverage, reloads, and disposable output; native output independently verified with MPS |
 | Python CUDA/MPS/CPU HDF5 load | `scripts/benchmark_hdf5_load.py` | Run-level p50/p95/max, full-volume hash/dtype/shape parity, logical resident bytes, sampled accelerator/process peak, and release snapshots |
 | CUDA/MPS screening | `scripts/benchmark_screening.py` | Separate build and prepared-reopen distributions, product hashes, stages, cache bytes, and memory |
-| Full-field and regional SSB fits (CUDA or MPS) | `quantem-gpu benchmark-ssb` | First and warm median/p90 per fit and region, trial counts, Newton diagnostics, source fingerprint and phase hashes ([SSB benchmark](../performance/ssb/joint-fit.md)) |
-| Python MPS SSB and detector regression check | `tests/benchmarks/mps_ssb.py run`, then `compare` (`pytest -m benchmark tests/benchmarks`) | p50/p90 of previews, search candidates, the default and standard fits and the detector sums on the public gold scan, with driver memory, against this chip's committed baseline |
+| Full-field and regional Direct Ptycho fits (CUDA or MPS) | `quantem-gpu benchmark-ssb` | First and warm median/p90 per fit and region, trial counts, Newton diagnostics, source fingerprint and phase hashes ([SSB benchmark](../performance/ssb/joint-fit.md)) |
+| Python MPS Direct Ptycho and detector regression check | `tests/benchmarks/mps_ssb.py run`, then `compare` (`pytest -m benchmark tests/benchmarks`) | p50/p90 of previews, search candidates, the default and standard fits and the detector sums on the public gold scan, with driver memory, against this chip's committed baseline |
 | Native Swift/Metal indexed load | `metal-4dstem-indexed-load-benchmark` | Exact resident volume/products, stage timing, hashes, and Metal/process memory |
 | Native Swift/Metal SSB | `metal-ssb-fit-benchmark`, `metal-ssb-redraw-benchmark` | Joint-model fit stages and fitted parameters; SSB redraw latency |
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_ssb.py scan_master.h5 --voltage-kV 300 --semiangle-mrad 30
+CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_direct_ptycho.py scan_master.h5 --voltage-kV 300 --semiangle-mrad 30
 ```
 
 CUDA compiles kernels on first use and caches them per process tree. Give each
@@ -247,15 +247,15 @@ Record Fourier preparation separately from the fit and from warm reconstruction.
 A finite cache budget is a different resource-policy row, not a replacement for
 the complete-cache timing.
 
-## SSB parity gates
+## Direct Ptycho parity gates
 
 ```bash
-bash scripts/check_ssb_parity.sh
+bash scripts/check_direct_ptycho_parity.sh
 ```
 
-`check_ssb_parity.sh` checks that the native `SSBAgreementSearch` draws the
+`check_direct_ptycho_parity.sh` checks that the native `SSBAgreementSearch` draws the
 search trials of the Python resident search and reaches the fits of its
-exact-derivative Newton on a synthetic objective (`scripts/ssb_agreement_gate.py`). It does
+exact-derivative Newton on a synthetic objective (`scripts/direct_ptycho_agreement_gate.py`). It does
 not run a CPU reconstruction oracle or recapture a baseline. Native
 reconstruction, fit and saved-result checks are XCTest suites
 (`MetalSSBKernelsTests`). Set `QUANTEM_SSB_PARITY_SOURCE` to a local acquisition

@@ -153,7 +153,7 @@ complete fit for reuse.
 (ssb-fit-methods)=
 ## Fit methods: model-based by default
 
-quantem fits SSB aberrations with a physical model of the measurement, not an
+quantem fits the aberrations with a physical model of the measurement, not an
 image-quality score. For each trial set of aberrations, sample tilt and depth
 spread, it predicts the bright-field data G(q, k) the detector should have
 recorded, then keeps the parameters whose prediction agrees best with the
@@ -219,7 +219,7 @@ data.calibration.semiangle_mrad = 30   # set what the file does not record
 data  # The notebook displays geometry, calibration, units, and overridden values.
 ```
 
-In the next cell, pass that same dataset to SSB and reconstruct:
+In the next cell, pass that same dataset to `DirectPtycho` and reconstruct:
 
 ```python
 ptycho = DirectPtycho(data)
@@ -233,7 +233,7 @@ metadata. Missing physical calibration raises an error. Explicit keyword
 overrides affect the session without rewriting `data.metadata`.
 
 `scan_detector_rotation_deg` is the physical scan-to-detector rotation, kept in
-[0, 360). Omitted, SSB uses the acquisition's recorded rotation, else estimates
+[0, 360). Omitted, `DirectPtycho` uses the acquisition's recorded rotation, else estimates
 it from the curl of the centre-of-mass field and prints one line. The curl knows
 the angle only modulo 180 degrees; for an estimated angle `reconstruct()` and
 `find_aberrations(check_rotation=True)` fit both 180-degree branches and keep
@@ -258,7 +258,7 @@ coefficients needs `check_rotation=False`. The joint fit searches depth
 spreads in `quantem.gpu.direct_ptycho.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ptycho.aberrations = {...}` to
 state a known calibration, which `reconstruct()` then applies without fitting.
 `detector_sampling_mrad` is detector angular sampling in
-mrad per pixel, `(row, col)`. Calibrate it as its own step before SSB:
+mrad per pixel, `(row, col)`. Calibrate it as its own step before Direct Ptycho:
 
 ```python
 fit = data.calibration.fit_detector_sampling()   # semiangle / bright-field edge radius, recorded on data
@@ -288,9 +288,9 @@ keeps only G(q, k), so a 512 x 512 scan holds no decoded copy of its crop.
 it; on MPS keep the dataset open while the session is in use. `close()` frees
 only the session's own crop and Fourier data. Encoded inputs decode only the
 bright-field evidence needed by the session.
-Treat detector values as fixed for the lifetime of a session: SSB retains their
+Treat detector values as fixed for the lifetime of a session: the session retains their
 prepared Fourier data. After editing the array, construct a new `DirectPtycho` session.
-SSB Fourier-stack preparation and reconstruction are additional work; they
+Direct Ptycho Fourier-stack preparation and reconstruction are additional work; they
 are not included in a detector-viewer loading-time claim.
 
 `find_aberrations()` returns one `SSBResult`. Its primary field is the complex64
@@ -342,7 +342,7 @@ and Newton with the sample tilt and depth spread held at 0, on CUDA and MPS
 ({ref}`Fit methods <ssb-fit-methods>`). No fit averages optimizer candidates.
 
 This is the implemented calibration workflow; Levenberg–Marquardt is not an
-available refinement mode. The browser SSB engine has no aberration search:
+available refinement mode. The browser Direct Ptycho engine has no aberration search:
 run `find_aberrations()` on CUDA or MPS. The browser never substitutes fewer
 trials or a reduced objective.
 
@@ -353,7 +353,7 @@ can remain encoded during SSB. Each detector-column batch is decoded exactly,
 transformed across **every scan position**, corrected with the existing SSB
 kernel, and accumulated before one inverse FFT. Scan tiles are not stitched.
 The full source and output must fit on the acquisition's GPU; distributing one
-SSB session across GPUs is not supported by this API yet.
+Direct Ptycho session across GPUs is not supported by this API yet.
 
 Decoded batches use a temporary scan-major uint16 buffer, then a tiled CUDA
 transpose writes the float32 FFT input. Counts remain exact in both buffers.
@@ -447,7 +447,7 @@ shown.show()
 ```
 
 The numbers above illustrate the units; use your acquisition's calibration.
-SSB here is model-based and tilt-corrected: `find_aberrations()` (`tilt=True`,
+The fit here is model-based and tilt-corrected: `find_aberrations()` (`tilt=True`,
 the default) jointly estimates specimen tilt and model depth spread as well as
 aberrations, and so does the automatic fit of `reconstruct()`.
 `search="primary", tilt=False` holds the tilt and depth spread at 0
@@ -461,7 +461,7 @@ draws the phase a result holds; for a native fit one line names the auto
 factor and the call that shows it.
 Keep `ssb` open for the examples below and call `ptycho.close()` when finished.
 
-Inspect the best joint fit while the same SSB session is open:
+Inspect the best joint fit while the same session is open:
 
 ```python
 ptycho.show()                             # existing interactive ShowPtycho
@@ -916,8 +916,8 @@ Rerun the aberration search for older records; the loader does not guess their u
 
 - Missing voltage, semiangle, or scan sampling raises rather than inventing
   calibration.
-- An unsupported backend or scientific request fails explicitly; SSB never
-  falls back silently to CPU.
+- An unsupported backend or scientific request fails explicitly; Direct Ptycho
+  never falls back silently to CPU.
 - `DirectPtycho(data.data, ...)` raises `TypeError`: the encoded storage inside a loaded
   dataset has no bounded read of its own. Pass the dataset, `DirectPtycho(data, ...)`, or
   open the file with `DirectPtycho.open(path, ...)`.
@@ -1151,21 +1151,21 @@ per-file `0.0` counts) else `microscope.scan_detector_rotation_deg`, and the
 
 ## Integration boundary
 
-QuantEM.GPU owns SSB preparation, the exact objective, optimization,
+QuantEM.GPU owns Direct Ptycho preparation, the exact objective, optimization,
 reconstruction, typed results, persistence signatures, and backend parity. A
 consuming application owns controls, progress presentation, cache scheduling,
 and visualization. It must present approximate previews as previews and must
 not promote them to exact calibration evidence.
 
-See [Single-sideband ptychography](../kernels/ssb.md) for the complete
-mathematics and [SSB performance reports](../performance/ssb/reports/index.md)
+See [Direct ptychography](../kernels/direct-ptycho.md) for the complete
+mathematics and [Direct Ptycho performance reports](../performance/ssb/reports/index.md)
 for dated, revision- and device-qualified measurements. Performance numbers do
 not live in this API contract because a new benchmark must not silently change
 API semantics.
 
 ### Inspect the launch calibration
 
-Load first so acquisition metadata remains available independently of SSB:
+Load first so acquisition metadata remains available independently of Direct Ptycho:
 
 ```python
 from quantem.gpu import DirectPtycho, io
@@ -1201,7 +1201,7 @@ not validation or confidence. Reading the table does not reconstruct or alter
 source data; detector estimates remain **Pending probe fit** until preparation.
 
 Detector sampling is optional: omit `detector_sampling_mrad` to reuse the
-loaded acquisition's saved calibration. If missing, SSB estimates sampling
+loaded acquisition's saved calibration. If missing, `DirectPtycho` estimates sampling
 from the full-field probe disk edge and the known convergence semiangle.
 The working session retains the estimate for reconstruction, regional sessions
 and persistence. The source QEM and its recorded metadata remain unchanged.

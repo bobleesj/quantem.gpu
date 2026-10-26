@@ -55,7 +55,7 @@ def run(
     undone, and the images are summed into one phase-contrast image. With
     ``fit_aberrations=True`` the shift pattern also gives defocus, two-fold
     astigmatism and the scan-detector rotation, in the units and convention
-    ``SSB`` takes.
+    ``DirectPtycho`` takes.
 
     The acquisition stays encoded on the GPU: only the bright-field pixels
     are read, in bounded bands of scan rows, and every count is used exactly.
@@ -88,7 +88,7 @@ def run(
         Scan step in Angstrom per pixel, ``(row, col)``, or one number for both axes; converts the measured shifts
         to length.
     semiangle_mrad
-        Probe convergence semiangle in mrad. Calibrates the detector as ``SSB``
+        Probe convergence semiangle in mrad. Calibrates the detector as ``DirectPtycho``
         does: ``semiangle_mrad`` over the radius at which the bright-field disk
         of the mean pattern falls to half its plateau.
     detector_sampling_mrad
@@ -148,8 +148,8 @@ def run(
             "fit_aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
             "calibration: semiangle_mrad, or detector_sampling_mrad in mrad per detector pixel."
         )
-    # A sampling is a (row, col) pair, as SSB reads it: one number was broadcast to both axes here,
-    # while SSB refuses it, so the same call meant two things in the two workflows.
+    # A sampling is a (row, col) pair, as DirectPtycho reads it: one number was broadcast to both axes here,
+    # while DirectPtycho refuses it, so the same call meant two things in the two workflows.
     scan_sampling_A = None if scan_sampling_A is None else sampling_pair("scan_sampling_A", scan_sampling_A)
     detector_sampling_mrad = None if detector_sampling_mrad is None else sampling_pair("detector_sampling_mrad", detector_sampling_mrad)
     # CuPy allocates and launches on its current device and torch exports DLPack from its own: both are the
@@ -223,7 +223,7 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     QuantEM's ``fit_aberrations_from_shifts`` does. The half turn ``(R, P) ->
     (-R, -P)`` fits equally well; the rotation is kept within 90 degrees of
     zero and the aberrations take its sign, the 180-degree ambiguity that
-    ``SSB.find_aberrations(check_rotation=True)`` settles.
+    ``DirectPtycho.find_aberrations(check_rotation=True)`` settles.
 
     Parameters
     ----------
@@ -250,7 +250,7 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
         rotation_rad = rotation_rad % (2 * math.pi) - math.pi
         aberration = -aberration
     a, b, c = aberration[0, 0], (aberration[1, 0] + aberration[0, 1]) / 2, aberration[1, 1]
-    # A is in Angstrom like the shifts; SSB takes C10 and C12 in nm
+    # A is in Angstrom like the shifts; DirectPtycho takes C10 and C12 in nm
     aberrations = {
         "C10_nm": float(a + c) / 20,
         "C12_nm": math.hypot((a - c) / 2, b) / 10,

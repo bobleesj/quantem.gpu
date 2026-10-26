@@ -10,8 +10,8 @@ folder moves require the machine-readable parity gates in
 
 | Backend | Purpose | Notes |
 |---|---|---|
-| `cuda` | NVIDIA GPU IO, decompression, reductions, and SSB reference paths | Uses CuPy/CUDA kernels where available. |
-| `mps` | Apple Silicon Metal/MLX paths | Used for ANS-encoded loading, BF/DF/DPC images, and SSB fit/reconstruction/preview paths. |
+| `cuda` | NVIDIA GPU IO, decompression, reductions, and Direct Ptycho reference paths | Uses CuPy/CUDA kernels where available. |
+| `mps` | Apple Silicon Metal/MLX paths | Used for ANS-encoded loading, BF/DF/DPC images, and Direct Ptycho fit/reconstruction/preview paths. |
 | `cpu` | Test/reference implementation | Available only when explicitly requested by a test or reference comparison. |
 
 Check the selected backend:
@@ -35,7 +35,7 @@ Use `backend="auto"` for normal scripts and `backend="cuda"` or
 
 WebGPU is a browser runtime, not a Python device backend. Reusable browser
 compute sources live beside their scientific domains and are packaged for
-browser clients. SSB-specific WebGPU implementation files live under
+browser clients. Direct Ptycho WebGPU implementation files live under
 `direct_ptycho/webgpu`. Browser performance claims must log a real
 adapter; SwiftShader or another software adapter is only a smoke test.
 
@@ -65,8 +65,8 @@ complete; `Gap` means the backend does not implement that capability yet.
 | CoM/DPC resident kernels | Done | Partial | Done | Reference | Detector-bin-4 CUDA/MPS CoM passed the frozen gate on 2026-08-19, measured on the dense loader of that date. WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
 | Cached detector/DPC products | Done | Done | Product-first Done / cache-read Done | Cache-read Done | CUDA and MPS build the product cache from one encoded load, including exact `uint64` total/ABF/ADF maps; a cache written without those fields is rebuilt. WebGPU owns browser selected-block product caches and can read prepared cache products. |
 | iDPC | Done | Partial | Done | Reference | On 2026-08-19 the CUDA/MPS detector-bin-4 iDPC exceeded the frozen `1e-5` cross-backend gate. WebGPU fixed-rotation iDPC uses paired DPC buffers and a dual-real FFT with an explicit float32 tolerance. |
-| Ptychographic SSB preview | Done | Done | Partial | Reference | Python MPS and the separate native `MetalSSBKernels` product have parity-qualified implementations; WebGPU source lives under `direct_ptycho/webgpu`, but its full browser matrix is not complete. |
-| Ptychographic SSB fit/reconstruction | Done | Done | Partial | Not target | Python MPS supports its current parity shapes. Native Swift/Metal (`MetalSSBKernels`) runs the default model-based, tilt-corrected fit with the Python resident search ported trial for trial, `tilt=False`, the fifth-order refinement with the ±20 box and half-band check, the curl rotation and 180-degree branch test, SSB (`phase_of_mean`) at 1-8x and the regularized `phase` and `complex` methods with drag windows at 1-4x, on 128×128, 256×256 and 512×512 scans; 1024×1024 remains a native gap. |
+| Direct Ptycho preview | Done | Done | Partial | Reference | Python MPS and the separate native `MetalSSBKernels` product have parity-qualified implementations; WebGPU source lives under `direct_ptycho/webgpu`, but its full browser matrix is not complete. |
+| Direct Ptycho fit/reconstruction | Done | Done | Partial | Not target | Python MPS supports its current parity shapes. Native Swift/Metal (`MetalSSBKernels`) runs the default model-based, tilt-corrected fit with the Python resident search ported trial for trial, `tilt=False`, the fifth-order refinement with the ±20 box and half-band check, the curl rotation and 180-degree branch test, SSB (`phase_of_mean`) at 1-8x and the regularized `phase` and `complex` methods with drag windows at 1-4x, on 128×128, 256×256 and 512×512 scans; 1024×1024 remains a native gap. |
 | Native Browser FFT (`MetalImageFFT.logMagnitude`) | NA | Done | NA | Reference | Native Swift/Metal product for already-transferred 2D BF/ADF/custom images. 512×512 must stay inside 120 Hz when warm. Not a Python MPS path. |
 | GIF/MP4 movie rendering | Done | Done | NA | Fallback | CUDA/NVENC and Metal/VideoToolbox paths live here; `movie.save_mp4(backend="auto")` prints one line when it uses the CPU writer; presentation controls remain client-owned. |
 | Browser source ownership | Done | Done | Done | NA | Reusable TypeScript/WGSL source lives beside each scientific domain. |

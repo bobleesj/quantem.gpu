@@ -6,7 +6,7 @@
 
 GPU-accelerated 4D-STEM analysis in Python: load acquisitions, explore
 virtual detectors, calculate CoM/DPC, and reconstruct phase with
-single-sideband ptychography (SSB). Use Python MPS on Apple Silicon or
+model-based direct ptychography (SSB, phase and complex). Use Python MPS on Apple Silicon or
 NVIDIA CUDA on Linux through the same public Python API.
 
 [Documentation](https://bobleesj.github.io/quantem.gpu/) ·
@@ -17,7 +17,7 @@ NVIDIA CUDA on Linux through the same public Python API.
 [BF/ADF](#bright-field-and-annular-dark-field-images) ·
 [Detector preview](#preview-the-detector-selection) ·
 [Save as QEM](#why-qem-one-research-format-across-detector-vendors) ·
-[SSB](#reconstruct-phase-with-ssb)
+[Direct Ptycho](#reconstruct-phase-with-direct-ptycho)
 
 ## Citing quantem.gpu
 
@@ -376,16 +376,16 @@ An existing destination is not overwritten.
 data.close()
 ```
 
-## Reconstruct phase with SSB
+## Reconstruct phase with Direct Ptycho
 
-### SSB in quantem.gpu
+### Direct Ptycho in quantem.gpu
 
-quantem fits SSB aberrations with a physical model of the measurement, not an
+quantem fits the aberrations with a physical model of the measurement, not an
 image-quality score: for each trial set of aberrations, sample tilt and depth
 spread it predicts the bright-field data the detector should have recorded and
 keeps the parameters whose prediction agrees best (least squares). This
-model-based, tilt-corrected fit is the default everywhere, and it is where SSB
-in quantem is heading.
+model-based, tilt-corrected fit is the default everywhere, and it is where Direct
+Ptycho in quantem is heading.
 
 | Call | Method | Use it for |
 |---|---|---|
@@ -395,7 +395,7 @@ in quantem is heading.
 Both refine on exact derivatives of the model agreement. The earlier
 phase-variance search (`objective="phase_variance"`), which scored how well the
 bright-field pixels' phase images agree instead of predicting the data, is
-retired. Backend support and evidence: [SSB fit methods](docs/api/ssb.md#fit-methods-model-based-by-default).
+retired. Backend support and evidence: [Direct Ptycho fit methods](docs/api/direct_ptycho.md#fit-methods-model-based-by-default).
 
 ### Find the aberrations, then reconstruct
 
@@ -440,7 +440,7 @@ aberrations.show("rotation")  # both branches at the auto factor, then their pha
 
 For a native/upsampled comparison, use `result.show(compare=result_4x,
 axsize=(7, 7))`. The library marks matching central crops on the full images.
-The [SSB API](docs/api/ssb.md#settle-the-180-branch) explains the branch test.
+The [Direct Ptycho API](docs/api/direct_ptycho.md#settle-the-180-branch) explains the branch test.
 
 Advanced users can inspect search trials with shared phase contrast, shown at
 `upsampling_factor="auto"`:
@@ -475,7 +475,7 @@ ptycho.close()
 Searches use the native scan grid. Finer output sampling does not add detector
 measurements or guarantee additional resolution. Reconstruction reuses the
 selected aberrations, tilt, depth spread and rotation; it does not refit them.
-See the [SSB guide](docs/api/ssb.md) for trial replay and saved results.
+See the [Direct Ptycho API](docs/api/direct_ptycho.md) for trial replay and saved results.
 
 ## What can I do?
 
@@ -484,7 +484,7 @@ See the [SSB guide](docs/api/ssb.md) for trial replay and saved results.
 | Load, inspect, and save acquisitions | [I/O](docs/api/io.md) |
 | BF, DF, ADF and other virtual detectors | [Detector reductions](docs/kernels/virtual-detectors.md) |
 | CoM, DPC and integrated DPC | [CoM/DPC](docs/kernels/com-dpc-idpc.md) |
-| Phase reconstruction and aberration fitting | [SSB](docs/api/ssb.md) |
+| Phase reconstruction and aberration fitting | [Direct Ptycho](docs/api/direct_ptycho.md) |
 | Browse acquisitions on a remote CUDA host | [Remote browsing](docs/remote/index.md) |
 
 Arrays use `I[R_r,R_c,k_r,k_c]`: scan row, scan column, detector row,

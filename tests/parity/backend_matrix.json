@@ -402,11 +402,11 @@
         },
         "swift-metal": {
           "level": "partial-hardware",
-          "gates": ["native/swift/Tests/MetalSSBKernelsTests/SSBRedrawReconstructionTests.swift", "native/swift/Tests/MetalSSBKernelsTests/SSBModelReconstructionTests.swift", "native/swift/Tests/MetalSSBKernelsTests/MetalSSBKernelsTests.swift", "docs/maintainer/native-joint-ssb.md"]
+          "gates": ["native/swift/Tests/MetalSSBKernelsTests/SSBRedrawReconstructionTests.swift", "native/swift/Tests/MetalSSBKernelsTests/SSBModelReconstructionTests.swift", "native/swift/Tests/MetalSSBKernelsTests/MetalSSBKernelsTests.swift", "docs/maintainer/direct-ptycho-native-fit.md"]
         },
         "webgpu": {
           "level": "partial-hardware",
-          "gates": ["tests/infrastructure/test_webgpu_sources.py", "tests/contracts/test_ssb_backend_contract.py", "docs/maintainer/ssb-performance.md"]
+          "gates": ["tests/infrastructure/test_webgpu_sources.py", "tests/contracts/test_ssb_backend_contract.py", "docs/maintainer/direct-ptycho-performance.md"]
         }
       }
     }

@@ -1,4 +1,4 @@
-"""The MLX/Metal implementation of the SSB backend protocol behind :class:`quantem.gpu.SSB` on Apple GPUs."""
+"""The MLX/Metal implementation of the Direct Ptycho backend protocol behind :class:`quantem.gpu.DirectPtycho` on Apple GPUs."""
 
 import dataclasses
 import math
@@ -255,7 +255,7 @@ class MpsSSBBackend:
         result = fit_sample(self._prepared, **options)
         result.setdefault("timings", {})["fft_preparation_s"] = preparation_s
         # Reuse allocator buffers for the following phase diagnostic and for
-        # repeated fits (both 180-degree branches); SSB.find_aberrations calls
+        # repeated fits (both 180-degree branches); DirectPtycho.find_aberrations calls
         # release_cache() when the fit is done, and close() clears it too.
         return result
 

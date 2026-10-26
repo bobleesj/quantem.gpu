@@ -1,4 +1,4 @@
-"""Saved-result storage for the public SSB workflow."""
+"""Saved-result storage for the public Direct Ptycho workflow."""
 
 import hashlib
 import json
@@ -19,7 +19,7 @@ from quantem.gpu.io.inspect import inspect as inspect_source
 from quantem.gpu.direct_ptycho.branches import RotationBranches
 from quantem.gpu.direct_ptycho.results import SSBResult, host_array, retired_estimator_note
 
-# One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
+# One number versions everything a saved Direct Ptycho fit means: the layout of its record and the convention its values follow.
 # Bump it when fitted values acquire a different physical meaning or record layout: the automatic
 # detector sampling rule, the unit, sign or angle reference of an aberration, the rotation convention,
 # the bright-field selection rule, the loss definition, or the record layout. Every older fit is then fitted again.
@@ -37,7 +37,7 @@ SCHEMA = 7
 FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 # The top-level "schema" of the screening record that holds the fit block (live/screen/<dataset>/config.json). The
 # record belongs to quantem.live: this is the schema of the record its reader accepts, and it takes no other. It
-# is written here only when SSB.reconstruct_series creates the record, and required of a record that exists.
+# is written here only when DirectPtycho.reconstruct_series creates the record, and required of a record that exists.
 SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 # The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
@@ -312,7 +312,7 @@ def _optional_file_identity(path: str | Path) -> dict[str, object]:
 
 
 def software_signature() -> dict[str, object]:
-    """Identify the installed SSB implementation that produced a result."""
+    """Identify the installed Direct Ptycho implementation that produced a result."""
 
     digest = hashlib.sha256()
     package = Path(__file__).resolve().parent

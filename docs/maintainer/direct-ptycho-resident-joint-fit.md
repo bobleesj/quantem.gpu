@@ -1,6 +1,6 @@
-# Resident joint SSB fitting
+# Resident joint Direct Ptycho fitting
 
-`SSB.find_aberrations(search="primary", tilt=True)` runs the six-parameter
+`DirectPtycho.find_aberrations(search="primary", tilt=True)` runs the six-parameter
 adaptive search and refinement on the session's MPS or CUDA device. The model
 jointly fits defocus, two-fold astigmatism and angle, both sample-tilt components,
 and depth spread. No extra notebook optimizer is needed.
@@ -24,7 +24,7 @@ Newton therefore use the available parallelism without changing each thread's
 arithmetic or bright-field reduction order. The hardware tests compare combined
 and serial tiles exactly for eight-point search and 84-point Newton batches.
 
-`ssb.select_region((row_start, row_stop, col_start, col_stop))` creates an
+`ptycho.select_region((row_start, row_stop, col_start, col_stop))` creates an
 independent fitting session over the full-field session's resident measured
 counts. It retains detector calibration and source provenance; closing or
 fitting a region does not change its parent. ShowPtycho uses this method rather

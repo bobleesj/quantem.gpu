@@ -150,7 +150,7 @@ that correction into the measurements.
 The qualification record of experiment 20260920-float-qem-cross-backend
 (raw evidence in the private evidence archive) separates exact measurement/virtual-image parity from tolerance-based mean-DP
 and CoM comparisons. It does not qualify float64, other detector geometries,
-raw float-source ingestion on Python GPUs, SSB, or an application's 120 Hz
+raw float-source ingestion on Python GPUs, Direct Ptycho, or an application's 120 Hz
 presentation cadence.
 
 The additional Python geometry and original-input tests are in
@@ -193,10 +193,10 @@ Envelope and body checksums are required; a logical measurement hash is not.
 
 Integer detector products accumulate into signed or unsigned 64-bit results
 and report overflow explicitly. Raw reads preserve the source dtype. Display
-means and SSB use their documented calculation precision; Metal float64
+means and Direct Ptycho use their documented calculation precision; Metal float64
 storage does not imply float64 Metal arithmetic. Use `read(output="native")`
 to obtain exact float64 Metal arrays when Torch cannot represent that dtype.
-FP8 detector products and SSB convert to float32 on-device. Batched detector
+FP8 detector products and Direct Ptycho convert to float32 on-device. Batched detector
 queries decode only selected entropy lanes, interpret literal bytes in the
 reduction kernel, and use the existing compensated float32 accumulation.
 They reuse one bounded word window and check errors once per completed query.

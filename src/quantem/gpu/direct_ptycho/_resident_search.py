@@ -431,7 +431,7 @@ def fit_resident(
 
     Parameters use the existing engine units. ``evaluate`` accepts resident
     encoded model trials and returns resident extended scores. Public callers
-    use ``SSB.find_aberrations(tilt=True)``; no solver setting is needed.
+    use ``DirectPtycho.find_aberrations(tilt=True)``; no solver setting is needed.
     ``derivatives`` (``LowOrderDerivatives`` of ``cuda`` or ``mps.exact_derivatives``) are the
     exact gradient and Hessian of the same objective that the trust-region
     Newton (``_exact_newton``) climbs; a fit that polishes needs them.

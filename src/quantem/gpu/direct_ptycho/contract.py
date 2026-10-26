@@ -58,7 +58,7 @@ def auto_refinement(refinement) -> str | None:
 
 @dataclass(frozen=True)
 class SSBPrecision:
-    """Numeric storage required from every SSB backend."""
+    """Numeric storage required from every Direct Ptycho backend."""
 
     real_dtype: Literal["float32"] = "float32"
     complex_dtype: Literal["complex64"] = "complex64"
@@ -99,7 +99,7 @@ class SSBExportState:
 
 
 class SSBProtocol(Protocol):
-    """Backend contract implemented by CUDA and MPS: every call ``SSB`` makes.
+    """Backend contract implemented by CUDA and MPS: every call ``DirectPtycho`` makes.
 
     CUDA and MPS implement this protocol in Python. Browser WebGPU mirrors the
     same semantic contract in ``webgpu/protocol.ts`` because its execution is

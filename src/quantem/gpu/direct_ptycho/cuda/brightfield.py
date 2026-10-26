@@ -1,4 +1,4 @@
-"""The bright-field pixels the CUDA SSB engine reads: their selection and their spectra.
+"""The bright-field pixels the CUDA Direct Ptycho engine reads: their selection and their spectra.
 
 SSB uses only detector pixels inside the bright-field disk. ``select_bright_field`` picks them on the device from the
 mean diffraction pattern, and ``bright_field_spectra`` turns each selected pixel's scan image into its spectrum G(q, k)
@@ -25,7 +25,7 @@ def select_bright_field(
     ``detector.fit_probe``, which the MPS backend calls; here it runs on the device in float32 so the mean pattern never
     leaves the GPU, and CuPy's reductions can round the threshold differently in the last bit, so the two are kept
     apart). With ``bright_field_radius_px`` the centre is the intensity-weighted centroid of the candidates; ``bright_field_center_px`` (row,
-    col, detector pixels) pins it instead, which ``SSB.open`` uses to reproduce the full-detector disk on a detector
+    col, detector pixels) pins it instead, which ``DirectPtycho.open`` uses to reproduce the full-detector disk on a detector
     crop, where the mean + std rule would shift. The mean pattern accumulates the raw counts in uint64 (float64 for
     float data), so no float32 copy of the 4D block is made.
     """

@@ -18,9 +18,9 @@ compared as interchangeable FPS or fit times.
 - [C10 caching and FFT transfer](../rendering/reports/2026-10-24-ssb-c10-cache-transfer.md): full higher-order CUDA experiments and actual notebook paints. It records an unmet 60 fps target and no demonstrated 2× speedup.
 - [Redraw symmetry and drag window](reports/2026-10-24-redraw-symmetry-and-drag-window.md): SSB 14-term redraw 56 to 30 ms by the q, -q symmetry; regularized drags in 1-3 ms.
 - [Staging memory](reports/2026-10-22-ssb-staging-memory.md): memory reduction with numerical checks.
-- [All SSB reports](reports/index.md): dated CUDA and Metal fitting, correction and memory studies.
+- [All Direct Ptycho reports](reports/index.md): dated CUDA and Metal fitting, correction and memory studies.
 
-The [SSB kernel guide](../../kernels/ssb.md) and [Direct Ptycho API](../../api/ssb.md)
+The [Direct Ptycho kernel guide](../../kernels/direct-ptycho.md) and [Direct Ptycho API](../../api/direct_ptycho.md)
 own the scientific and public contracts. [Rendering](../rendering/index.md)
 owns display measurements. Report publication does not imply that a measured
 development implementation is in the latest release.

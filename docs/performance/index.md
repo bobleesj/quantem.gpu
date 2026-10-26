@@ -9,7 +9,7 @@ operation so the same scientific workload stays together.
 | Operation | Scope |
 |---|---|
 | [IO and compression](io/index.md) | Loading, decoding, encoding, conversion, saving and memory |
-| [SSB](ssb/index.md) | Calibration, joint fitting, reconstruction and local-region measurements |
+| [Direct Ptycho](ssb/index.md) | Calibration, joint fitting, reconstruction and local-region measurements |
 | [Virtual detectors](virtual-detectors/index.md) | BF, DF, ADF, arbitrary masks and diffraction reductions |
 | [CoM, DPC and iDPC](dpc/index.md) | Detector moments, rotation and phase integration |
 | [Rendering and transfer](rendering/index.md) | FFT display, contrast, GPU/host transfer and actual image updates |

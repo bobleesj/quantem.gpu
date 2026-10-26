@@ -717,7 +717,7 @@ domain-specific maintainer records instead of being copied into this page.
 | July native CUDA/MPS IO and compressed-save work | Historical diagnostic; some host/storage fields were not retained | [Optimization ledger](../maintainer/backend-optimization-matrix.md) |
 | WebGPU local-file, selected-block, and display campaigns | Historical implementation evidence, not current full-stack or physical-8-GB signoff | [Optimization ledger](../maintainer/backend-optimization-matrix.md) and [WebGPU history](../maintainer/history/index.md) |
 | WebGPU full-native batch-2 load candidate | Refuted for performance: exact output but prepared-index/source-pages-unspecified p50/p95/max `1.128484/1.140200/1.141501 s` missed the strict subsecond gate and did not replace the accepted `1.080860 s` single observation | Sealed evidence `75eec9cccd5c1a9814068a83a23e67253227a363` |
-| SSB size sweeps and rejected kernel layouts | Historical or rejected unless promoted into the current table above | [SSB performance history](../maintainer/ssb-performance.md) |
+| SSB size sweeps and rejected kernel layouts | Historical or rejected unless promoted into the current table above | [SSB performance history](../maintainer/direct-ptycho-performance.md) |
 | Physical M2 Air application loading | Separate application-level evidence; never substituted for a library benchmark | [M2 Air Metal evidence](../maintainer/m2-air-lz4-match-unroll-2026-08-18.md) |
 | Rejected first-chunk screening and nondeterministic CUDA calibration | Failed scientific gates; retained to prevent repetition, never shown as current speed | [Revision and change ledger](changes.md) and [optimization ledger](../maintainer/backend-optimization-matrix.md) |
 

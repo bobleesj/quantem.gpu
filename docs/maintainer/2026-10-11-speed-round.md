@@ -1,6 +1,6 @@
 # Speed round after rc16: where the time went and what changed - 2026-10-11
 
-> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/direct_ptycho.md).
 
 ## Question
 

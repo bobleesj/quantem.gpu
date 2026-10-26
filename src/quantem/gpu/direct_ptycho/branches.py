@@ -170,7 +170,7 @@ class RotationBranch:
 class RotationBranches:
     """Both 180-degree branches of an estimated rotation, fitted independently, and the branch kept.
 
-    Returned by ``SSB.compare_rotation_branches`` and recorded on the fit as ``result.rotation_branches``.
+    Returned by ``DirectPtycho.compare_rotation_branches`` and recorded on the fit as ``result.rotation_branches``.
 
     Attributes
     ----------
@@ -227,7 +227,7 @@ class RotationBranches:
     def upsampled_phases(self, upsampling_factor: int | Literal["auto"] = "auto") -> tuple[np.ndarray, np.ndarray]:
         """Each branch's fit reconstructed at ``upsampling_factor`` (radians): the panels ``show`` draws.
 
-        The SSB session that fitted or reloaded the branches reconstructs each one at its own rotation, aberrations,
+        The Direct Ptycho session that fitted or reloaded the branches reconstructs each one at its own rotation, aberrations,
         sample tilt and depth spread with the G(q, k) it already holds: no search and no second G(q, k) build (a
         session that reloaded the fit builds its G(q, k) first, as its first reconstruction would). On
         the 512 x 512 gold scan at 0.5 Å (4x auto, 2048 x 2048 each) both took 0.4 s on an M5 Max, 0.35 GiB above

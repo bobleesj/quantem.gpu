@@ -1,4 +1,4 @@
-"""Private CUDA compute implementation for the public SSB workflow."""
+"""Private CUDA compute implementation for the public Direct Ptycho workflow."""
 
 import math
 import time
@@ -17,12 +17,12 @@ from quantem.gpu.direct_ptycho.results import SSBResult
 
 
 class CudaSSBBackend:
-    """The CUDA implementation of the SSB backend protocol behind :class:`quantem.gpu.SSB`.
+    """The CUDA implementation of the Direct Ptycho backend protocol behind :class:`quantem.gpu.DirectPtycho`.
 
     Each bright-field pixel sees the sample through a slightly different probe tilt; correcting every pixel's image
     for the probe aberrations and averaging recovers the object phase at the scan resolution. This class prepares the
     bright-field spectra ``G_qk`` on the device and runs fits and reconstructions through ``SSBEngine``. Units are the
-    engine's (C10, C12 in Angstrom); ``SSB`` owns the public units, validation and result types.
+    engine's (C10, C12 in Angstrom); ``DirectPtycho`` owns the public units, validation and result types.
 
     Parameters
     ----------
@@ -71,7 +71,7 @@ class CudaSSBBackend:
     ):
         scan_detector_rotation_rad = math.radians(scan_detector_rotation_deg)
 
-        # quantem.gpu SSB is GPU-only. Ensure the input is a CuPy array but
+        # quantem.gpu Direct Ptycho is GPU-only. Ensure the input is a CuPy array but
         # keep the native dtype. Casting the raw 4D block to float32 would
         # double memory (e.g. 19 GB uint16 -> 38 GB float32 copy on a
         # 512x512x192x192 scan). Reductions promote internally via uint64
@@ -197,7 +197,7 @@ class CudaSSBBackend:
 
     def free(self) -> None:
         """
-        Release all GPU VRAM held by this SSB engine.
+        Release all GPU VRAM held by this Direct Ptycho engine.
 
         Frees:
         - G_qk (the FFT of virtual BF stack - the largest allocation, ~7 GB)
@@ -208,7 +208,7 @@ class CudaSSBBackend:
         engine is no longer usable. Previously returned ``SSBResult``
         objects remain valid (they hold independent copies of the phase).
 
-        Call this when the SSB pipeline is done and you need VRAM for
+        Call this when the Direct Ptycho pipeline is done and you need VRAM for
         the next stage (e.g., iterative ptychography).
         """
         if self._accelerator is not None:

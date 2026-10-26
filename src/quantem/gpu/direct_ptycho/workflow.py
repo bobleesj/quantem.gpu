@@ -1,6 +1,6 @@
-"""Backend-neutral scientist-facing SSB workflow.
+"""Backend-neutral scientist-facing Direct Ptycho workflow.
 
-This module owns the only public stateful SSB entry point. Backend modules own
+This module owns the only public stateful Direct Ptycho entry point. Backend modules own
 device preparation and kernels, but they do not define a second user API.
 """
 
@@ -813,7 +813,7 @@ class DirectPtycho:
         calibration: str | None = None,
         verbose: bool = False,
     ) -> Self:
-        """Open one lossless 4D-STEM source and prepare an SSB session.
+        """Open one lossless 4D-STEM source and prepare a Direct Ptycho session.
 
         Exact BF-column storage is chosen automatically when it is available;
         otherwise detector counts are loaded with the explicitly requested
@@ -3387,7 +3387,7 @@ class DirectPtycho:
 
         The session owns only what it made: the bright-field crop decoded from a
         loaded dataset, backends' Fourier data, and the encoded acquisition
-        retained by an ``DirectPtycho.open`` session that reads it encoded (a large CUDA
+        retained by a ``DirectPtycho.open`` session that reads it encoded (a large CUDA
         scan, or integer counts on MPS). A borrowed array or dataset is never
         released here.
         """
@@ -3406,7 +3406,7 @@ class DirectPtycho:
             backend.close()
 
     def __enter__(self) -> Self:
-        """Return this prepared SSB session."""
+        """Return this prepared Direct Ptycho session."""
 
         return self
 

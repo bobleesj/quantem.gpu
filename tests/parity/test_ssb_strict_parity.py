@@ -64,7 +64,7 @@ def _requires_artifact(case_name: str) -> None:
     if not (case_root(CASES[case_name]) / "case.json").is_file():
         pytest.skip(
             f"case {case_name} is not exported yet; run "
-            "`scripts/check_ssb_parity.sh --cpu-oracle --export` (see this module's docstring)"
+            "`scripts/check_direct_ptycho_parity.sh --cpu-oracle --export` (see this module's docstring)"
         )
 
 
@@ -320,7 +320,7 @@ def test_full_512_mps_finding_stays_open() -> None:
     if report is None:
         pytest.skip(
             "no recorded 512 report; measure one with "
-            "`scripts/check_ssb_parity.sh --cpu-oracle --full` and point "
+            "`scripts/check_direct_ptycho_parity.sh --cpu-oracle --full` and point "
             "QUANTEM_SSB_PARITY_FULL_REPORT at it"
         )
     checked = 0

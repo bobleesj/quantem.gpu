@@ -14,7 +14,7 @@ physical-device gates.
 | Acquisition | `io` | Original count identity, geometry, dtype, calibration, exclusions |
 | Count representation | `resident/<runtime>` | Dense values or an authenticated lossless payload and all decoding tables |
 | Detector query index | `detector/<runtime>` | Optional exact summaries, checkpoints, or spatial indexes bound to one resident source |
-| Fourier representation | `ssb/<runtime>` and native SSB products | Final Fourier coefficients and all descriptors needed to consume them |
+| Fourier representation | `direct_ptycho/<runtime>` and native Direct Ptycho products | Final Fourier coefficients and all descriptors needed to consume them |
 
 ```text
 authenticated source -> io.load -> dense or ANS-encoded counts
@@ -40,7 +40,7 @@ and private dispatch. Reject an unknown profile before dispatch; do not guess
 a codec from a compression ratio or filename. ANS coding probabilities do not
 approximate measured counts: the decoded integers must remain exact.
 
-Fourier storage is a separate SSB choice. An advanced
+Fourier storage is a separate Direct Ptycho choice. An advanced
 `fourier_representation` option is a **design proposal, not a shipped argument**.
 Do not overload the count `representation` argument to select it. The existing
 source-native load behavior and dense Fourier defaults remain unchanged during
@@ -74,7 +74,7 @@ A bounded decode test is not proof of full-dataset residency or display speed.
    invalidation. Retain the NumPy/Torch reference before the accelerated port.
    Profile versioning belongs in metadata, not method names.
 3. **Extract the smallest implementation.** The resident layer owns count
-   decoding, detector owns indexes, and SSB owns final Fourier storage. Native
+   decoding, detector owns indexes, and Direct Ptycho owns final Fourier storage. Native
    clients use package products. No copied app kernels or runtime imports from
    research directories.
 4. **Test both representations.** Exact integer equality includes rare maximum
