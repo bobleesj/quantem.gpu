@@ -243,3 +243,60 @@ def test_encoded_1024_scan_keeps_regularized_methods(method):
         assert actual.object_wave.shape == (1024, 1024)
         cp.testing.assert_allclose(cp.asarray(actual.object_wave), cp.asarray(expected.object_wave),
                                    atol=1e-6, rtol=1e-5)
+
+
+def _assert_same_wave(actual, expected, tolerance):
+    """Phase and log-amplitude agree within ``tolerance`` of the largest phase (log|w| of a complex64 near 1 is
+    quantized at 2**-23, so it also gets a few of those steps)."""
+    actual, expected = cp.asarray(actual), cp.asarray(expected)
+    scale = float(cp.abs(cp.angle(expected)).max())
+    for part, floor in ((cp.angle, 0.0), (lambda wave: cp.log(cp.abs(wave)), 4 * 2.0**-23)):
+        difference = float(cp.abs(part(actual) - part(expected)).max())
+        print(f"max difference {difference:.3g} rad, {difference / scale:.3g} of the largest phase")
+        assert difference <= tolerance * scale + floor
+
+
+@pytest.mark.parametrize("method, factor, weighting, transposed", [
+    ("phase", 1, "uniform", False), ("phase", 3, "inverse_mean", True),
+    ("complex", 1, "inverse_mean", False), ("complex", 2, "uniform", True),
+])
+def test_streamed_regularized_matches_resident_1024(method, factor, weighting, transposed):
+    """The column-streamed normal equations solve the resident systems: 1024 x 1024 streamed against resident."""
+    from quantem.gpu.direct_ptycho import direct_workflow
+
+    values = _counts((1024, 1024, 8, 8))
+    policy = direct_workflow.settings(method, None, None, None, weighting)
+    optics = {"aberrations": HIGHER, "sample_tilt_mrad": (1., -2.), "depth_spread_nm": 14.}
+    with _encoded(values, chunk_scans=65536) as data:
+        streamed = StreamedSSB(
+            data, mean_pattern=None, center=SETTINGS["bright_field_center_px"],
+            radius=SETTINGS["bright_field_radius_px"], threshold=0., semiangle_mrad=30.,
+            detector_sampling_mrad=SETTINGS["detector_sampling_mrad"], scan_detector_rotation_flipped=transposed,
+        )
+        actual, diagnostics = streamed.direct(optics, factor, policy, voltage_kV=300., semiangle_mrad=30.,
+            scan_sampling_A=SETTINGS["scan_sampling_A"], rotation_deg=27., compute_loss=True)
+    values[..., 2, 3] = 0
+    with SSB(values, **SETTINGS, scan_detector_rotation_flipped=transposed) as dense:
+        expected, expected_diagnostics = direct_workflow.solve(
+            dense, HIGHER, (1., -2.), 14., factor, policy, compute_loss=True)
+    assert actual.shape == (1024 * factor, 1024 * factor)
+    _assert_same_wave(actual, expected, 2e-6)
+    assert diagnostics["training_relative_sse"] == pytest.approx(expected_diagnostics["training_relative_sse"], rel=1e-5)
+
+
+@pytest.mark.parametrize("method", ["phase", "complex"])
+def test_large_scan_regularized_matches_periodic_native_reference(method):
+    """Phase and Complex above 1024 run through the public session: a tiled scan reconstructs as the tiled tile."""
+    tile = _counts((128, 128, 8, 8))
+    shape = (1536, 1024, 8, 8)
+    source = StreamedCounts(shape, np.uint16, np.ones((8, 8), bool))
+    for row in range(0, shape[0], 128):
+        source.append(cp.tile(tile, (1, shape[1] // 128, 1, 1)).reshape(-1, 8, 8))
+    with Dataset4dstemGPU(source, resident_metadata(shape, np.uint16, source.nbytes, backend="cuda")) as data:
+        with SSB(tile, **SETTINGS, aberrations=HIGHER) as reference:
+            expected = reference.run(method=method, aberrations=HIGHER, upsampling_factor=2, compute_loss=False)
+        with SSB(data, **SETTINGS, aberrations=HIGHER) as session:
+            assert session._streams_full_scan
+            actual = session.run(method=method, aberrations=HIGHER, upsampling_factor=2, compute_loss=False)
+    assert actual.object_wave.shape == (2 * shape[0], 2 * shape[1])
+    _assert_same_wave(actual.object_wave, cp.tile(cp.asarray(expected.object_wave), (shape[0] // 128, shape[1] // 128)), 2e-6)

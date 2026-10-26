@@ -403,12 +403,19 @@ square computational padding.
 It uses complex64 forward spectra, complex128 summation/inverse FFT and
 float32 phase. Its phase of the mean wave matches the existing CUDA
 wave-average path within floating-point FFT rounding, not bit for bit.
-Use `compute_loss=False` for the bounded path: above 1024 a full-scan loss is
-not computed, and `compute_loss=True` raises and says so. Full-field per-detector
-phase-variance loss and the regularized `method="phase"` and `"complex"`
-use the existing Fourier-stack backend for 1024 scans, an encoded 1024×1024
-acquisition included, retaining their prior behavior and memory cost. Those
-two operations are unsupported above 1024. Fit diagnostics remain available on the small
+Use `compute_loss=False` for SSB on the bounded path: above 1024 the
+per-detector phase-variance loss is not computed, and `compute_loss=True`
+raises and says so. At 1024 and below, that loss and the regularized methods use
+the existing Fourier-stack backend, an encoded 1024×1024 acquisition included.
+Above 1024, `method="phase"` and `"complex"` stream the same detector-column
+batches: each batch adds its part of every frequency's normal equations in
+float64, and each system is solved once by float64 Cholesky at the requested
+strengths. When the systems of every frequency do not fit beside a batch, the
+frequencies are split into passes that each stream the columns again
+(`result.reconstruction_diagnostics["streamed"]` records the batch and the
+passes). They match the resident solve within 2e-6 of the largest phase at
+1024×1024 and support `compute_loss=True` (their prediction error). Nothing is
+kept between calls, so drag previews of these methods recompute the full scan. Fit diagnostics remain available on the small
 region. A full 1024 fit remains available, but an explicit smaller region avoids
 keeping its entire Fourier stack during optimization.
 

@@ -8,6 +8,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- CUDA: `run(method="phase")` and `"complex"` above 1024 (encoded scans up to 4096, rectangular included). The
+  normal equations of every frequency are summed over streamed detector-column batches in float64
+  (`direct_normal_equations` gains an accumulate variant) and solved by float64 Cholesky; frequencies are split into
+  passes when their systems do not fit beside a batch. 1024 x 1024 streamed agrees with the resident solve within
+  4.4e-7 of the largest phase (log-amplitude 1.4e-6), uniform and inverse-mean weighting, 1x to 3x. The streamed SSB
+  adds each batch straight into one complex128 spectrum (40 instead of 56 bytes per output pixel), so 3x output fits
+  beside larger acquisitions.
+
 - CUDA: scans above 1024 (encoded, even sides up to 4096, rectangular included) now reconstruct the full field with
   the default fifth-order fit. The streamed full-scan SSB applies all 14 fitted aberration terms with the fitted tilt
   and depth (the resident 14-term kernel), so `find_aberrations(scan_region=...)` followed by

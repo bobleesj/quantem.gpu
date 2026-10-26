@@ -89,8 +89,12 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
     (``direct_ptycho.mps.direct``), from the same model and layout.
     """
     if session._streams_full_scan:
-        raise NotImplementedError(
-            "Regularized direct reconstruction needs a resident region; use select_region(...) first."
+        # Above 1024 the systems are summed over streamed detector columns and solved once; nothing is retained.
+        optics = {"aberrations": coefs, "sample_tilt_mrad": tilt or (0.0, 0.0), "depth_spread_nm": depth or 0.0}
+        return session._streamed.direct(
+            optics, factor, policy, voltage_kV=session.voltage_kV, semiangle_mrad=session.semiangle_mrad,
+            scan_sampling_A=session.scan_sampling_A, rotation_deg=session.scan_detector_rotation_deg,
+            compute_loss=compute_loss,
         )
     if session.backend == "cuda":
         from quantem.gpu.direct_ptycho.cuda.direct import PreparedDirect
