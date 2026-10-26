@@ -190,6 +190,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   is `band_power` on the CUDA and MPS backends, summed in float64. The fifth-order fit now reports `tilt_fit_gain` (the
   primary's gain times its agreement over the primary's) and honors `compare_standard`. Saved results with the raw
   agreement are fitted again.
+- Native (Metal) SSB fits report the same `sampleAgreement`: S / P with `MetalSSBJointModel.bandPower` (P summed in
+  Double on the host while the band is gathered, no added preparation time), for the low-order, standard-comparison
+  and fifth-order fits; a fifth-order fit with `compareStandard` carries `tiltFitGain` as Python. `SSBFit` adds
+  `bandPower`, `rawSampleAgreement` and `rawStandardAgreement`; saved fits keep the raw agreement under its old key and
+  the fraction under `sampleAgreementFraction`, and fits saved before decode with no fraction (raw values only).
 - The Model-Based Direct Ptychography package `quantem.gpu.ssb` is now `quantem.gpu.direct_ptycho`, its WebGPU
   sources included (`direct_ptycho/webgpu/*.ts` in `webgpu/sources.json`). Public names stay: `DirectPtycho`, `SSB`,
   `SSBResult`, kernel and registry names. `quantem.gpu.ssb` remains a deprecated import alias: `quantem.gpu.ssb` and

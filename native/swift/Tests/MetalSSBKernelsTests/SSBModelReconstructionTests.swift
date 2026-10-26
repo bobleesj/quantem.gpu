@@ -378,7 +378,7 @@ final class SSBModelReconstructionTests: XCTestCase {
       let fit = try SSBModelFit.fit(
         model: model,
         options: SSBFitOptions(tilt: tilt, trials: 40, compareStandard: false, maximumOrder: 1))
-      let agreement = try XCTUnwrap(fit.sampleAgreement)
+      let agreement = try XCTUnwrap(fit.rawSampleAgreement)
       let p = fit.point
       let z = SSBAgreementSearch.encode([
         p.c10Angstroms, p.c12Angstroms, p.phi12Radians, p.sampleTiltMrad[0], p.sampleTiltMrad[1],
@@ -415,6 +415,75 @@ final class SSBModelReconstructionTests: XCTestCase {
   /// The exact low-order gradient and Hessian against Richardson-extrapolated central differences of the
   /// value and of the gradient, at points with and without tilt and depth spread; the value against the
   /// agreement objective.
+  /// `sampleAgreement` is the agreement over the band power P = sum_q w_q sum_k |G(q, k)|^2 (Python `band_power`),
+  /// summed in Double; saved fits keep the raw agreement under its old key, and a fit saved before P was measured
+  /// decodes without a fraction.
+  func testSampleAgreementIsTheExplainedFractionOfBandPower() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
+    let s = try Self.scene()
+    let input = try XCTUnwrap(
+      s.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+    let engine = try MetalSSBEngine(device: device, geometry: s.geometry)
+    try engine.prepare(brightfield: input, countType: .uint16)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+    // An independent Double sum of the objective's own evidence and weights, in the same order: equal bit for bit.
+    let arrays = try model.objectiveArrays()
+    var perFrequency = [Double](repeating: 0, count: model.bandCount)
+    for row in 0..<arrays.k.count {
+      for q in 0..<model.bandCount {
+        let g = SIMD2<Double>(arrays.evidence[row * model.bandCount + q])
+        perFrequency[q] += g.x * g.x + g.y * g.y
+      }
+    }
+    let expected = zip(arrays.weights, perFrequency).reduce(0.0) { $0 + Double($1.0) * $1.1 }
+    XCTAssertEqual(model.bandPower, expected)
+    // Rotation changes the model, not G: the power stays.
+    try model.retarget(scanDetectorRotationDegrees: 40)
+    XCTAssertEqual(model.bandPower, expected)
+    try model.retarget(scanDetectorRotationDegrees: 17.25)
+
+    let fit = try SSBModelFit.fit(
+      model: model,
+      options: SSBFitOptions(trials: 40, compareStandard: true, maximumOrder: 1))
+    let raw = try XCTUnwrap(fit.rawSampleAgreement)
+    let rawStandard = try XCTUnwrap(fit.rawStandardAgreement)
+    XCTAssertEqual(fit.bandPower, expected)
+    XCTAssertEqual(fit.sampleAgreement, raw / expected)
+    XCTAssertEqual(fit.standardAgreement, rawStandard / expected)
+    XCTAssertEqual(fit.tiltFitGain, raw / rawStandard)
+    let fraction = try XCTUnwrap(fit.sampleAgreement)
+    XCTAssertGreaterThan(fraction, 0)
+    XCTAssertLessThanOrEqual(fraction, 1)
+
+    // Saved: the fraction under its own key, the raw agreement under the key that always held it.
+    let saved = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(fit)) as? [String: Any])
+    XCTAssertEqual(saved["sampleAgreement"] as? Double, raw)
+    XCTAssertEqual(saved["sampleAgreementFraction"] as? Double, fraction)
+    let restored = try JSONDecoder().decode(
+      SSBFit.self, from: JSONSerialization.data(withJSONObject: saved))
+    XCTAssertEqual(restored.sampleAgreement, fit.sampleAgreement)
+    XCTAssertEqual(restored.standardAgreement, fit.standardAgreement)
+    XCTAssertEqual(restored.rawSampleAgreement, raw)
+    XCTAssertEqual(restored.bandPower, expected)
+    // A fit saved before the band power: its raw agreements are never read as fractions; the gain, a ratio, stays.
+    var legacy = saved
+    for key in ["bandPower", "sampleAgreementFraction", "standardAgreementFraction"] {
+      legacy.removeValue(forKey: key)
+    }
+    let old = try JSONDecoder().decode(
+      SSBFit.self, from: JSONSerialization.data(withJSONObject: legacy))
+    XCTAssertNil(old.sampleAgreement)
+    XCTAssertNil(old.standardAgreement)
+    XCTAssertNil(old.bandPower)
+    XCTAssertEqual(old.rawSampleAgreement, raw)
+    XCTAssertEqual(old.rawStandardAgreement, rawStandard)
+    XCTAssertEqual(old.tiltFitGain, fit.tiltFitGain)
+    XCTAssertEqual(old.point, fit.point)
+  }
+
   func testLowOrderDerivativesMatchFiniteDifferences() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let s = try Self.scene()

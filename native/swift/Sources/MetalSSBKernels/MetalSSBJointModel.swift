@@ -92,6 +92,13 @@ public final class MetalSSBJointModel {
   public private(set) var scanDetectorRotationDegrees: Double
   public let bandInverseAngstroms: ClosedRange<Float>
   public let bandCount: Int
+  /// G's power over the band, sum_q w_q sum_k |G(q, k)|^2 with the agreement's half-plane weights, summed in Double
+  /// once at preparation (Python `band_power`). It bounds the agreement, so agreement / `bandPower` is the fraction
+  /// of the band's power the model explains, in [0, 1]. It depends on the band and the data, not on the rotation.
+  public private(set) var bandPower = 0.0
+  /// Wall time `bandPower` added to preparation (its reduction runs on the host while the GPU gathers the band),
+  /// for benchmarks.
+  public private(set) var bandPowerSeconds = 0.0
   private var grid: Grid
   private let qBuffer, indexBuffer, weights, bandG: MTLBuffer
   private var kBuffer: MTLBuffer
@@ -216,7 +223,8 @@ public final class MetalSSBJointModel {
     qBuffer = try Self.buffer(device, qs)
     indexBuffer = try Self.buffer(device, indices)
     weights = try Self.buffer(device, ws)
-    bandG = try Self.allocate(device, activeIndices.count * bandCount * 8)
+    // Shared: the host sums its power as it is gathered (`bandPower`).
+    bandG = try Self.allocate(device, activeIndices.count * bandCount * 8, shared: true)
     let chunks = (activeIndices.count + 255) / 256
     grid = Grid(
       n: UInt32(n), outputN: UInt32(n), count: 0, bfOffset: 0,
@@ -228,6 +236,8 @@ public final class MetalSSBJointModel {
       dcReal: geometry.dcValue.x, dcImag: geometry.dcValue.y,
       factor: geometry.phaseFactor ?? Float.pi / geometry.wavelengthAngstroms)
     try encodeProbeGeometry()
+    let power = BandPowerSum(evidence: bandG, bandCount: bandCount)
+    defer { power.wait() }
     try withoutActuallyEscaping(isCancelled) { cancelled in
       try visit(8) { [self] source, offset, half, bfOffset, count in
         if cancelled() { throw CancellationError() }
@@ -243,8 +253,12 @@ public final class MetalSSBJointModel {
         encoder.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
         dispatch(encoder, width: bandCount, height: count)
         try finish(commands)
+        power.add(rows: bfOffset, count: count)
       }
     }
+    let started = Date()
+    bandPower = power.total(weights: ws)
+    bandPowerSeconds = Date().timeIntervalSince(started)
   }
 
   /// BF coordinates rotated by `rotation`, as the MPS preparation: the angle in double precision, the
@@ -888,5 +902,58 @@ public final class MetalSSBJointModel {
       throw MetalSSBError.allocation("joint SSB geometry")
     }
     return result
+  }
+}
+
+/// `MetalSSBJointModel.bandPower`, summed on the host while the GPU gathers the band evidence: each gathered batch
+/// of BF rows is added on a serial queue, so every frequency's power is summed over the BF pixels in Double in BF
+/// order, then weighted and summed in band order. Deterministic, and independent of the thread count.
+private final class BandPowerSum: @unchecked Sendable {
+  private let evidence: MTLBuffer
+  private let bandCount: Int
+  private let blocks: Int
+  private let perFrequency: UnsafeMutablePointer<Double>
+  private let queue = DispatchQueue(label: "quantem.ssb.band-power")
+
+  init(evidence: MTLBuffer, bandCount: Int) {
+    self.evidence = evidence
+    self.bandCount = bandCount
+    // A few threads keep up with the gather; more slow its command submission.
+    blocks = min(bandCount, 8, ProcessInfo.processInfo.activeProcessorCount)
+    perFrequency = .allocate(capacity: bandCount)
+    perFrequency.initialize(repeating: 0, count: bandCount)
+  }
+
+  deinit { perFrequency.deallocate() }
+
+  /// Add BF rows `first..<first + count` of the evidence, which the GPU has finished writing. Batches are added in
+  /// the order given.
+  func add(rows first: Int, count: Int) {
+    queue.async { [self] in
+      let g = UnsafePointer(evidence.contents().assumingMemoryBound(to: SIMD2<Float>.self))
+      DispatchQueue.concurrentPerform(iterations: blocks) { block in
+        let start = block * bandCount / blocks
+        let end = (block + 1) * bandCount / blocks
+        for q in start..<end {
+          var sum = perFrequency[q]
+          for row in first..<(first + count) {
+            let value = SIMD2<Double>(g[row * bandCount + q])
+            sum += (value * value).sum()
+          }
+          perFrequency[q] = sum
+        }
+      }
+    }
+  }
+
+  /// Wait for every added batch.
+  func wait() { queue.sync {} }
+
+  /// sum_q w_q sum_k |G(q, k)|^2 over the added rows, with the agreement's half-plane weights.
+  func total(weights: [Float]) -> Double {
+    wait()
+    var total = 0.0
+    for q in 0..<bandCount { total += Double(weights[q]) * perFrequency[q] }
+    return total
   }
 }

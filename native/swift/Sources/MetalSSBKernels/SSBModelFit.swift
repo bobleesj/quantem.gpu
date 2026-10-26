@@ -150,15 +150,34 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
 }
 
 /// One fit at one scan-detector rotation.
+///
+/// `sampleAgreement` is the fraction of G's power in the fit band that the fitted model explains, from 0 to 1 (Python
+/// `sample_agreement`): the raw agreement S over the band power P (`MetalSSBJointModel.bandPower`), the same quantity
+/// for the low-order and fifth-order fits. Saved fits store it under `sampleAgreementFraction` and keep the raw S
+/// under `sampleAgreement`, the key that held it before. A fit saved before the band power was measured (no
+/// `bandPower` key) decodes with `sampleAgreement` and `standardAgreement` nil and its raw values in
+/// `rawSampleAgreement` and `rawStandardAgreement`: a raw agreement is never read as a fraction.
 public struct SSBFit: Codable, Sendable {
   public let scanDetectorRotationDegrees: Double
   public let point: SSBModelPoint
   public let options: SSBFitOptions
-  /// The model agreement at the fit (agreement objective), larger is better.
+  /// The fraction of the band's power the model explains at the fit, in [0, 1] (S / P); nil for a fit saved before
+  /// the band power was measured.
   public let sampleAgreement: Double?
-  /// The best agreement of the standard comparison and the ratio of the two (tilt fits only).
+  /// The best agreement of the standard comparison (tilt and depth spread 0), as the same fraction; nil without a
+  /// comparison or for a fit saved before the band power was measured.
   public let standardAgreement: Double?
+  /// The fit's agreement over the best standard-SSB agreement on the same data (> 1: the tilt explains more). For a
+  /// fifth-order fit, the low-order fit's gain times the fifth-order agreement over the low-order fit's (Python
+  /// `tilt_fit_gain`); nil without a standard comparison (`SSBFitOptions.compareStandard`).
   public let tiltFitGain: Double?
+  /// G's power over the 0.2...0.9 1/A fit band, sum_q w_q sum_k |G(q, k)|^2 (Python `band_power`); nil for a fit
+  /// saved before it was measured.
+  public let bandPower: Double?
+  /// The raw agreement S at the fit (larger is better; S = `sampleAgreement` x `bandPower`).
+  public let rawSampleAgreement: Double?
+  /// The raw best agreement of the standard comparison.
+  public let rawStandardAgreement: Double?
   public let trialCount: Int
   public var timings: [String: Double]
   /// The trust-region Newton starts of the primary fit (iterations, objective evaluations, convergence).
@@ -169,11 +188,68 @@ public struct SSBFit: Codable, Sendable {
   /// The fifth-order search's trajectory (`higherOrderSearch`); nil for a primary-only fit.
   /// Agreements in this trace are divided by `higherOrderNormalization`.
   public var higherOrderRefinement: SSBFifthOrderGradientSearch.Result? = nil
-  /// Initial agreement for the shared fifth-order model, using the strict 0.2...0.9 inverse-Angstrom band.
+  /// Initial raw agreement for the shared fifth-order model, using the strict 0.2...0.9 inverse-Angstrom band.
   public var higherOrderNormalization: Double? = nil
   /// The half-band check of a wide fit (`SSBFitOptions.checkHigherOrderConsistency`): whether its higher orders are
   /// trusted, and the limit of this fit (±2 after a fallback, when `options.higherOrderLimit` is 2). nil otherwise.
   public var higherOrderConsistency: SSBHigherOrderConsistency? = nil
+
+  /// A fit from its raw agreements and the band power P that turns them into fractions.
+  public init(
+    scanDetectorRotationDegrees: Double, point: SSBModelPoint, options: SSBFitOptions,
+    agreement: Double, standardAgreement: Double?, bandPower: Double, tiltFitGain: Double?,
+    trialCount: Int, timings: [String: Double]
+  ) {
+    self.scanDetectorRotationDegrees = scanDetectorRotationDegrees
+    self.point = point
+    self.options = options
+    rawSampleAgreement = agreement
+    rawStandardAgreement = standardAgreement
+    self.bandPower = bandPower
+    sampleAgreement = agreement / bandPower
+    self.standardAgreement = standardAgreement.map { $0 / bandPower }
+    self.tiltFitGain = tiltFitGain
+    self.trialCount = trialCount
+    self.timings = timings
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case scanDetectorRotationDegrees, point, options, tiltFitGain, bandPower, trialCount, timings,
+      newtonStarts, mappedFromBranch, higherOrderRefinement, higherOrderNormalization,
+      higherOrderConsistency
+    case sampleAgreement = "sampleAgreementFraction"
+    case standardAgreement = "standardAgreementFraction"
+    // The keys that held the raw agreements before the band power was measured; they still do.
+    case rawSampleAgreement = "sampleAgreement"
+    case rawStandardAgreement = "standardAgreement"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    scanDetectorRotationDegrees = try c.decode(Double.self, forKey: .scanDetectorRotationDegrees)
+    point = try c.decode(SSBModelPoint.self, forKey: .point)
+    options = try c.decode(SSBFitOptions.self, forKey: .options)
+    tiltFitGain = try c.decodeIfPresent(Double.self, forKey: .tiltFitGain)
+    bandPower = try c.decodeIfPresent(Double.self, forKey: .bandPower)
+    rawSampleAgreement = try c.decodeIfPresent(Double.self, forKey: .rawSampleAgreement)
+    rawStandardAgreement = try c.decodeIfPresent(Double.self, forKey: .rawStandardAgreement)
+    // Fractions only with the band power that made them; an older fit's raw values stay raw.
+    let measured = bandPower != nil
+    sampleAgreement =
+      measured ? try c.decodeIfPresent(Double.self, forKey: .sampleAgreement) : nil
+    standardAgreement =
+      measured ? try c.decodeIfPresent(Double.self, forKey: .standardAgreement) : nil
+    trialCount = try c.decode(Int.self, forKey: .trialCount)
+    timings = try c.decode([String: Double].self, forKey: .timings)
+    newtonStarts = try c.decodeIfPresent(
+      [SSBAgreementSearch.NewtonStart].self, forKey: .newtonStarts)
+    mappedFromBranch = try c.decodeIfPresent(Int.self, forKey: .mappedFromBranch)
+    higherOrderRefinement = try c.decodeIfPresent(
+      SSBFifthOrderGradientSearch.Result.self, forKey: .higherOrderRefinement)
+    higherOrderNormalization = try c.decodeIfPresent(Double.self, forKey: .higherOrderNormalization)
+    higherOrderConsistency = try c.decodeIfPresent(
+      SSBHigherOrderConsistency.self, forKey: .higherOrderConsistency)
+  }
 }
 
 /// Both 180-degree branches fitted independently and the branch kept (Python `RotationBranches`).
@@ -302,8 +378,8 @@ public enum SSBModelFit {
         point: SSBModelPoint(
           c10Angstroms: p[0], c12Angstroms: p[1], phi12Radians: p[2], sampleTiltMrad: [p[3], p[4]],
           depthSpreadAngstroms: p[5]),
-        options: options, sampleAgreement: result.agreement, standardAgreement: standard?.agreement,
-        tiltFitGain: standard.map { result.agreement / $0.agreement },
+        options: options, agreement: result.agreement, standardAgreement: standard?.agreement,
+        bandPower: model.bandPower, tiltFitGain: standard.map { result.agreement / $0.agreement },
         trialCount: options.trials, timings: timings)
       fit.newtonStarts = result.newtonStarts
       return fit
@@ -326,8 +402,8 @@ public enum SSBModelFit {
       var fit = SSBFit(
         scanDetectorRotationDegrees: rotation,
         point: SSBModelPoint(c10Angstroms: p[0], c12Angstroms: p[1], phi12Radians: p[2]),
-        options: options, sampleAgreement: result.agreement, standardAgreement: nil,
-        tiltFitGain: nil,
+        options: options, agreement: result.agreement, standardAgreement: nil,
+        bandPower: model.bandPower, tiltFitGain: nil,
         trialCount: options.trials, timings: timings)
       fit.newtonStarts = result.newtonStarts
       return fit
@@ -381,8 +457,8 @@ public enum SSBModelFit {
         let agreement = try model.agreements([point], isCancelled: isCancelled)[0]
         var opposite = SSBFit(
           scanDetectorRotationDegrees: rotation, point: point, options: branchOptions,
-          sampleAgreement: agreement, standardAgreement: nil, tiltFitGain: nil,
-          trialCount: fits[0].trialCount,
+          agreement: agreement, standardAgreement: nil, bandPower: model.bandPower,
+          tiltFitGain: nil, trialCount: fits[0].trialCount,
           timings: ["mapped_agreement_s": Date().timeIntervalSince(started)])
         opposite.mappedFromBranch = 0
         fitted = opposite
@@ -406,7 +482,8 @@ public enum SSBModelFit {
       phases: phases, rotations: rotations, rows: size, columns: size, darkField: darkField,
       scanSampling: scanSampling, keepFirst: keepFirst)
     try model.retarget(scanDetectorRotationDegrees: rotations[decision.kept])
-    if options.tilt && options.compareStandard, let agreement = fits[decision.kept].sampleAgreement
+    if options.tilt && options.compareStandard,
+      let agreement = fits[decision.kept].rawSampleAgreement
     {
       let started = Date()
       let standard = try SSBAgreementSearch.standardComparison(
@@ -422,7 +499,7 @@ public enum SSBModelFit {
       fits[decision.kept] = SSBFit(
         scanDetectorRotationDegrees: kept.scanDetectorRotationDegrees, point: kept.point,
         options: options,
-        sampleAgreement: agreement, standardAgreement: standard.agreement,
+        agreement: agreement, standardAgreement: standard.agreement, bandPower: model.bandPower,
         tiltFitGain: standard.agreement > 0 ? agreement / standard.agreement : .nan,
         trialCount: kept.trialCount, timings: timings)
       fits[decision.kept].newtonStarts = kept.newtonStarts
@@ -491,7 +568,10 @@ public enum SSBModelFit {
       var fit = SSBFit(
         scanDetectorRotationDegrees: primary.scanDetectorRotationDegrees,
         point: refined.point, options: fitOptions,
-        sampleAgreement: refined.agreement, standardAgreement: nil, tiltFitGain: nil,
+        agreement: refined.agreement, standardAgreement: nil, bandPower: model.bandPower,
+        // The low-order gain times the fifth-order agreement over the low-order point's (Python
+        // `fit_fifth_order`): `normalization` is the fifth-order objective at the low-order fit.
+        tiltFitGain: primary.tiltFitGain.map { $0 * refined.agreement / refined.normalization },
         trialCount: primary.trialCount, timings: primary.timings)
       fit.higherOrderRefinement = refined.result
       fit.higherOrderNormalization = refined.normalization

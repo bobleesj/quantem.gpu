@@ -485,6 +485,11 @@ func record(_ fit: SSBFit) -> [String: Any] {
     values["newton_evaluations"] = starts.reduce(0) { $0 + $1.evaluations }
   }
   if let source = fit.mappedFromBranch { values["mapped_from_branch"] = source }
+  // sample_agreement is the fraction S / P of the band power; the raw S and P are kept beside it.
+  if let raw = fit.rawSampleAgreement { values["sample_agreement_raw"] = raw }
+  if let power = fit.bandPower { values["band_power"] = power }
+  if let gain = fit.tiltFitGain { values["tilt_fit_gain"] = gain }
+  if let standard = fit.standardAgreement { values["standard_agreement"] = standard }
   if let normalization = fit.higherOrderNormalization {
     values["higher_order_normalization"] = normalization
   }
@@ -750,6 +755,7 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
     var result: [String: Any] = [
       "repeat": repeatIndex, "device": device.name, "source": caseRecord.source,
       "bf_pixels": setup.pixels.count, "band_count": model.bandCount,
+      "band_power": model.bandPower, "band_power_s": model.bandPowerSeconds,
       "rotation_estimate_deg": caseRecord.rotationEstimateDegrees,
       "dark_field": darkField != nil, "evidence": caseRecord.evidence ?? "v1: flagged excluded",
       "prepare_s": prepareSeconds, "joint_model_s": modelSeconds,
@@ -821,8 +827,8 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
     log(
       String(
         format:
-          "repeat %d: prepare %.2f s, initial fit %.2f s, total %.2f s, agreement %.9g, fifth-order evals %d (%@)",
-        repeatIndex, prepareSeconds, initialSeconds, totalSeconds,
+          "repeat %d: prepare %.2f s, band power %.3f s, initial fit %.2f s, total %.2f s, agreement %.9g, fifth-order evals %d (%@)",
+        repeatIndex, prepareSeconds, model.bandPowerSeconds, initialSeconds, totalSeconds,
         fitted.fit.sampleAgreement ?? .nan, refinement?.evaluations ?? 0,
         refinement?.stop ?? "none"))
   }

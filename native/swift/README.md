@@ -102,9 +102,12 @@ displayed reconstruction. The fifth-order search stops when a step predicts no
 resolvable gain, at 400 full-data objective passes or at 200 iterations. A
 lower objective is not the target: this fit maximizes model agreement.
 
-`higherOrderRefinement` records the stopping reason, the objective and
-gradient passes, and the best-agreement trace. Divide the raw agreement by
-`higherOrderNormalization` to compare with that trace. Native saved joint
+`sampleAgreement` is the fraction of G's power in the fit band that the model
+explains, from 0 to 1 (the raw agreement `rawSampleAgreement` over
+`bandPower`), as Python's `sample_agreement`; fits saved before it decode with
+their raw agreement only. `higherOrderRefinement` records the stopping reason,
+the objective and gradient passes, and the best-agreement trace. Divide the raw
+agreement by `higherOrderNormalization` to compare with that trace. Native saved joint
 results retain the exact Double model point, independent of rounded UI
 controls. An imported phase alone does not establish support for editing all of
 its originating model parameters.

@@ -198,6 +198,16 @@ final class SSBHigherOrderLimitTests: XCTestCase {
     XCTAssertEqual(try XCTUnwrap(term(wide, 2, 3)).magnitudeAngstroms / 10, 30, accuracy: 3)
     XCTAssertEqual(try XCTUnwrap(term(wide, 3, 0)).magnitudeAngstroms / 10, 5000, accuracy: 500)
     XCTAssertGreaterThan(wide.sampleAgreement!, standard.sampleAgreement!)
+    // The fraction of the band power, and the low-order gain carried by the fifth-order agreement over the low-order
+    // point's (Python `fit_fifth_order`).
+    let lowGain = try XCTUnwrap(low.fit.tiltFitGain)
+    for fit in [standard, wide] {
+      let raw = try XCTUnwrap(fit.rawSampleAgreement)
+      XCTAssertEqual(fit.bandPower, model.bandPower)
+      XCTAssertEqual(fit.sampleAgreement, raw / model.bandPower)
+      XCTAssertLessThanOrEqual(fit.sampleAgreement!, 1)
+      XCTAssertEqual(fit.tiltFitGain, lowGain * raw / fit.higherOrderNormalization!)
+    }
 
     // A fit saved with the retired coherence guard's record decodes, ignoring it.
     var saved = try XCTUnwrap(
