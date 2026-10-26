@@ -142,9 +142,9 @@ class FrameObjective(PeakedObjective):
 
     calls = 0
 
-    def evaluate(self, points, order):
-        FrameObjective.calls += len(points)
-        return super().evaluate(points, order)
+    def values(self, points, stride=1):
+        FrameObjective.calls += len(np.atleast_2d(points))
+        return super().values(points, stride)
 
 
 class FakeSession:
@@ -219,7 +219,7 @@ def fake_stream(monkeypatch, tmp_path, rows=256, noise_frames=()):
                                metadata={}, close=lambda: None)
 
     monkeypatch.setattr(stream_module.io, "load", load)
-    monkeypatch.setattr(stream_module, "_objective", lambda session: FrameObjective(
+    monkeypatch.setattr(stream_module, "_objective", lambda session, gradients=False: FrameObjective(
         peaks[loaded["name"]] + np.r_[1e-3 * loaded["bytes"], np.zeros(27)]))
     monkeypatch.setattr(stream_module, "public_params", lambda objective, z, order: (
         {"C10_nm": z[0], "C12_nm": z[1], "phi12_deg": z[2]}, (0.0, 0.0), 1.0))
