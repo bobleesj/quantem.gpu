@@ -337,22 +337,6 @@ public final class MetalSSBJointModel {
     scanDetectorRotationDegrees = rotation
   }
 
-  /// Negative explained Fourier power. Lower is better; it is not a confidence
-  /// score or a certificate of the physical scan-rotation branch.
-  public func loss(_ parameters: SSBJointParameters) throws -> Double {
-    try losses([parameters])[0]
-  }
-
-  /// Evaluate independent candidates together on the same measured BF evidence.
-  /// Geometry and input reads are shared across up to eight candidates. The
-  /// precision and accumulation order of each scalar objective are retained.
-  public func losses(
-    _ parameters: [SSBJointParameters], isCancelled: () -> Bool = { false }
-  ) throws -> [Double] {
-    for value in parameters { try value.validate() }
-    return try agreements(parameters.map(SSBModelPoint.init), isCancelled: isCancelled).map { -$0 }
-  }
-
   /// The least-squares agreement of the transfer model with the measured double-overlap data, larger is
   /// better: per band frequency |sum_k G conj(gamma)|^2 / sum_k |gamma|^2, summed with the half-plane weights
   /// (Python `thick_fit_batch`, `resident_fit.evaluate`).

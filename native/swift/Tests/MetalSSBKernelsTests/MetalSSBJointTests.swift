@@ -51,7 +51,7 @@ final class MetalSSBJointTests: XCTestCase {
       device: device, geometry: setup.geometry, cacheBudgetBytes: 2 << 30)
     try engine.prepare(brightfield: input, countType: .uint32)
     let model = try engine.jointModel(scanDetectorRotationDegrees: Double(fixture.rotationDegrees))
-    let loss = try model.loss(fixture.parameters)
+    let loss = -(try model.agreements([SSBModelPoint(fixture.parameters)])[0])
     let lossError = abs(loss - fixture.loss) / abs(fixture.loss)
     print("CALIBRATED_JOINT_PARITY loss=\(lossError)")
     XCTAssertLessThan(lossError, 5e-5)
@@ -97,17 +97,18 @@ final class MetalSSBJointTests: XCTestCase {
         device: device, geometry: geometry, cacheBudgetBytes: cacheBudget)
       try engine.prepare(brightfield: input, countType: .uint16)
       let model = try engine.jointModel(scanDetectorRotationDegrees: 0)
-      let batchCases = (0..<17).map { cases[$0 % cases.count].parameters }
-      let scalarLosses = try batchCases.map(model.loss)
+      let batchCases = (0..<17).map { SSBModelPoint(cases[$0 % cases.count].parameters) }
+      let scalarAgreements = try batchCases.map { try model.agreements([$0])[0] }
       for count in [1, 7, 8, 9, 17] {
-        let batched = try model.losses(Array(batchCases.prefix(count)))
+        let batched = try model.agreements(Array(batchCases.prefix(count)))
         XCTAssertEqual(
-          batched, Array(scalarLosses.prefix(count)), "GPU batching changed a scalar objective")
+          batched, Array(scalarAgreements.prefix(count)), "GPU batching changed a scalar objective")
       }
-      XCTAssertEqual(try model.losses([]), [])
-      XCTAssertThrowsError(try model.losses(batchCases, isCancelled: { true }))
+      XCTAssertEqual(try model.agreements([]), [])
+      XCTAssertThrowsError(try model.agreements(batchCases, isCancelled: { true }))
       for fixture in cases {
-        let measured = try model.loss(fixture.parameters)
+        // The fixture's loss is the negative agreement.
+        let measured = -(try model.agreements([SSBModelPoint(fixture.parameters)])[0])
         let relative = abs(measured - fixture.loss) / max(abs(fixture.loss), 1)
         XCTAssertLessThan(relative, 5e-5, "\(fixture.name) objective relative error \(relative)")
         print("JOINT_PARITY \(fixture.name) cache=\(cacheBudget) objective=\(relative)")
@@ -143,7 +144,7 @@ final class MetalSSBJointTests: XCTestCase {
       XCTAssertThrowsError(try model.reconstruct(cases[0].parameters, isCancelled: { true }))
       XCTAssertThrowsError(try model.reconstruct(cases[0].parameters, upsamplingFactor: 5))
       try engine.prepare(brightfield: input, countType: .uint16)
-      XCTAssertThrowsError(try model.loss(cases[0].parameters))
+      XCTAssertThrowsError(try model.agreements([SSBModelPoint(cases[0].parameters)]))
       XCTAssertThrowsError(try model.reconstruct(cases[0].parameters))
 
     }
