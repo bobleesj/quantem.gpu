@@ -55,9 +55,10 @@ final class SSBDirectDragWindowTests: XCTestCase {
       let p = values(x, count)
       let q = values(y, count)
       let average = q.reduce(0, +) / Double(count)
-      amplitude =
-        (zip(p, q).map { ($0 - $1) * ($0 - $1) }.reduce(0, +) / Double(count)).squareRoot()
-        / average
+      // A loop: Swift 6.1 cannot type-check the zip-map-reduce form in time.
+      var squaredError = 0.0
+      for (u, v) in zip(p, q) { squaredError += (u - v) * (u - v) }
+      amplitude = (squaredError / Double(count)).squareRoot() / average
     }
     return ((squared / power).squareRoot(), maximum, amplitude)
   }
