@@ -113,6 +113,13 @@ new `rcN` heading when that rc is published to TestPyPI.
   option `joint_objective_batch` had no caller). Shared sources changed, so `ssb-joint-agreement` v0.4,
   `ssb-low-order-derivatives` v0.4, `ssb-fifth-agreement` v0.4, `ssb-fifth-gradient` v0.3, `ssb-per-term` v0.3 and
   `ssb-direct` v0.3 are registered; every output is bitwise unchanged.
+- Benchmarks and docs: `scripts/benchmark_ssb_mps_scaling.py` (the MPS phase-variance pair and fit benchmark) and
+  `scripts/benchmark_ssb_rotation_defocus.py` (unreferenced, pinned to `refinement="newton"`) are deleted.
+  `scripts/benchmark_ssb.py` times the standard model fit (`search="primary", tilt=False`) instead of the
+  phase-variance fit, and `tests/benchmarks/mps_ssb.py` drops its phase-variance metrics (and from the M5 Max
+  baseline). The docs describe the model fits, exact-derivative refinement, the ±20 higher-order box and the drag
+  windows as current; 26 dated SSB reports that describe retired behaviour carry a Historical line, the SSB
+  performance notes moved to Historical records, and pages outside the table of contents joined the site.
 
 ### Changed
 
