@@ -137,6 +137,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- Python SSB: `upsampling_factor="auto"` still picks the factor from the scan sampling, at most 4×, and now says so
+  when the cap lowers it: one line per session, `SSB: auto upsampling capped at 4× (the scan sampling supports 8×);
+  pass upsampling_factor=8 for the full factor.` `stream` resolves auto once for the series. Explicit factors are
+  unchanged. `optics.ssb_upsampling_factor(..., max_factor=4)` takes another cap (1, 2, 3, 4 or 8; `max_factor=8` is the
+  uncapped choice).
 - Python SSB (CUDA and MPS): the fifth-order fit's higher-order box is wide by default, as on native:
   `find_aberrations(higher_order_limit=None)` (the default) bounds each of the 22 higher-order coordinates to ±20 rad
   of probe phase at the aperture edge, and `higher_order_limit=2` keeps the earlier box (`search="primary"` refuses

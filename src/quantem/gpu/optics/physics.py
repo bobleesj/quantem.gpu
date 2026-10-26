@@ -2,6 +2,7 @@
 
 import math
 from collections.abc import Sequence
+from numbers import Integral
 
 import numpy as np
 
@@ -9,6 +10,10 @@ PLANCK_H = 6.62607015e-34  # Planck constant (J·s)
 ELECTRON_MASS = 9.1093837015e-31  # Electron rest mass (kg)
 ELECTRON_CHARGE = 1.602176634e-19  # Elementary charge (C)
 SPEED_OF_LIGHT = 299792458  # Speed of light (m/s)
+
+# The SSB output factors a reconstruction accepts, and the largest one upsampling_factor="auto" chooses.
+SSB_UPSAMPLING_FACTORS = (1, 2, 3, 4, 8)
+SSB_AUTO_UPSAMPLING_MAX = 4
 
 # Wavelengths in Angstroms at common microscope voltages in kV, at full precision.
 COMMON_VOLTAGES = {
@@ -180,8 +185,9 @@ def ssb_upsampling_factor(
     voltage_kV: float,
     semiangle_mrad: float,
     scan_sampling_A: float | Sequence[float],
+    max_factor: int = SSB_AUTO_UPSAMPLING_MAX,
 ) -> int:
-    """Choose automatic SSB output sampling, capped at 4×.
+    """Choose automatic SSB output sampling from the scan sampling, at most 4× by default.
 
     Parameters
     ----------
@@ -191,21 +197,40 @@ def ssb_upsampling_factor(
         Positive probe convergence semi-angle in milliradians.
     scan_sampling_A : float or sequence of float
         Native scan step in Angstroms, ``(row, col)``.
+    max_factor : {1, 2, 3, 4, 8}, optional
+        Largest factor to choose, 4 by default. ``max_factor=8`` gives the
+        factor the scan sampling alone chooses.
 
     Returns
     -------
     int
-        Smallest factor in 1, 2, 3, 4 covering nominal support, or 4 when
-        the requirement exceeds the automatic limit. Use
-        ``ssb_upsampling_requirement`` to inspect the uncapped requirement.
+        Smallest of 1, 2, 3, 4 and 8, up to ``max_factor``, whose output
+        Nyquist frequency covers nominal support on both scan axes, or
+        ``max_factor`` when none does. Use ``ssb_upsampling_requirement`` to
+        inspect the fractional requirement.
 
     Notes
     -----
-    Auto can undersample nominal support. Request 8× explicitly in the
-    reconstruction or viewer when needed; this choice does not change fitting.
+    A capped factor undersamples nominal support. ``upsampling_factor="auto"``
+    uses the default cap and prints one line, once per session, naming the
+    factor the scan sampling supports; pass that factor explicitly (for
+    example ``upsampling_factor=8``) to use it. This choice does not change
+    fitting.
+
+    Examples
+    --------
+    At 300 kV and 30 mrad, a 1 Å step needs about 6.1×:
+
+    >>> ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0)
+    4
+    >>> ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0, max_factor=8)
+    8
     """
+    if isinstance(max_factor, bool) or not isinstance(max_factor, Integral) or max_factor not in SSB_UPSAMPLING_FACTORS:
+        raise ValueError("max_factor must be 1, 2, 3, 4, or 8.")
     required = ssb_upsampling_requirement(
         voltage_kV=voltage_kV, semiangle_mrad=semiangle_mrad,
         scan_sampling_A=scan_sampling_A,
     )
-    return next((factor for factor in (1, 2, 3, 4) if factor >= required - 1e-12), 4)
+    return next((factor for factor in SSB_UPSAMPLING_FACTORS
+                 if factor <= max_factor and factor >= required - 1e-12), int(max_factor))

@@ -94,6 +94,8 @@ def stream(ptycho, sources, fit: SSBResult, *, method="ssb", upsampling_factor="
         "scan_detector_rotation_deg": fit.scan_detector_rotation_deg,
         "scan_detector_rotation_flipped": fit.scan_detector_rotation_flipped,
     }
+    # Every frame has the reference calibration, so "auto" is resolved (and a capped factor announced) once.
+    factor = ptycho._resolve_upsampling_factor(upsampling_factor)
     records = None if save_dir is None else Path(save_dir).expanduser() / "stream"
     # What every frame's record shares: the reference fit it refits from and the code that ran it.
     shared = None if records is None else {
@@ -154,7 +156,7 @@ def stream(ptycho, sources, fit: SSBResult, *, method="ssb", upsampling_factor="
             optics, tilt, depth = saved["aberrations"], tuple(saved["sample_tilt_mrad"]), saved["depth_spread_nm"]
         chosen = copy.copy(fit)
         chosen.aberrations, chosen.sample_tilt_mrad, chosen.depth_spread_nm = optics, tilt, depth
-        reconstructed, sampling, seconds = _reconstruct(session, chosen, runs, upsampling_factor, strengths)
+        reconstructed, sampling, seconds = _reconstruct(session, chosen, runs, factor, strengths)
         clock.update(seconds)
         began = time.perf_counter()
         if index == 0:
@@ -230,7 +232,7 @@ def stream(ptycho, sources, fit: SSBResult, *, method="ssb", upsampling_factor="
         shifts_A=np.array(shifts) * np.array(sampling), confidence=tuple(float(value) for value in confidence),
         placed=tuple(score >= CONFIDENCE for score in confidence),
         combined={key: _combined(canvases[key]) for key in images}, cover=canvases["ssb"].cover, sources=tuple(sources),
-        session={"kind": type(ptycho), "settings": settings, "upsampling_factor": upsampling_factor, "device": device},
+        session={"kind": type(ptycho), "settings": settings, "upsampling_factor": factor, "device": device},
     )
 
 

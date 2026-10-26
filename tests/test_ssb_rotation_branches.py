@@ -259,9 +259,8 @@ def test_display_helpers_default_to_the_auto_factor():
         calibration = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(step, step))
         assert SSB._resolve_upsampling_factor(calibration, "auto") == factor
     assert SSB._resolve_upsampling_factor(calibration, 2) == 2
-    with pytest.raises(ValueError, match="more than 8"):
-        SSB._resolve_upsampling_factor(SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0,
-                                                       scan_sampling_A=(2.0, 2.0)), "auto")
+    coarse = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(2.0, 2.0))
+    assert SSB._resolve_upsampling_factor(coarse, "auto") == 4   # capped; the notice is tested in test_ssb_auto_sampling
 
 
 def test_a_native_phase_view_names_the_auto_factor(capsys):

@@ -166,13 +166,19 @@ class FakeSession:
         FakeSession.open -= self.data is not None
         self.data = None
 
+    def _resolve_upsampling_factor(self, upsampling_factor):
+        from quantem.gpu.ssb.workflow import SSB
+
+        return SSB._resolve_upsampling_factor(self, upsampling_factor)
+
     def run(self, chosen, *, method, **options):
         import cupy
 
         strengths = {name: value for name, value in options.items() if name not in (
             "upsampling_factor", "compute_loss", "force", "verbose")}
         FakeSession.runs.append(SimpleNamespace(frame=self.data.name, method=method, chosen=chosen,
-                                                optics=dict(chosen.aberrations), strengths=strengths))
+                                                optics=dict(chosen.aberrations), strengths=strengths,
+                                                factor=options["upsampling_factor"]))
         if method == "ssb":
             return SimpleNamespace(phase=self.data.phase, object_sampling_A=(0.2, 0.2))
         generator = cupy.random.default_rng(sum(map(ord, self.data.name)) * 3 + "spc".index(method[0]))
@@ -352,6 +358,23 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
         cupy.testing.assert_allclose(series.combined[key], live, atol=1e-6)
     table = series.report()
     assert {"SSB (s)", "Phase-only (s)", "Amplitude + phase (s)", "Near threshold"} <= set(table.columns)
+
+
+def test_a_capped_auto_factor_is_announced_once_per_stream(monkeypatch, tmp_path, capsys):
+    """At a 1 A step (300 kV, 30 mrad) the scan sampling supports 8x: auto is resolved once to 4x, one line
+    says so, and every frame runs at 4x; an explicit 8 runs at 8x without the line."""
+    from quantem.gpu.ssb.stream import stream
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    monkeypatch.setattr(FakeSession, "scan_sampling_A", 1.0)
+    for requested, factor, notice in (("auto", 4, "SSB: auto upsampling capped at 4× (the scan sampling supports "
+                                                  "8×); pass upsampling_factor=8 for the full factor.\n"),
+                                      (8, 8, "")):
+        FakeSession.runs, FakeSession.open = [], 0
+        capsys.readouterr()
+        stream(FakeSession(), sources, fit, upsampling_factor=requested, show=False, verbose=False)
+        assert capsys.readouterr().out == notice
+        assert {run.factor for run in FakeSession.runs} == {factor}
 
 
 def test_registration_uses_the_ssb_phase_whatever_the_method(monkeypatch, tmp_path):

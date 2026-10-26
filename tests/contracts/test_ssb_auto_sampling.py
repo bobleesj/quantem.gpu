@@ -70,3 +70,35 @@ def test_interaction_parameter_at_300_kV_and_invalid_voltages():
     for voltage_kV in (0, -300, float("nan"), float("inf")):
         with pytest.raises(ValueError, match="voltage_kV"):
             interaction_parameter(voltage_kV)
+
+
+NOTICE = ("SSB: auto upsampling capped at 4× (the scan sampling supports 8×); "
+          "pass upsampling_factor=8 for the full factor.\n")
+
+
+def test_max_factor_changes_the_cap_and_explicit_factors_are_unchanged():
+    assert ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0) == 4
+    assert ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0, max_factor=8) == 8
+    assert ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=0.373, max_factor=8) == 3
+    assert ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=0.373, max_factor=2) == 2
+    for invalid in (0, 5, 16, 8.0, True, "8"):
+        with pytest.raises(ValueError, match="max_factor"):
+            ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0, max_factor=invalid)
+
+
+def test_a_capped_auto_factor_is_announced_once_per_session(capsys):
+    """Sampling that wants 8x gives 4x and one line, once; 2x and 3x print nothing; an explicit 8 gives 8."""
+    from types import SimpleNamespace
+
+    from quantem.gpu.ssb.workflow import SSB
+
+    coarse = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(1.0, 1.0))
+    assert SSB._resolve_upsampling_factor(coarse, "auto") == 4
+    assert capsys.readouterr().out == NOTICE
+    assert SSB._resolve_upsampling_factor(coarse, "auto") == 4
+    assert SSB._resolve_upsampling_factor(coarse, 8) == 8
+    assert capsys.readouterr().out == ""
+    for step, factor in ((0.264, 2), (0.373, 3)):
+        session = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(step, step))
+        assert SSB._resolve_upsampling_factor(session, "auto") == factor
+    assert capsys.readouterr().out == ""

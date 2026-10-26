@@ -1497,15 +1497,21 @@ class DirectPtycho:
         return self._compute
 
     def _resolve_upsampling_factor(self, upsampling_factor: int | Literal["auto"]) -> int:
-        """``upsampling_factor`` as an output factor: ``"auto"`` is ``ssb_upsampling_factor`` for this calibration."""
-        if upsampling_factor == "auto":
-            from quantem.gpu.optics.physics import ssb_upsampling_factor
+        """``upsampling_factor`` as an output factor: ``"auto"`` is ``ssb_upsampling_factor`` for this calibration.
 
-            upsampling_factor = ssb_upsampling_factor(
-                voltage_kV=self.voltage_kV,
-                semiangle_mrad=self.semiangle_mrad,
-                scan_sampling_A=self.scan_sampling_A,
-            )
+        When the 4× cap lowers auto below the factor the scan sampling supports, one line says so, once per session.
+        """
+        if upsampling_factor == "auto":
+            from quantem.gpu.optics.physics import SSB_UPSAMPLING_FACTORS, ssb_upsampling_factor
+
+            calibration = {"voltage_kV": self.voltage_kV, "semiangle_mrad": self.semiangle_mrad,
+                           "scan_sampling_A": self.scan_sampling_A}
+            upsampling_factor = ssb_upsampling_factor(**calibration)
+            full = ssb_upsampling_factor(**calibration, max_factor=max(SSB_UPSAMPLING_FACTORS))
+            if full > upsampling_factor and not getattr(self, "_auto_upsampling_cap_announced", False):
+                self._auto_upsampling_cap_announced = True
+                print(f"SSB: auto upsampling capped at {upsampling_factor}× (the scan sampling supports {full}×); "
+                      f"pass upsampling_factor={full} for the full factor.")
         if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
             raise ValueError("upsampling_factor must be 'auto', 1, 2, 3, 4, or 8.")
         return upsampling_factor
@@ -2790,7 +2796,9 @@ class DirectPtycho:
             by this factor, preserving the physical field of view.
             ``"auto"`` chooses the smallest supported factor whose output
             Nyquist frequency covers the ideal circular-aperture SSB support,
-            2 * semiangle / wavelength, on both scan axes. This is a grid
+            2 * semiangle / wavelength, on both scan axes, at most 4×; when
+            the scan sampling supports 8×, one line says so and
+            ``upsampling_factor=8`` gives it. This is a grid
             criterion, not a measured resolution or a guarantee of useful
             signal at the cutoff. All 14 aberration terms support upsampling
             and tilt/depth correction on CUDA and MPS.
@@ -2973,7 +2981,8 @@ class DirectPtycho:
         aberrations, trial_ids, upsampling_factor
             Same controls as conventional reconstruction. Trial replay applies
             only to SSB. ``"auto"`` sampling covers the modeled aperture
-            support; it does not establish resolution.
+            support up to 4× (one line names a larger factor the scan sampling
+            supports); it does not establish resolution.
         phase_estimator
             Compatibility keyword: only ``"phase_of_mean"``, what ``"ssb"``
             computes, is accepted. The retired ``"mean_phase"`` and
