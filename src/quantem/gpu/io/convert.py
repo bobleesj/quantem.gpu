@@ -23,7 +23,6 @@ from pathlib import Path
 from threading import Event
 
 import h5py
-import hdf5plugin  # noqa: F401  registers bitshuffle/LZ4 for h5py
 import numpy as np
 import torch
 import yaml
@@ -612,6 +611,7 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
     unsigned comparison; other formats and correction references use h5py
     source decoding followed by accelerator comparison.
     """
+    import hdf5plugin  # noqa: F401  registers bitshuffle/LZ4 for h5py; loaded on use only
     header, _ = read_header(qem)
     rows, columns, detector_rows, detector_columns = header["shape"]
     mask = read_pixel_mask(master)
@@ -775,6 +775,7 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
     >>> checked.verified
     True
     """
+    import hdf5plugin  # noqa: F401  registers bitshuffle/LZ4 for h5py; loaded on use only
     master, destination = Path(master), Path(destination)
     explicit = _explicit_calibration(voltage_kV, semiangle_mrad, scan_sampling_A, detector_sampling_mrad)
     hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)

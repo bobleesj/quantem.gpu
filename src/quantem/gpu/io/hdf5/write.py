@@ -15,7 +15,6 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import h5py
-import hdf5plugin
 import numpy as np
 import torch
 
@@ -51,6 +50,15 @@ _write_queue = queue.Queue(maxsize=2)
 _write_thread = None
 _write_thread_lock = threading.Lock()
 _write_error = None
+
+
+def _bitshuffle_lz4() -> dict:
+    """The bitshuffle/LZ4 dataset options. hdf5plugin is imported here, on first write, not with
+    the package: it registers its filters in the process's HDF5, and a process that also writes
+    HDF5 through another library (a detector pipeline) must not get them as a side effect."""
+    import hdf5plugin
+
+    return hdf5plugin.Bitshuffle(cname="lz4")
 
 
 class H5Writer:
@@ -126,7 +134,7 @@ class H5Writer:
             shape=(self._current_file_n, self._det_row, self._det_col),
             dtype=self._dtype,
             chunks=(1, self._det_row, self._det_col),
-            **hdf5plugin.Bitshuffle(cname="lz4"),
+            **_bitshuffle_lz4(),
         )
         self._current_ds.attrs["image_nr_low"] = np.uint64(lo)
         self._current_ds.attrs["image_nr_high"] = np.uint64(hi)
@@ -352,7 +360,7 @@ def save_compressed_arina_h5(
                 shape=(end - start, det_row, det_col),
                 dtype=dtype,
                 chunks=(1, det_row, det_col),
-                **hdf5plugin.Bitshuffle(cname="lz4"),
+                **_bitshuffle_lz4(),
             )
             dataset.attrs["image_nr_low"] = np.uint64(start + 1)
             dataset.attrs["image_nr_high"] = np.uint64(end)

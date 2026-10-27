@@ -12,7 +12,6 @@ import os
 import time
 
 import h5py
-import hdf5plugin  # noqa: F401 - registers the bitshuffle+LZ4 filter
 import numpy as np
 from tqdm.auto import tqdm
 
@@ -44,6 +43,7 @@ def load_reference(
     file axis unless ``stack`` is False; ``single`` returns one result for one
     path given on its own.
     """
+    import hdf5plugin  # noqa: F401 - registers the bitshuffle+LZ4 filter; loaded on use only
 
     def load_one(path):
         meta = get_metadata(str(path))
@@ -154,6 +154,7 @@ def load_master(
     replaces them as ``quantem.gpu.resident.hot_pixels.fill_flagged`` does. A
     mask of another shape raises ``ValueError`` rather than being skipped.
     """
+    import hdf5plugin  # noqa: F401 - registers the bitshuffle+LZ4 filter; loaded on use only
     with h5py.File(filepath, "r") as master:
         sources = detector_sources(master)
     if not sources:
