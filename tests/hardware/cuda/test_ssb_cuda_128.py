@@ -213,7 +213,7 @@ def _make_engine(
     bright_field_center_px: tuple[float, float] = (15.5, 15.5),
 ):
     cp = _cupy()
-    from quantem.gpu.direct_ptycho.cuda.engine import DirectPtychoEngine
+    from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
 
     if g_qk is None:
         rng = np.random.default_rng(1234)
@@ -228,7 +228,7 @@ def _make_engine(
     bf_inds_col = cp.asarray(np.resize(col_pattern, num_bright_field_pixels), dtype=cp.int32)
     q = cp.fft.fftfreq(size, d=0.5).astype(cp.float32)
     q_row, q_col = cp.meshgrid(q, q, indexing="ij")
-    engine = DirectPtychoEngine(
+    engine = SSBEngine(
         G_qk=g_qk,
         bf_inds_row=bf_inds_row,
         bf_inds_col=bf_inds_col,
@@ -301,12 +301,12 @@ def _expand_hermitian_cp(half_gqk):
 
 def test_cuda_128_rejects_mismatched_bf_count() -> None:
     cp = _cupy()
-    from quantem.gpu.direct_ptycho.cuda.engine import DirectPtychoEngine
+    from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
 
     q = cp.fft.fftfreq(128, d=0.5).astype(cp.float32)
     q_row, q_col = cp.meshgrid(q, q, indexing="ij")
     with pytest.raises(ValueError, match="G_qk first dimension"):
-        DirectPtychoEngine(
+        SSBEngine(
             G_qk=cp.zeros((8, 128, 128), dtype=cp.complex64),
             bf_inds_row=cp.arange(7, dtype=cp.int32),
             bf_inds_col=cp.arange(7, dtype=cp.int32),
@@ -443,9 +443,9 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
     aberrations = {"C10_nm": -8.0, "C12_nm": 3.0, "phi12_deg": math.degrees(0.4)}
     with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5),
              detector_sampling_mrad=(2.0, 2.0), bright_field_center_px=(7.5, 7.5), bright_field_radius_px=5) as session:
-        before = session.run(aberrations=aberrations).loss
-        session.find_aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
-        after = session.run(aberrations=aberrations, force=True).loss
+        before = session.reconstruct(aberrations=aberrations).loss
+        session.fit_aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
+        after = session.reconstruct(aberrations=aberrations, force=True).loss
         engine = session._backend()._get_accelerator()
         engine_aberrations = aberrations_to_engine(aberrations)
         _, exact = engine.reconstruct_with_loss(
@@ -550,7 +550,7 @@ def test_cuda_phase_loss_accepts_hermitian_gqk(size: int, num_bright_field_pixel
 
 def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     cp = _cupy()
-    from quantem.gpu.direct_ptycho.cuda.backend import CudaDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(123)
     data = rng.poisson(4.0, size=(128, 128, 16, 16)).astype(np.uint16)
@@ -566,7 +566,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
         aberrations={"C10": -120.0, "C12": 55.0, "phi12": math.radians(17.0)},
     )
 
-    herm = CudaDirectPtychoBackend(cp.asarray(data), **kwargs)
+    herm = CudaSSBBackend(cp.asarray(data), **kwargs)
     assert herm.G_qk.shape[2] == 65
     assert herm.G_qk.nbytes == len(herm.bf_inds_row) * 128 * 65 * 8
 
@@ -608,7 +608,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
 
 def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -> None:
     cp = _cupy()
-    from quantem.gpu.direct_ptycho.cuda.backend import CudaDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(124)
     data = rng.poisson(4.0, size=(128, 128, 16, 16)).astype(np.uint16)
@@ -623,7 +623,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
         bright_field_radius_px=3,
     )
 
-    herm = CudaDirectPtychoBackend(cp.asarray(data), **kwargs)
+    herm = CudaSSBBackend(cp.asarray(data), **kwargs)
     accel = herm._get_accelerator()
     herm_phase, _ = accel.reconstruct_with_loss(-120.0, 55.0, math.radians(17.0))
     full_engine = _make_engine(
@@ -653,7 +653,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
 def test_ssb_default_hermitian_optimize_keeps_half_plane() -> None:
     cp = _cupy()
     pytest.importorskip("optuna")
-    from quantem.gpu.direct_ptycho.cuda.backend import CudaDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(125)
     data = rng.poisson(4.0, size=(128, 128, 16, 16)).astype(np.uint16)
@@ -661,7 +661,7 @@ def test_ssb_default_hermitian_optimize_keeps_half_plane() -> None:
     bf = (yy - 8) ** 2 + (xx - 8) ** 2 <= 4 ** 2
     data[..., bf] += 80
 
-    ssb = CudaDirectPtychoBackend(
+    ssb = CudaSSBBackend(
         cp.asarray(data),
         voltage_kV=300,
         semiangle=21.4,
@@ -693,7 +693,7 @@ def test_cuda_128_variance_loss_matches_reference() -> None:
 def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
     cp = _cupy()
     from quantem.gpu.io import load
-    from quantem.gpu.direct_ptycho.cuda.backend import CudaDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     _clean_gpu()
     path = _realdata_master()
@@ -703,7 +703,7 @@ def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
         backend="cuda",
         verbose=False,
     )
-    ssb = CudaDirectPtychoBackend(
+    ssb = CudaSSBBackend(
         loaded.data,
         scan_shape=(128, 128),
         voltage_kV=300,
@@ -732,7 +732,7 @@ def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
 def test_ssb_roi96_auto_pads_to_128_not_256(capsys) -> None:
     """The padding keeps every measured position and announces itself with how to avoid it."""
     cp = _cupy()
-    from quantem.gpu.direct_ptycho.cuda.backend import CudaDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(5)
     data = rng.poisson(4.0, size=(96, 96, 16, 16)).astype(np.uint16)
@@ -740,7 +740,7 @@ def test_ssb_roi96_auto_pads_to_128_not_256(capsys) -> None:
     bf = (yy - 8) ** 2 + (xx - 8) ** 2 <= 4 ** 2
     data[..., bf] += 100
 
-    ssb = CudaDirectPtychoBackend(
+    ssb = CudaSSBBackend(
         cp.asarray(data),
         voltage_kV=300,
         semiangle=21.4,
@@ -759,11 +759,11 @@ def test_ssb_roi96_auto_pads_to_128_not_256(capsys) -> None:
 def test_ssb_refuses_to_crop_a_scan_larger_than_1024() -> None:
     """A scan beyond the largest CUDA FFT is refused, never center-cropped to 1024 positions."""
     cp = _cupy()
-    from quantem.gpu.direct_ptycho.cuda.backend import CudaDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     data = cp.ones((1025, 2, 8, 8), dtype=cp.uint16)
     with pytest.raises(ValueError, match="at most 1024 x 1024 positions; got 1025x2"):
-        CudaDirectPtychoBackend(data, voltage_kV=300, semiangle=21.4, scan_sampling=0.5, detector_sampling_mrad=(1.0, 1.0), bright_field_radius_px=2)
+        CudaSSBBackend(data, voltage_kV=300, semiangle=21.4, scan_sampling=0.5, detector_sampling_mrad=(1.0, 1.0), bright_field_radius_px=2)
 
 
 @pytest.mark.parametrize(("size", "num_bright_field_pixels"), [(128, 40), (256, 20), (512, 8), (1024, 3)])

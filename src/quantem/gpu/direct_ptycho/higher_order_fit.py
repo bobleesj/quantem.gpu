@@ -1,7 +1,7 @@
 """Trial rows of the higher-order agreement kernel (``mps.higher_order_agreement``): (thickness_A, tilt_row_mrad,
 tilt_col_mrad, then 2 N Cartesian Krivanek coefficients in Angstrom, ``higher_order.ORDERS`` order).
 
-The ``find_aberrations(higher_order=...)`` subset polish that used them is retired: the fifth-order fit fits every term
+The ``fit_aberrations(higher_order=...)`` subset polish that used them is retired: the fifth-order fit fits every term
 through C56 on exact gradients, with the half-band check.
 """
 

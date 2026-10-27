@@ -26,11 +26,11 @@ def test_auto_grid_matches_explicit_grid_without_refitting(monkeypatch):
         def forbidden(*args, **kwargs):
             raise AssertionError("Output sampling must not search aberrations")
 
-        monkeypatch.setattr(ssb, "find_aberrations", forbidden)
-        native = ssb.reconstruct(upsampling_factor=1)
-        explicit = ssb.reconstruct(upsampling_factor=factor)
-        automatic = ssb.reconstruct(upsampling_factor="auto")
-        assert automatic.upsampling_factor == factor
+        monkeypatch.setattr(ssb, "fit_aberrations", forbidden)
+        native = ssb.reconstruct(upsampling=1)
+        explicit = ssb.reconstruct(upsampling=factor)
+        automatic = ssb.reconstruct(upsampling="auto")
+        assert automatic.upsampling == factor
         assert automatic.loss == native.loss
         assert automatic.aberrations == native.aberrations
         assert automatic.sample_tilt_mrad == native.sample_tilt_mrad
@@ -49,14 +49,14 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, depth, mo
     np.save(source, cp.asnumpy(ssb._data))
     ssb.source_path = str(source)
     try:
-        correction = ssb.find_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
+        correction = ssb.fit_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
                                           check_rotation=False, verbose=False)
         correction = replace(correction, sample_tilt_mrad=(2., -3.), depth_spread_nm=depth)
         native, loss = ssb.preview(correction.aberrations, sample_tilt_mrad=correction.sample_tilt_mrad,
                                   depth_spread_nm=correction.depth_spread_nm)
         results = {}
         for factor in (1, 2, 3, 4, 1):
-            result = ssb.reconstruct(correction, upsampling_factor=factor, save_dir=tmp_path / f'x{factor}')
+            result = ssb.reconstruct(correction, upsampling=factor, save_dir=tmp_path / f'x{factor}')
             assert result.phase.shape == (128 * factor, 128 * factor)
             assert result.object_sampling_A == (.3 / factor, .3 / factor)
             assert result.loss == loss
@@ -64,16 +64,16 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, depth, mo
             assert result.sample_tilt_mrad == correction.sample_tilt_mrad
             assert result.depth_spread_nm == depth
             assert not result.amplitude_estimated
-            assert result.upsampling_factor == factor
+            assert result.upsampling == factor
             assert result.phase_estimator == 'phase_of_mean'
             assert np.isfinite(cp.asnumpy(result.phase)).all()
             results[factor] = cp.asnumpy(result.phase)
         np.testing.assert_allclose(results[1], native, atol=1e-7)
         def forbidden(*args, **kwargs):
             raise AssertionError('Reconstruction must not refit')
-        monkeypatch.setattr(ssb, 'find_aberrations', forbidden)
+        monkeypatch.setattr(ssb, 'fit_aberrations', forbidden)
         for factor in (4, 3, 2, 1):
-            saved = ssb.reconstruct(correction, upsampling_factor=factor, save_dir=tmp_path / f'x{factor}')
+            saved = ssb.reconstruct(correction, upsampling=factor, save_dir=tmp_path / f'x{factor}')
             # A source path cannot identify the direct array's crop or edits.
             # The saved image is refreshed; immutable SSB.open sources have
             # separate cache-reuse checks in test_ssb_persistence.

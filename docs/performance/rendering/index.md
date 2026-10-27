@@ -13,5 +13,5 @@ It does not redefine reconstruction resolution or scientific precision.
 
 Count new scientific image paints, not animation callbacks or requested sweep
 rates. Keep full result shape, displayed shape, backend and physical adapter
-explicit. Read [Direct Ptycho](../ssb/index.md) for reconstruction and fitting costs;
+explicit. Read [SSB](../ssb/index.md) for reconstruction and fitting costs;
 read [methodology](../methodology.md) for timing boundaries.

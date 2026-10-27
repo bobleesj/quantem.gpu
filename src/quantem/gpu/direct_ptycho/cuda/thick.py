@@ -3,7 +3,7 @@
 Standard SSB treats the sample as one plane at the probe defocus. A crystal of thickness t tilted by theta sees a range of
 defoci and shifts through its depth; averaging the SSB transfer terms over that depth gives each its own sinc weight (see
 ``kernels/engine.py``). ``ThickSample`` evaluates that model on one engine's prepared bright-field spectra ``G_qk``:
-phase images for previews and reconstruction, and the agreement that ``find_aberrations(tilt=True)`` maximises.
+phase images for previews and reconstruction, and the agreement that ``fit_aberrations(tilt=True)`` maximises.
 """
 
 import math
@@ -30,7 +30,7 @@ from quantem.gpu.direct_ptycho.units import ENGINE_PER_NM, aberrations_to_engine
 
 
 class ThickSample:
-    """The thick-sample model on one ``DirectPtychoEngine``'s prepared ``G_qk`` and rotation geometry.
+    """The thick-sample model on one ``SSBEngine``'s prepared ``G_qk`` and rotation geometry.
 
     The engine owns the evidence and the current rotation; this object owns what only the thick model needs: the
     spatial-frequency band of the fit objective and the float64 wave-sum scratch buffer, each rebuilt only when the
@@ -93,7 +93,7 @@ class ThickSample:
     ) -> tuple[cp.ndarray, float]:
         """The phase-variance objective on the native grid: (mean over BF pixels of each corrected phase, loss).
 
-        Same definitions as ``DirectPtychoEngine.reconstruct_with_loss`` (the loss is the mean over the image of the per-pixel
+        Same definitions as ``SSBEngine.reconstruct_with_loss`` (the loss is the mean over the image of the per-pixel
         variance of the bright-field phases), with each pixel's correction averaged over the sample depth. C10/C12
         optics run ``_native_phase_variance``; higher orders the reference loop below: element-wise correction, then
         one inverse FFT per pixel, in chunks of bright-field pixels.
@@ -627,7 +627,7 @@ class WaveWindow:
         return self.thick._wave_phase(spectrum, self.qrow.size, self.qcol.size)
 
     def _spectrum(self, value: float, *, pairs: int) -> cp.ndarray:
-        """``_wave_spectrum`` at the control value, with the engine arguments ``DirectPtycho.preview`` derives."""
+        """``_wave_spectrum`` at the control value, with the engine arguments ``SSB.preview`` derives."""
         aberrations = validate_aberrations({**self.aberrations, self.control: value}, higher_order=True)
         coefs = aberrations_to_engine(aberrations)
         magnitudes, angles = higher_order_arrays(aberrations) or (None, None)

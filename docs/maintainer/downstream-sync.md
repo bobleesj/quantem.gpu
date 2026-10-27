@@ -193,34 +193,34 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.screening._cuda` | deleted |  |
 | `quantem.gpu.screening._memory` | deleted | 1 of 1 names deleted |
 | `quantem.gpu.screening._mps` | deleted |  |
-| `quantem.gpu.ssb.backends` | deleted |  |
-| `quantem.gpu.ssb.backends.contract` | `quantem.gpu.ssb.contract` |  |
-| `quantem.gpu.ssb.backends.cuda` | deleted |  |
-| `quantem.gpu.ssb.backends.cuda.backend` | `quantem.gpu.ssb.cuda.backend` | 1 of 2 names deleted |
-| `quantem.gpu.ssb.backends.cuda.engine` | `quantem.gpu.ssb.cuda.engine`, `quantem.gpu.ssb.cuda.kernels.engine` |  |
-| `quantem.gpu.ssb.backends.cuda.kernels` | `quantem.gpu.ssb.cuda.kernels` |  |
-| `quantem.gpu.ssb.backends.cuda.kernels.common` | `quantem.gpu.ssb.cuda.kernels.common` |  |
-| `quantem.gpu.ssb.backends.cuda.kernels.fft1024` | `quantem.gpu.ssb.cuda.kernels.fft1024` |  |
-| `quantem.gpu.ssb.backends.cuda.kernels.fft128` | `quantem.gpu.ssb.cuda.kernels.fft128` |  |
-| `quantem.gpu.ssb.backends.cuda.kernels.fft256` | `quantem.gpu.ssb.cuda.kernels.fft256` |  |
-| `quantem.gpu.ssb.backends.cuda.kernels.fft512` | `quantem.gpu.ssb.cuda.kernels.fft512` |  |
-| `quantem.gpu.ssb.backends.cuda.optimizer` | `quantem.gpu.ssb.cuda.optimizer` |  |
-| `quantem.gpu.ssb.backends.mps` | deleted |  |
-| `quantem.gpu.ssb.backends.mps.backend` | `quantem.gpu.ssb.mps.backend` |  |
-| `quantem.gpu.ssb.backends.mps.brightfield_columns` | deleted |  |
-| `quantem.gpu.ssb.backends.mps.engine` | `quantem.gpu.ssb.mps.frames` | 1 of 3 names deleted |
-| `quantem.gpu.ssb.backends.mps.kernels` | `quantem.gpu.ssb.mps.kernels` |  |
-| `quantem.gpu.ssb.backends.mps.kernels.common` | `quantem.gpu.ssb.mps.kernels.common` |  |
-| `quantem.gpu.ssb.backends.mps.kernels.fft1024` | `quantem.gpu.ssb.mps.kernels.fft1024` |  |
-| `quantem.gpu.ssb.backends.mps.kernels.fft128` | `quantem.gpu.ssb.mps.kernels.fft128` |  |
-| `quantem.gpu.ssb.backends.mps.kernels.fft256` | `quantem.gpu.ssb.mps.kernels.fft256` |  |
-| `quantem.gpu.ssb.backends.mps.kernels.fft512` | `quantem.gpu.ssb.mps.kernels.fft512` |  |
-| `quantem.gpu.ssb.backends.mps.optimizer` | `quantem.gpu.ssb.cuda.optimizer`, `quantem.gpu.ssb.mps.optimizer` |  |
-| `quantem.gpu.ssb.backends.mps.thick_sample` | `quantem.gpu.ssb.mps.thick_sample`, `quantem.gpu.ssb.cuda.kernels.engine` |  |
-| `quantem.gpu.ssb.backends.webgpu` | deleted |  |
-| `quantem.gpu.ssb.plots` | deleted | 2 of 2 names deleted |
-| `quantem.gpu.ssb.temporal` | deleted | 6 of 6 names deleted |
-| `quantem.gpu.ssb.torch_ssb` | deleted | 1 of 1 names deleted |
-| `quantem.gpu.ssb.workflow` | `quantem.gpu.ssb.units`, `quantem.gpu.ssb.contract`, `quantem.gpu.ssb.workflow` |  |
+| `quantem.gpu.direct_ptycho.backends` | deleted |  |
+| `quantem.gpu.direct_ptycho.backends.contract` | `quantem.gpu.direct_ptycho.contract` |  |
+| `quantem.gpu.direct_ptycho.backends.cuda` | deleted |  |
+| `quantem.gpu.direct_ptycho.backends.cuda.backend` | `quantem.gpu.direct_ptycho.cuda.backend` | 1 of 2 names deleted |
+| `quantem.gpu.direct_ptycho.backends.cuda.engine` | `quantem.gpu.direct_ptycho.cuda.engine`, `quantem.gpu.direct_ptycho.cuda.kernels.engine` |  |
+| `quantem.gpu.direct_ptycho.backends.cuda.kernels` | `quantem.gpu.direct_ptycho.cuda.kernels` |  |
+| `quantem.gpu.direct_ptycho.backends.cuda.kernels.common` | `quantem.gpu.direct_ptycho.cuda.kernels.common` |  |
+| `quantem.gpu.direct_ptycho.backends.cuda.kernels.fft1024` | `quantem.gpu.direct_ptycho.cuda.kernels.fft1024` |  |
+| `quantem.gpu.direct_ptycho.backends.cuda.kernels.fft128` | `quantem.gpu.direct_ptycho.cuda.kernels.fft128` |  |
+| `quantem.gpu.direct_ptycho.backends.cuda.kernels.fft256` | `quantem.gpu.direct_ptycho.cuda.kernels.fft256` |  |
+| `quantem.gpu.direct_ptycho.backends.cuda.kernels.fft512` | `quantem.gpu.direct_ptycho.cuda.kernels.fft512` |  |
+| `quantem.gpu.direct_ptycho.backends.cuda.optimizer` | `quantem.gpu.direct_ptycho.cuda.optimizer` |  |
+| `quantem.gpu.direct_ptycho.backends.mps` | deleted |  |
+| `quantem.gpu.direct_ptycho.backends.mps.backend` | `quantem.gpu.direct_ptycho.mps.backend` |  |
+| `quantem.gpu.direct_ptycho.backends.mps.brightfield_columns` | deleted |  |
+| `quantem.gpu.direct_ptycho.backends.mps.engine` | `quantem.gpu.direct_ptycho.mps.frames` | 1 of 3 names deleted |
+| `quantem.gpu.direct_ptycho.backends.mps.kernels` | `quantem.gpu.direct_ptycho.mps.kernels` |  |
+| `quantem.gpu.direct_ptycho.backends.mps.kernels.common` | `quantem.gpu.direct_ptycho.mps.kernels.common` |  |
+| `quantem.gpu.direct_ptycho.backends.mps.kernels.fft1024` | `quantem.gpu.direct_ptycho.mps.kernels.fft1024` |  |
+| `quantem.gpu.direct_ptycho.backends.mps.kernels.fft128` | `quantem.gpu.direct_ptycho.mps.kernels.fft128` |  |
+| `quantem.gpu.direct_ptycho.backends.mps.kernels.fft256` | `quantem.gpu.direct_ptycho.mps.kernels.fft256` |  |
+| `quantem.gpu.direct_ptycho.backends.mps.kernels.fft512` | `quantem.gpu.direct_ptycho.mps.kernels.fft512` |  |
+| `quantem.gpu.direct_ptycho.backends.mps.optimizer` | `quantem.gpu.direct_ptycho.cuda.optimizer`, `quantem.gpu.direct_ptycho.mps.optimizer` |  |
+| `quantem.gpu.direct_ptycho.backends.mps.thick_sample` | `quantem.gpu.direct_ptycho.mps.thick_sample`, `quantem.gpu.direct_ptycho.cuda.kernels.engine` |  |
+| `quantem.gpu.direct_ptycho.backends.webgpu` | deleted |  |
+| `quantem.gpu.direct_ptycho.plots` | deleted | 2 of 2 names deleted |
+| `quantem.gpu.direct_ptycho.temporal` | deleted | 6 of 6 names deleted |
+| `quantem.gpu.direct_ptycho.torch_ssb` | deleted | 1 of 1 names deleted |
+| `quantem.gpu.direct_ptycho.workflow` | `quantem.gpu.direct_ptycho.units`, `quantem.gpu.direct_ptycho.contract`, `quantem.gpu.direct_ptycho.workflow` |  |
 | `quantem.gpu.swift.Benchmarks.MetalImageFFTBenchmark.compare_torch_fft` | `native/swift/Benchmarks/MetalImageFFTBenchmark/compare_torch_fft.py` | a script beside the Swift benchmark, not a package module |
 | `quantem.gpu.webgpu` | deleted | 3 of 3 names deleted; the package now holds only `sources.json` for browser builds |

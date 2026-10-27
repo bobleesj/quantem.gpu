@@ -1,7 +1,7 @@
-"""CUDA kernels of the Direct Ptycho engine: phase reductions, the probe at each bright-field pixel, and the thick-sample model.
+"""CUDA kernels of the SSB engine: phase reductions, the probe at each bright-field pixel, and the thick-sample model.
 
 The size-specific inverse-FFT kernels live in the ``fft{128,256,512,1024}`` modules; these are the size-independent
-kernels ``DirectPtychoEngine`` and ``ThickSample`` launch around them.
+kernels ``SSBEngine`` and ``ThickSample`` launch around them.
 """
 
 import cupy as cp
@@ -309,11 +309,7 @@ extern "C" __global__ void thick_wave_sum(
     // A block none of whose frequencies meets this BF group (beyond the support, or culled) only writes its zeros:
     // the per-tile BF setup below would otherwise run for nothing.
     if (!__syncthreads_or(contributes)) {
-#ifdef SSB_WAVE_ADD
-        if (q < plane) { partial[slot].x += sum.x; partial[slot].y += sum.y; }
-#else
         if (q < plane) partial[(size_t)blockIdx.y * slots + slot] = sum;
-#endif
         return;
     }
     // The BF pixel's own geometry and chi(k) are the same for every frequency: computed once per block and tile.
@@ -348,13 +344,7 @@ extern "C" __global__ void thick_wave_sum(
     if (q >= plane) return;
     sum.x += (double)high_re + (double)low_re;
     sum.y += (double)high_im + (double)low_im;
-#ifdef SSB_WAVE_ADD
-    // one BF group per launch (gridDim.y == 1) adds straight into the running spectrum: no partial plane
-    partial[slot].x += sum.x;
-    partial[slot].y += sum.y;
-#else
     partial[(size_t)blockIdx.y * slots + slot] = sum;
-#endif
 }
 """
 thick_wave_sum_kernel = cp.RawKernel("#define SSB_WAVE\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
@@ -420,11 +410,6 @@ _HIGHER_CORRECTION_SOURCE = (
     "#define SSB_COEFFICIENTS const float*\n" + CHI_SOURCE + _THICK_CORRECTION_SOURCE
 )
 thick_wave_sum_full_kernel = cp.RawKernel("#define SSB_WAVE\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
-# The streamed full scan adds each detector-column batch into one complex128 spectrum (SSB_WAVE_ADD).
-thick_wave_sum_add_kernel = cp.RawKernel(
-    "#define SSB_WAVE\n#define SSB_WAVE_ADD\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
-thick_wave_sum_full_add_kernel = cp.RawKernel(
-    "#define SSB_WAVE\n#define SSB_WAVE_ADD\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
 thick_wave_sum_bounded_full_kernel = cp.RawKernel(
     "#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE,
     "thick_wave_sum",

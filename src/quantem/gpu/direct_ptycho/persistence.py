@@ -1,4 +1,4 @@
-"""Saved-result storage for the public Direct Ptycho workflow."""
+"""Saved-result storage for the public SSB workflow."""
 
 import hashlib
 import json
@@ -17,9 +17,9 @@ import numpy as np
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.inspect import inspect as inspect_source
 from quantem.gpu.direct_ptycho.branches import RotationBranches
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array, retired_estimator_note
+from quantem.gpu.direct_ptycho.results import SSBResult, host_array, retired_estimator_note
 
-# One number versions everything a saved Direct Ptycho fit means: the layout of its record and the convention its values follow.
+# One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
 # Bump it when fitted values acquire a different physical meaning or record layout: the automatic
 # detector sampling rule, the unit, sign or angle reference of an aberration, the rotation convention,
 # the bright-field selection rule, the loss definition, or the record layout. Every older fit is then fitted again.
@@ -37,17 +37,21 @@ SCHEMA = 7
 FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 # The top-level "schema" of the screening record that holds the fit block (live/screen/<dataset>/config.json). The
 # record belongs to quantem.live: this is the schema of the record its reader accepts, and it takes no other. It
-# is written here only when DirectPtycho.reconstruct_series creates the record, and required of a record that exists.
+# is written here only when SSB.reconstruct_series creates the record, and required of a record that exists.
 SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 # The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
+# 11: the result field upsampling_factor is upsampling, and reconstruction_options names the direct strengths
+#     phase_damping and amplitude_damping (phase_regularization, amplitude_regularization before). A version-10
+#     record also carries the previous source hash in its signature, so it is computed again, as after any code change.
 # 10: the record holds no absolute path, inode, device or time: the source is its portable acquisition_identity, and
 #     input names files relative to the results folder (portable_source), so a moved or copied folder is reused.
 # 9: the rotation check is rotation_branches, both 180-degree branches fitted independently (their aberrations, loss,
 #    column test, phase tail and native phases), replacing column_sign, initial_column_sign,
 #    initial_scan_detector_rotation_deg and rotation_check_phases.
-# 8: the result field refine_method is refinement, the name of the find_aberrations keyword it records.
-RESULT_VERSION = 10
+# 8: the result field refine_method is refinement, the name of the fit_aberrations keyword it records.
+# 12: sample_agreement is the fraction of the agreement band's power the fit explains (it was the raw agreement).
+RESULT_VERSION = 12
 RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"
 
 
@@ -58,12 +62,12 @@ _ARTIFACT_FIELDS = {"object_wave", "rotation_branches", "reused", "saved_path", 
 
 
 def save_result(
-    result: DirectPtychoResult,
+    result: SSBResult,
     *,
     paths: tuple[Path, Path],
     signature: dict[str, object],
     input_metadata: dict[str, object],
-) -> DirectPtychoResult:
+) -> SSBResult:
     """Persist one result and attach its complete provenance."""
 
     array_path, metadata_path = paths
@@ -107,7 +111,7 @@ def load_result(
     paths: tuple[Path, Path],
     signature: dict[str, object],
     backend: Literal["cuda", "mps"],
-) -> DirectPtychoResult | None:
+) -> SSBResult | None:
     """Load one exact saved result, or return ``None`` on any mismatch."""
 
     array_path, metadata_path = paths
@@ -140,7 +144,7 @@ def load_result(
     note = retired_estimator_note(saved.get("phase_estimator"), f"{array_path.name} in {array_path.parent}")
     if note is not None:
         print(note)
-    return DirectPtychoResult(
+    return SSBResult(
         object_wave=object_wave,
         rotation_branches=rotation_branches,
         reused=True,
@@ -312,7 +316,7 @@ def _optional_file_identity(path: str | Path) -> dict[str, object]:
 
 
 def software_signature() -> dict[str, object]:
-    """Identify the installed Direct Ptycho implementation that produced a result."""
+    """Identify the installed SSB implementation that produced a result."""
 
     digest = hashlib.sha256()
     package = Path(__file__).resolve().parent

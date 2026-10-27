@@ -12,7 +12,7 @@ pytestmark = pytest.mark.slow
 
 def test_benchmark_exports_cuda_phases_for_full_and_regional_fits(tmp_path):
     """The complete report includes device phases without implicit NumPy conversion."""
-    from quantem.gpu.benchmark import run_direct_ptycho
+    from quantem.gpu.benchmark import run_ssb
 
     _require_cuda()
     rng = np.random.default_rng(7)
@@ -24,7 +24,7 @@ def test_benchmark_exports_cuda_phases_for_full_and_regional_fits(tmp_path):
     source = tmp_path / "scan.npy"
     np.save(source, counts)
 
-    report = run_direct_ptycho(
+    report = run_ssb(
         source,
         backend="cuda",
         runs=2,

@@ -18,8 +18,7 @@ second manifest in this directory.
 | [MetalDisplayKernels](Sources/MetalDisplayKernels) | Image normalization, colormaps, histograms, and display shaders |
 | [MetalImageFFT](Sources/MetalImageFFT) | Resident `logMagnitude`: `fftshift(log1p(abs(fft2(source))))` |
 | [MetalImageRuntime](Sources/MetalImageRuntime) | Histogram windows, range, and display contracts |
-| [MetalDirectPtychoKernels](Sources/MetalDirectPtychoKernels) | Direct Ptycho: Fourier preparation, aberration fit, and the SSB, Phase and Complex reconstructions |
-| [MetalSSBKernels](Sources/MetalSSBKernels) | Deprecated former name of MetalDirectPtychoKernels: re-exports it with deprecated aliases for the renamed types |
+| [MetalSSBKernels](Sources/MetalSSBKernels) | SSB reconstruction and optimizer kernels |
 
 ```text
 native/swift/
@@ -69,21 +68,21 @@ memory or performance contract.
 
 ## Staged SSB fitting
 
-`DirectPtychoModelFit.findAberrations` runs 200 low-order TPE trials, then a
+`SSBModelFit.findAberrations` runs 200 low-order TPE trials, then a
 trust-region Newton on the exact gradient and Hessian of the agreement (C10,
 C12, phi12, specimen tilt and depth spread). It then refines the aberrations
 through C56 with the tilt and depth spread together: an exact-gradient
 trust-region BFGS, first on every 8th BF pixel and then on all of them. Each
 of the 22 higher-order coordinates is bounded to ±20 rad of probe phase at the
-aperture edge (`DirectPtychoFitOptions.higherOrderLimit`; 2 is the standard box). A ±20
+aperture edge (`SSBFitOptions.higherOrderLimit`; 2 is the standard box). A ±20
 fit is refitted on two halves of the band frequencies and falls back to ±2
 when the halves disagree (`checkHigherOrderConsistency`). Rotation is selected
 using the low-order fits and held during the fifth-order stage.
-`DirectPtychoFitOptions(maximumOrder: 1)` stops after the low-order fit, and
+`SSBFitOptions(maximumOrder: 1)` stops after the low-order fit, and
 `refineToFifthOrder` refines a shown low-order fit later.
 
 ```swift
-let fit = try DirectPtychoModelFit.findAberrations(
+let fit = try SSBModelFit.findAberrations(
   model: model, rotationDegrees: rotation,
   darkField: darkField, scanSampling: scanSampling,
   onInitialFit: { initial in
@@ -103,12 +102,9 @@ displayed reconstruction. The fifth-order search stops when a step predicts no
 resolvable gain, at 400 full-data objective passes or at 200 iterations. A
 lower objective is not the target: this fit maximizes model agreement.
 
-`sampleAgreement` is the fraction of G's power in the fit band that the model
-explains, from 0 to 1 (the raw agreement `rawSampleAgreement` over
-`bandPower`), as Python's `sample_agreement`; fits saved before it decode with
-their raw agreement only. `higherOrderRefinement` records the stopping reason,
-the objective and gradient passes, and the best-agreement trace. Divide the raw
-agreement by `higherOrderNormalization` to compare with that trace. Native saved joint
+`higherOrderRefinement` records the stopping reason, the objective and
+gradient passes, and the best-agreement trace. Divide the raw agreement by
+`higherOrderNormalization` to compare with that trace. Native saved joint
 results retain the exact Double model point, independent of rounded UI
 controls. An imported phase alone does not establish support for editing all of
 its originating model parameters.
@@ -118,7 +114,7 @@ its originating model parameters.
 ```bash
 swift build -c release
 swift test
-swift test -c release --filter MetalDirectPtychoKernelsTests
+swift test -c release --filter MetalSSBKernelsTests
 ```
 
 A `512×512` BF/ADF FFT has a target budget of 8.33 ms for a 120 Hz interaction;

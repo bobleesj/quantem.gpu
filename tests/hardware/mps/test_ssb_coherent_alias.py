@@ -79,7 +79,7 @@ def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
     sample = {"sample_tilt_mrad": (-9., 5.), "depth_spread_nm": 18.}
     with _disk_session(native, detector_sampling=(8., 12.)) as ssb:
         compact, loss = ssb.preview(
-            coefs, **sample, upsampling_factor=2, compute_loss=False,
+            coefs, **sample, upsampling=2, compute_loss=False,
         )
         monkeypatch.setattr(
             up, "_coherent_support",
@@ -90,7 +90,7 @@ def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
         # the compact geometry retained by the previous slider evaluation.
         ssb._backend()._prepared.upsampled_geometry = None
         dense, dense_loss = ssb.preview(
-            coefs, **sample, upsampling_factor=2, compute_loss=False,
+            coefs, **sample, upsampling=2, compute_loss=False,
         )
         np.testing.assert_array_equal(compact, dense)
         assert loss is dense_loss is None

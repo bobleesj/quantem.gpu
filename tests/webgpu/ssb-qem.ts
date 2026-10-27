@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { WebGPUDirectPtychoBackend, setSSBLocalFiles } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
+import { WebGPUSSBBackend, setSSBLocalFiles } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
 import type { WebGPUReconstructionOptions } from "../../src/quantem/gpu/direct_ptycho/webgpu/protocol";
 
 /** The exported-folder consumer must receive the same phase from streamed QEM and raw BF columns. */
@@ -17,10 +17,10 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
   });
   const modes: WebGPUReconstructionOptions[] = [
     { computeLoss: true, phaseEstimator: "mean_phase" },
-    { computeLoss: true, phaseEstimator: "phase_of_mean", upsamplingFactor: 2,
+    { computeLoss: true, phaseEstimator: "phase_of_mean", upsampling: 2,
       sample: { sampleTiltMrad: [2.2, -3.1], depthSpreadA: 140 } },
   ];
-  const raw = new WebGPUDirectPtychoBackend(calibration, source(base + "ssb-columns.u16", "uint16"));
+  const raw = new WebGPUSSBBackend(calibration, source(base + "ssb-columns.u16", "uint16"));
   const expected: { phase: Float32Array; loss: number | null }[] = [];
   try {
     for (const options of modes) {
@@ -32,7 +32,7 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
     }
   } finally { raw.close(); }
   const results: Record<string, number> = { bright_field_pixels: cal.num_bright_field_pixels };
-  async function compare(engine: WebGPUDirectPtychoBackend, transport: string): Promise<void> {
+  async function compare(engine: WebGPUSSBBackend, transport: string): Promise<void> {
     for (const [index, options] of modes.entries()) {
       const actual = await engine.reconstruct(-120, 35, 0.6, options);
       const before = new Uint32Array(expected[index].phase.buffer);
@@ -63,7 +63,7 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
     }
     return fetchSource(input, init);
   };
-  const http = new WebGPUDirectPtychoBackend(calibration, source(qemURL, "qem"));
+  const http = new WebGPUSSBBackend(calibration, source(qemURL, "qem"));
   try {
     await http.prepare();
     await compare(http, "http");
@@ -97,7 +97,7 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
   for (const localFile of [false, true]) {
     if (localFile) {
       setSSBLocalFiles([new SelectedFile([bytes], qemName)]);
-      const local = new WebGPUDirectPtychoBackend(calibration, source(qemName, "qem"));
+      const local = new WebGPUSSBBackend(calibration, source(qemName, "qem"));
       try {
         await compare(local, "local");
         readOnce(localReads, bytes.byteLength);
@@ -107,7 +107,7 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
     for (const transposed of [false, true]) {
       const mappedCal = transposed ? { ...cal, detector_shape: cal.detector_shape.slice().reverse(),
         bright_field_rows: cal.bright_field_cols, bright_field_cols: cal.bright_field_rows } : cal;
-      const engine = new WebGPUDirectPtychoBackend(JSON.stringify(mappedCal), { json: JSON.stringify({
+      const engine = new WebGPUSSBBackend(JSON.stringify(mappedCal), { json: JSON.stringify({
         ...fullSource, url: localFile ? "ssb-full.qem" : base + "ssb-full.qem",
         scan_detector_rotation_flipped: transposed,
       }) });
@@ -116,7 +116,7 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
     }
   }
   // Equal pixel counts cannot certify the row/column geometry of a source.
-  const wrongShape = new WebGPUDirectPtychoBackend(calibration, { json: JSON.stringify({
+  const wrongShape = new WebGPUSSBBackend(calibration, { json: JSON.stringify({
     ...fullSource, detector_shape: [13, 12], url: "ssb-full.qem",
   }) });
   let rejected = false;
@@ -125,7 +125,7 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
   finally { wrongShape.close(); }
   if (!rejected) throw new Error("SSB accepted a full QEM with the wrong detector shape");
   results.full_detector_shape_mismatch_rejected = 1;
-  const replaced = new WebGPUDirectPtychoBackend(calibration, { json: JSON.stringify({
+  const replaced = new WebGPUSSBBackend(calibration, { json: JSON.stringify({
     ...fullSource, header_sha256: "0".repeat(64), url: "ssb-full.qem",
   }) });
   rejected = false;

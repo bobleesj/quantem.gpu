@@ -9,12 +9,12 @@ import pytest
 
 from quantem.gpu.direct_ptycho import fifth_order_fit
 from quantem.gpu.direct_ptycho.fit_display import FitDisplay
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 from quantem.gpu.direct_ptycho.workflow import SSB
 
 
 def _fit():
-    return DirectPtychoResult(
+    return SSBResult(
         object_wave=np.ones((8, 8), dtype=np.complex64), backend="mps",
         aberrations={"C10_nm": 1.0, "C12_nm": 0.2, "phi12_deg": 17.0},
         sample_tilt_mrad=(0.1, -0.2), depth_spread_nm=10.0,
@@ -60,7 +60,7 @@ def handoff(monkeypatch):
         figures.append(figure)
         return figure
 
-    monkeypatch.setattr(DirectPtychoResult, "show", draw)
+    monkeypatch.setattr(SSBResult, "show", draw)
 
     class Session:
         backend = "mps"
@@ -88,15 +88,15 @@ def handoff(monkeypatch):
             clock.now += 2.0
             return self.primary
 
-        def run(self, fit, **options):
-            factor = options["upsampling_factor"]
+        def reconstruct(self, fit, **options):
+            factor = options["upsampling"]
             self.calls.append(factor)
             events.append(f"reconstruct:{factor}")
             clock.now += 1.0
             result = copy.deepcopy(fit)
-            result.upsampling_factor = 2 if factor == "auto" else factor
+            result.upsampling = 2 if factor == "auto" else factor
             result.object_wave = np.full(
-                (8 * result.upsampling_factor,) * 2,
+                (8 * result.upsampling,) * 2,
                 np.complex64(1.0 + fit.aberrations["C10_nm"] * 1j),
             )
             result.loss = 0.25 if options.get("compute_loss") else None
@@ -170,7 +170,7 @@ def test_initial_and_final_auto_views_preserve_native_fit(handoff):
     assert session.calls == ["auto", 1, "auto"]
     assert handoff.display.call_count == 1
     handoff.handle.update.assert_called_once_with(handoff.figures[1])
-    assert result.upsampling_factor == 1
+    assert result.upsampling == 1
     assert session._aberration_search is result
     assert session._reconstruction is result
     assert session.aberrations == result.aberrations
@@ -207,7 +207,7 @@ def test_callback_runs_once_before_refinement_and_outside_fit_clock(handoff):
 
     result = handoff.run(session, show=True, on_initial_fit=receive)
     assert callback_results == [session.primary]
-    assert session.primary.upsampling_factor == 1
+    assert session.primary.upsampling == 1
     assert handoff.events.index("initial") < handoff.events.index("callback")
     assert handoff.events.index("callback") < handoff.events.index("setup")
     assert result.timings["initial_handoff_s"] == 15.0
@@ -259,7 +259,7 @@ def test_reused_fit_display_keeps_the_native_session_result(handoff, monkeypatch
 def test_display_failure_keeps_session_result_and_loss(handoff, monkeypatch):
     session = handoff.Session()
     result, loss = session._reconstruction, session.best_loss
-    monkeypatch.setattr(DirectPtychoResult, "show", Mock(side_effect=RuntimeError("renderer failed")))
+    monkeypatch.setattr(SSBResult, "show", Mock(side_effect=RuntimeError("renderer failed")))
     with pytest.raises(RuntimeError, match="renderer failed"):
         FitDisplay(session, enabled=True).update(result, final=False)
     assert session._reconstruction is result

@@ -25,11 +25,11 @@ POINTS = {
               (2.5, -4.0), 14.0),
 }
 PRESETS = {
-    "default": dict(phase_regularization=0.03, amplitude_regularization=0.03, smoothness_inv_A=1.0,
+    "default": dict(phase_damping=0.03, amplitude_damping=0.03, smoothness_inv_A=1.0,
                     detector_weighting="uniform"),
-    "flat": dict(phase_regularization=0.1, amplitude_regularization=0.01, smoothness_inv_A=0.0,
+    "flat": dict(phase_damping=0.1, amplitude_damping=0.01, smoothness_inv_A=0.0,
                  detector_weighting="uniform"),
-    "inverse_mean": dict(phase_regularization=0.03, amplitude_regularization=0.03, smoothness_inv_A=1.0,
+    "inverse_mean": dict(phase_damping=0.03, amplitude_damping=0.03, smoothness_inv_A=1.0,
                          detector_weighting="inverse_mean"),
 }
 
@@ -63,8 +63,8 @@ def _session(data, point, radius=RADIUS):
 def _run(ptycho, method, factor, preset="default", **changes):
     options = {**PRESETS[preset], **changes}
     if method == "phase":
-        options.pop("amplitude_regularization")
-    return ptycho.run(None, method=method, upsampling_factor=factor, **options)
+        options.pop("amplitude_damping")
+    return ptycho.reconstruct(None, method=method, upsampling=factor, **options)
 
 
 @pytest.fixture(scope="module")
@@ -171,12 +171,12 @@ def _reference_solve(prepared, method, preset):
         q0 = options["smoothness_inv_A"]
         prior = (1 + q2 / q0**2) ** 2 if q0 else np.ones_like(q2)
         if method == "complex":
-            damping = np.concatenate((np.full(count, options["amplitude_regularization"]),
-                                      np.full(count, options["phase_regularization"])))
+            damping = np.concatenate((np.full(count, options["amplitude_damping"]),
+                                      np.full(count, options["phase_damping"])))
             penalty = np.concatenate((prior, prior), axis=1) * damping * prepared["scale"]
         else:
             gram, rhs = gram[:, count:, count:], rhs[:, count:]
-            penalty = prior * options["phase_regularization"] * prepared["scale"]
+            penalty = prior * options["phase_damping"] * prepared["scale"]
         system = gram + penalty[:, :, None] * np.eye(gram.shape[1])
         x = np.linalg.solve(system, rhs[..., None])[..., 0] * factor**2
         channels = [("phi", x[:, -count:])] + ([("eta", x[:, :count])] if method == "complex" else [])
@@ -234,15 +234,15 @@ def test_strength_change_reuses_preparation_bitwise(sessions):
     ptycho = sessions["fifth"]
     first = _run(ptycho, "complex", 3)
     prepared = ptycho._prepared_direct[1]["complex"]
-    changed = _run(ptycho, "complex", 3, amplitude_regularization=0.1)
+    changed = _run(ptycho, "complex", 3, amplitude_damping=0.1)
     assert ptycho._prepared_direct[1]["complex"] is prepared
     assert not np.array_equal(changed.object_wave, first.object_wave)
     again = _run(ptycho, "complex", 3)
     np.testing.assert_array_equal(again.object_wave, first.object_wave)
-    rebuilt = ptycho.run(None, method="complex", upsampling_factor=3, amplitude_regularization=0.1, force=True)
+    rebuilt = ptycho.reconstruct(None, method="complex", upsampling=3, amplitude_damping=0.1, force=True)
     assert ptycho._prepared_direct[1]["complex"] is not prepared
     np.testing.assert_array_equal(rebuilt.object_wave, changed.object_wave)
-    assert first.reconstruction_options["amplitude_regularization"] == 0.03
+    assert first.reconstruction_options["amplitude_damping"] == 0.03
     assert first.reconstruction_diagnostics["training_relative_sse"] >= 0
 
 
@@ -250,8 +250,8 @@ def test_preview_returns_the_run_phase(sessions):
     """The interactive preview of a direct method is the committed result's phase, as a NumPy array."""
     ptycho = sessions["primary"]
     aberrations, tilt, depth = POINTS["primary"]
-    result = _run(ptycho, "phase", 2, phase_regularization=0.1)
-    preview, loss = ptycho.preview(aberrations, method="phase", phase_regularization=0.1, upsampling_factor=2,
+    result = _run(ptycho, "phase", 2, phase_damping=0.1)
+    preview, loss = ptycho.preview(aberrations, method="phase", phase_damping=0.1, upsampling=2,
                                    sample_tilt_mrad=tilt, depth_spread_nm=depth)
     assert loss is None and isinstance(preview, np.ndarray) and preview.dtype == np.float32
     np.testing.assert_array_equal(preview, result.phase)
@@ -262,7 +262,7 @@ def test_complex_with_suppressed_amplitude_is_phase(sessions):
     ptycho = sessions["fifth"]
     for factor in (1, 3):
         phase = _run(ptycho, "phase", factor).phase
-        suppressed = _run(ptycho, "complex", factor, amplitude_regularization=1e8).phase
+        suppressed = _run(ptycho, "complex", factor, amplitude_damping=1e8).phase
         assert np.sqrt(np.mean((suppressed - phase) ** 2)) <= 1e-5 * np.sqrt(np.mean(phase**2))
 
 
@@ -272,7 +272,7 @@ def test_prior_and_damping(sessions):
     flat = _run(ptycho, "phase", 3, smoothness_inv_A=0.0).phase
     wide = _run(ptycho, "phase", 3, smoothness_inv_A=1e9).phase
     assert np.sqrt(np.mean((flat - wide) ** 2)) <= 1e-6 * np.sqrt(np.mean(flat**2))
-    rms = [float(np.sqrt(np.mean(_run(ptycho, "phase", 3, phase_regularization=strength).phase ** 2)))
+    rms = [float(np.sqrt(np.mean(_run(ptycho, "phase", 3, phase_damping=strength).phase ** 2)))
            for strength in (0.003, 0.03, 0.3, 3.0, 1e6)]
     assert all(later < earlier for earlier, later in zip(rms, rms[1:]))
     assert rms[-1] < 1e-5 * rms[1]

@@ -2,7 +2,7 @@
 
 > Retired 2026-10-25: the engine's non-model reconstruction, phase-variance objective and
 > optimizer described here were removed; native SSB is the joint model
-> ([Native SSB](direct-ptycho-native-fit.md)). This page is the 2026-08-19 migration record.
+> ([Native SSB](native-joint-ssb.md)). This page is the 2026-08-19 migration record.
 
 This record freezes the extraction of reusable native SSB compute from the
 earlier iOS implementation into QuantEM.GPU. It does not migrate application

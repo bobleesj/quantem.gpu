@@ -2,7 +2,7 @@
 
 G(q, k) does not depend on the rotation; only the bright-field k vectors do, so a session changes the angle with
 ``set_rotation`` (the k geometry is retargeted, G is not rebuilt) and each angle costs one polish of the fit
-(``find_aberrations(trials=0)``: Newton from the nearest angle's fit, same objective and tilt mode). The search
+(``fit_aberrations(trials=0)``: Newton from the nearest angle's fit, same objective and tilt mode). The search
 walks from the estimate in 1-degree steps until the objective falls on both sides (at most 10 degrees away), then
 bounded Brent narrows the bracket to 0.05 degrees.
 """

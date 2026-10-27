@@ -3,6 +3,15 @@
 This repository is public. Everything committed here, and everything in its
 history, can be read by anyone. These rules apply to coding agents and humans.
 
+## Where code belongs
+
+- **quantem.gpu provides algorithms and backends only**: DirectPtycho, `series`, MAPED and the other
+  reconstructions; GPU backends such as `quantem.gpu.streaming.LiveEncoder` (ANS encoding of incoming batches),
+  `io.load` / `io.save` and the kernels. It holds no streaming code: no detector connections, receivers,
+  hand-off queues, listener threads or acquisition lifecycle (start, wait, close, keep last N).
+- **Receivers and the acquisition lifecycle live in live4d** (Holoscan RDMA/ZMQ receive), which calls
+  `LiveEncoder` for each batch.
+
 ## Never commit
 
 - Raw experiment or benchmark logs, manifests, JSONL, profiler dumps or run
@@ -50,8 +59,8 @@ Display options must not change scientific data or reconstruction quality.
 For performance work, timing claims and release qualification, use the
 repository's [gpu-benchmark skill](.agents/skills/gpu-benchmark/SKILL.md).
 Keep reusable runners and reviewed summaries here, with raw evidence in the
-private archive. Prefer the installed `quantem-gpu benchmark-direct-ptycho` command (formerly
-`benchmark-ssb`, still accepted) for full-field and regional joint Direct Ptycho fits.
+private archive. Prefer the installed `quantem-gpu benchmark-ssb` command for
+full-field and regional joint SSB fits.
 
 ## Tests
 

@@ -270,7 +270,7 @@ def test_float8_ssb_matches_float32_and_survives_reopen(tmp_path, backend, kind)
                 session.sample_tilt_mrad = tilt
                 session.depth_spread_nm = 5 if tilt else None
                 phase = session.reconstruct(
-                    aberrations={"C10_nm": 2}, upsampling_factor=2, compute_loss=False
+                    aberrations={"C10_nm": 2}, upsampling=2, compute_loss=False
                 ).phase
                 result.append(phase.get() if backend == "cuda" else np.asarray(phase))
             return result

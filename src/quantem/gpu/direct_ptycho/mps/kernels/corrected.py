@@ -3,7 +3,7 @@
 from functools import lru_cache
 
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho, pk_batch_from_prepared
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, pk_batch_from_prepared
 
 
 @lru_cache(maxsize=16)
@@ -128,7 +128,7 @@ def _corrected_kernel(batch: int, chunk: int, ny: int, nx: int, gqk_cols: int):
 
 
 def corrected_from_cached_geometry(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     start: int,
     stop: int,
@@ -329,7 +329,7 @@ def _corrected_dynamic_kernel(batch: int, chunk: int, ny: int, nx: int, gqk_cols
 
 
 def corrected_from_dynamic_geometry(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     start: int,
     stop: int,

@@ -1,6 +1,6 @@
 # Lower CUDA SSB staging memory without changing numerical results
 
-> **Historical:** describes the code as of 2026-10-22; the Nelder–Mead refinement it checks is retired. See the [current fit methods](../../../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-22; the Nelder–Mead refinement it checks is retired. See the [current fit methods](../../../api/ssb.md).
 
 ## Change
 

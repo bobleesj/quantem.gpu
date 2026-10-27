@@ -1,4 +1,4 @@
-"""find_aberrations settles the 180-degree ambiguity of an estimated scan-detector rotation.
+"""fit_aberrations settles the 180-degree ambiguity of an estimated scan-detector rotation.
 
 The centre-of-mass rotation search cannot tell omega from omega + 180 degrees, and SSB fits both equally well: the second
 is the negated phase with the opposite defocus. For an estimated rotation the fit runs twice, independently, at both
@@ -89,10 +89,10 @@ def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp
 
     _require_cuda()
     monkeypatch.setattr(workflow, "MAP_OPPOSITE_BRANCH", mapped)
-    direct = _simulated(0.0).find_aberrations(search="primary", check_rotation=False, verbose=False)
+    direct = _simulated(0.0).fit_aberrations(search="primary", check_rotation=False, verbose=False)
     estimate(180.0)
     session = _estimated()
-    checked = session.find_aberrations(search="primary", verbose=False)
+    checked = session.fit_aberrations(search="primary", verbose=False)
     branches = checked.rotation_branches
     assert [branch.scan_detector_rotation_deg for branch in branches.branches] == [180.0, 0.0]
     assert branches.kept == branches.chosen == 1
@@ -129,8 +129,8 @@ def test_simulated_crystal_estimated_on_the_right_branch_is_left_exactly_as_fitt
     """Estimated at the right rotation, the kept branch is the first fit: same result as check_rotation=False."""
     _require_cuda()
     estimate(0.0)
-    kept = _estimated().find_aberrations(search="primary", verbose=False)
-    direct = _simulated(0.0).find_aberrations(search="primary", check_rotation=False, verbose=False)
+    kept = _estimated().fit_aberrations(search="primary", verbose=False)
+    direct = _simulated(0.0).fit_aberrations(search="primary", check_rotation=False, verbose=False)
     assert kept.rotation_branches.kept == 0 and kept.scan_detector_rotation_deg == 0.0
     np.testing.assert_array_equal(_host(kept.phase), _host(direct.phase))
     assert kept.aberrations == direct.aberrations
@@ -142,7 +142,7 @@ def test_a_given_rotation_is_kept():
     _require_cuda()
     from quantem.gpu.direct_ptycho.results import column_sign
 
-    result = _simulated(180.0).find_aberrations(search="primary", verbose=False)
+    result = _simulated(180.0).fit_aberrations(search="primary", verbose=False)
     assert result.scan_detector_rotation_deg == pytest.approx(180.0, abs=1e-9)
     assert result.rotation_branches is None
     assert column_sign(result.phase) < -0.8
@@ -156,11 +156,11 @@ def test_real_acquisition_compares_the_same_two_branches_from_either_angle():
     from quantem.gpu import SSB
 
     with SSB.open(str(SOURCE), scan_detector_rotation_deg=REAL_ROTATION_DEG, **REAL) as session:
-        first = session.compare_rotation_branches(verbose=False)
+        first = session.scan_rotations(report=False, verbose=False)
         assert session.scan_detector_rotation_deg == REAL_ROTATION_DEG   # given: reported, not applied
     cp.get_default_memory_pool().free_all_blocks()
     with SSB.open(str(SOURCE), scan_detector_rotation_deg=REAL_ROTATION_DEG + 180.0, **REAL) as session:
-        second = session.compare_rotation_branches(apply=True, verbose=False)
+        second = session.scan_rotations(report=False, apply=True, verbose=False)
         assert session.scan_detector_rotation_deg == pytest.approx(second.chosen_rotation_deg)
     assert first.chosen_rotation_deg == pytest.approx(second.chosen_rotation_deg, abs=1e-9)
     assert first.decided_by == second.decided_by
@@ -218,7 +218,7 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
 
     monkeypatch.setattr(session, "_fit_tilt", measured_fit)
     try:
-        result = session.find_aberrations(search="primary", tilt=True, save_dir=tmp_path / "joint", verbose=False)
+        result = session.fit_aberrations(search="primary", tilt=True, save_dir=tmp_path / "joint", verbose=False)
         searches = 1 if mapped else 2
         # one search, or two, neither started from the other's fit
         assert fit_calls == [(rotation, False), ((rotation + 180.0) % 360.0, False)][:searches]
@@ -238,7 +238,7 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
         assert restored.sample_tilt_mrad == result.sample_tilt_mrad
         assert restored.rotation_branches.summary == result.rotation_branches.summary
         np.testing.assert_array_equal(_host(restored.phase), _host(result.phase))
-        finer = session.reconstruct(restored, upsampling_factor=2)
+        finer = session.reconstruct(restored, upsampling=2)
         assert finer.phase.shape == tuple(2 * size for size in result.phase.shape)
         assert finer.rotation_branches is restored.rotation_branches
         assert len(fit_calls) == (1 if mapped else 2)
@@ -256,7 +256,7 @@ def test_no_signal_scan_reports_unidentifiable_fit_without_changing_rotation():
              scan_sampling_A=(0.5, 0.5), detector_sampling_mrad=(5, 5), bright_field_center_px=(8, 8),
              bright_field_radius_px=4, scan_detector_rotation_deg=180) as session:
         with pytest.raises(ValueError, match="no positive finite agreement"):
-            session.compare_rotation_branches(apply=True, tilt=True, num_trials=8,
+            session.scan_rotations(report=False, apply=True, tilt=True, num_trials=8,
                                               refinement=None, verbose=False)
         assert session.scan_detector_rotation_deg == 180.0
 

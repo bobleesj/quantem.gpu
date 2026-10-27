@@ -1,13 +1,13 @@
 # SSB aberration units (nm) and the thick-sample (tilt + thickness) model - 2026-09-24
 
-> **Historical:** describes the code as of 2026-09-24; the phase-variance search and Nelder–Mead refinement are retired. See the [current fit methods](../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-09-24; the phase-variance search and Nelder–Mead refinement are retired. See the [current fit methods](../api/ssb.md).
 
 ## 1. C10 / C12 were Angstrom under an nm label
 
 **Question.** The API, docs and ShowPtycho label SSB C10 / C12 in nm. Are they?
 
 **Setup.** abTEM 4D-STEM of a thin crystal (one BaTiO3 unit cell, 4 A, so thickness cannot move the apparent focus), 300 kV,
-30 mrad, 64 x 64 scan at 0.25 A, probe defocus set explicitly (abTEM C10 = -defocus). `SSB.find_aberrations(trials=200,
+30 mrad, 64 x 64 scan at 0.25 A, probe defocus set explicitly (abTEM C10 = -defocus). `SSB.fit_aberrations(trials=200,
 refinement="nelder-mead")`. Script: study folder `c10_unit_test.py` (same setup as `tests/hardware/cuda/test_ssb_units.py`).
 
 | abTEM defocus | true C10 | fit before | fit after |
@@ -64,7 +64,7 @@ thick fit (or trust the calibrated rotation).
 **Performance.** CUDA 128 crop (8889 BF): thick preview 29-61 ms, `fit_sample` 30-55 s (1500 trials). MPS M5: preview
 ~20 ms after 1 s compile, fit ~65 s.
 
-**API.** `SSB.find_aberrations(tilt=True)` (result `.tilt_mrad` (row, col), `.depth_spread_nm`, `.tilt_fit_gain`, `.report()`),
+**API.** `SSB.fit_aberrations(tilt=True)` (result `.tilt_mrad` (row, col), `.depth_spread_nm`, `.tilt_fit_gain`, `.report()`),
 `SSB.preview(aberrations, tilt_mrad=(row, col), depth_spread_nm=d)`, `SSB.supports_tilt`. CUDA and MPS backends. WebGPU (`reconstruct(..., {sample: {tiltRowMrad, tiltColMrad, thickness}})`, a separate thick shader so the thin path is bit-identical) drives ShowPtycho exports: logic crop in Mac Chrome (Metal) loss 0.170941 vs CUDA 0.170950, phase correlation 0.99999997; fitting stays in Python.
 Tests: `tests/hardware/cuda/test_ssb_thick_sample.py`, `tests/hardware/mps/test_ssb_thick_sample_mps.py`, `tests/webgpu/ssb-thick-sample.ts` (+ `run_ssb_thick_sample.py`, weights vs CUDA: max rel 5e-4, median 1.5e-7).
 
@@ -79,7 +79,7 @@ its cuFFT first and cuda.pathfinder then skips CuPy's CUDA 12 wheel library. `qu
 
 **Setup.** `bench_ssb_tilt.py` (study folder): `SSB` on uint16 counts, 192 x 192 detector, 300 kV, 30 mrad.
 Preview = median of 30 `SSB.preview` calls returning the loss (a float, so the device is synchronised); drag = the same
-through `preview_context(num_bf // 4)`. Fit = `SSB.find_aberrations(trials=200, refinement="nelder-mead")`; tilt fit = the thick-sample search (then
+through `preview_context(num_bf // 4)`. Fit = `SSB.fit_aberrations(trials=200, refinement="nelder-mead")`; tilt fit = the thick-sample search (then
 `fit_sample`: 200-trial standard baseline + 300 joint trials + 3-start Nelder-Mead, all on the least-squares objective). CUDA: RTX PRO
 6000 Blackwell, idle GPU. MPS: M5 (128 GB). Same committed source on both. Samples: logic device (Si) and BaTiO3/SrTiO3 film.
 

@@ -15,12 +15,13 @@ struct StreamReader {
     __device__ StreamReader() = default;
     const u8* payload;
     const u32* table;
-    u32 cursor, end, state, model, constant;
+    u32 cursor, end, state, model, constant, buffered, available;
     bool valid;
     __device__ StreamReader(const u8* bytes, const u32* offsets,
                            const u8* models, const u32* decoding, u32 stream)
         : payload(bytes), cursor(offsets[stream]), end(offsets[stream + 1]),
-          state(SC_LOWER), model(models[stream]), constant(0), valid(true) {
+          state(SC_LOWER), model(models[stream]), constant(0),
+          buffered(0), available(0), valid(true) {
         table = decoding + (model < SC_MODELS ? model * 1024 : 0);
         if (model == 252) { state=0; valid=(end-cursor)%2==0; return; }
         if (model == 253) return;
@@ -31,10 +32,23 @@ struct StreamReader {
             valid = model < SC_MODELS && end - cursor >= 4;
             if (valid) {
                 state = 0;
-                for (int i=0;i<4;++i) state |= u32(payload[cursor++]) << (8*i);
+                for (int i=0;i<4;++i) state |= read_byte() << (8*i);
                 valid = state >= SC_LOWER && state < (1u<<31);
             }
         }
+    }
+    // Buffer only aligned words wholly inside this stream; tails remain byte reads.
+    __device__ __forceinline__ u32 read_byte() {
+        if (cursor>=end) { valid=false; return 0; }
+        if (!available) {
+            const u8* at=payload+cursor;
+            if ((u64(at)&3u) || end-cursor<4) return payload[cursor++];
+            buffered=*((const u32*)at);
+            available=4;
+        }
+        u32 value=buffered&255u;
+        buffered>>=8; --available; ++cursor;
+        return value;
     }
     __device__ u32 next() {
         if (!valid) return 0;
@@ -49,19 +63,19 @@ struct StreamReader {
         if (model == 253 || model == 255) return constant;
         if (model == 254) {
             if (end-cursor < 2) { valid=false; return 0; }
-            u32 value = payload[cursor] | (u32(payload[cursor+1])<<8); cursor+=2;
+            u32 value=read_byte(); value|=read_byte()<<8;
             return value;
         }
         u32 slot = state & 1023u, code = table[slot];
         state = (code >> 16) * (state >> SC_SCALE) + slot - ((code >> 6) & 1023u);
         while (state < SC_LOWER) {
             if (cursor >= end) { valid=false; return 0; }
-            state = (state << 8) | payload[cursor++];
+            state = (state << 8) | read_byte();
         }
         u32 symbol=code&63u;
         if (symbol==32) {
             if (end-cursor<2) { valid=false; return 0; }
-            symbol=payload[cursor] | (u32(payload[cursor+1])<<8); cursor+=2;
+            symbol=read_byte(); symbol|=read_byte()<<8;
         }
         return symbol;
     }
@@ -386,19 +400,27 @@ __device__ void sc_residual(const u64* descriptors, const u32* selected,
     const u32* offsets=(const u32*)d[1];
     int constant=0;
     if (coefficient && model==252) {
-        for (u32 at=offsets[stream];at<offsets[stream+1];at+=2) {
+        u32 begin=offsets[stream], end=offsets[stream+1], previous=0;
+        bool seen=false;
+        if (end<begin || (end-begin)%2) atomicOr(errors,1u);
+        else for (u32 at=begin;at<end;at+=2) {
             u32 event=payload[at]|(u32(payload[at+1])<<8),position=event>>7;
-            if (position>=length) { atomicOr(errors,1u); break; }
+            if (position>=length || (seen && position<=previous)) { atomicOr(errors,1u); break; }
             atomicAdd(output+d[9]*scans+d[7]+first+position,Output((long long)coefficient*((event&127u)+1)));
+            previous=position; seen=true;
         }
         coefficient=0;
     }
     if (coefficient && model==255) {
-        u32 at=offsets[stream];
-        constant=coefficient*int(payload[at]|(u32(payload[at+1])<<8));
+        u32 at=offsets[stream], end=offsets[stream+1];
+        if (end<at || end-at!=2) atomicOr(errors,1u);
+        else constant=coefficient*int(payload[at]|(u32(payload[at+1])<<8));
         coefficient=0;
     }
-    if (model==253) coefficient=0;
+    if (coefficient && model==253) {
+        if (offsets[stream]!=offsets[stream+1]) atomicOr(errors,1u);
+        coefficient=0;
+    }
     constant=__reduce_add_sync(0xffffffffu,constant);
     if (constant) for (u32 i=lane;i<length;i+=32)
         atomicAdd(output+d[9]*scans+d[7]+first+i,Output((long long)constant));
@@ -447,21 +469,33 @@ extern "C" __global__ void sc_moment_pair(
     const u8* payload=(const u8*)d[0];
     const u32* offsets=(const u32*)d[1];
     u64 at_scan=d[9]*scans+d[7]+first;
-    bool decodes=counted && model!=253;
+    bool decodes=counted;
     int first_constant=0, second_constant=0;
     if (decodes && model==252) {
-        for (u32 at=offsets[stream];at<offsets[stream+1];at+=2) {
+        u32 begin=offsets[stream], end=offsets[stream+1], previous=0;
+        bool seen=false;
+        if (end<begin || (end-begin)%2) atomicOr(errors,1u);
+        else for (u32 at=begin;at<end;at+=2) {
             u32 event=payload[at]|(u32(payload[at+1])<<8),position=event>>7;
-            if (position>=length) { atomicOr(errors,1u); break; }
+            if (position>=length || (seen && position<=previous)) { atomicOr(errors,1u); break; }
             long long value=(event&127u)+1;
             atomicAdd(first_output+at_scan+position,u64(first_weight*value));
             atomicAdd(second_output+at_scan+position,u64(second_weight*value));
+            previous=position; seen=true;
         }
         decodes=false;
     }
     if (decodes && model==255) {
-        int constant=int(payload[offsets[stream]]|(u32(payload[offsets[stream]+1])<<8));
-        first_constant=first_weight*constant; second_constant=second_weight*constant;
+        u32 at=offsets[stream], end=offsets[stream+1];
+        if (end<at || end-at!=2) atomicOr(errors,1u);
+        else {
+            int constant=int(payload[at]|(u32(payload[at+1])<<8));
+            first_constant=first_weight*constant; second_constant=second_weight*constant;
+        }
+        decodes=false;
+    }
+    if (decodes && model==253) {
+        if (offsets[stream]!=offsets[stream+1]) atomicOr(errors,1u);
         decodes=false;
     }
     first_constant=__reduce_add_sync(0xffffffffu,first_constant);

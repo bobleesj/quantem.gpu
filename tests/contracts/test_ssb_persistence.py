@@ -17,11 +17,11 @@ class _Backend:
         self.reconstruct_calls = 0
 
     def fit(self, **settings):
-        from quantem.gpu import DirectPtychoResult
+        from quantem.gpu import SSBResult
 
         self.fit_calls += 1
         trials = int(settings["trials"])
-        return DirectPtychoResult(
+        return SSBResult(
             object_wave=np.full((2, 2), 1 + 2j, dtype=np.complex64),
             backend=self.backend,
             aberrations={"C10": -101.0, "C12": 4.0, "phi12": 0.25},
@@ -102,12 +102,12 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     saved = tmp_path / "result"
     backend = _Backend()
 
-    first = _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False,
+    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
         num_trials=200,
         save_dir=saved,
         verbose=False,
     )
-    second = _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False,
+    second = _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
         num_trials=200,
         save_dir=saved,
         verbose=False,
@@ -145,16 +145,16 @@ def test_saved_fit_without_diagnostic_does_not_satisfy_a_loss_request(tmp_path, 
     backend = _Backend()
     options = dict(tilt=False, num_trials=200, save_dir=tmp_path / "result",
                    verbose=False)
-    first = _session(monkeypatch, source, backend).find_aberrations(search="primary",
+    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary",
         **options, compute_loss=False,
     )
-    reopened = _session(monkeypatch, source, backend).find_aberrations(search="primary",
+    reopened = _session(monkeypatch, source, backend).fit_aberrations(search="primary",
         **options, compute_loss=False,
     )
     assert reopened.reused and reopened.loss is None and first.loss is None
     assert backend.fit_calls == 1
     np.testing.assert_array_equal(reopened.phase, first.phase)
-    diagnostic = _session(monkeypatch, source, backend).find_aberrations(search="primary", **options)
+    diagnostic = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **options)
     assert not diagnostic.reused and diagnostic.loss == 0.125
     assert backend.fit_calls == 2
 
@@ -167,14 +167,14 @@ def test_changed_fit_settings_or_source_recompute(tmp_path, monkeypatch) -> None
     saved = tmp_path / "result"
     backend = _Backend()
 
-    _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
         num_trials=200, save_dir=saved, verbose=False
     )
-    _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
         num_trials=201, save_dir=saved, verbose=False
     )
     source.write_bytes(b"different detector counts")
-    _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
         num_trials=201, save_dir=saved, verbose=False
     )
 
@@ -193,16 +193,16 @@ def test_changed_calibration_recomputes(tmp_path, monkeypatch) -> None:
 
     first = _session(monkeypatch, source, backend)
     first.calibration_path = str(calibration)
-    first.find_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
+    first.fit_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
 
     same = _session(monkeypatch, source, backend)
     same.calibration_path = str(calibration)
-    reused = same.find_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
+    reused = same.fit_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
 
     calibration.write_text('{"rotation": 2}', encoding="utf-8")
     changed = _session(monkeypatch, source, backend)
     changed.calibration_path = str(calibration)
-    recomputed = changed.find_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
+    recomputed = changed.fit_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
 
     assert reused.reused
     assert not recomputed.reused
@@ -217,8 +217,8 @@ def test_force_recomputes_matching_fit(tmp_path, monkeypatch) -> None:
     saved = tmp_path / "result"
     backend = _Backend()
 
-    _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
-    forced = _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
+    forced = _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
         save_dir=saved, force=True, verbose=False
     )
 
@@ -276,7 +276,7 @@ def test_saved_result_requires_source_identity(tmp_path, monkeypatch) -> None:
     import pytest
 
     with pytest.raises(ValueError, match="requires source_path"):
-        session.find_aberrations(search="primary", tilt=False, save_dir=tmp_path / "result", verbose=False)
+        session.fit_aberrations(search="primary", tilt=False, save_dir=tmp_path / "result", verbose=False)
 
 
 def test_array_inputs_never_reuse_saved_results_by_source_path(tmp_path, monkeypatch):
@@ -288,7 +288,7 @@ def test_array_inputs_never_reuse_saved_results_by_source_path(tmp_path, monkeyp
         session = _session(monkeypatch, source, backend)
         session.source_kind = "array"
         session._data[...] = offset
-        search = session.find_aberrations(search="primary", tilt=False, save_dir=tmp_path / "search", verbose=False)
+        search = session.fit_aberrations(search="primary", tilt=False, save_dir=tmp_path / "search", verbose=False)
         result = session.reconstruct(save_dir=tmp_path / "fixed")
         assert not search.reused
         assert not result.reused
@@ -306,9 +306,9 @@ def test_changed_refinement_start_invalidates_saved_search(tmp_path, monkeypatch
     session = _session(monkeypatch, source, backend)
     settings = dict(tilt=False, num_trials=0, refinement=None, check_rotation=False,
                     save_dir=tmp_path / "search", verbose=False)
-    first = session.find_aberrations(search="primary", **settings)
+    first = session.fit_aberrations(search="primary", **settings)
     session.reconstruct(aberrations={"C10_nm": 12.0})
-    second = session.find_aberrations(search="primary", **settings)
+    second = session.fit_aberrations(search="primary", **settings)
     assert not second.reused
     assert backend.fit_calls == 2
     assert first.metadata["signature"]["settings"]["starting_aberrations"]["C10_nm"] == 0.0
@@ -326,10 +326,10 @@ def test_cuda_reuse_restores_object_wave_to_cuda(tmp_path, monkeypatch) -> None:
     saved = tmp_path / "result"
     backend = _Backend("cuda")
 
-    _session(monkeypatch, source, backend, device="cuda").find_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend, device="cuda").fit_aberrations(search="primary", tilt=False,
         save_dir=saved, verbose=False
     )
-    reused = _session(monkeypatch, source, backend, device="cuda").find_aberrations(search="primary", tilt=False,
+    reused = _session(monkeypatch, source, backend, device="cuda").fit_aberrations(search="primary", tilt=False,
         save_dir=saved, verbose=False
     )
 
@@ -365,7 +365,7 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
 
 def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     """write_fit_metadata marks its block and saved_fit returns the exact values; no field of an unmarked block survives."""
-    from quantem.gpu import DirectPtychoResult
+    from quantem.gpu import SSBResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
     from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
@@ -376,7 +376,7 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     config.write_text(json.dumps({"schema": SCREEN_ACQUISITION_SCHEMA, "human": {"notes": "kept"},
                                   "computed": {"bright_field_radius_px": 55.0, "ssb": earlier}}))
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": math.degrees(-0.5)}
-    result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_radius_px=48.0)
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5), "scan_detector_rotation_deg": 200.0, "bright_field_radius_px": None}
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
@@ -411,7 +411,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     """
     import h5py
 
-    from quantem.gpu import DirectPtychoResult
+    from quantem.gpu import SSBResult
     from quantem.gpu.formats.ssb_phase import export_result, read_result
     from quantem.gpu.direct_ptycho import workflow
     from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
@@ -431,7 +431,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     columns = tmp_path / "columns.u16"
     np.zeros((2, 4), dtype=np.uint16).tofile(columns)
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
-    monkeypatch.setattr(workflow, "MpsDirectPtychoBackend", RecordingBackend)
+    monkeypatch.setattr(workflow, "MpsSSBBackend", RecordingBackend)
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.25, 0.25)}
     # an export with its own calibration, then one that records only the disk edge
     for exported, expected in (((0.61, 0.62), (0.61, 0.62)), (None, (30.0 / 48.0, 30.0 / 48.0))):
@@ -449,7 +449,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     with h5py.File(master, "w") as handle:
         handle["entry/data/data_000001"] = h5py.ExternalLink("scan_data.h5", "/data")
     np.save(tmp_path / "ssb_phase.npy", np.zeros((2, 2), np.float32))
-    result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps", scan_detector_rotation_deg=192.0,
+    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps", scan_detector_rotation_deg=192.0,
                        aberrations={"C10_nm": 7.0, "C12_nm": 2.0, "phi12_deg": 5.0}, bright_field_center_px=(1.0, 1.5))
     write_fit_metadata(tmp_path, {**settings, "scan_detector_rotation_deg": 192.0}, result, session.detector_sampling_mrad)
     record, _ = read_result(export_result(tmp_path, master, tmp_path / "out.json"))
@@ -465,13 +465,13 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     """
     import pytest
 
-    from quantem.gpu import DirectPtychoResult
+    from quantem.gpu import SSBResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
     from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
     assert SCREEN_ACQUISITION_SCHEMA == "quantem.screen-acquisition/2"
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": -0.5}
-    result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_center_px=(31.5, 32.5))
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5), "scan_detector_rotation_deg": 200.0}
     # created: the record carries the schema first, and the fit reads back
@@ -507,12 +507,12 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
 
 
 def _saved_joint_fit(tmp_path, monkeypatch):
-    from quantem.gpu import DirectPtychoResult
+    from quantem.gpu import SSBResult
 
     source = tmp_path / "scan.bin"
     source.write_bytes(b"detector counts")
     session = _session(monkeypatch, source, _Backend())
-    result = DirectPtychoResult(
+    result = SSBResult(
         object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps",
         aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": 3.0},
         sample_tilt_mrad=(1.0, 2.0), depth_spread_nm=10.0,
@@ -561,7 +561,7 @@ def test_parameter_slices_require_live_ownership_for_saved_array_fit(tmp_path, m
 
 
 def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path, monkeypatch):
-    from quantem.gpu import DirectPtychoResult
+    from quantem.gpu import SSBResult
     from quantem.gpu.direct_ptycho import parameters
     from quantem.gpu.direct_ptycho.persistence import load_result
 
@@ -582,12 +582,12 @@ def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path
     assert metadata["parameter_slices"] == measured
     assert "parameter_slices" not in metadata["result"]
     # The existing scientific payload needs no new constructor keyword.
-    assert DirectPtychoResult(object_wave=result.object_wave, **metadata["result"]).parameter_slices is None
+    assert SSBResult(object_wave=result.object_wave, **metadata["result"]).parameter_slices is None
     restored = load_result(paths=paths, signature=signature, backend="mps")
     assert restored.parameter_slices == measured
     assert session.measure_parameters(restored) == measured
 
-    unsaved = DirectPtychoResult(
+    unsaved = SSBResult(
         object_wave=result.object_wave, backend="mps", aberrations=result.aberrations,
         sample_tilt_mrad=result.sample_tilt_mrad, depth_spread_nm=result.depth_spread_nm,
         scan_detector_rotation_deg=result.scan_detector_rotation_deg,
@@ -615,12 +615,12 @@ def test_a_retired_refinement_reuses_the_automatic_result(tmp_path, monkeypatch,
 
     backend.fit_sample = fit_sample
     settings = dict(tilt=tilt, save_dir=saved, check_rotation=False, verbose=False)
-    first = _session(monkeypatch, source, backend).find_aberrations(search="primary", **settings)
+    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **settings)
     assert first.refinement == "newton"
     assert first.num_trials == 200
     capsys.readouterr()
     for method in ("newton", "nelder-mead", "bfgs"):
-        explicit = _session(monkeypatch, source, backend).find_aberrations(
+        explicit = _session(monkeypatch, source, backend).fit_aberrations(
             search="primary", refinement=method, **settings)
         assert explicit.reused and explicit.refinement == "newton"
         assert explicit.metadata["signature"]["settings"]["refinement"] == "newton"
@@ -631,7 +631,7 @@ def test_a_retired_refinement_reuses_the_automatic_result(tmp_path, monkeypatch,
         assert joint_calls[0]["polish"] == "newton" and joint_calls[0]["polish_starts"] == 3
     else:
         assert backend.fit_calls == 1
-    unrefined = _session(monkeypatch, source, backend).find_aberrations(search="primary",
+    unrefined = _session(monkeypatch, source, backend).fit_aberrations(search="primary",
         refinement=None, **settings,
     )
     assert not unrefined.reused
@@ -657,14 +657,14 @@ def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_
     optics = {"C10_nm": -10.1, "C12_nm": .4, "phi12_deg": 15.0}
     settings = dict(tilt=True, fixed_aberrations=optics, save_dir=tmp_path / "result",
                     check_rotation=False, compare_standard=False, verbose=False)
-    first = _session(monkeypatch, source, backend).find_aberrations(search="primary", **settings)
-    second = _session(monkeypatch, source, backend).find_aberrations(search="primary", **settings)
+    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **settings)
+    second = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **settings)
     assert first.sample_agreement == second.sample_agreement == 0.9
     assert second.reused and len(calls) == 1
     assert calls[0]["polish"] == "newton"
     assert calls[0]["fixed_aberrations"]["C10"] == -101.0
     settings["fixed_aberrations"] = {**optics, "C10_nm": -9.0}
-    changed = _session(monkeypatch, source, backend).find_aberrations(search="primary", **settings)
+    changed = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **settings)
     assert not changed.reused and len(calls) == 2
 
 
@@ -683,17 +683,17 @@ def test_save_dir_is_a_results_directory_and_refuses_a_file_name(tmp_path):
 
 
 def test_a_result_record_of_an_earlier_schema_is_refused_with_one_line(tmp_path, capsys):
-    """quantem.ssb-result/9 named its source by absolute path; /10 reads only its own layout and says so."""
+    """quantem.ssb-result/11 held the raw agreement as sample_agreement; /12 reads only its own layout and says so."""
     from quantem.gpu.direct_ptycho.persistence import RESULT_SCHEMA, load_result, result_paths
 
-    assert RESULT_SCHEMA == "quantem.ssb-result/10"
+    assert RESULT_SCHEMA == "quantem.ssb-result/12"
     paths = result_paths(tmp_path / "fit", "find_aberrations")
     paths[0].parent.mkdir()
     np.savez(paths[0], object_wave=np.ones((2, 2), np.complex64))
-    paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/9", "signature": {}, "result": {}}))
+    paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/11", "signature": {}, "result": {"sample_agreement": 4e17}}))
     assert load_result(paths=paths, signature={}, backend="mps") is None
     out = capsys.readouterr().out
-    assert "'quantem.ssb-result/9' record" in out and "'quantem.ssb-result/10' only" in out
+    assert "'quantem.ssb-result/11' record" in out and "'quantem.ssb-result/12' only" in out
 
 
 def _absolute_paths(value, found=None):
@@ -724,7 +724,7 @@ def test_saved_result_is_reused_after_its_folder_moves_and_holds_no_absolute_pat
     source.parent.mkdir(parents=True)
     source.write_bytes(b"detector counts")
     backend = _Backend()
-    first = _session(monkeypatch, source, backend).find_aberrations(search="primary", tilt=False, save_dir=folder, verbose=False)
+    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False, save_dir=folder, verbose=False)
     record = json.loads((folder / "ssb-find_aberrations.json").read_text(encoding="utf-8"))
     assert record["input"]["source"] == {"file_name": "scan.bin", "relative_path": "data/scan.bin"}
     assert _absolute_paths(record) == []
@@ -736,12 +736,12 @@ def test_saved_result_is_reused_after_its_folder_moves_and_holds_no_absolute_pat
     moved = tmp_path / "elsewhere" / "session"
     moved.parent.mkdir()
     shutil.move(folder, moved)
-    again = _session(monkeypatch, moved / "data" / "scan.bin", backend).find_aberrations(search="primary",
+    again = _session(monkeypatch, moved / "data" / "scan.bin", backend).fit_aberrations(search="primary",
         tilt=False, save_dir=moved, verbose=False)
     assert again.reused and backend.fit_calls == 1
     np.testing.assert_array_equal(again.object_wave, first.object_wave)
 
     (moved / "data" / "scan.bin").write_bytes(b"other detector counts")
-    other = _session(monkeypatch, moved / "data" / "scan.bin", backend).find_aberrations(search="primary",
+    other = _session(monkeypatch, moved / "data" / "scan.bin", backend).fit_aberrations(search="primary",
         tilt=False, save_dir=moved, verbose=False)
     assert not other.reused and backend.fit_calls == 2

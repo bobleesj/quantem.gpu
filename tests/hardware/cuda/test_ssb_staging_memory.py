@@ -24,7 +24,7 @@ def test_coherent_previews_do_not_retain_per_detector_images():
             ssb.depth_spread_nm = depth
             options = {
                 "aberrations": {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0},
-                "upsampling_factor": "auto", "compute_loss": False,
+                "upsampling": "auto", "compute_loss": False,
             }
             first = ssb.reconstruct(**options)
             repeated = ssb.reconstruct(**options, force=True)

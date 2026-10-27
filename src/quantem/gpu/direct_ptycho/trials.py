@@ -6,7 +6,7 @@ from copy import deepcopy
 import numpy as np
 
 from quantem.gpu.optics.physics import wrap_degrees
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
+from quantem.gpu.direct_ptycho.results import SSBResult, host_array
 
 
 def resolve_trial_count(trials: int | None, num_trials: int | None, *, default: int = 200) -> int:
@@ -17,7 +17,7 @@ def resolve_trial_count(trials: int | None, num_trials: int | None, *, default: 
     return default if value is None else value
 
 
-def label_trials(result: DirectPtychoResult, *, search: int) -> None:
+def label_trials(result: SSBResult, *, search: int) -> None:
     """Give every trial record its index, search pass and physical rotation.
 
     Backends record only the optimized parameters. Without these keys
@@ -52,7 +52,7 @@ def choose_trials(records: list[dict], *, best=None, last=None, first=None) -> l
         raise ValueError("Use one positive count: best=5, last=5, or first=5.")
     completed = [record for record in records or () if record.get("stage", "search") == "search" and math.isfinite(record["loss"])]
     if not completed:
-        raise ValueError("No completed trials were recorded; run find_aberrations(trials=200).")
+        raise ValueError("No completed trials were recorded; run fit_aberrations(trials=200).")
     if best is not None:
         latest = max(record["search"] for record in completed)
         group = [record for record in completed if record["search"] == latest]
@@ -116,7 +116,7 @@ def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (4.5, 4
     table.scale(1, 1.8)
     names = {"negative_thick_agreement": "negative thick-sample agreement"}
     objectives = ", ".join(sorted({names.get(record["objective"], record["objective"]) for record in records}))
-    sampling = f"{result.upsampling_factor}×" if sampling is None else sampling
+    sampling = f"{result.upsampling}×" if sampling is None else sampling
     figure.suptitle(f"{selection} {count} search trials · {sampling} · phase (rad)", fontsize=18, y=1 - .08 / height)
     figure.text(.5, 1 - .5 / height,
                 f"Shared contrast: {lower:.3g} to {upper:.3g} rad (pooled 1–99%) · {objectives}",

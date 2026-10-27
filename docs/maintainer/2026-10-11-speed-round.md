@@ -1,6 +1,6 @@
 # Speed round after rc16: where the time went and what changed - 2026-10-11
 
-> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/ssb.md).
 
 ## Question
 
@@ -90,7 +90,7 @@ Cost on an idle GPU, with and without the wait alternating in one process:
 
 ## Where the time went, and what changed
 
-### Aberration fit (`find_aberrations`, 200 trials and Nelder-Mead)
+### Aberration fit (`fit_aberrations`, 200 trials and Nelder-Mead)
 
 Profile (cProfile around the fit, CUDA events around one loss evaluation): 211
 loss evaluations take 93% of the fit, Optuna's sampler 0.58 s (3% under load,
@@ -121,7 +121,7 @@ Nelder-Mead refinement returns after its four starting evaluations. The
 starting simplex is 5% of each coefficient wide, the fitted defocus is 0.42 nm,
 so the simplex (0.2 A) is already inside the 0.25 A stopping tolerance.
 
-### Tilt fit (`find_aberrations(tilt=True)`): a faster polish that is not bit-identical, not merged
+### Tilt fit (`fit_aberrations(tilt=True)`): a faster polish that is not bit-identical, not merged
 
 Profile: of 13.4 s, 9.5 s were the Nelder-Mead polish (three starts, 1540
 objective evaluations, one kernel launch and one host round trip each), 1.8 s
@@ -348,8 +348,8 @@ on the 256 x 256 one, including the digest of the retained encoded bytes.
 | dense, `immutable=True`: BF / ADF / DF / centre of mass | - | 2.4 / 2.4 / 1.8 / 0.01 in both |
 | paired mean / BF / DF / centre of mass / scan-ROI mean | 0.08 / 2.2 / 6.2 / 29.2 / 18.1, 0.10 / 2.3 / 2.3 / 16.7 / 7.6 | 0.07 / 1.7 / 1.6 / 15.5 / 5.7, 0.07 / 1.9 / 1.6 / 15.9 / 5.8 |
 | SSB reconstruct, without / with loss | 16 / 42, 16 / 44 | 16 / 44, 17 / 45 |
-| `find_aberrations`, s | 8.03, 5.95 | 5.95, 6.00 |
-| `find_aberrations(tilt=True)`, s | 4.52, 3.86 | 3.90, 3.92 |
+| `fit_aberrations`, s | 8.03, 5.95 | 5.95, 6.00 |
+| `fit_aberrations(tilt=True)`, s | 4.52, 3.86 | 3.90, 3.92 |
 | `parallax.run` with the aberration fit | 330, 333 | 214, 214 |
 | SSB session build | 449, 283 | 306, 308 (first build 168, 241) |
 | `dpc.run` | 113, 112 | 203, 130 |

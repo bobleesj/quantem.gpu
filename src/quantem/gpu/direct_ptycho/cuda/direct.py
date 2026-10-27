@@ -78,8 +78,7 @@ extern "C" __global__ void direct_pixel_terms(
 // Register budget per thread for blocks of 32 _WARPS = 128 threads, measured fastest on
 // the test field: 5 resident blocks (96 registers) for phase, 3 (168) for complex, whose
 // running sums are 2.5x larger.
-// ACCUMULATE adds to `augmented` instead of writing it: a streamed scan sums its detector-column batches in float64.
-template <int COUNT, int COMPLEX, int PARTS, int ACCUMULATE = 0>
+template <int COUNT, int COMPLEX, int PARTS>
 __global__ void __launch_bounds__(128, COMPLEX ? 3 : 5) direct_normal_equations(
     const complex<float>* spectrum, int plane, const int* frequency, int nfrequency,
     const float* alias_qr, const float* alias_qc,
@@ -155,14 +154,7 @@ __global__ void __launch_bounds__(128, COMPLEX ? 3 : 5) direct_normal_equations(
             }
             // a Hermitian diagonal is real; the float32 products leave a rounding residue
             if (a == b) im = 0.0;
-            if (lane == 0 && ACCUMULATE) {
-                out[2 * (a * WIDTH + b)] += re;
-                out[2 * (a * WIDTH + b) + 1] += im;
-                if (a != b) {
-                    out[2 * (b * WIDTH + a)] += re;
-                    out[2 * (b * WIDTH + a) + 1] -= im;
-                }
-            } else if (lane == 0) {
+            if (lane == 0) {
                 out[2 * (a * WIDTH + b)] = re;
                 out[2 * (a * WIDTH + b) + 1] = im;
                 out[2 * (b * WIDTH + a)] = re;
@@ -332,7 +324,7 @@ __global__ void direct_cholesky(const complex<double>* gram, const complex<doubl
 _kernels = {}
 
 
-def _normal_equations(count: int, complex_object: bool, accumulate: bool = False):
+def _normal_equations(count: int, complex_object: bool):
     """The normal-equation kernel for one alias count, and the blocks per frequency.
 
     Systems of more than _ENTRIES_PER_WARP entries a <= b split over several
@@ -341,7 +333,7 @@ def _normal_equations(count: int, complex_object: bool, accumulate: bool = False
     """
     width = (2 * count if complex_object else count) + 1
     parts = -(-width * (width + 1) // 2 // _ENTRIES_PER_WARP)
-    name = f"direct_normal_equations<{count}, {int(complex_object)}, {parts}{', 1' if accumulate else ''}>"
+    name = f"direct_normal_equations<{count}, {int(complex_object)}, {parts}>"
     if name not in _kernels:
         module = cp.RawModule(code=_SOURCE, options=("-std=c++17",), name_expressions=[name])
         _kernels[name] = module.get_function(name)
@@ -407,31 +399,14 @@ def _layout(engine, factor: int, smoothness_inv_A: float, detector_weighting: st
     if cached is not None and cached[0]() is engine.G_qk and cached[1] == key:
         return cached[2]
     nbf, nrow, ncol = engine._bf_grid()
-    cache = engine._cache
-    layout = _alias_layout(
-        engine.G_qk[:, 0, 0].real, nrow, ncol, engine.G_qk.shape[2], cache["aperture_k_1d"],
-        (cache["qx_1d"][1], cache["qy_1d"][1]), engine.wavelength, cache["semiangle_rad"],
-        (cache["ang_y_rad"], cache["ang_x_rad"]), engine.bf_inds_row, engine.bf_inds_col,
-        factor, smoothness_inv_A, detector_weighting,
-    )
-    engine._direct_layout = weakref.ref(engine.G_qk), key, layout
-    return layout
-
-
-def _alias_layout(dc, nrow, ncol, stored_cols, aperture, q_step, wavelength, semiangle_rad, angular_rad,
-                  detector_row, detector_col, factor, smoothness_inv_A, detector_weighting):
-    """The optics-free layout from each BF pixel's scan sum ``dc`` (G(0, k)) and the scan and detector geometry.
-
-    The resident engine and the streamed full scan both build it, so they solve the same systems.
-    """
-    nbf = int(dc.size)
     if min(nrow, ncol) < 3:
         raise ValueError(
             "Direct inversion needs at least 3 scan positions per side; select a larger region."
         )
     out_row, out_col = factor * nrow, factor * ncol
-    aperture2 = aperture ** 2
-    dose = cp.sum(dc, dtype=cp.float64)
+    cache = engine._cache
+    aperture2 = cache["aperture_k_1d"] ** 2
+    dose = cp.sum(engine.G_qk[:, 0, 0].real, dtype=cp.float64)
     dose /= nrow * ncol * aperture2.sum()
     if not bool(cp.isfinite(dose) & (dose > 0)):
         raise ValueError(
@@ -440,7 +415,7 @@ def _alias_layout(dc, nrow, ncol, stored_cols, aperture, q_step, wavelength, sem
     if detector_weighting == "uniform":
         weights = cp.ones(nbf, cp.float32)
     else:
-        mean = cp.maximum(dc / (nrow * ncol), 0)
+        mean = cp.maximum(engine.G_qk[:, 0, 0].real / (nrow * ncol), 0)
         floor = cp.median(mean) * 0.05
         if float(floor) <= 0:
             raise ValueError(
@@ -461,16 +436,16 @@ def _alias_layout(dc, nrow, ncol, stored_cols, aperture, q_step, wavelength, sem
     output_cols = cols[:, None] + alias_col.ravel()[None, :] * ncol
     qr = (
         cp.where(output_rows <= (out_row - 1) // 2, output_rows, output_rows - out_row).astype(cp.float32)
-        * q_step[0]
+        * cache["qx_1d"][1]
     )
     qc = (
         cp.where(output_cols <= (out_col - 1) // 2, output_cols, output_cols - out_col).astype(cp.float32)
-        * q_step[1]
+        * cache["qy_1d"][1]
     )
-    cutoff = (2 * semiangle_rad + max(angular_rad)) / wavelength
+    cutoff = (2 * cache["semiangle_rad"] + max(cache["ang_y_rad"], cache["ang_x_rad"])) / engine.wavelength
     active = qr * qr + qc * qc < cutoff**2
     counts = active.sum(axis=1)
-    columns = rows * np.int32(stored_cols) + cols
+    columns = rows * np.int32(engine.G_qk.shape[2]) + cols
     groups = []
     for count, size in enumerate(cp.bincount(counts).get().tolist()):
         if not size:
@@ -501,13 +476,15 @@ def _alias_layout(dc, nrow, ncol, stored_cols, aperture, q_step, wavelength, sem
         )
     # BF pixels in 4 x 8 detector tiles, so the 32 pixels of a warp are compact and
     # the aperture-overlap branches agree across its lanes (about 10 % faster)
-    detector_row = cp.asarray(detector_row)
-    detector_col = cp.asarray(detector_col)
+    detector_row = cp.asarray(engine.bf_inds_row)
+    detector_col = cp.asarray(engine.bf_inds_col)
     order = cp.lexsort(cp.stack((detector_col % 8, detector_row % 4, detector_col // 8, detector_row // 4)))
-    return _Layout(
+    layout = _Layout(
         (out_row, out_col), float(dose), weights.astype(cp.float32, copy=False), scale, float(scale),
         order.astype(cp.int32), groups,
     )
+    engine._direct_layout = weakref.ref(engine.G_qk), key, layout
+    return layout
 
 
 @dataclass
@@ -559,8 +536,28 @@ class PreparedDirect:
         """
         layout = _layout(engine, factor, smoothness_inv_A, detector_weighting)
         cache = engine._cache
-        coefficients, optics_scalars = _optics_terms(
-            optics, engine.wavelength, cache["semiangle_rad"], (cache["ang_y_rad"], cache["ang_x_rad"]))
+        higher = higher_order_arrays(optics["aberrations"])
+        if higher is None:
+            magnitudes = np.zeros(14, np.float32)
+            angles = np.zeros(14, np.float32)
+            magnitudes[:2] = [
+                optics["aberrations"].get("C10_nm", 0),
+                optics["aberrations"].get("C12_nm", 0),
+            ]
+            angles[1] = np.deg2rad(optics["aberrations"].get("phi12_deg", 0))
+        else:
+            magnitudes, angles = higher
+        coefficients = cp.asarray(pack_coefficients(magnitudes * 10, angles))
+        tilt_row, tilt_col = optics["sample_tilt_mrad"]
+        optics_scalars = (
+            np.float32(engine.wavelength),
+            np.float32(cache["semiangle_rad"]),
+            np.float32(cache["ang_y_rad"]),
+            np.float32(cache["ang_x_rad"]),
+            np.float32(optics["depth_spread_nm"] * 10),
+            np.float32(tilt_row * 1e-3),
+            np.float32(tilt_col * 1e-3),
+        )
         nbf = layout.weights.size
         pixel = cp.empty((nbf, 2, 4), cp.float32)
         _pixel_terms(
@@ -607,8 +604,8 @@ class PreparedDirect:
 
     def solve(
         self,
-        phase_regularization: float,
-        amplitude_regularization: float | None,
+        phase_damping: float,
+        amplitude_damping: float | None,
         *,
         compute_loss: bool,
     ):
@@ -620,8 +617,8 @@ class PreparedDirect:
             if self.complex_object:
                 matrix = group.gram.copy()
                 penalty = group.prior.astype(cp.float64) * self.scale
-                penalty[:, :count] *= amplitude_regularization
-                penalty[:, count:] *= phase_regularization
+                penalty[:, :count] *= amplitude_damping
+                penalty[:, count:] *= phase_damping
                 diagonal = cp.arange(matrix.shape[-1])
                 matrix[:, diagonal, diagonal] += penalty
                 coefficients = cp.linalg.solve(matrix, group.rhs[..., None])[
@@ -632,7 +629,7 @@ class PreparedDirect:
                 coefficients = _evaluate(
                     group.basis,
                     group.eigen,
-                    phase_regularization,
+                    phase_damping,
                     dim,
                     size=nfrequency * dim,
                 ).reshape(nfrequency, dim)
@@ -654,135 +651,6 @@ class PreparedDirect:
                 diagnostics["training_relative_sse"] = None
                 diagnostics["prediction_error_status"] = "undefined: no non-DC signal"
         return wave, diagnostics
-
-
-def _optics_terms(optics, wavelength, semiangle_rad, angular_rad):
-    """The packed 14-term aberration coefficients and the scalar transfer arguments of one optics."""
-    higher = higher_order_arrays(optics["aberrations"])
-    if higher is None:
-        magnitudes = np.zeros(14, np.float32)
-        angles = np.zeros(14, np.float32)
-        magnitudes[:2] = [
-            optics["aberrations"].get("C10_nm", 0),
-            optics["aberrations"].get("C12_nm", 0),
-        ]
-        angles[1] = np.deg2rad(optics["aberrations"].get("phi12_deg", 0))
-    else:
-        magnitudes, angles = higher
-    coefficients = cp.asarray(pack_coefficients(magnitudes * 10, angles))
-    tilt_row, tilt_col = optics["sample_tilt_mrad"]
-    scalars = (
-        np.float32(wavelength),
-        np.float32(semiangle_rad),
-        np.float32(angular_rad[0]),
-        np.float32(angular_rad[1]),
-        np.float32(optics["depth_spread_nm"] * 10),
-        np.float32(tilt_row * 1e-3),
-        np.float32(tilt_col * 1e-3),
-    )
-    return coefficients, scalars
-
-
-def solve_streamed(source, optics, factor: int, *, complex_object: bool, smoothness_inv_A: float,
-                   detector_weighting: str, phase_regularization: float, amplitude_regularization: float | None,
-                   compute_loss: bool):
-    """The regularized wave of a scan streamed by detector columns, the systems of `PreparedDirect` without its stack.
-
-    ``source`` (`streamed.StreamedDirectPtycho.direct_source`) gives each BF pixel's scan sum, the detector geometry and
-    ``batches(order, size)``, which decodes and transforms detector columns in the layout's pixel order. Each
-    column batch adds its part of every frequency's augmented Gram in float64 (``direct_normal_equations``
-    with ACCUMULATE); the float32 per-lane sums cover a batch instead of every BF pixel. When the systems of
-    every frequency do not fit beside the batch, the frequencies are split into passes that each stream the
-    columns again. Each system is then solved at the requested strengths by float64 Cholesky
-    (`direct_cholesky`, the `DragWindow` solve), which equals the phase eigenbasis evaluation.
-    """
-    layout = _alias_layout(
-        source.dc, source.scan_shape[0], source.scan_shape[1], source.scan_shape[1] // 2 + 1, source.aperture,
-        source.q_step, source.wavelength, source.semiangle_rad, source.angular_rad,
-        source.detector_rows, source.detector_cols, factor, smoothness_inv_A, detector_weighting,
-    )
-    coefficients, optics_scalars = _optics_terms(optics, source.wavelength, source.semiangle_rad, source.angular_rad)
-    order = layout.order
-    plane = source.scan_shape[0] * (source.scan_shape[1] // 2 + 1)
-    batch_size = source.batch_size(reserve=2 * 8 * layout.shape[0] * layout.shape[1])
-    spectra = [cp.zeros(layout.shape, cp.complex64), cp.zeros(layout.shape, cp.complex64)]
-    free = cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes()
-    # the column batch, and the inverse FFTs and exponential of the final wave (about 4 complex64 planes)
-    budget = max(64 << 20, int(free * 0.6) - batch_size * source.column_bytes - 32 * layout.shape[0] * layout.shape[1])
-    # (group, first, stop) pieces of every group's frequencies, packed into passes within the budget
-    passes, current, used = [], [], 0
-    for group in layout.groups:
-        dim = 2 * group.count if complex_object else group.count
-        per = (dim + 1) ** 2 * 16 * 2  # the augmented system and the solve's working copies
-        step = max(1, budget // per)
-        for first in range(0, group.columns.size, step):
-            stop = min(first + step, group.columns.size)
-            if current and used + (stop - first) * per > budget:
-                passes.append(current)
-                current, used = [], 0
-            current.append((group, first, stop))
-            used += (stop - first) * per
-    if current:
-        passes.append(current)
-    power = cp.zeros((), cp.float64)
-    residual = cp.zeros((), cp.float64)
-    for pieces in passes:
-        augmented = []
-        for group, first, stop in pieces:
-            dim = 2 * group.count if complex_object else group.count
-            augmented.append(cp.zeros((stop - first, dim + 1, dim + 1), cp.complex128))
-        for start, stop_pixel, batch in source.batches(order, batch_size):
-            count = stop_pixel - start
-            pixel = cp.empty((count, 2, 4), cp.float32)
-            _pixel_terms(
-                (-(-count // 256),), (256,),
-                (cp.arange(count, dtype=cp.int32), source.k_row[order[start:stop_pixel]],
-                 source.k_col[order[start:stop_pixel]], layout.weights[order[start:stop_pixel]],
-                 np.int32(count), *optics_scalars[:4], coefficients, pixel),
-            )
-            spectrum = batch.reshape(count, plane)
-            for (group, first, stop), out in zip(pieces, augmented):
-                size = stop - first
-                kernel, parts = _normal_equations(group.count, complex_object, accumulate=True)
-                kernel(
-                    (-(-size // _WARPS), parts), (32 * _WARPS,),
-                    (spectrum, np.int32(plane), cp.ascontiguousarray(group.columns[first:stop]), np.int32(size),
-                     cp.ascontiguousarray(group.qr[first * group.count:stop * group.count]),
-                     cp.ascontiguousarray(group.qc[first * group.count:stop * group.count]),
-                     pixel, np.int32(count), *optics_scalars, coefficients, out),
-                )
-        for (group, first, stop), out in zip(pieces, augmented):
-            count = group.count
-            dim = 2 * count if complex_object else count
-            power += out[:, dim, dim].real.sum() / layout.dose**2
-            if not count:
-                continue
-            gram = cp.ascontiguousarray(out[:, :dim, :dim])
-            rhs = cp.ascontiguousarray(out[:, :dim, dim] / layout.dose)
-            prior = group.prior[first:stop]
-            if complex_object:
-                penalty = cp.concatenate((prior * amplitude_regularization, prior * phase_regularization), axis=1)
-            else:
-                penalty = prior * phase_regularization
-            penalty = cp.ascontiguousarray(penalty * layout.scale)
-            size = stop - first
-            solution = cp.empty((size, dim), cp.complex64)
-            _cholesky(dim)((-(-size // 64),), (64,), (gram, rhs, penalty, np.int32(size), solution))
-            if compute_loss:
-                precise = solution.astype(cp.complex128)
-                prediction = (gram @ precise[..., None])[..., 0]
-                residual += cp.sum((precise.conj() * prediction).real - 2 * (precise.conj() * rhs).real)
-            _scatter(spectra, group.rows[first:stop], group.cols[first:stop], solution, complex_object, factor)
-        del augmented
-    wave, diagnostics = _wave(spectra, layout.dose)
-    diagnostics["streamed"] = {"detector_batch_size": batch_size, "passes": len(passes)}
-    if compute_loss:
-        if float(power) > 0:
-            diagnostics["training_relative_sse"] = float(cp.maximum(power + residual, 0) / power)
-        else:
-            diagnostics["training_relative_sse"] = None
-            diagnostics["prediction_error_status"] = "undefined: no non-DC signal"
-    return wave, diagnostics
 
 
 # ---
@@ -824,7 +692,7 @@ class DragWindow:
         self.series.add(cp.concatenate([part.ravel() for group in prepared.groups for part in (group.gram, group.rhs)]))
         return self.series.ready
 
-    def solve(self, value: float, phase_regularization: float, amplitude_regularization: float | None,
+    def solve(self, value: float, phase_damping: float, amplitude_damping: float | None,
               *, complex_object: bool):
         """The wave at control ``value`` (inside the window), as PreparedDirect.solve without the loss."""
         values = self.series.evaluate(value)
@@ -840,11 +708,11 @@ class DragWindow:
             count = group.rows.shape[1]
             penalty = group.prior * template.scale
             if complex_object:
-                penalty = penalty * cp.concatenate((cp.full(count, amplitude_regularization), cp.full(count, phase_regularization)))
+                penalty = penalty * cp.concatenate((cp.full(count, amplitude_damping), cp.full(count, phase_damping)))
             else:
                 if self.complex_object:
                     gram, rhs, penalty = gram[:, count:, count:], rhs[:, count:], penalty[:, count:]
-                penalty = penalty * phase_regularization
+                penalty = penalty * phase_damping
             width = rhs.shape[1]
             coefficients = cp.empty((size, width), cp.complex64)
             _cholesky(width)(
@@ -873,7 +741,7 @@ def _wave(spectra, incident_scale):
     amplitude, phase = [cp.fft.ifft2(spectrum).real.astype(cp.float32) for spectrum in spectra]
     wave = cp.exp(amplitude + 1j * phase).astype(cp.complex64)
     if not bool(cp.isfinite(wave).all()):
-        raise ValueError('Direct inversion diverged; increase regularization or use method="phase".')
+        raise ValueError('Direct inversion diverged; increase phase_damping or amplitude_damping, or use method="phase".')
     diagnostics = {
         "model": "T = exp(eta + i phi), linearized about unity",
         "normalization": "zero mean phase and log-amplitude; relative amplitude only",

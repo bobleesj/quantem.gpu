@@ -48,9 +48,9 @@ def _resident(counts, valid):
 
 
 def _backend(data, center, flipped):
-    from quantem.gpu.direct_ptycho.mps.backend import MpsDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
 
-    return MpsDirectPtychoBackend(
+    return MpsSSBBackend(
         data, voltage_kV=300.0, semiangle_mrad=24.0, scan_sampling=(0.5, 0.5),
         detector_sampling_mrad=(4.0, 4.0), bright_field_intensity_threshold=0.0,
         bright_field_center_px=center[::-1] if flipped else center, bright_field_radius_px=RADIUS,

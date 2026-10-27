@@ -101,8 +101,8 @@ def test_window_matches_exact_preparation(ptycho, control):
 
 
 def _exact_phase(ptycho, aberrations, method, amplitude=None):
-    options = {} if amplitude is None else {"amplitude_regularization": amplitude}
-    return ptycho.preview(aberrations, method=method, phase_regularization=STRENGTH, upsampling_factor=3,
+    options = {} if amplitude is None else {"amplitude_damping": amplitude}
+    return ptycho.preview(aberrations, method=method, phase_damping=STRENGTH, upsampling=3,
                           sample_tilt_mrad=ptycho.sample_tilt_mrad, depth_spread_nm=ptycho.depth_spread_nm,
                           compute_loss=False, output="numpy", **options)[0]
 

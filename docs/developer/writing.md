@@ -50,8 +50,8 @@ they are necessary historical provenance.
 
 Start with the current short workflow: `io.load(path)`, array indexing,
 `detector.bf(data)` / `detector.adf(data)`, and
-`ptycho = DirectPtycho(data, ...)`, `aberrations = ptycho.find_aberrations()`, then
-`ptycho.run(aberrations)`. Call the fitted result `aberrations`. Show automatic defaults
+`ptycho = DirectPtycho(data, ...)`, `aberrations = ptycho.fit_aberrations()`, then
+`ptycho.reconstruct(aberrations)`. Call the fitted result `aberrations`. Show automatic defaults
 first, then pixel-radius and center overrides. Keep `detector.prepare` in
 advanced integration examples that need its exact/native output contract.
 

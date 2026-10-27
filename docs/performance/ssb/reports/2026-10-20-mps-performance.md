@@ -1,6 +1,6 @@
 # MPS performance: what got faster, why the rest is slow, how to profile (2026-10-20)
 
-> **Historical:** describes the code as of 2026-10-20; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired. See the [current fit methods](../../../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-20; the phase-variance search (`objective="phase_variance"`) and its Nelder–Mead refinement are retired. See the [current fit methods](../../../api/ssb.md).
 
 This page collects one night of Apple GPU (MPS/Metal) work on the SSB preview,
 the aberration search and Show4DSTEM's detector sums, explains where the time

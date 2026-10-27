@@ -101,7 +101,7 @@ Native Apple parity additionally runs:
 
 ```bash
 swift test
-swift test -c release --filter MetalDirectPtychoKernelsTests
+swift test -c release --filter MetalSSBKernelsTests
 ```
 
 Real CUDA, MPS/Metal, and WebGPU gates run only on their qualified hardware and

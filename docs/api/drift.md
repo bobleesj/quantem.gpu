@@ -13,8 +13,8 @@ found.show(phases)                         # frame 0, the mean before and after 
 aligned, mean = found.corrected(phases)    # every frame on frame 0, over the region all frames share
 ```
 
-`phases` can be a GPU tensor or CuPy array, a NumPy array (moved to the GPU), a list of 2D images, a list of Direct Ptycho
-results, or the Direct Ptycho stream itself. A stream or result supplies its own sampling and a stream its frame names, so
+`phases` can be a GPU tensor or CuPy array, a NumPy array (moved to the GPU), a list of 2D images, a list of SSB
+results, or the SSB stream itself. A stream or result supplies its own sampling and a stream its frame names, so
 `drift(stream)` needs no other argument. On a stream, `stream.align()` runs the same `drift` and also re-places the
 stream's own combined image with it; call `drift(stream)` for the Drift alone.
 

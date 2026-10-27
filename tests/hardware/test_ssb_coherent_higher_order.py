@@ -97,13 +97,13 @@ def reference(ssb, coefs, factor, tilt, depth, phase_variance=False):
 @pytest.mark.parametrize("depth", [0., 18.])
 def test_all_orders_coherent_tilt_and_upsampling_match_polar_oracle(factor, depth):
     with _session(constant=False) as ssb:
-        phase, loss = ssb.preview(COEFS, upsampling_factor=factor,
+        phase, loss = ssb.preview(COEFS, upsampling=factor,
                                   sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth)
         expected, _ = reference(ssb, COEFS, factor, (-9., 5.), depth)
         np.testing.assert_allclose(phase, expected, rtol=0, atol=5e-6)
         _, native_loss = reference(ssb, COEFS, 1, (-9., 5.), depth, phase_variance=True)
         assert loss == pytest.approx(native_loss, rel=1e-5, abs=1e-10)
-        explicit, _ = ssb.preview(COEFS, upsampling_factor=factor,
+        explicit, _ = ssb.preview(COEFS, upsampling=factor,
                                  sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth,
                                  phase_estimator="phase_of_mean", compute_loss=False)
         np.testing.assert_array_equal(phase, explicit)
@@ -112,7 +112,7 @@ def test_all_orders_coherent_tilt_and_upsampling_match_polar_oracle(factor, dept
 @pytest.mark.parametrize("factor", [1, 3, 4, 8])
 def test_higher_order_constant_scan_has_no_alias_pattern(factor):
     with _session() as ssb:
-        phase, _ = ssb.preview(COEFS, upsampling_factor=factor, compute_loss=False,
+        phase, _ = ssb.preview(COEFS, upsampling=factor, compute_loss=False,
                               sample_tilt_mrad=(-9., 5.), depth_spread_nm=18.)
         np.testing.assert_allclose(phase, 0., rtol=0, atol=1e-7)
 
@@ -135,11 +135,11 @@ def test_auto_sampling_preserves_higher_orders_when_saving_and_reloading(tmp_pat
                   scan_sampling_A=(.5, .5), detector_sampling_mrad=(10., 10.)) as ssb:
         ssb.sample_tilt_mrad = (-9., 5.)
         ssb.depth_spread_nm = 18.
-        saved = ssb.reconstruct(aberrations=COEFS, upsampling_factor="auto", save_dir=tmp_path / "result")
+        saved = ssb.reconstruct(aberrations=COEFS, upsampling="auto", save_dir=tmp_path / "result")
         assert saved.phase_estimator == "phase_of_mean"
-        assert saved.upsampling_factor == 4
+        assert saved.upsampling == 4
         assert saved.aberrations == COEFS
-        loaded = ssb.reconstruct(aberrations=COEFS, upsampling_factor="auto", save_dir=tmp_path / "result")
+        loaded = ssb.reconstruct(aberrations=COEFS, upsampling="auto", save_dir=tmp_path / "result")
         assert loaded.reused
         before = saved.phase.get() if backend == "cuda" else saved.phase
         after = loaded.phase.get() if backend == "cuda" else loaded.phase

@@ -168,6 +168,7 @@ def test_metadata_table_preserves_saved_overrides_and_missing_rotation():
     assert "<script>" not in data._repr_html_()
     assert "Overridden" in repr(data)
     assert metadata == original
-    # The dataset copies the outer mapping on construction; a recorded zero rotation is a value, not missing.
+    # The dataset holds its own copy of the outer mapping: edits go through data.metadata.
     data.metadata["scan_detector_rotation_deg"] = 0.0
     assert data.metadata_table().loc["Scan-detector rotation", "Value"] == 0.0
+    assert "scan_detector_rotation_deg" not in metadata

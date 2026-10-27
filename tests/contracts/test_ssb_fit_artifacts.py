@@ -10,11 +10,11 @@ import pytest
 
 from quantem.gpu.direct_ptycho.calibration import capture_calibration
 from quantem.gpu.direct_ptycho.persistence import load_result, save_result, source_identity
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 
 def _fit():
-    return DirectPtychoResult(
+    return SSBResult(
         object_wave=np.exp(1j * np.arange(16).reshape(4, 4) / 100).astype(np.complex64),
         backend="mps", aberrations={"C10_nm": -8., "C12_nm": 0.2, "phi12_deg": 35., "C50_nm": 10_000.},
         sample_tilt_mrad=(1., -2.), depth_spread_nm=12., phase_estimator="phase_of_mean",
@@ -76,11 +76,11 @@ def test_calibration_survives_result_roundtrip_without_session(tmp_path, monkeyp
     wave = fit.object_wave.copy()
     path = fit.save_calibration(tmp_path / "review" / "calibration.json")
     record = json.loads(path.read_text())
-    assert record["schema"] == "quantem.ssb-calibration/6"
+    assert record["schema"] == "quantem.ssb-calibration/7"
     assert record["aberrations"] == fit.aberrations
     assert record["sample_tilt_mrad"] == [1., -2.]
     assert record["scan_sampling_A"] == [.5, .5]
-    assert record["upsampling_mode"] == "auto" and record["upsampling_factor"] > 1
+    assert record["upsampling_mode"] == "auto" and record["upsampling"] > 1
     assert str(tmp_path) not in path.read_text()
     fingerprint = source_identity(**fit._calibration_source)
     signature = {"source": fingerprint}

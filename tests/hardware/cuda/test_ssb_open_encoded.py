@@ -38,7 +38,7 @@ def test_open_bright_field_crop_matches_full_detector(detector_sampling_mrad):
     assert cropped._data.shape[-2:] != (192, 192)          # only the bright-field region was decoded
     factors = [1, 2, 3, 4] if detector_sampling_mrad is None else [1]
     crop_results = {
-        factor: cropped.preview(aberrations, upsampling_factor=factor)
+        factor: cropped.preview(aberrations, upsampling=factor)
         for factor in factors
     }
     crop_bf = cropped.num_bright_field_pixels
@@ -48,7 +48,7 @@ def test_open_bright_field_crop_matches_full_detector(detector_sampling_mrad):
     full = SSB(cp.from_dlpack(load(str(SOURCE), verbose=False).read()), **settings)
     assert crop_bf == full.num_bright_field_pixels
     for factor in factors:
-        full_phase, full_loss = full.preview(aberrations, upsampling_factor=factor)
+        full_phase, full_loss = full.preview(aberrations, upsampling=factor)
         crop_phase, crop_loss = crop_results[factor]
         np.testing.assert_allclose(crop_phase, full_phase, atol=1e-6)
         assert abs(crop_loss - full_loss) <= 1e-6 * abs(full_loss)

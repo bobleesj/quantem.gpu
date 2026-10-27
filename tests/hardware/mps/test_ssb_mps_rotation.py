@@ -148,7 +148,7 @@ def test_reconstruct_keeps_the_branch_comparison_of_the_fit_it_applies(estimate_
     with SSB(frames, **_settings(detector_mrad)) as session:
         fitted = session.find_aberrations(search="primary", num_trials=40, verbose=False)
         assert session.reconstruct() is fitted
-        for result in (session.reconstruct(), session.reconstruct(fitted, upsampling_factor=2)):
+        for result in (session.reconstruct(), session.reconstruct(fitted, upsampling=2)):
             assert result.rotation_branches is fitted.rotation_branches
             report = result.report().iloc[:, 0]
             assert report["Suggested rotation (deg)"] == 180.0 and report["SSB-selected rotation (deg)"] == 0.0
@@ -182,17 +182,17 @@ def test_branch_panels_are_each_fit_at_the_auto_factor_while_the_fit_stays_nativ
     with SSB(frames, **_settings(detector_mrad)) as session:
         fitted = session.find_aberrations(search="primary", num_trials=40, verbose=False)
         branches = fitted.rotation_branches
-        assert fitted.upsampling_factor == 1 and fitted.phase.shape == (64, 64)
+        assert fitted.upsampling == 1 and fitted.phase.shape == (64, 64)
         assert all(branch.phase.shape == (64, 64) for branch in branches.branches)
         tests = [(branch.column_z, branch.phase_skewness) for branch in branches.branches]
         panels = branches.upsampled_phases()
-        assert branches.upsampling_factor == 2 and branches.object_sampling_A == (0.125, 0.125)
+        assert branches.upsampling == 2 and branches.object_sampling_A == (0.125, 0.125)
         assert session.scan_detector_rotation_deg == 0.0 and session.reconstruct() is fitted
         for branch, panel in zip(branches.branches, panels, strict=True):
             assert panel.shape == (128, 128)
             session.set_rotation(branch.scan_detector_rotation_deg)
             expected, _ = session.preview(dict(branch.aberrations), sample_tilt_mrad=branch.sample_tilt_mrad,
-                                          depth_spread_nm=branch.depth_spread_nm, upsampling_factor=2,
+                                          depth_spread_nm=branch.depth_spread_nm, upsampling=2,
                                           compute_loss=False)
             np.testing.assert_array_equal(panel, expected)
             # the native samples of the 2x grid are the scan positions the columns were located at
@@ -233,11 +233,11 @@ def test_a_region_fit_keeps_its_branch_panels_after_its_region_session_closes(tm
         fitted = session.find_aberrations(search="primary", scan_region=(0, 128, 0, 128), tilt=False, num_trials=8, refinement=None,
                                           save_dir=tmp_path / "results", verbose=False)
     branches = fitted.rotation_branches
-    assert fitted.fit_scan_region == (0, 128, 0, 128) and branches.upsampling_factor == 2
+    assert fitted.fit_scan_region == (0, 128, 0, 128) and branches.upsampling == 2
     assert [panel.shape for panel in branches.upsampled_phases()] == [(256, 256)] * 2
     paths = (fitted.saved_path, fitted.saved_path.with_suffix(".json"))
     reloaded = load_result(paths=paths, signature=fitted.metadata["signature"], backend="mps").rotation_branches
-    assert reloaded.upsampling_factor == 2
+    assert reloaded.upsampling == 2
     for saved, panel in zip(reloaded.upsampled_phases(), branches.upsampled_phases(), strict=True):
         np.testing.assert_array_equal(saved, panel)
 

@@ -81,8 +81,8 @@ def test_native_encoded_ssb_matches_dense_and_keeps_acquisition_open(tmp_path, b
             # the centre counts from the first pixel of the full detector, also in the session that decoded only its
             # crop; that session used to report the centre inside the crop
             assert native.bright_field_center_px == dense.bright_field_center_px == (11.5, 11.5)
-            cropped_result = native.run(aberrations=ABERRATIONS)
-            dense_result = dense.run(aberrations=ABERRATIONS)
+            cropped_result = native.reconstruct(aberrations=ABERRATIONS)
+            dense_result = dense.reconstruct(aberrations=ABERRATIONS)
             assert cropped_result.bright_field_center_px == dense_result.bright_field_center_px == (11.5, 11.5)
         np.testing.assert_array_equal(data[0, 0].cpu().numpy(), counts[0, 0])
 
@@ -169,7 +169,7 @@ def test_open_retains_detector_correction_and_matches_saved_counts(tmp_path, bac
         bright_field_radius_px=4.0, bright_field_center_px=(5.5, 5.5),
     )
     preview = dict(
-        upsampling_factor=3, sample_tilt_mrad=(-2.0, 3.0), depth_spread_nm=depth_nm,
+        upsampling=3, sample_tilt_mrad=(-2.0, 3.0), depth_spread_nm=depth_nm,
     )
     # The acquisition loader remains lossless; the SSB file workflow owns its
     # explicit preprocessing choice and never changes the source file.

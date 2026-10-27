@@ -1,0 +1,104 @@
+# SSB architecture
+
+## Public contract
+
+`quantem.gpu.SSB` is the scientist-facing SSB compute entry point. CUDA and
+MPS are its execution backends, not separate APIs. The browser engine in
+`direct_ptycho/webgpu` is a separate runtime that applications bundle; it is not an
+`DirectPtycho(backend=...)` option.
+
+```python
+from quantem.gpu import DirectPtycho
+
+with DirectPtycho.open(
+    "scan_master.h5",
+    backend="mps",
+    voltage_kV=300,
+    semiangle_mrad=30,
+    scan_sampling_A=(0.5, 0.5),
+    scan_detector_rotation_deg=351.8,
+) as ptycho:
+    result = ptycho.fit_aberrations(save_dir="results/ssb")
+```
+
+The public units are fixed: kV, mrad, angstrom, nanometres for `C10_nm` and
+`C12_nm`, degrees for `phi12_deg` and the scan-detector rotation, and
+`(row, col)` for all coordinates. Missing required data raises a deterministic error; adapters do
+not probe loosely named attributes.
+
+`SSBResult` owns optimizer metadata and the final complex object wave, and
+derives object phase and amplitude from that wave. There is no separate fit or
+phase-evaluation result class.
+
+Backend geometry and browser transport use private typed records such as
+`BrightfieldDisk` and `SSBExportState`. They are integration details and are
+not exported from `quantem.gpu` or `quantem.gpu.direct_ptycho`.
+
+The scientific defaults are 200 trials, the least-squares agreement of the SSB
+model with the full-BF evidence fitted with the sample tilt and depth spread
+(`fit_aberrations()`), refinement on exact derivatives (`refinement="auto"`),
+float32 real values, and complex64 object values. One vocabulary names the fit
+methods, on every backend that fits:
+
+| Call | Objective | Search and refinement | Code |
+| --- | --- | --- | --- |
+| `fit_aberrations()` (default) | agreement, tilt and depth spread fitted, through fifth order | resident TPE, exact-Hessian Newton, then exact-gradient BFGS through fifth order | `_resident_search.fit_resident`, `_exact_newton`, `fifth_order_fit`, `_gradient_refinement` |
+| `fit_aberrations(search="primary", tilt=False)` | agreement, tilt and depth spread held at 0 | resident TPE, exact-Hessian Newton | `_resident_search.fit_standard_resident` (CUDA and MPS) |
+
+The phase-variance search (`objective="phase_variance"`) and the
+finite-difference and Nelder–Mead refinements are retired. `objective` is a
+saved setting and `SSBResult.objective` records it. The phase variance remains
+the optional diagnostic `result.loss`. A backend may reject a job it cannot
+execute, but may not switch to CPU, crop or subsample the BF evidence, quantize
+values, or change the objective silently.
+
+`fit_aberrations()` and `reconstruct()` own saved-result reuse through the same `save_dir`
+and `force` controls. Reuse requires an exact scientific signature and restores
+one `SSBResult`; there is no cache manager, persistence session, or second
+workflow API. The NPZ owns the complex object wave, and its JSON companion owns
+readable provenance and result metadata. Serialization occurs only at this
+artifact boundary and never changes GPU computation.
+
+## Backend differences
+
+The same call does not return the same phase image on CUDA and MPS:
+
+- both reconstruct the phase of the mean wave (`phase_of_mean`), but the
+  wave sums run different kernels in different orders;
+- the bright-field disk is selected by the same rule with different rounding
+  (CUDA device float32, MPS host float32), so edge pixels can differ; and
+- the agreement and loss reduction orders differ.
+
+Each result records its backend, `phase_of_mean` and output factor
+(`result.phase_estimator`, `result.upsampling`).
+
+## Ownership boundaries
+
+| Layer | Owns | Must not own |
+| --- | --- | --- |
+| `quantem.gpu.SSB` | validation, public units, backend selection, fit/reconstruct/preview lifecycle, shared results | device kernels, viewer rendering |
+| CUDA/MPS backend modules | preparation, device buffers, exact objective, reconstruction kernels | public parameter names, result schemas |
+| `direct_ptycho/webgpu` browser engine | WebGPU execution of an exported bright-field plan with the same units and parameter names | aberration search, silent preview substitution |
+| Applications and viewers | rendering, export folders, provenance presentation, acquisition integration | copied SSB optics, optimizers, or result classes |
+
+Python CUDA and MPS run in process. The browser engine runs asynchronously and
+reconstructs from exported bright-field columns and calibration; it does not
+fit aberrations. Fitting stays on CUDA, MPS and native Metal.
+
+## Required parity gates
+
+Every backend release runs the same fixtures at 128 and 256 scan sizes, plus
+512 where hardware permits. Tests compare BF `(row, col)` indices,
+float32/complex64 dtypes, aberrations, full-BF loss, object phase, and saved
+provenance. WebGPU tests run in a real browser on a hardware adapter; CUDA and
+MPS tests run on their native devices. Performance signoff is recorded only
+after parity passes.
+
+## Kernel selection by scan size
+
+Each backend selects its kernels by square scan size (128, 256, 512 and 1024)
+in one place: `direct_ptycho/cuda/kernels`, `direct_ptycho/mps/kernels` and
+`direct_ptycho/webgpu/backend.ts`. Shape dispatch is not scattered through optimizer or
+viewer code. SSB-specific WebGPU code lives under `direct_ptycho/webgpu`; generic browser
+device utilities live under `device`, and HDF5 decoder utilities live under
+`io/hdf5/webgpu`.

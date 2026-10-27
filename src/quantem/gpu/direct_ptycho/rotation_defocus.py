@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from quantem.gpu.direct_ptycho.contract import RefineMethod
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
+from quantem.gpu.direct_ptycho.results import SSBResult, host_array
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -21,9 +21,9 @@ class RotationDefocusComparison:
 
     Attributes
     ----------
-    fits : tuple of DirectPtychoResult
+    fits : tuple of SSBResult
         Native-grid fits ordered by rotation, then negative/positive C10 range.
-    reconstructions : tuple of DirectPtychoResult
+    reconstructions : tuple of SSBResult
         Each fit reconstructed with Auto sampling.
     focus_ranges : tuple of tuple of float
         Negative and positive C10 intervals, in nm, both including zero.
@@ -33,12 +33,12 @@ class RotationDefocusComparison:
 
     Examples
     --------
-    >>> comparison = ssb.compare_rotation_defocus()  # doctest: +SKIP
+    >>> comparison = ssb.scan_rotations(defocus=True, report=False)  # doctest: +SKIP
     >>> comparison.show()  # doctest: +SKIP
     """
 
-    fits: tuple[DirectPtychoResult, ...]
-    reconstructions: tuple[DirectPtychoResult, ...]
+    fits: tuple[SSBResult, ...]
+    reconstructions: tuple[SSBResult, ...]
     focus_ranges: tuple[tuple[float, float], tuple[float, float]]
     region: tuple[int, int, int, int] | None = None
 
@@ -87,15 +87,24 @@ class RotationDefocusComparison:
     def _repr_html_(self) -> str:
         return self.report()._repr_html_()
 
-    def show(self, *, view_fraction: float = 0.25) -> "Figure":
+    def show(self, *, view_fraction: float | None = None, zoom: float | None = None,
+             size: str | int = "medium", cmap: str = "inferno") -> "Figure":
         """Show matched phase images above native-pixel histograms.
 
         Parameters
         ----------
         view_fraction : float, optional
             Central fraction of each scan axis to display. Use 1 for the full
-            field. Fits and stored arrays are unchanged. One symmetric contrast
-            scale is shared; only each region's median phase is subtracted.
+            field. Legacy crop-only display, default 0.25 when zoom is omitted.
+            Cannot be combined with zoom.
+        zoom : float, optional
+            Show full fitted fields above boxed central magnifications. 1 shows
+            only the full fields. Histograms use the whole fitted region; all
+            views share contrast and the same per-image median subtraction.
+        size : str or int, optional
+            Per-panel size preset or positive pixel width, default "medium".
+        cmap : str, optional
+            Phase colormap, default "inferno". Fits and stored arrays are unchanged.
 
         Returns
         -------
@@ -107,7 +116,18 @@ class RotationDefocusComparison:
         >>> comparison.show(view_fraction=1)  # doctest: +SKIP
         """
         import matplotlib.pyplot as plt
+        from matplotlib.patches import Rectangle
 
+        from quantem.gpu.display._layout import panel_inches, zoom_bounds
+
+        width_in = panel_inches(size)
+        if zoom is not None:
+            zoom_bounds((1, 1), zoom)
+            if view_fraction is not None:
+                raise ValueError("Use zoom or the legacy view_fraction, not both.")
+            view_fraction = 1.0
+        elif view_fraction is None:
+            view_fraction = 0.25
         cases = [
             {"angle": fit.scan_detector_rotation_deg,
              "C10_nm": fit.aberrations["C10_nm"],
@@ -115,7 +135,7 @@ class RotationDefocusComparison:
              "depth_nm": fit.depth_spread_nm or 0.0,
              "phase": result.phase, "native_phase": fit.phase,
              "sampling_A": result.object_sampling_A,
-             "upsampling": result.upsampling_factor}
+             "upsampling": result.upsampling}
             for fit, result in zip(self.fits, self.reconstructions, strict=True)
         ]
         focus_ranges = self.focus_ranges
@@ -137,20 +157,25 @@ class RotationDefocusComparison:
         bins = np.linspace(min(p.min() for p in histograms),
                            max(p.max() for p in histograms), 81)
         colors = ["#9b51b6", "#1487a7"]
-        fig, axes = plt.subplots(3, 2, figsize=(10, 11), constrained_layout=True,
-                                 gridspec_kw={"height_ratios": [1, 1, 0.55]})
+        has_zoom = zoom is not None and zoom > 1
+        heights = [1, 1] + ([1, 1] if has_zoom else []) + [0.55]
+        fig, axes = plt.subplots(len(heights), 2,
+                                 figsize=(2 * (width_in + .9), sum(heights) * (width_in + .65) + 1),
+                                 constrained_layout=True, gridspec_kw={"height_ratios": heights})
         for index, case in enumerate(cases):
             row, col = divmod(index, 2)
             ax = axes[row, col]
-            image = ax.imshow(images[index], cmap="inferno", vmin=-limit, vmax=limit,
+            image = ax.imshow(images[index], cmap=cmap, vmin=-limit, vmax=limit,
                               interpolation="nearest",
                               aspect=case["sampling_A"][0] / case["sampling_A"][1])
             c10 = case["C10_nm"]
             tilt = np.linalg.norm(case["tilt_mrad"])
             focus_label = ("C₁₀ = f = 0 nm (boundary)" if abs(c10) < 1e-6 else
                            f"C₁₀ {c10:+.2f} nm · f {(-c10):+.2f} nm")
-            ax.set_title(f"{case['angle']:.1f}° · {focus_label}\n"
-                         f"Tilt {tilt:.2f} mrad · depth spread {case['depth_nm']:.1f} nm")
+            title_size = min(12, max(8, 3 * width_in))
+            ax.set_title(f"Rotation {case['angle']:.1f}°\n{focus_label}\n"
+                         f"Tilt {tilt:.2f} mrad\nDepth spread {case['depth_nm']:.1f} nm",
+                         fontsize=title_size)
             ax.set_xticks([])
             ax.set_yticks([])
             # Integer-unit scale bar, based on the reconstructed object sampling.
@@ -160,19 +185,45 @@ class RotationDefocusComparison:
                 ax.plot([0.06 * width, 0.06 * width + bar_pixels], [0.91 * height] * 2,
                         color="white", linewidth=3)
                 ax.text(0.06 * width, 0.86 * height, "1 nm", color="white", weight="bold")
+            if has_zoom:
+                crop = zoom_bounds(case["native_phase"].shape, zoom)
+                top, bottom, left, right = (value * case["upsampling"] for value in crop)
+                ax.add_patch(Rectangle((left - .5, top - .5), right - left, bottom - top,
+                                       fill=False, edgecolor="#00D5FF", linewidth=1))
+                zoom_axis = axes[row + 2, col]
+                zoom_axis.set_title(
+                    f"Rotation {case['angle']:.1f}° · central zoom {zoom:g}×\n{focus_label}",
+                    fontsize=title_size,
+                )
+                zoom_axis.set(xticks=[], yticks=[])
+                zoom_axis.imshow(images[index][top:bottom, left:right], cmap=cmap,
+                                 vmin=-limit, vmax=limit, interpolation="nearest",
+                                 aspect=case["sampling_A"][0] / case["sampling_A"][1])
+                from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+
+                width_A = (right - left) * case["sampling_A"][1]
+                lengths = [value for value in (1, 2, 5, 10, 20, 50, 100) if value < width_A * .3]
+                if lengths:
+                    length_A = lengths[-1]
+                    label = f"{length_A // 10} nm" if length_A >= 10 else f"{length_A} Å"
+                    zoom_axis.add_artist(AnchoredSizeBar(
+                        zoom_axis.transData, length_A / case["sampling_A"][1], label,
+                        "lower right", frameon=False, color="white", pad=.5,
+                        size_vertical=max(1, (bottom - top) * .008),
+                    ))
             counts, _ = np.histogram(histograms[index], bins=bins)
             fraction = counts / histograms[index].size
-            axes[2, col].plot((bins[:-1] + bins[1:]) / 2,
+            axes[-1, col].plot((bins[:-1] + bins[1:]) / 2,
                              np.where(fraction > 0, fraction, np.nan),
                              color=colors[row], label=f"{case['angle']:.1f}°")
         for col, bounds in enumerate(focus_ranges):
-            axes[2, col].set(title=f"C₁₀ search: [{bounds[0]:g}, {bounds[1]:g}] nm",
+            axes[-1, col].set(title=f"C₁₀ search: [{bounds[0]:g}, {bounds[1]:g}] nm",
                              xlabel="Phase − median (rad)", ylabel="Native pixel fraction / bin",
                              yscale="log")
-            axes[2, col].set_xlim(bins[0], bins[-1])
-            axes[2, col].axvline(0, color="0.6", linewidth=0.8, linestyle=":")
-            axes[2, col].legend(frameon=False)
-        fig.colorbar(image, ax=axes[:2, :], shrink=0.65, label="Phase − median (rad)")
+            axes[-1, col].set_xlim(bins[0], bins[-1])
+            axes[-1, col].axvline(0, color="0.6", linewidth=0.8, linestyle=":")
+            axes[-1, col].legend(frameon=False)
+        fig.colorbar(image, ax=axes[:-1, :], shrink=0.65, label="Phase − median (rad)")
         region_label = ""
         if self.region is not None:
             row_start, row_stop, col_start, col_stop = self.region
@@ -248,14 +299,14 @@ def compare_rotation_defocus(
                     case = f"{angle:.1f}°, C10 [{interval[0]:g}, {interval[1]:g}] nm"
                     refinement_label = "" if refinement is None else f" + {refinement} refinement"
                     progress.set_postfix_str(f"{case} | Fitting: {num_trials} trials{refinement_label}")
-                    fitted = candidate.find_aberrations(
+                    fitted = candidate.fit_aberrations(
                         search="primary",
                         tilt=tilt, num_trials=num_trials, refinement=refinement,
                         search_ranges={**ranges, "C10_nm": interval}, seed=seed,
                         check_rotation=False, compare_standard=False, verbose=False,
                     )
                     progress.set_postfix_str(f"{case} | Reconstructing scan region {bounds}")
-                    reconstructed = candidate.run(upsampling_factor="auto")
+                    reconstructed = candidate.reconstruct(upsampling="auto")
                     fits.append(fitted)
                     reconstructions.append(reconstructed)
                     progress.update(1)

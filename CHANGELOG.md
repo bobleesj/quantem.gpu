@@ -8,36 +8,6 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
-- CUDA `DirectPtycho.open` of a `.qem` scan above 1024 with a known rotation loads only the bright-field pixels the
-  session reads (`bright_field_only=True`, announced in one line; `False` loads every pixel). The file is summed once
-  over the scan for the exact detector total, the session's own bright-field rule picks the pixels from that mean,
-  and a second pass copies only their count streams through a bounded staging window
-  (`io.qem.load_counts_pixels`); every other pixel becomes an empty constant-zero stream and the spatial index is
-  not loaded. SSB, Phase, Complex and region fits give the same bits as a full load; the session refuses a selection
-  outside the kept pixels. On a 4096 x 4096 scan with a 192 x 192 detector the kept
-  streams (one exact allocation each for payload, offsets and models) take 67.5 of 84.3 GiB; the whole workflow then
-  runs on one 96 GB GPU (open 33 s, 512 x 512 region fits at +-20 and +-2 in 2.1 / 1.3 s equal to the 512 x 512 scan's
-  fit, SSB 1x 6.6 s and 3x 10.7 s, Phase 1x 7.6 s and 3x 97 s, Complex 1x 11.5 s and 3x 552 s; peak 93.7 GB).
-
-- CUDA: `run(method="phase")` and `"complex"` above 1024 (encoded scans up to 4096, rectangular included). The
-  normal equations of every frequency are summed over streamed detector-column batches in float64
-  (`direct_normal_equations` gains an accumulate variant) and solved by float64 Cholesky; frequencies are split into
-  passes when their systems do not fit beside a batch. 1024 x 1024 streamed agrees with the resident solve within
-  4.4e-7 of the largest phase (log-amplitude 1.4e-6), uniform and inverse-mean weighting, 1x to 3x. The streamed SSB
-  adds each batch straight into one complex128 spectrum (40 instead of 56 bytes per output pixel), so 3x output fits
-  beside larger acquisitions.
-
-- CUDA: scans above 1024 (encoded, even sides up to 4096, rectangular included) now reconstruct the full field with
-  the default fifth-order fit. The streamed full-scan SSB applies all 14 fitted aberration terms with the fitted tilt
-  and depth (the resident 14-term kernel), so `find_aberrations(scan_region=...)` followed by
-  `run(fit, compute_loss=False)` works as fitted instead of raising; it matches the resident SSB within 1e-6 rad at
-  1x, 2x and 3x, transposed detectors included. An encoded 1024 x 1024 acquisition keeps `method="phase"` and
-  `"complex"` (they were refused because the scan was streamed); above 1024 they still need a resident region.
-  Fixed: a large scan with one number for `detector_sampling_mrad`, or none (the estimate), raised a TypeError.
-  Fixed: a second `find_aberrations()` on an encoded 1024 x 1024 acquisition held the session's cached Fourier
-  stack beside the new fit's crop and ran out of memory on a 96 GB GPU with ~9300 bright-field pixels; the cache is now
-  dropped first and rebuilt on demand (a repeat fit there takes 5.4 s, peak 70 GB).
-
 - `io.load` reads a 4D-STEM dataset QuantEM saved as a zipped Zarr v3 store (`Dataset4dstem` serializer) in place,
   without quantem core: chunks decode on parallel threads straight into one array, bit for bit in the stored dtype,
   and the saved sampling, units and origin become `scan_sampling_A`, the detector sampling and `origin`. On a saved
@@ -50,11 +20,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   `PreparedDirect.solve`. On two measured 512 x 512 acquisitions at 3x on an Apple M5 Max (4 CPU threads) a frame
   takes 25-43 ms (phase) and 60-81 ms (complex) against 0.33-0.63 s for an exact preparation, and agrees with the
   exact image within 1.0e-6 of its largest phase (log-amplitude within 6e-7); a window takes 11-16 s to build and
-  holds 0.96 GB (phase) or 2.9 GB (complex). Previews come only from `drag`; `run`, `preview` and saved results stay
+  holds 0.96 GB (phase) or 2.9 GB (complex). Previews come only from `drag`; `reconstruct`, `preview` and saved results stay
   exact. The window rule (reach, truncation, order, width, nodes) moves to `ssb.chebyshev`, shared with CUDA.
 
-- Python MPS: the regularized `phase` and `complex` reconstructions, `DirectPtycho.run(method=...)` and
-  `preview(method=...)`, on Apple GPUs (`ssb.mps.direct`), with CUDA's model, layout and regularization. MLX Metal
+- Python MPS: the regularized `phase` and `complex` reconstructions, `DirectPtycho.reconstruct(method=...)`
+  and `preview(method=...)`, on Apple GPUs (`ssb.mps.direct`), with CUDA's model, layout and damping. MLX Metal
   kernels accumulate the normal equations from the retained G(q, k) (float32 per bright-field pixel, float-float across
   pixel batches); the damped systems are solved in float64 on CPU threads; one inverse FFT of the packed eta + i phi
   spectrum gives the wave. On five measured 512 x 512 acquisitions (1x, 2x and Auto, every regularization preset,
@@ -186,8 +156,8 @@ new `rcN` heading when that rc is published to TestPyPI.
   `estimator:` argument of `MetalSSBJointModel.reconstruct`, the mean-phase general and fused 1536-point kernels
   (`ssb-mean-phase`) and the complex-wave amplitude path are removed; the native reconstruction choices are
   ShowPtycho's three, `SSBReconstructionMethod` `.ssb`, `.phase` and `.complex`.
-- Python SSB (CUDA and MPS): the `mean_phase` and `complex_wave` estimators are retired; `DirectPtycho.run` has
-  ShowPtycho's three methods, `ssb` (the phase of the mean wave), `phase` and `complex`. `run`, `reconstruct` and
+- Python SSB (CUDA and MPS): the `mean_phase` and `complex_wave` estimators are retired; `DirectPtycho.reconstruct`
+  has ShowPtycho's three methods, `ssb` (the phase of the mean wave), `phase` and `complex`. `reconstruct` and
   `preview` raise for `phase_estimator="mean_phase"` (naming `method="phase"`) and `"complex_wave"` (naming
   `method="complex"`); `phase_estimator` accepts only `"phase_of_mean"`. Results and screening records saved with a
   retired estimator still load as saved, with a one-line notice. Removed: the backends' `reconstruct_result`,
@@ -215,75 +185,25 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
-- Python MPS: Direct Ptycho prepares G(q, k) from exact bright-field columns (a ShowPtycho or `export_brightfield`
-  export) at native speed: 0.68-0.72 s warm and 0.83-0.85 s from disk on five 512 x 512 scans with 8,800-9,300
-  bright-field pixels on an M5 Max, from 1.49-1.54 s and 2.3-2.6 s (native Metal about 1 s). The stored uint8/uint16
-  counts are read on four threads straight into GPU memory (`MpsBfColumnFrames.columns_into`) and become float32 on
-  the GPU, instead of memmap reads converted 4 bytes per count on one host thread; G(q, k) and the fits are bit for
-  bit unchanged. An export without a stored DC value sums its detector columns the same way, in uint64 (0.21 s from
-  0.84 s). `io.load` sessions already decoded and converted on the GPU (0.92-0.98 s) and are unchanged.
-  `ssb_source_sha256` changes, so results saved before are computed again once.
-- Native (Swift/Metal): the Direct Ptycho module is `MetalDirectPtychoKernels` (product, target and
-  `native/swift/Sources/MetalDirectPtychoKernels`), and its feature-level types take Direct Ptycho names, for example
-  `MetalSSBJointModel` → `MetalDirectPtychoJointModel`, `SSBModelFit` → `DirectPtychoModelFit`, `SSBFitOptions` →
-  `DirectPtychoFitOptions`, `SSBDirectRegularization` → `DirectPtychoRegularization` and `SSBDirectError` →
-  `DirectPtychoSolveError` (38 public types; the rest are `MetalSSB*` → `MetalDirectPtycho*` and `SSB*` →
-  `DirectPtycho*`). The SSB-method and retired-format types keep their names (`SSBPhaseArtifact`, `MetalSSBSavedRun`,
-  `SSBOptimization*`, `SSBBrightfieldSampling`), as do every Codable key, enum raw value and saved schema, the
-  kernel registry names (`ssb-redraw`, `ssb-direct`, ...) and the `ssb*.metal` sources, whose registered digests are
-  unchanged. The `MetalSSBKernels` product stays for one pin cycle as a deprecated re-export with an alias for each
-  renamed type. A packaged app now copies the resource bundle `MetalKernels_MetalDirectPtychoKernels.bundle` (was
-  `MetalKernels_MetalSSBKernels.bundle`). The benchmarks are `metal-direct-ptycho-fit-benchmark` and
-  `metal-direct-ptycho-redraw-benchmark` (were `metal-ssb-*`), the test target `MetalDirectPtychoKernelsTests`.
-- Python MPS: the low-order Direct Ptycho fit runs as fast as the native Metal fit on the same Mac (2.5 s warm on a
-  512 x 512 scan, from 6.9 s): its agreement kernel takes the native arithmetic (exact aperture inside and outside
-  the edge ring, uniform phasor anchors, one dispatch per group of eight trials), and the Newton's exact gradient and
-  Hessian come from 29 k-sums per band frequency, fused with the value pass where every center's are used. The fitted
-  point moves by float32 rounding only (C10 within 2e-6 nm).
+- Direct ptychography uses `fit_aberrations()`, `reconstruct()`, and `scan_rotations()`; the former fitting, run, and rotation-comparison method names are removed. `reconstruct(method="all")` returns SSB, phase-only, and complex results from one shared optical fit. Existing saved-fit files remain readable.
+
+- `DirectPtycho.run`, `preview` and `stream` take `phase_damping` and `amplitude_damping` (were `phase_regularization` and `amplitude_regularization`): the strengths are Tikhonov damping of a damped least-squares solve. The output factor is `upsampling` (was `upsampling_factor`) on `run`, `preview`, `stream`, `show_trials` and `RotationBranches.show` / `upsampled_phases`, and `result.upsampling` / `branches.upsampling` replace `upsampling_factor`. The old keywords and attributes keep working with a `DeprecationWarning`; passing both spellings raises `TypeError`. Saved calibrations are `quantem.ssb-calibration/7` (keys `upsampling`, `phase_damping`, `amplitude_damping`); ShowPtycho still reads `/6` files. The WebGPU engine option `upsamplingFactor` is `upsampling`.
+- `DirectPtycho.stream(...)` is `DirectPtycho.series(...)` (recorded frames from files), returning `SSBSeries`; `stream` and `SSBStream` are removed.
 - SSB `sample_agreement` is the fraction of G's power in the fit band that the fitted model explains, from 0 to 1,
   the same quantity for the standard, joint and fifth-order fits (it was the raw agreement, e.g. 4e17). The band power
   is `band_power` on the CUDA and MPS backends, summed in float64. The fifth-order fit now reports `tilt_fit_gain` (the
   primary's gain times its agreement over the primary's) and honors `compare_standard`. Saved results with the raw
-  agreement are fitted again.
-- Native (Metal) SSB fits report the same `sampleAgreement`: S / P with `MetalSSBJointModel.bandPower` (P summed in
-  Double on the host while the band is gathered, no added preparation time), for the low-order, standard-comparison
-  and fifth-order fits; a fifth-order fit with `compareStandard` carries `tiltFitGain` as Python. `SSBFit` adds
-  `bandPower`, `rawSampleAgreement` and `rawStandardAgreement`; saved fits keep the raw agreement under its old key and
-  the fraction under `sampleAgreementFraction`, and fits saved before decode with no fraction (raw values only).
+  agreement (result records before `quantem.ssb-result/12`) are fitted again.
 - The Model-Based Direct Ptychography package `quantem.gpu.ssb` is now `quantem.gpu.direct_ptycho`, its WebGPU
   sources included (`direct_ptycho/webgpu/*.ts` in `webgpu/sources.json`). Public names stay: `DirectPtycho`, `SSB`,
-  `SSBResult`, kernel and registry names. `quantem.gpu.ssb` remains a deprecated import alias: `quantem.gpu.ssb` and
-  every `quantem.gpu.ssb.<module>` are the same module objects as `quantem.gpu.direct_ptycho.<module>` (no second
-  copies, so `isinstance` checks and pickles naming the old path still work), and the first import warns once with a
-  DeprecationWarning. Browser bundles that copy the WebGPU sources read them from `direct_ptycho/webgpu`.
-- Docs and scripts call the whole feature (fit, the three reconstructions, sessions, backends) Direct Ptycho; SSB
-  names the single-sideband method only. Moved pages keep their old URLs as redirects: `api/ssb` →
-  `api/direct_ptycho`, `kernels/ssb` → `kernels/direct-ptycho`, and `maintainer/ssb-architecture`, `ssb-performance`,
-  `native-joint-ssb`, `ssb-resident-joint-fit` → `maintainer/direct-ptycho-architecture`, `-performance`,
-  `-native-fit`, `-resident-joint-fit`. The `performance/ssb/` topic and its dated reports keep their paths. Scripts:
-  `benchmark_ssb.py` → `benchmark_direct_ptycho.py`, `check_ssb_parity.sh` → `check_direct_ptycho_parity.sh`,
-  `check_ssb_fit_trajectory.sh` → `check_direct_ptycho_fit_trajectory.sh`, `ssb_agreement_gate.py` →
-  `direct_ptycho_agreement_gate.py`, `build_metal_ssb_joint_reference.py` →
-  `build_metal_direct_ptycho_joint_reference.py` (same arguments and `QUANTEM_SSB_*` variables). Docstrings in
-  `direct_ptycho` changed, so `ssb_source_sha256` changes and results saved before are computed again once.
-- Python and WebGPU names of the whole feature are Direct Ptycho names: `DirectPtychoResult`,
-  `DirectPtychoSeriesResult`, `DirectPtychoStream`, `DirectPtychoProtocol`, `DirectPtychoPrecision`,
-  `DirectPtychoExportState`, `CudaDirectPtychoBackend`, `MpsDirectPtychoBackend`, `PreparedMpsDirectPtycho`,
-  `StreamedDirectPtycho`, `DirectPtychoEngine`, `benchmark.run_direct_ptycho` and `run_direct_ptycho_preview`; in
-  `direct_ptycho/webgpu`, `WebGPUDirectPtychoBackend`, `WebGPUDirectPtychoResult`, `DirectPtychoProtocol` and
-  `DirectPtychoPrecision`. The SSB names (`SSBResult`, `CudaSSBBackend`, `run_ssb`, `WebGPUSSBBackend`, ...) stay as
-  aliases of the same objects, without a warning, so imports, `isinstance` checks and pickles keep working; a new
-  pickle names `DirectPtychoResult`. `quantem-gpu benchmark-direct-ptycho` is the benchmark command and
-  `benchmark-ssb` remains the same command. Unchanged: `method="ssb"`, `SSB` (= `DirectPtycho`),
-  `ssb_upsampling_factor`, stored schemas, file names and keys, and `QUANTEM_SSB_*`. `ssb_source_sha256` changes
-  again, so results saved before are computed again once.
-- Python SSB: `upsampling_factor="auto"` still picks the factor from the scan sampling, at most 4×, and now says so
+  `SSBResult`, kernel and registry names. There is no `quantem.gpu.ssb` alias.
+- Python SSB: `upsampling="auto"` still picks the factor from the scan sampling, at most 4×, and now says so
   when the cap lowers it: one line per session, `SSB: auto upsampling capped at 4× (the scan sampling supports 8×);
-  pass upsampling_factor=8 for the full factor.` `stream` resolves auto once for the series. Explicit factors are
+  pass upsampling=8 for the full factor.` `series` resolves auto once for the series. Explicit factors are
   unchanged. `optics.ssb_upsampling_factor(..., max_factor=4)` takes another cap (1, 2, 3, 4 or 8; `max_factor=8` is the
   uncapped choice).
 - Python SSB (CUDA and MPS): the fifth-order fit's higher-order box is wide by default, as on native:
-  `find_aberrations(higher_order_limit=None)` (the default) bounds each of the 22 higher-order coordinates to ±20 rad
+  `fit_aberrations(higher_order_limit=None)` (the default) bounds each of the 22 higher-order coordinates to ±20 rad
   of probe phase at the aperture edge, and `higher_order_limit=2` keeps the earlier box (`search="primary"` refuses
   either). A ±20 fit is checked with native's definition (`fifth_order_fit.higher_order_consistency`): the fifth
   order is refitted with exact gradients on each half of an alternating 0.05 1/A ring split of the band frequencies,
@@ -363,7 +283,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 - On Macs with 96 GB or more, the 512 x 512 MPS loss computes its row IFFT in tiles of 1024 bright-field pixels
   instead of one 4096-pixel chunk, so a ShowPtycho session keeps 3.5 GiB of loss buffers instead of 9.5 to 15 GiB
   (session peak 34.3 -> 22.2 GiB on gold) with the same loss and phase bits; loss previews take about 4 % longer.
-  `quantem.gpu.ssb.mps.reconstruct.LOSS_ROW_IFFT_TILE_BF = None` keeps the whole chunk.
+  `quantem.gpu.direct_ptycho.mps.reconstruct.LOSS_ROW_IFFT_TILE_BF = None` keeps the whole chunk.
 - An MPS region refit (`select_region`, `find_aberrations(scan_region=...)`, ShowPtycho's Fit Regions and Crop and
   Refit) frees the full field's G(q, k) first and the next full-field preview rebuilds it (about 0.8 s, the same
   bits); fits evaluate their loss in 256-pixel tiles and the standard search in 1,024-pixel packs. A ShowPtycho
@@ -402,8 +322,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `SSB.compare_rotation_branches(**find_aberrations_options)` fits both 180°
   branches and returns a `RotationBranches` with `show()` and `report()`; on a
   given rotation it reports without moving it unless `apply=True`.
-- `quantem.gpu.ssb.results.phase_skewness`, the mean-centred third-moment
-  ratio, next to `column_sign`; `quantem.gpu.ssb.branches` holds the column
+- `quantem.gpu.direct_ptycho.results.phase_skewness`, the mean-centred third-moment
+  ratio, next to `column_sign`; `quantem.gpu.direct_ptycho.branches` holds the column
   test (`locate_atomic_columns`, `column_phase_test`).
 
 - The beginner SSB path is load, state the beam, reconstruct:
@@ -415,7 +335,7 @@ new `rcN` heading when that rc is published to TestPyPI.
   ShowPtycho when that package is installed. The launch table names each
   rotation's source and adds a **Rotation flipped** row.
 
-- `quantem.gpu.ssb.DEPTH_SPREAD_RANGE_NM = (2.0, 60.0)` is the depth-spread
+- `quantem.gpu.direct_ptycho.DEPTH_SPREAD_RANGE_NM = (2.0, 60.0)` is the depth-spread
   range the joint fit searches and its parameter slices span, for
   applications that offer the same range.
 - `quantem.gpu.optics` exports `ssb_upsampling_factor`, which other packages
@@ -439,11 +359,6 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
-- Native (Swift/Metal): measuring the bright-field disk (`MetalDirectPtychoBrightfieldEstimate.measure`) in a packaged
-  app read `ssb_calibration.metal` through SwiftPM's `Bundle.module`, which looks only beside the app and in the
-  build folder and stops the process when neither exists. It now reads the app's copy in `Contents/Resources`
-  through the shader loader, like every other kernel of the module; a test checks that the loader's packaged
-  bundle name is the bundle SwiftPM builds and that a packaged copy gives the registered digests.
 - Python MPS SSB: the bright-field frequencies k are formed in float64 and rounded once to float32
   (`ssb.mps.prepared.bright_field_frequencies`, used at preparation and on a rotation change, and by the direct
   methods). They were formed from a float32-rounded disk centre, which shifts every k by the same amount. Fits move by
@@ -588,7 +503,7 @@ new `rcN` heading when that rc is published to TestPyPI.
   `find_optimal_rotation(..., scan_detector_rotation_flipped=...)` keeps a
   given flip and fits the angle alone, the one search SSB uses.
 
-- `disk_edge_radius` moves from `quantem.gpu.ssb.brightfield` to
+- `disk_edge_radius` moves from `quantem.gpu.direct_ptycho.brightfield` to
   `quantem.gpu.detector.disk_edge_radius`.
 
 - `detector_transposed` is renamed `scan_detector_rotation_flipped`
@@ -734,7 +649,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 - The axis word in arguments is `col`: `extract_diffraction_device(scan_row,
   scan_column)` of encoded residents becomes `(scan_row, scan_col)`, and
   regions are documented as `(row_start, row_stop, col_start, col_stop)`.
-- The WebGPU SSB engine (`ssb/webgpu`) follows the same vocabulary. It reads
+- The WebGPU SSB engine (`direct_ptycho/webgpu`) follows the same vocabulary. It reads
   a ShowPtycho folder's `snapshots/cal.json` as quantem.widget writes it,
   `"schema": "quantem.ssb-browser-calibration/2"`: `num_bf` becomes
   `num_bright_field_pixels`, `rotation_angle_deg` becomes
@@ -1622,7 +1537,7 @@ Includes everything since rc5; rc6 to rc13 were published without rolling this f
 - Move BF/DF/ADF, mean diffraction pattern, masked-sum, virtual image, CoM/DPC,
   and iDPC compute paths into `quantem.gpu`, with parity tests against the
   legacy widget/live paths.
-- Move SSB compute APIs from `quantem.live` into `quantem.gpu.ssb`, including
+- Move SSB compute APIs from `quantem.live` into `quantem.gpu.direct_ptycho`, including
   CUDA reference parity, MPS/MLX preview and C10/C12/phi12 free-fit paths, and
   real-data parity/speed checks used during migration.
 - Move MPS chunk-backed product compute and movie export helpers into

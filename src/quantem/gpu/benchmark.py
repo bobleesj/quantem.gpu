@@ -1,4 +1,4 @@
-"""Reproducible Direct Ptycho workflow timings using the installed compute backend."""
+"""Reproducible SSB workflow timings using the installed compute backend."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from quantem.gpu import DirectPtycho
+    from quantem.gpu import SSB
 
 
 def _synchronize(backend: str) -> None:
@@ -151,15 +151,15 @@ def _regions(shape: tuple[int, int], sizes: tuple[int, ...]) -> list[tuple[str, 
     return result
 
 
-def run_direct_ptycho_preview(
-    ssb: DirectPtycho,
+def run_ssb_preview(
+    ssb: SSB,
     *,
     upsampling: tuple[int, ...] = (1, 2, 3, 4, 8),
     runs: int = 6,
     defocus_step_nm: float = 0.1,
     progress: Callable[[str], None] | None = None,
 ) -> dict:
-    """Measure changed-defocus redraws of an existing full-field Direct Ptycho session.
+    """Measure changed-defocus redraws of an existing full-field SSB session.
 
     Retain the session's aberrations, rotation, tilt, depth and complete
     bright-field support. Only C10 changes along a deterministic trajectory;
@@ -169,7 +169,7 @@ def run_direct_ptycho_preview(
 
     Parameters
     ----------
-    ssb : quantem.gpu.DirectPtycho
+    ssb : quantem.gpu.SSB
         Calibrated session, normally restored from a reviewed joint fit.
     upsampling : tuple of int
         Output factors to measure. Supported factors are 1, 2, 3, 4 and 8.
@@ -194,8 +194,8 @@ def run_direct_ptycho_preview(
 
     Examples
     --------
-    >>> from quantem.gpu.benchmark import run_direct_ptycho_preview
-    >>> report = run_direct_ptycho_preview(ssb, upsampling=(1, 4), runs=11)  # doctest: +SKIP
+    >>> from quantem.gpu.benchmark import run_ssb_preview
+    >>> report = run_ssb_preview(ssb, upsampling=(1, 4), runs=11)  # doctest: +SKIP
     """
     if runs < 2:
         raise ValueError("Use runs >= 2 for a first observation and warm timings.")
@@ -248,7 +248,7 @@ def run_direct_ptycho_preview(
                     ssb.preview,
                     values,
                     compute_loss=False,
-                    upsampling_factor=factor,
+                    upsampling=factor,
                     output="native" if backend == "cuda" else "numpy",
                     **sample,
                 ),
@@ -284,7 +284,7 @@ def run_direct_ptycho_preview(
     return report
 
 
-def run_direct_ptycho(
+def run_ssb(
     source: str | Path,
     *,
     backend: str = "auto",
@@ -343,8 +343,8 @@ def run_direct_ptycho(
 
     Examples
     --------
-    >>> from quantem.gpu.benchmark import run_direct_ptycho
-    >>> report = run_direct_ptycho("scan.qem")  # doctest: +SKIP
+    >>> from quantem.gpu.benchmark import run_ssb
+    >>> report = run_ssb("scan.qem")  # doctest: +SKIP
     """
     from quantem.gpu import DirectPtycho, io
     from quantem.gpu.device import resolve
@@ -437,7 +437,7 @@ def run_direct_ptycho(
             with ssb:
                 fitted, seconds = _timed(
                     partial(
-                        ssb.find_aberrations,
+                        ssb.fit_aberrations,
                         search="standard",
                         num_trials=num_trials,
                         seed=seed,
@@ -457,7 +457,7 @@ def run_direct_ptycho(
                     partial(
                         ssb.reconstruct,
                         fitted,
-                        upsampling_factor="auto",
+                        upsampling="auto",
                         compute_loss=False,
                     ),
                     selected,
@@ -514,7 +514,7 @@ def run_direct_ptycho(
                     with regional:
                         local, fit_s = _timed(
                             partial(
-                                regional.find_aberrations,
+                                regional.fit_aberrations,
                                 search="standard",
                                 num_trials=num_trials,
                                 seed=seed,
@@ -532,7 +532,7 @@ def run_direct_ptycho(
                             local.aberrations,
                             sample_tilt_mrad=local.sample_tilt_mrad,
                             depth_spread_nm=local.depth_spread_nm,
-                            upsampling_factor=factor,
+                            upsampling=factor,
                             compute_loss=False,
                         ),
                         selected,
@@ -595,8 +595,3 @@ def run_direct_ptycho(
         }
     finally:
         data.close()
-
-
-# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
-run_ssb = run_direct_ptycho
-run_ssb_preview = run_direct_ptycho_preview

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 
 def test_inspect_all_fitted_coefficients_and_export_without_rounding():
@@ -21,7 +21,7 @@ def test_inspect_all_fitted_coefficients_and_export_without_rounding():
         "C56_nm": 555512.25,
         "phi56_deg": -4.642517566680908,
     }
-    fit = DirectPtychoResult(
+    fit = SSBResult(
         backend="cuda",
         object_wave=np.ones((8, 8), dtype=np.complex64),
         aberrations=coefficients,
@@ -72,7 +72,7 @@ def test_inspect_all_fitted_coefficients_and_export_without_rounding():
 @pytest.mark.parametrize("columns", [2, 3])
 def test_compact_report_preserves_every_parameter_and_export(columns):
     """Review a shorter table, then export the same full-precision optics."""
-    fit = DirectPtychoResult(
+    fit = SSBResult(
         backend="cuda", object_wave=np.ones((8, 8), dtype=np.complex64),
         aberrations={"C10_nm": -17.487747060046477, "C30_nm": -3094.677734375},
         sample_tilt_mrad=(-4.409721571110939, 5.255381849875908),
@@ -100,7 +100,7 @@ def test_compact_report_preserves_every_parameter_and_export(columns):
 
 def test_compare_reports_and_export_series_trial_ids():
     """Compare fits and retain the series report's existing trial-table meaning."""
-    fit = DirectPtychoResult(
+    fit = SSBResult(
         backend="cuda",
         object_wave=np.ones((8, 8), dtype=np.complex64),
         aberrations={"C10_nm": 1.23456789, "C12_nm": 0.0, "phi12_deg": 0.0},
@@ -108,7 +108,7 @@ def test_compare_reports_and_export_series_trial_ids():
     comparison = pd.concat({"first": fit.report(), "repeat": fit.report()}, axis=1)
     assert comparison.loc["C10 (nm)"].tolist() == [1.23456789, 1.23456789]
     assert "C30 (nm)" not in comparison.index
-    series = DirectPtychoResult(
+    series = SSBResult(
         backend="cuda",
         object_wave=np.ones((2, 8, 8), dtype=np.complex64),
         aberrations={},
@@ -135,7 +135,7 @@ def test_report_option_displays_saved_convergence_once(monkeypatch):
     import IPython.display
     import matplotlib.pyplot as plt
 
-    fit = DirectPtychoResult(
+    fit = SSBResult(
         backend="cuda", object_wave=np.ones((8, 8), dtype=np.complex64),
         aberrations={"C10_nm": 1.23456789},
         objective="agreement",

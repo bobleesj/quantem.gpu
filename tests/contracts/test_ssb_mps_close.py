@@ -16,7 +16,7 @@ def test_close_releases_backend_state_and_mlx_cache(monkeypatch) -> None:
         "require_mlx",
         lambda: SimpleNamespace(clear_cache=lambda: calls.append("clear")),
     )
-    backend = backend_module.MpsDirectPtychoBackend.__new__(backend_module.MpsDirectPtychoBackend)
+    backend = backend_module.MpsSSBBackend.__new__(backend_module.MpsSSBBackend)
     for name in (
         "_prepared",
         "_frames",

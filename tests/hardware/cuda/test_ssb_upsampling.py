@@ -44,7 +44,7 @@ def test_upsampling_matches_zero_inserted_scan(factor):
     try:
         coefs = {'C10_nm': 30.0, 'C12_nm': 5.0, 'phi12_deg': math.degrees(0.3)}
         native, native_loss = ssb.preview(coefs)
-        phase, loss = ssb.preview(coefs, upsampling_factor=factor)
+        phase, loss = ssb.preview(coefs, upsampling=factor)
         assert phase.shape == (128 * factor, 128 * factor)
         assert loss == native_loss
         expected = _wave_sum_oracle(ssb, factor, (300.0, 50.0, 0.3), (0.0, 0.0), 0.0)
@@ -67,7 +67,7 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
     try:
         native, native_loss = ssb.preview(coefs, sample_tilt_mrad=tilt, depth_spread_nm=depth)
         actual, loss = ssb.preview(
-            coefs, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
+            coefs, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling=factor,
         )
         expected, _ = engine.thick.reconstruct(
             -80.0, 40.0, -0.7, tilt, depth * 10, compute_loss=False,
@@ -81,7 +81,7 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
         # UI can retain an angle after its higher-order magnitude is cleared.
         inactive, _ = ssb.preview(
             coefs | {"phi21_deg": math.degrees(1.2)}, sample_tilt_mrad=tilt,
-            depth_spread_nm=depth, upsampling_factor=factor,
+            depth_spread_nm=depth, upsampling=factor,
         )
         np.testing.assert_allclose(inactive, actual, atol=2e-6)
     finally:

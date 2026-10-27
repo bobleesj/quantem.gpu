@@ -40,20 +40,19 @@ def test_two_rotation_branches_require_the_full_gpu_trial_budget():
         benchmark._fit_record(result, "mps", 200, 2)
 
 
-@pytest.mark.parametrize("command", ["benchmark-direct-ptycho", "benchmark-ssb"])
-def test_cli_records_portable_report_and_scalar_calibration(tmp_path, monkeypatch, command):
+def test_cli_records_portable_report_and_scalar_calibration(tmp_path, monkeypatch):
     received = {}
 
     def run(source, **kwargs):
         received.update(kwargs)
         return {"measurements": {"full_field_fit": benchmark._summary([2.0, 1.0])}}
 
-    monkeypatch.setattr(benchmark, "run_direct_ptycho", run)
+    monkeypatch.setattr(benchmark, "run_ssb", run)
     output = tmp_path / "benchmark.json"
     assert (
         cli.main(
             [
-                command,
+                "benchmark-ssb",
                 "scan.qem",
                 "--out",
                 str(output),
@@ -72,8 +71,3 @@ def test_cli_records_portable_report_and_scalar_calibration(tmp_path, monkeypatc
     assert (
         json.loads(output.read_text())["measurements"]["full_field_fit"]["warm_n"] == 1
     )
-
-
-def test_old_benchmark_names_are_the_new_functions():
-    assert benchmark.run_ssb is benchmark.run_direct_ptycho
-    assert benchmark.run_ssb_preview is benchmark.run_direct_ptycho_preview

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 cp = pytest.importorskip("cupy")
 
@@ -14,7 +14,7 @@ def test_probe_matches_quantem_optics_and_centered_fourier_pair():
     from quantem.diffractive_imaging.complex_probe import evaluate_probe, polar_spatial_frequencies
     from quantem.gpu.optics.physics import wavelength_A_from_kV
 
-    result = DirectPtychoResult(
+    result = SSBResult(
         object_wave=cp.ones((128, 128), dtype=cp.complex64), backend="cuda",
         voltage_kV=300, semiangle_mrad=30, aberrations={"C10_nm": -3.2, "C12_nm": 1.4, "phi12_deg": math.degrees(-0.6)},
     )
@@ -45,10 +45,10 @@ def test_reconstruction_keeps_model_probe_and_saves_calibration(tmp_path):
     ssb, _ = _synthetic_session()
     try:
         native = ssb.reconstruct(aberrations={"C10_nm": -3, "C12_nm": 0.5, "phi12_deg": math.degrees(0.4)})
-        fine = ssb.reconstruct(native, upsampling_factor=4)
-        automatic = ssb.reconstruct(native, upsampling_factor="auto")
-        explicit = ssb.reconstruct(native, upsampling_factor=2)
-        assert automatic.upsampling_factor == 2
+        fine = ssb.reconstruct(native, upsampling=4)
+        automatic = ssb.reconstruct(native, upsampling="auto")
+        explicit = ssb.reconstruct(native, upsampling=2)
+        assert automatic.upsampling == 2
         cp.testing.assert_array_equal(automatic.object_wave, explicit.object_wave)
         assert automatic.phase_limits == native.phase_limits
         cp.testing.assert_array_equal(fine.probe(), native.probe())
@@ -66,7 +66,7 @@ def test_reconstruction_keeps_model_probe_and_saves_calibration(tmp_path):
 
 
 def test_defocused_model_fits_inside_the_automatic_field():
-    result = DirectPtychoResult(
+    result = SSBResult(
         object_wave=cp.ones((128, 128), dtype=cp.complex64), backend="cuda",
         voltage_kV=300, semiangle_mrad=30, aberrations={"C10_nm": 100, "C12_nm": 5, "phi12_deg": math.degrees(0.3)},
     )
@@ -79,7 +79,7 @@ def test_phase_and_probe_views_keep_data_and_calibration():
     import matplotlib.pyplot as plt
     from matplotlib.text import Text
 
-    result = DirectPtychoResult(
+    result = SSBResult(
         object_wave=cp.exp(1j * cp.arange(64 * 64, dtype=cp.float32).reshape(64, 64) / 4096),
         backend="cuda", voltage_kV=300, semiangle_mrad=30,
         object_sampling_A=(0.4, 0.5), aberrations={"C10_nm": 10, "C12_nm": 2, "phi12_deg": math.degrees(0.2)},
@@ -112,7 +112,7 @@ def test_phase_and_probe_views_keep_data_and_calibration():
     from dataclasses import replace
 
     fine = replace(result, object_wave=cp.repeat(cp.repeat(result.object_wave, 4, axis=0), 4, axis=1),
-                   upsampling_factor=4, object_sampling_A=(0.1, 0.125))
+                   upsampling=4, object_sampling_A=(0.1, 0.125))
     figure = result.show(compare=fine, axsize=(7, 7))
     image_axes = [axis for axis in figure.axes if axis.images]
     assert len(image_axes) == 4
@@ -122,5 +122,9 @@ def test_phase_and_probe_views_keep_data_and_calibration():
     assert image_axes[3].images[0].get_array().shape[:2] == (64, 64)
     colorbars = [axis for axis in figure.axes if not axis.images]
     assert all(np.allclose(axis.get_ylim(), result.phase_limits) for axis in colorbars)
-    np.testing.assert_array_equal(figure.get_size_inches(), (14, 14))
+    # axsize is each panel's size; the figure adds fixed-inch gaps for titles and colorbars (panel_figure).
+    width_in, height_in = figure.get_size_inches()
+    for axis in image_axes:
+        position = axis.get_position(original=True)
+        np.testing.assert_allclose((position.width * width_in, position.height * height_in), (7, 7), rtol=1e-9)
     cp.testing.assert_array_equal(result.phase, phase)

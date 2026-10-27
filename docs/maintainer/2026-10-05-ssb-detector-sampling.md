@@ -52,7 +52,7 @@ so R is the radius where the disk falls to half its plateau.
 | MPS array with `bf_radius` | NumPy copy of the integer half-maximum | 2 alpha / R |
 | MPS dataset and `SSB.open` | integer half-maximum of the bright-field CROP (no disk edge in it) | 2 alpha / R |
 | CUDA WebGPU export (`detected_radius_px`) | inverse of the above | 2 alpha / det |
-| regional fit (`find_aberrations(scan_region=...)`) | `bf_radius` or the equal-area radius | alpha / R |
+| regional fit (`fit_aberrations(scan_region=...)`) | `bf_radius` or the equal-area radius | alpha / R |
 
 **After.** One radius, one formula, both backends and every input: `direct_ptycho.brightfield.disk_edge_radius(mean_pattern)`
 is the radius of a disk with the area of the pixels brighter than half the plateau (the median of the pixels above
@@ -71,7 +71,7 @@ Script: scratch `probes/abtem_radii.py`; test `tests/hardware/cuda/test_ssb_unit
 | equal area, mean + std | 54.493 | 0.5505 | +0.67 % | 1.1011 | +101.3 % |
 | integer half maximum | 55 | 0.5455 | -0.26 % | 1.0909 | +99.5 % |
 
-Fitted C10 (truth -10 nm, `find_aberrations(trials=200)`): exact sampling -10.03 nm; new automatic sampling -9.67 nm;
+Fitted C10 (truth -10 nm, `fit_aberrations(trials=200)`): exact sampling -10.03 nm; new automatic sampling -9.67 nm;
 equal-area -9.60 nm; integer half maximum -9.77 nm; old CUDA automatic (1.0909) -4.36 nm; old MPS array automatic
 (1.1011) -4.29 nm.
 

@@ -17,7 +17,7 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from quantem.gpu.formats.hdf5.frames import detector_sources
-from quantem.gpu.formats.hdf5.master import get_metadata, read_pixel_mask
+from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE, get_metadata, read_pixel_mask
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.resident.hot_pixels import fill_flagged, hot_pixel_outcome, hot_pixel_record, median_plan
@@ -49,11 +49,16 @@ def load_reference(
         meta = get_metadata(str(path))
         meta["source_path"] = str(path)
         mask = read_pixel_mask(str(path)) if apply_mask else None
-        correction = hot_pixel_record(mask, hot_pixel_correction if apply_mask else "none", backend="cpu")
+        saved_correction = meta.get(HOT_PIXEL_CORRECTION_ATTRIBUTE)
+        correction = hot_pixel_record(
+            mask, hot_pixel_correction if apply_mask and saved_correction is None else "none", backend="cpu",
+        )
         data = load_master(str(path), pixel_mask=mask if correction["applied"] else None,
                            method=correction["method"], verbose=verbose)
         source_dtype = np.dtype(data.dtype)
-        if correction["applied"]:
+        if saved_correction is not None:
+            correction = saved_correction
+        elif correction["applied"]:
             correction["stage"] = "cpu_load_before_dense_storage"
         meta["hot_pixel_correction"] = correction
         if mask is not None:

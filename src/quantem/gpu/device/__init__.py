@@ -8,6 +8,7 @@ from quantem.gpu.device.select import (
     resolve_device,
     runtime_notice,
 )
+from quantem.gpu.device.telemetry import status
 
 __all__ = [
     "detect",
@@ -16,4 +17,5 @@ __all__ = [
     "resolve",
     "resolve_device",
     "runtime_notice",
+    "status",
 ]

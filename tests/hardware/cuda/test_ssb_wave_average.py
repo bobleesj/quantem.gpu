@@ -14,7 +14,7 @@ def test_paired_frequencies_match_full_plane_and_keep_native_diagnostics(depth, 
     """Retain the complete BF sum when a finer grid permits frequency pairing."""
     ssb, engine = _synthetic_session()
     options = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth,
-                   upsampling_factor=4)
+                   upsampling=4)
     aberrations = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
     try:
         assert engine.thick._wave_columns(128, 128) == 128
@@ -72,11 +72,11 @@ def test_explicit_estimator_matches_direct_waves_and_preserves_native_loss(facto
     try:
         native, native_loss = ssb.preview(aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth)
         legacy, _ = ssb.preview(
-            aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
+            aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling=factor,
         )
         candidate, loss = ssb.preview(
             aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth,
-            upsampling_factor=factor,
+            upsampling=factor,
         )
         expected = _direct_wave_average(ssb, factor, tilt, depth)
         np.testing.assert_allclose(candidate, expected, atol=1e-6, rtol=1e-5)
@@ -88,7 +88,7 @@ def test_explicit_estimator_matches_direct_waves_and_preserves_native_loss(facto
         np.testing.assert_array_equal(restored, native)
         assert restored_loss == native_loss
         repeated, _ = ssb.preview(
-            aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
+            aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling=factor,
         )
         np.testing.assert_array_equal(repeated, legacy)
     finally:
@@ -106,7 +106,7 @@ def test_wave_average_chunking_and_inactive_higher_order_angles(depth):
     try:
         candidate, loss = ssb.preview(
             aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth,
-            upsampling_factor=4, compute_loss=False,
+            upsampling=4, compute_loss=False,
         )
         assert loss is None
         batched, _ = engine.thick.reconstruct(
@@ -117,7 +117,7 @@ def test_wave_average_chunking_and_inactive_higher_order_angles(depth):
         # an azimuth left on a higher order whose magnitude is zero selects the packed coefficients
         packed, _ = ssb.preview(
             aberrations | {"phi21_deg": math.degrees(1.2)}, sample_tilt_mrad=tilt, depth_spread_nm=depth,
-            upsampling_factor=4, compute_loss=False,
+            upsampling=4, compute_loss=False,
         )
         np.testing.assert_allclose(packed, candidate, atol=1e-6, rtol=0)
     finally:
@@ -146,7 +146,7 @@ def test_group_support_keeps_full_bf_phase_after_rotation(depth, higher, monkeyp
             ssb.set_rotation(rotation)
             for factor in (1, 4):
                 options = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth,
-                               upsampling_factor=factor, compute_loss=False)
+                               upsampling=factor, compute_loss=False)
                 candidate, _ = ssb.preview(aberrations, **options)
                 with monkeypatch.context() as patch:
                     patch.setattr(engine.thick, "_wave_group_bounds", unpruned)
@@ -172,7 +172,7 @@ def test_higher_order_coefficients_are_independent_between_streams():
         with cp.cuda.Device(0), cp.cuda.Stream(non_blocking=True):
             phase, _ = sessions[index].preview(
                 optics[index], sample_tilt_mrad=(3.0, -4.0),
-                depth_spread_nm=18.0, upsampling_factor=2, compute_loss=False,
+                depth_spread_nm=18.0, upsampling=2, compute_loss=False,
             )
             return np.asarray(phase).copy()
 
@@ -201,7 +201,7 @@ def test_native_512_joint_optics_keep_phase_with_bounded_workspace():
              scan_sampling_A=(0.3, 0.3), detector_sampling_mrad=(5.0, 5.0),
              scan_detector_rotation_deg=17) as ssb:
         options = {
-            "upsampling_factor": 1,
+            "upsampling": 1,
             "sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": 18.0,
             "compute_loss": False,
         }

@@ -22,7 +22,7 @@ def test_region_fit_preserves_overview_with_memory_budget(monkeypatch, retain):
     with _disk_session(n=128) as session:
         before, before_loss = session.preview(
             optics, sample_tilt_mrad=(2.0, -1.0), depth_spread_nm=12.0,
-            upsampling_factor=2, compute_loss=True,
+            upsampling=2, compute_loss=True,
         )
         prepared = session._compute._prepared
         with session.select_region((16, 80, 24, 104)) as regional:
@@ -34,7 +34,7 @@ def test_region_fit_preserves_overview_with_memory_budget(monkeypatch, retain):
             assert np.isfinite(fit.phase).all()
         after, after_loss = session.preview(
             optics, sample_tilt_mrad=(2.0, -1.0), depth_spread_nm=12.0,
-            upsampling_factor=2, compute_loss=True,
+            upsampling=2, compute_loss=True,
         )
         np.testing.assert_array_equal(after, before)
         assert after_loss == before_loss

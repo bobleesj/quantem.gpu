@@ -13,19 +13,19 @@ import sys
 import numpy as np
 import torch
 
+from quantem.gpu.detector.bit_ans import BitANSDetectorCompute
 from quantem.gpu.detector.bounded import BoundedDetectorCompute
 from quantem.gpu.detector.counts import CountDetectorCompute, CountSeriesCompute
 from quantem.gpu.detector.cuda.dense import CudaKernelCompute
 from quantem.gpu.detector.cuda.paired_series import PairedSeriesCompute
 from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
-from quantem.gpu.detector.bit_ans import BitANSDetectorCompute
 from quantem.gpu.detector.mps.dense import MetalRawBackend
 from quantem.gpu.detector.tensors import ArrayBackend, TorchBackend
 from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.cuda.paired import PairedCounts
 from quantem.gpu.resident.cuda.precision import PrecisionSource as CUDAPrecisionSource
-from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 from quantem.gpu.resident.mps.frames import ChunkedFrames
 from quantem.gpu.resident.mps.precision import PrecisionSource as MPSPrecisionSource
@@ -319,7 +319,8 @@ class DetectorSession:
         Returns
         -------
         tuple of numpy.ndarray
-            Detector ``(row, col)`` centres in pixels, each with ``scan_shape``.
+            Detector ``(row, col)`` centres in pixels, each with
+            ``(*series_shape, *scan_shape)``.
             They are not mean-subtracted; ``dpc.center_of_mass`` does that.
 
         Examples
@@ -327,8 +328,9 @@ class DetectorSession:
         >>> com_row, com_col = session.center_of_mass()
         """
         com_col, com_row = self._backend.center_of_mass(mask)
-        row = _reduced_to_numpy(com_row).reshape(self.scan_shape)
-        col = _reduced_to_numpy(com_col).reshape(self.scan_shape)
+        shape = (*self.series_shape, *self.scan_shape)
+        row = _reduced_to_numpy(com_row).reshape(shape)
+        col = _reduced_to_numpy(com_col).reshape(shape)
         return row, col
 
     def close(self) -> None:
@@ -453,6 +455,9 @@ def _check_output(output: str, out) -> None:
 
 def _reduced_to_numpy(data) -> np.ndarray:
     """Convert a small reduced product to float32 NumPy for widget display."""
+    if _is_loaded_instance(data, "cupy", "ndarray") and data.dtype == np.uint32:
+        # CUDA rounds the exact count sum once, avoiding a second host allocation.
+        return data.astype(np.float32).get()
     return np.asarray(_to_host(data), dtype=np.float32)
 
 

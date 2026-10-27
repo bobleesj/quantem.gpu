@@ -195,7 +195,7 @@ def test_model_scores_and_public_joint_fit_remain_on_device(device, monkeypatch)
         # precision on CUDA; Metal already used an FP64 host reduction.
         np.testing.assert_allclose(actual, expected, rtol=2e-6)
 
-        result = ssb.find_aberrations(search="primary",
+        result = ssb.fit_aberrations(search="primary",
             tilt=True,
             num_trials=200,
             compare_standard=False,

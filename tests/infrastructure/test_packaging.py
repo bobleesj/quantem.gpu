@@ -10,7 +10,7 @@ def _distributions(extra: str) -> set[str]:
 
 
 def test_lazily_imported_packages_are_declared_in_an_extra() -> None:
-    # DirectPtychoResult.show, DirectPtycho.show_trials and the rotation histograms import these when called.
+    # SSBResult.show, SSB.show_trials and the rotation histograms import these when called.
     assert {"ipython", "matplotlib", "quantem"} <= _distributions("plot")
     # movie.cuda writes MP4 through NVENC.
     assert "pynvvideocodec" in _distributions("movie")

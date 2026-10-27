@@ -49,6 +49,14 @@ def test_higher_orders_are_named_keys_packed_in_krivanek_order():
     np.testing.assert_array_equal(angles, expected_angles)
 
 
+class _DeviceArray(np.ndarray):
+    """A host array with CuPy's ``get(out=...)``: what a CUDA backend hands the session for a preview."""
+
+    def get(self, out):
+        out[...] = self
+        return out
+
+
 @pytest.mark.parametrize("compute_loss", [False, True])
 def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monkeypatch, compute_loss):
     """The session converts nm to Angstrom once, before the backend: for one public mapping CUDA and MPS are handed
@@ -60,13 +68,6 @@ def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monk
 
     received = {}
 
-    class DeviceArray(np.ndarray):
-        """A CUDA session hands back a device array; the preview copies it into its own pinned host buffer."""
-
-        def get(self, out):
-            out[...] = self
-            return out
-
     class Recorder:
         def __init__(self, name):
             self.name = name
@@ -74,11 +75,12 @@ def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monk
         def preview_upsampled(self, aberrations, *, compute_loss, higher_order_magnitudes=None, higher_order_angles=None, **kwargs):
             assert "phase_estimator" not in kwargs  # SSB has one estimator, the phase of the mean wave
             received[self.name] = (aberrations, higher_order_magnitudes, higher_order_angles)
-            return np.zeros((2, 2), np.float32).view(DeviceArray), 0.5 if compute_loss else None
+            return np.zeros((2, 2), np.float32).view(_DeviceArray), 0.5 if compute_loss else None
 
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
-    # pinned host memory stands in as a plain host buffer
-    monkeypatch.setattr(workflow, "cp", SimpleNamespace(cuda=SimpleNamespace(alloc_pinned_memory=bytearray)))
+    # A CUDA session copies its device phase into a pinned host buffer it owns (phase.get(out=host)); the double's
+    # pinned memory is a bytearray and its device array a NumPy array with CuPy's get(out=...).
+    monkeypatch.setattr(workflow, "cp", SimpleNamespace(asnumpy=np.asarray, cuda=SimpleNamespace(alloc_pinned_memory=bytearray)))
 
     def session(name):
         ssb = workflow.SSB(np.zeros((2, 2, 3, 3), np.uint16), voltage_kV=300.0, semiangle_mrad=30.0,

@@ -82,7 +82,7 @@ dpc_result.report()
 
 The table labels the scan-detector rotation in degrees, the detector-axis swap,
 and elapsed seconds. DPC's curl minimum does not resolve the 180° ambiguity;
-Direct Ptycho can check the phase polarity before selecting a branch.
+SSB can check the phase polarity before selecting a branch.
 
 ## Shapes, coordinates, dtypes, and units
 
@@ -146,7 +146,7 @@ scan-detector rotation fixed, or omit it for the DPC rotation search. Inspect
 one is `scan_detector_rotation_deg`. The fitted value lies in [0, 180]: an
 unrotated scan fits the end point of the search grid, float32 pi, which reads
 `180.000005`, and 0 and 180 describe the same estimate. DPC does not estimate
-probe aberrations; Direct Ptycho does.
+SSB aberrations.
 
 For a client that needs several launch products from the same source, use
 `screening.prepare()` and reuse its small derived state instead of traversing

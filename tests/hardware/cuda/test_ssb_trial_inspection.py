@@ -23,7 +23,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
                     search_ranges={'C10_nm': (-10., 10.), 'C12_nm': 4., 'phi12_deg': 30.},
                     save_dir=tmp_path / 'search')
     try:
-        aberrations = ssb.find_aberrations(search="primary", **settings)
+        aberrations = ssb.fit_aberrations(search="primary", **settings)
         assert not hasattr(ssb, 'fit')
         assert len(aberrations.trials) == 8
         assert aberrations["C12_nm"] == pytest.approx(4.)
@@ -69,7 +69,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
                              signature=aberrations.metadata['signature'], backend='cuda')
         assert loaded.reused
         assert loaded.trial_records == records
-        override = ssb.reconstruct(loaded, aberrations={'C10_nm': 0.}, upsampling_factor=2)
+        override = ssb.reconstruct(loaded, aberrations={'C10_nm': 0.}, upsampling=2)
         assert override.phase.shape == (256, 256)
         assert override.object_sampling_A == (.15, .15)
         assert override['C10_nm'] == 0.
@@ -94,7 +94,7 @@ def test_branch_comparison_keeps_original_trial_geometry(monkeypatch):
     monkeypatch.setattr(workflow, 'compare_branches', second_branch)
     first = ssb.scan_detector_rotation_deg
     try:
-        ssb.compare_rotation_branches(num_trials=8, refinement=None, verbose=False, apply=True)
+        ssb.scan_rotations(report=False, num_trials=8, refinement=None, verbose=False, apply=True)
         aberrations = ssb._aberration_search
         assert aberrations.scan_detector_rotation_deg == ssb.scan_detector_rotation_deg != first
         first_search = [record for record in aberrations.trial_records if record['search'] == 0]
@@ -121,7 +121,7 @@ def test_joint_history_carries_tilt_depth_and_objective():
 
     ssb, _ = _synthetic_session()
     try:
-        aberrations = ssb.find_aberrations(search="primary", tilt=True, num_trials=8, refinement=None,
+        aberrations = ssb.fit_aberrations(search="primary", tilt=True, num_trials=8, refinement=None,
                                            check_rotation=False, verbose=False)
         table = aberrations.trials
         assert len(table) == 8
@@ -147,12 +147,12 @@ def test_joint_history_carries_tilt_depth_and_objective():
 def test_zero_trial_search_does_not_relabel_previous_search():
     ssb, _ = _synthetic_session()
     try:
-        first = ssb.find_aberrations(search="primary", tilt=False, num_trials=4, check_rotation=False,
+        first = ssb.fit_aberrations(search="primary", tilt=False, num_trials=4, check_rotation=False,
                                      verbose=False)
         history = deepcopy(first.trial_records)
         assert first.refine_nfev > 0
         ssb.set_rotation(37.)
-        second = ssb.find_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
+        second = ssb.fit_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
                                        check_rotation=False, verbose=False)
         assert second.num_trials == 0
         assert second.trials.empty
@@ -172,7 +172,7 @@ def test_search_starts_from_the_current_public_coefficients():
     try:
         wanted = {'C10_nm': 9.0, 'C12_nm': 3.0, 'phi12_deg': math.degrees(0.25)}
         ssb.reconstruct(aberrations=wanted, compute_loss=False)
-        result = ssb.find_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
+        result = ssb.fit_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
                                       check_rotation=False, verbose=False)
         assert result.aberrations == wanted
         assert ssb.aberrations == wanted
@@ -188,7 +188,7 @@ def test_zero_trial_tilt_search_fails_before_backend_work(monkeypatch):
             raise AssertionError('An invalid tilt search reached the backend')
         monkeypatch.setattr(ssb, '_fit_tilt', forbidden)
         with pytest.raises(ValueError, match='trials=0'):
-            ssb.find_aberrations(search="primary", tilt=True, num_trials=0, verbose=False)
+            ssb.fit_aberrations(search="primary", tilt=True, num_trials=0, verbose=False)
     finally:
         ssb.close()
 
@@ -202,9 +202,9 @@ def test_search_retains_anisotropic_scan_calibration():
         with SSB(original._data, backend='cuda', voltage_kV=300.0,
                  semiangle_mrad=30.0, scan_sampling_A=(0.3, 0.45),
                  detector_sampling_mrad=(3.0, 3.0)) as ssb:
-            result = ssb.find_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
+            result = ssb.fit_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
                                           check_rotation=False, verbose=False)
             assert result.object_sampling_A == (0.3, 0.45)
-            assert ssb.reconstruct(result, upsampling_factor=2).object_sampling_A == (0.15, 0.225)
+            assert ssb.reconstruct(result, upsampling=2).object_sampling_A == (0.15, 0.225)
     finally:
         original.close()

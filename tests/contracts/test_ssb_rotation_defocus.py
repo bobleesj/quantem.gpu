@@ -5,7 +5,7 @@ import numpy as np
 
 matplotlib.use("Agg")
 
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 from quantem.gpu.direct_ptycho.rotation_defocus import RotationDefocusComparison
 
 
@@ -24,10 +24,10 @@ def test_review_shares_contrast_and_retains_unresolved_phase_evidence():
                 scan_detector_rotation_deg=angle, sample_tilt_mrad=(1.0, 2.0),
                 depth_spread_nm=10.0,
             )
-            fits.append(DirectPtychoResult(object_wave=wave, object_sampling_A=(0.5, 0.5), **fields))
-            reconstructions.append(DirectPtychoResult(
+            fits.append(SSBResult(object_wave=wave, object_sampling_A=(0.5, 0.5), **fields))
+            reconstructions.append(SSBResult(
                 object_wave=wave.repeat(2, axis=0).repeat(2, axis=1),
-                object_sampling_A=(0.25, 0.25), upsampling_factor=2, **fields,
+                object_sampling_A=(0.25, 0.25), upsampling=2, **fields,
             ))
     review = RotationDefocusComparison(tuple(fits), tuple(reconstructions), ((-30, 0), (0, 30)))
     originals = [result.phase.copy() for result in reconstructions]
@@ -54,7 +54,7 @@ def test_comparison_defaults_to_table_and_show_displays_one_figure(monkeypatch):
     from quantem.gpu.direct_ptycho import rotation_defocus
     from quantem.gpu.direct_ptycho.workflow import SSB
 
-    fits = tuple(DirectPtychoResult(
+    fits = tuple(SSBResult(
         object_wave=np.exp(1j * np.arange(64).reshape(8, 8) / 100), backend="mps",
         aberrations={"C10_nm": focus}, scan_detector_rotation_deg=angle,
         object_sampling_A=(0.5, 0.5), loss=0.2,
@@ -64,7 +64,9 @@ def test_comparison_defaults_to_table_and_show_displays_one_figure(monkeypatch):
     monkeypatch.setattr(rotation_defocus, "compare_rotation_defocus", lambda *args, **kwargs: review)
     displayed = []
     monkeypatch.setattr(IPython.display, "display", displayed.append)
-    returned = SSB.compare_rotation_defocus(SimpleNamespace(_device=None))
+    session = object.__new__(SSB)
+    session._device = None
+    returned = session.scan_rotations(defocus=True, report=False, )
     assert returned is review
     assert not displayed
     table = returned.report()
@@ -73,8 +75,8 @@ def test_comparison_defaults_to_table_and_show_displays_one_figure(monkeypatch):
     assert table["f = -C10 (nm)"].tolist() == [8.0, 0.0, 8.0, 0.0]
     assert table["At zero boundary"].tolist() == [False, True, False, True]
     assert "Unresolved" in returned._repr_html_()
-    SSB.compare_rotation_defocus(SimpleNamespace(_device=None), show=True)
-    assert len(displayed) == 1
+    session.scan_rotations(defocus=True, report=True)
+    assert len(displayed) == 2
 
 
 
@@ -91,7 +93,7 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
         def set_rotation(self, angle):
             self.scan_detector_rotation_deg = angle
 
-        def find_aberrations(self, **options):
+        def fit_aberrations(self, **options):
             calls.append((self.scan_detector_rotation_deg, dict(self.aberrations),
                           self.sample_tilt_mrad, self.depth_spread_nm, options))
             # A completed fit changes state; none of it may seed the next case.
@@ -100,8 +102,8 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
             self.latest = SimpleNamespace(case=len(calls))
             return self.latest
 
-        def run(self, *, upsampling_factor):
-            assert upsampling_factor == "auto"
+        def reconstruct(self, *, upsampling):
+            assert upsampling == "auto"
             return self.latest
 
     @contextmanager

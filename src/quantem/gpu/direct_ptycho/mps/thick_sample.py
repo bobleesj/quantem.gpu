@@ -30,7 +30,7 @@ from quantem.gpu.direct_ptycho._execution import checkpoint
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sums_from_complex
 from quantem.gpu.direct_ptycho.mps.prepared import (
-    PreparedMpsDirectPtycho,
+    PreparedMpsSSB,
     compute_geometry,
     expand_hermitian_mx,
     ifft2_chunked,
@@ -56,7 +56,7 @@ _K_CHUNK = 256      # bright-field pixels summed per thread; the partial sums ov
 
 
 def reconstruct_thick(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     C10: float,
     C12: float,
@@ -83,7 +83,7 @@ def reconstruct_thick(
 
 
 def reconstruct_thick_reference(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     C10: float,
     C12: float,
@@ -127,7 +127,7 @@ def reconstruct_thick_reference(
 
 
 def thick_fit(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     C10: float,
     C12: float,
@@ -164,7 +164,7 @@ def thick_fit(
     return float((power / den[keep]).sum())
 
 
-def thick_fit_batch(prepared: PreparedMpsDirectPtycho, params, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
+def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
     """``thick_fit`` for many parameter sets at once with the fused Metal kernel (fast path used by the fit search).
 
     ``params``: (B, 6) rows of (C10, C12, phi12, tilt_row_mrad, tilt_col_mrad, thickness), engine units. Same value as
@@ -245,7 +245,7 @@ def thick_fit_batch(prepared: PreparedMpsDirectPtycho, params, band_inv_A: tuple
     return out
 
 
-def _chunk_bf(prepared: PreparedMpsDirectPtycho) -> int:
+def _chunk_bf(prepared: PreparedMpsSSB) -> int:
     """BF pixels per chunk so a chunk's complex temporaries stay near ``_CHUNK_BYTES``."""
     ny, nx = prepared.scan_shape
     return max(1, _CHUNK_BYTES // (int(ny) * int(nx) * 8 * _LIVE_PLANES))
@@ -294,7 +294,7 @@ def _compiled_terms():
     return mx.compile(terms)
 
 
-def _params(prepared: PreparedMpsDirectPtycho, C10, C12, phi12, sample_tilt_mrad, thickness):
+def _params(prepared: PreparedMpsSSB, C10, C12, phi12, sample_tilt_mrad, thickness):
     """Pack every scalar of the thick-sample model into one float32 array, in the order ``_compiled_terms`` reads.
 
     One array argument keeps the compiled graph from being traced again for each new parameter value.
@@ -310,7 +310,7 @@ def _params(prepared: PreparedMpsDirectPtycho, C10, C12, phi12, sample_tilt_mrad
     )
 
 
-def _chunk_terms(prepared: PreparedMpsDirectPtycho, start: int, stop: int, params):
+def _chunk_terms(prepared: PreparedMpsSSB, start: int, stop: int, params):
     """Full-plane G for storage BF pixels [start, stop) and the model terms for them."""
     mx = prepared.mx
     _, nx = prepared.scan_shape
@@ -460,7 +460,7 @@ def _thick_fit_batch_kernel():
     )
 
 
-def band_power(prepared: PreparedMpsDirectPtycho, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> float:
+def band_power(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> float:
     """G's power over the fit band, sum_q w_q sum_k |G(q, k)|^2 (per-q sums of BF chunks, added in float64).
 
     It bounds the agreement (Cauchy-Schwarz at each q), so agreement / band power is the fraction of the band's
@@ -480,7 +480,7 @@ def band_power(prepared: PreparedMpsDirectPtycho, band_inv_A: tuple[float, float
     return prepared.band_power[1]
 
 
-def _band(prepared: PreparedMpsDirectPtycho, band_inv_A: tuple[float, float]):
+def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
     """Band q on the stored half-plane: flat index into a G plane, (qx, qy) and the mirror weight; cached on ``prepared``.
 
     The term at -q equals the term at q (gamma(k, -q) = -conj gamma(k, q) for any probe phase with the first term at
@@ -520,7 +520,7 @@ def _band(prepared: PreparedMpsDirectPtycho, band_inv_A: tuple[float, float]):
     return band
 
 
-def _band_mask(prepared: PreparedMpsDirectPtycho, band_inv_A: tuple[float, float]) -> np.ndarray:
+def _band_mask(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]) -> np.ndarray:
     q_row = np.asarray(prepared.q_row, dtype=np.float32)[:, None]
     q_col = np.asarray(prepared.q_col, dtype=np.float32)[None, :]
     q = np.hypot(q_row, q_col)

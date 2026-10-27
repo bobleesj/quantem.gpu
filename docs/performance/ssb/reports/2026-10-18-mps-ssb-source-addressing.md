@@ -1,6 +1,6 @@
 # Reuse source addresses in MPS SSB reconstruction
 
-> **Historical:** describes the code as of 2026-10-18; the `mean_phase` estimator is retired. See the [current fit methods](../../../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-18; the `mean_phase` estimator is retired. See the [current fit methods](../../../api/ssb.md).
 
 ## Change
 

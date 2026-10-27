@@ -1,6 +1,6 @@
 # Faster broad SSB search with identical results
 
-> **Historical:** describes the code as of 2026-10-22; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-22; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/ssb.md).
 
 ## What changed
 

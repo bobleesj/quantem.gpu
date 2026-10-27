@@ -159,6 +159,9 @@ For large acquisitions, retain the accelerated encoded path where supported.
 
 ### Inspect metadata without a GPU or full decode
 
+Use `io.report("example.qem")` for a table. Existing structured metadata
+access through `io.inspect` remains available:
+
 ```python
 info = io.inspect("example.qem")
 metadata = info.metadata["scientific_metadata"]

@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { WebGPUDirectPtychoBackend, setSSBLocalFiles } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
+import { WebGPUSSBBackend, setSSBLocalFiles } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
 
 /** A synthetic SSB folder: square n x n scan, a bright-field disk of `radius` detector pixels with
  * uint16 counts, and the calibration fields the browser engine reads. */
@@ -72,13 +72,13 @@ export async function runSsbBfSubsetParity(): Promise<Record<string, number>> {
   const folder = syntheticFolder(128, 12);
   setSSBLocalFiles([folder.file]);
   const aberrations = [-120.0, 35.0, 0.6] as const;
-  const full = new WebGPUDirectPtychoBackend(folder.cal, { kind: "bf_columns", json: folder.source });
+  const full = new WebGPUSSBBackend(folder.cal, { kind: "bf_columns", json: folder.source });
   const out: Record<string, number> = { numBf: folder.numBf };
   try {
     await full.prepareBfCount(folder.numBf);
     await full.reconstruct(...aberrations, { numBrightFieldPixels: folder.numBf });
     for (const count of [100, 300]) {
-      const subset = new WebGPUDirectPtychoBackend(folder.cal, { kind: "bf_columns", json: folder.source });
+      const subset = new WebGPUSSBBackend(folder.cal, { kind: "bf_columns", json: folder.source });
       try {
         await subset.prepareBfCount(count);
         for (const computeLoss of [false, true]) {
@@ -97,7 +97,7 @@ export async function runSsbBfSubsetParity(): Promise<Record<string, number>> {
       } finally { subset.close(); }
     }
     const back = await full.reconstruct(...aberrations, { numBrightFieldPixels: folder.numBf, computeLoss: true });
-    const reference = new WebGPUDirectPtychoBackend(folder.cal, { kind: "bf_columns", json: folder.source });
+    const reference = new WebGPUSSBBackend(folder.cal, { kind: "bf_columns", json: folder.source });
     try {
       await reference.prepareBfCount(folder.numBf);
       const again = await reference.reconstruct(...aberrations, { numBrightFieldPixels: folder.numBf, computeLoss: true });
@@ -118,7 +118,7 @@ and exceeded the budget the chunk count was chosen for.
 export async function runSsbBuildPeak(): Promise<Record<string, number>> {
   const folder = syntheticFolder(128, 24);
   setSSBLocalFiles([folder.file]);
-  const engine = new WebGPUDirectPtychoBackend(folder.cal, { kind: "bf_columns", json: folder.source });
+  const engine = new WebGPUSSBBackend(folder.cal, { kind: "bf_columns", json: folder.source });
   try {
     const { peak, live } = await trackBufferBytes(() => engine.prepareBfCount(folder.numBf));
     const out = { numBf: folder.numBf, peakMB: peak / 1e6, readyMB: live / 1e6, fullPlaneMB: folder.numBf * 128 * 128 * 8 / 1e6 };

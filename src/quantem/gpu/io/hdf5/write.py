@@ -7,6 +7,7 @@ finished bitshuffle+LZ4 chunks to a background writer thread, so compression
 of the next batch overlaps the file writes of this one.
 """
 
+import json
 import queue
 import threading
 from collections import deque
@@ -20,6 +21,8 @@ import torch
 
 from quantem.gpu.device.cuda_runtime import _release_pinned, cp
 from quantem.gpu.formats.hdf5.frames import BLOCK_SIZE
+from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE
+from quantem.gpu.formats.qem.metadata import json_metadata
 from quantem.gpu.io.hdf5.cuda.encode import compress_batch
 from quantem.gpu.io.hdf5.mps.encode import NativeU16Compressor, compress_tensor_batch
 from quantem.gpu.resident.mps.arrays import MetalArray
@@ -539,6 +542,14 @@ def _metadata_attrs(handle, metadata):
         return
     for key, value in metadata.items():
         if value is None:
+            continue
+        if key == HOT_PIXEL_CORRECTION_ATTRIBUTE and not isinstance(value, str):
+            value = json.dumps(value, default=json_metadata)
+        if key == "pixel_mask" and HOT_PIXEL_CORRECTION_ATTRIBUTE in metadata:
+            name = "entry/instrument/detector/detectorSpecific/pixel_mask"
+            if name in handle:
+                del handle[name]
+            handle.create_dataset(name, data=value)
             continue
         try:
             handle.attrs[key] = value

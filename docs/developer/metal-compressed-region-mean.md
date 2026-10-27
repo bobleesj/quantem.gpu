@@ -3,7 +3,7 @@
 `MetalRuntimeANSResidentSource.meanDiffractionPattern(rows:columns:shape:)`
 returns a detector-sized `Float32` mean and exact `UInt64` numerator, directly
 from compressed resident counts. This complements point diffraction; it does
-not change the encoded data or the Direct Ptycho detector-column reduction.
+not change the encoded data or the SSB detector-column reduction.
 
 ## Contract, version 1
 

@@ -3,7 +3,7 @@
 Both maximize the least-squares agreement of the SSB model with G(q, k) (the fused Metal kernel) with the
 device-resident search of ``direct_ptycho._resident_search`` and the trust-region Newton on the exact derivatives: the standard
 fit (``optimize``) holds the sample tilt and depth spread at 0, where the model is ordinary SSB exactly, and the joint
-fit (``fit_sample``) fits them. The phase variance at the fit is ``DirectPtychoResult.loss``, a diagnostic.
+fit (``fit_sample``) fits them. The phase variance at the fit is ``SSBResult.loss``, a diagnostic.
 """
 
 import math
@@ -18,9 +18,9 @@ from quantem.gpu.direct_ptycho.mps.hardware import (
     require_mlx,
 )
 from quantem.gpu.direct_ptycho.mps.kernels.object_sum import object_fourier_sum_dynamic
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB
 from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 # The standard fit's search box when search_ranges leaves a coefficient out: C10 +-40 nm, C12 up to 10 nm, phi12 over
 # its period (engine keys and units).
@@ -54,7 +54,7 @@ def newton_supported(search_ranges: dict | None, refine_lock: list[str] | None) 
 
 
 def optimize(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     selection: BrightfieldDisk,
     *,
     voltage_kV: float,
@@ -70,7 +70,7 @@ def optimize(
     verbose: bool = False,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     compute_loss: bool = True,
-) -> tuple[DirectPtychoResult, np.ndarray | None]:
+) -> tuple[SSBResult, np.ndarray | None]:
     """Standard SSB fit of C10/C12/phi12 on Apple GPU, then the complex object and the phase at the fit.
 
     ``num_trials`` trials of the resident search maximize the agreement with the sample tilt and depth spread at 0,
@@ -127,7 +127,7 @@ def optimize(
                 "params": {"C10_A": record["params"]["C10"], "C12_A": record["params"]["C12"],
                            "phi12_deg": math.degrees(record["params"]["phi12"])},
                 "loss": record["loss"]} for record in fit["trial_records"]]
-    result = DirectPtychoResult(
+    result = SSBResult(
         object_wave=object_wave,
         backend="mps",
         aberrations=dict(best),
@@ -158,7 +158,7 @@ def optimize(
 # =========================================================================
 
 def fit_sample(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     **options,

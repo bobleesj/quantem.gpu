@@ -24,7 +24,7 @@ def test_featureless_acquisition_reports_undefined_prediction_error(method):
         bright_field_center_px=(7.5, 7.5), bright_field_radius_px=5.,
         scan_detector_rotation_deg=0., aberrations={"C10_nm": 0., "C12_nm": 0., "phi12_deg": 0.},
     ) as ptycho:
-        result = ptycho.run(method=method, compute_loss=True, verbose=False)
+        result = ptycho.reconstruct(method=method, compute_loss=True, verbose=False)
         cp.testing.assert_array_equal(result.object_wave, cp.ones((128, 128), cp.complex64))
         diagnostics = result.reconstruction_diagnostics
         assert diagnostics["training_relative_sse"] is None

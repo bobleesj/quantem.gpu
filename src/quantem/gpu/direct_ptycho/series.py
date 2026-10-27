@@ -1,4 +1,4 @@
-"""SSB reconstruction of an acquisition series (``DirectPtycho.reconstruct_series``) and the Live layout it reads and writes.
+"""SSB reconstruction of an acquisition series (``SSB.reconstruct_series``) and the Live layout it reads and writes.
 
 A series directory holds raw ``*_master.h5`` acquisitions and, under ``live/screen/<dataset>`` (or the ``save_dir``
 a caller names, such as Live's ``<output>/live/screen``), the products QuantEM Live already made: ``config.json`` with the fitted SSB settings, bright- and dark-field images, and saved SSB results.
@@ -20,8 +20,8 @@ from quantem.gpu.formats import dataset_yaml
 from quantem.gpu.direct_ptycho.contract import auto_refinement
 from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, RESULT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
 from quantem.gpu.direct_ptycho.results import (
-    DirectPtychoResult,
-    DirectPtychoSeriesResult,
+    SSBResult,
+    SSBSeriesResult,
     host_array,
     retired_estimator_note,
 )
@@ -47,17 +47,15 @@ def reconstruct_series(
     save_dir: str | Path | None = None,
     progress: bool = True,
     num_trials: int | None = None,
-) -> DirectPtychoSeriesResult:
-    """Reconstruct an SSB series with independent or fixed-probe fitting (``DirectPtycho.reconstruct_series``).
-
-    ``cls`` is ``DirectPtycho``.
+) -> SSBSeriesResult:
+    """Reconstruct an SSB series with independent or fixed-probe fitting (``SSB.reconstruct_series``; ``cls`` is ``SSB``).
 
     Existing QuantEM Live products under ``save_dir`` (default
     ``<source>/live/screen``) are discovered and reused automatically. Missing
-    products run through :class:`DirectPtycho` and are saved to the same location. When
+    products run through :class:`SSB` and are saved to the same location. When
     no Live screening exists, physical settings are read from ``dataset.yaml``
     or from explicit keyword arguments; an acquisition with no recorded
-    rotation has it estimated by ``DirectPtycho.open``. A stored fit counts only when it carries
+    rotation has it estimated by ``SSB.open``. A stored fit counts only when it carries
     the current fit schema (``stored_fit``); any other is treated as absent, so
     a probe reference stored by an earlier version is fitted again.
 
@@ -78,7 +76,7 @@ def reconstruct_series(
     voltage_kV, semiangle_mrad, scan_detector_rotation_deg : float, optional
         Physical microscope settings; each wins over prior Live metadata and
         ``dataset.yaml``. A rotation none of them records is estimated per
-        acquisition (``DirectPtycho.open``).
+        acquisition (``SSB.open``).
     scan_detector_rotation_flipped : bool, optional
         Whether the detector row and column axes are exchanged with the
         rotation. None takes the saved fit's flag, else unflipped for a
@@ -90,10 +88,10 @@ def reconstruct_series(
     num_trials : int, optional
         Compatibility alias for ``trials``. Supply only one of them.
     refinement : str or None, default "auto"
-        ``"auto"``, the exact-derivative fit (``find_aberrations``), or None for no local refinement; another value
+        ``"auto"``, the exact-derivative fit (``fit_aberrations``), or None for no local refinement; another value
         is retired and prints one line.
     backend : {"auto", "cuda", "mps"}, default "auto"
-        Accelerated Direct Ptycho backend. CPU is never used.
+        Accelerated SSB backend. CPU is never used.
     save_dir : str or Path, optional
         Directory holding one folder per acquisition (``<dataset>/config.json``
         and its saved fits), the layout ``live screen --output OUT`` writes as
@@ -103,7 +101,7 @@ def reconstruct_series(
 
     Returns
     -------
-    DirectPtychoSeriesResult
+    SSBSeriesResult
         One independent-fit or fixed-probe phase stack, with its bright- and
         dark-field companions and a ``metadata()`` table.
     """
@@ -150,7 +148,7 @@ def reconstruct_series(
                     f"Raw probe-reference acquisition not found: {source}"
                 )
             with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
-                reference_result = ssb.find_aberrations(
+                reference_result = ssb.fit_aberrations(
                     search="primary", num_trials=num_trials,
                     refinement=refinement,
                     save_dir=reference_path / "ssb-fit",
@@ -191,13 +189,13 @@ def reconstruct_series(
                         "scan_detector_rotation_flipped": reference_flipped}
         with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
             if fixed_probe:
-                result = ssb.run(
+                result = ssb.reconstruct(
                     aberrations=reference_aberrations,
                     save_dir=screen_path / "ssb-locked",
                     verbose=False,
                 )
             else:
-                result = ssb.find_aberrations(
+                result = ssb.fit_aberrations(
                     search="primary", num_trials=num_trials,
                     refinement=refinement,
                     save_dir=screen_path / "ssb-fit",
@@ -234,7 +232,7 @@ def reconstruct_series(
                 "result": "saved" if result.reused else "computed",
             }
         )
-    return DirectPtychoSeriesResult(
+    return SSBSeriesResult(
         phase=np.stack(phases),
         bright_field=np.stack(bright_fields),
         dark_field=np.stack(dark_fields),
@@ -373,7 +371,7 @@ def acquisition_settings(
 
     Each value comes from the caller, else the saved Live SSB fit, else ``dataset.yaml``; a beam or scan step none of
     them gives is an error that names the three places to fix it. A rotation none of them gives stays None, and
-    ``DirectPtycho.open`` estimates it with its detector axes. The flip is the caller's, else the saved fit's when the
+    ``SSB.open`` estimates it with its detector axes. The flip is the caller's, else the saved fit's when the
     rotation is the saved one, else unflipped for a recorded rotation.
     """
     config_path = screen_path / "config.json"
@@ -409,10 +407,10 @@ def acquisition_settings(
 
 
 def open_settings(settings: dict[str, object]) -> dict[str, object]:
-    """``DirectPtycho.open`` keywords for one acquisition's resolved settings.
+    """``SSB.open`` keywords for one acquisition's resolved settings.
 
     A saved bright-field radius is passed as it was fitted: rounding it to whole pixels (53.4 to 53) reconstructed with
-    a different disk than the stored fit. A rotation of None is estimated by ``DirectPtycho.open``.
+    a different disk than the stored fit. A rotation of None is estimated by ``SSB.open``.
     """
     rotation = settings["scan_detector_rotation_deg"]
     return {
@@ -432,7 +430,7 @@ LIVE_BRANCH_DECISION = ("column_sign", "session_moved_180", "session_rotation", 
 def write_fit_metadata(
     screen_path: Path,
     settings: dict[str, object],
-    result: DirectPtychoResult,
+    result: SSBResult,
     detector_sampling_mrad: tuple[float, float],
 ) -> None:
     """Record a fresh GPU fit in ``config.json`` so Live screening and later series runs find it.
@@ -442,7 +440,7 @@ def write_fit_metadata(
     without which no reader accepts it. Fields Live added to a block of the
     current schema are kept, except quantem.live's 180-degree decision on the earlier fit (``LIVE_BRANCH_DECISION``),
     which a new fit invalidates; a block of any other schema is replaced whole, so none of its values pass as current.
-    ``detector_sampling_mrad`` is the session's after ``DirectPtycho.open``, which holds one on every backend; a block
+    ``detector_sampling_mrad`` is the session's after ``SSB.open``, which holds one on every backend; a block
     without it cannot be exported.
 
     The file is quantem.live's screening record. A record this function creates carries
@@ -609,14 +607,14 @@ def _dataset_yaml_settings(
 
 
 def screen_record_settings(record: str | Path) -> dict[str, object]:
-    """The ``DirectPtycho.open`` keywords a QuantEM Live screening record holds for its acquisition's stored SSB fit.
+    """The ``SSB.open`` keywords a QuantEM Live screening record holds for its acquisition's stored SSB fit.
 
     ``record`` is one acquisition's screening folder (``<output>/live/screen/<dataset>``) or its ``config.json``.
     The keywords are everything the fit used: the beam (``voltage_kV``, ``semiangle_mrad``), ``scan_sampling_A`` and
     ``detector_sampling_mrad`` as ``(row, col)`` pairs, the physical ``scan_detector_rotation_deg`` with
     ``scan_detector_rotation_flipped``, the bright-field centre and radius, and the fitted ``aberrations``
     (``C10_nm``, ``C12_nm``, ``phi12_deg``). The fit is the record's result, its tilt-corrected fit when it has one
-    (``screen_record_fit``); its sample tilt and depth spread are not ``DirectPtycho.open`` keywords and are
+    (``screen_record_fit``); its sample tilt and depth spread are not ``SSB.open`` keywords and are
     ``screen_record_sample``'s. Opening with all of them reproduces the fit's geometry; opening with
     the rotation alone (``series.open_settings``) let the session derive another detector sampling and disk.
 
@@ -678,7 +676,7 @@ def open_screen_record(
     backend: Literal["auto", "cuda", "mps"] = "auto",
     verbose: bool = False,
 ):
-    """Open a ``DirectPtycho`` session on a QuantEM Live screened acquisition, at its stored fit (``screen_record_settings``).
+    """Open an ``SSB`` session on a QuantEM Live screened acquisition, at its stored fit (``screen_record_settings``).
 
     The bridge from a microscope session to the notebook: the screening record names the raw source
     (``source_master``) and every calibration of its fit, so the session opens with the fitted aberrations, the
@@ -690,7 +688,7 @@ def open_screen_record(
     --------
     >>> from quantem.gpu.direct_ptycho.series import open_screen_record  # doctest: +SKIP
     >>> ssb = open_screen_record("OUT/live/screen/scan_018")  # doctest: +SKIP
-    >>> ssb.run()  # doctest: +SKIP
+    >>> ssb.reconstruct()  # doctest: +SKIP
     >>> ssb.show(show_fft=True, save_dir="ssb-results")  # doctest: +SKIP
     """
     from quantem.gpu.direct_ptycho.workflow import DirectPtycho

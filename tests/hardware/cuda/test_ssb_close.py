@@ -14,7 +14,7 @@ def test_close_releases_thick_engine_before_loading_another_dataset():
     """A saved phase survives close, while the engine's cyclic state does not."""
     ssb, engine = _synthetic_session()
     options = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18.,
-                   upsampling_factor=4, compute_loss=False)
+                   upsampling=4, compute_loss=False)
     aberrations = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
     try:
         phase, _ = ssb.preview(aberrations, **options)

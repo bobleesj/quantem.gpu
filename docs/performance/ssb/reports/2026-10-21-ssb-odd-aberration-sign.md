@@ -1,6 +1,6 @@
 # Sign of the odd aberrations in SSB reconstruction (2026-10-21)
 
-> **Historical:** describes the code as of 2026-10-21; the `mean_phase` estimator is retired. See the [current fit methods](../../../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-21; the `mean_phase` estimator is retired. See the [current fit methods](../../../api/ssb.md).
 
 ## Question
 

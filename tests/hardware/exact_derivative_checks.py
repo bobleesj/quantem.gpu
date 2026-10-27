@@ -146,7 +146,7 @@ def check_fit(simulation, backend):
     of the reference: at fifth order, and over the six low-order coordinates with the higher orders held at 0."""
     data, _, detector_mrad = simulation
     with session(data, detector_mrad, backend) as ssb:
-        exact = ssb.find_aberrations(show=False, verbose=False, check_rotation="both", higher_order_limit=2)
+        exact = ssb.fit_aberrations(show=False, verbose=False, check_rotation="both", higher_order_limit=2)
         truth = reference(ssb)
         fitted = np.asarray(exact.optimizer["coordinates"])
         assert truth.agreement(fitted) >= truth.agreement(float64_optimum(truth, fitted)) * (1 - 2e-7)
@@ -170,7 +170,7 @@ def check_wide_fit(simulation, backend):
 
     data, _, detector_mrad = simulation
     with session(data, detector_mrad, backend) as ssb:
-        fit = ssb.find_aberrations(show=False, verbose=False)
+        fit = ssb.fit_aberrations(show=False, verbose=False)
         check = fit.optimizer["higher_order_consistency"]
         assert check["trusted"] and check["shown_limit"] == 20.0 and fit.optimizer["higher_order_limit"] == 20.0
         assert check["half_band_rms_rad"] < 0.1

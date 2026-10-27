@@ -1,8 +1,8 @@
-"""Stream an acquisition series: defocus and astigmatism refit per frame, every other optic held fixed.
+"""Reconstruct a recorded acquisition series: defocus and astigmatism refit per frame, every other optic held fixed.
 
 A full fifth-order fit takes seconds to minutes; between frames of a time series the specimen height and
 the objective lens drift, but coma, trefoil, spherical aberration and the sample tilt change far less.
-``stream`` therefore keeps the reference fit's coordinates and refines only C10 and the two C12 components
+``series`` therefore keeps the reference fit's coordinates and refines only C10 and the two C12 components
 on each new frame, starting from the previous frame, with the same model-agreement objective and exact-gradient
 trust-region refinement as the full fit. On the measured series (frames 151-191) this is about 0.05 s of fitting per frame, so the
 per-frame time is dominated by reading the compressed acquisition, far inside the 13 s scan.
@@ -10,7 +10,7 @@ per-frame time is dominated by reading the compressed acquisition, far inside th
 Each new phase is also placed live: registered against the frame placed before it by the lattice-safe band
 registration of quantem.gpu.drift, with Bragg-spot bands from the first frame, and added in register to a
 combined image that grows with the drift. On the measured series this adds 0.013 s a frame (median) and
-agrees with the full pairwise drift to 0.09 Å over 107 Å of drift; ``DirectPtychoStream.align`` then re-places every frame by that pairwise drift.
+agrees with the full pairwise drift to 0.09 Å over 107 Å of drift; ``SSBSeries.align`` then re-places every frame by that pairwise drift.
 
 With ``save_dir`` each frame's optics and shift are written as it finishes, so a restarted kernel
 reconstructs the finished frames from them, with no refit and no registration, and continues.
@@ -39,7 +39,7 @@ from quantem.gpu.resident.hot_pixels import hot_pixel_outcome
 from quantem.gpu.direct_ptycho.fifth_order_fit import _objective, _refine_with_gradients
 from quantem.gpu.direct_ptycho.fifth_order_parameters import public_params
 from quantem.gpu.direct_ptycho.persistence import _write_atomically, acquisition_identity, json_value, software_signature
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
+from quantem.gpu.direct_ptycho.results import SSBResult, host_array
 
 # Coordinates 0..2 of the fifth-order vector: C10 and the two C12 components.
 VARIED = slice(0, 3)
@@ -52,22 +52,113 @@ CONFIDENCE = 0.04
 # The live search reaches as far as drift's pairs: the residual past the extrapolated guess is a few Å.
 REACH_A = 30.0
 # The layout of a saved frame record; a record of another layout is computed again.
-RECORD_SCHEMA = "quantem.ssb-stream-frame/3"
+# 3: the shared settings name the output factor upsampling (upsampling_factor in 2).
+# 4: each frame's C10/C12 refit is the exact-gradient trust region, held coordinates fixed (main's /3).
+RECORD_SCHEMA = "quantem.ssb-stream-frame/4"
 
 
-def stream(ptycho, sources, fit: DirectPtychoResult, *, method="ssb", upsampling_factor="auto", save_dir=None,
-           show: bool = True, verbose: bool = True, **strengths) -> "DirectPtychoStream":
+class _FrameStep:
+    """The per-frame work of ``series``: one recorded or resident frame at a time.
+
+    For each frame: open a session on its counts with the reference calibration, refit the
+    three low-order coordinates (C10 and the two C12 components) from the previous frame's
+    values with every other optic held at ``fit``'s, reconstruct each requested method at
+    those optics, and register the SSB phase against the last confidently placed frame onto
+    one combined canvas per method. Both entry points call these methods, so a live frame
+    and a recorded frame are processed by the same code.
+    """
+
+    def __init__(self, ptycho, fit: SSBResult, methods):
+        self.fit = fit
+        self.methods = methods
+        # SSB first: its phase is what each frame is registered on.
+        self.runs = ("ssb", *(name for name in methods if name != "ssb"))
+        self.reference = np.array(fit.optimizer["coordinates"])
+        self.bounds = np.array(fit.optimizer["bounds"])[VARIED]
+        self.start = self.reference[VARIED].copy()
+        self.kind = type(ptycho)
+        self.settings = {
+            "backend": ptycho.backend, "voltage_kV": ptycho.voltage_kV, "semiangle_mrad": ptycho.semiangle_mrad,
+            "scan_sampling_A": ptycho.scan_sampling_A, "detector_sampling_mrad": ptycho.detector_sampling_mrad,
+            "bright_field_center_px": ptycho.bright_field_center_px,
+            "bright_field_radius_px": ptycho.bright_field_radius_px,
+            "scan_detector_rotation_deg": fit.scan_detector_rotation_deg,
+            "scan_detector_rotation_flipped": fit.scan_detector_rotation_flipped,
+        }
+        self.lattice = self.canvases = None
+        self.placed = []
+
+    def open(self, data):
+        """A session on one frame's counts with the reference calibration, so frames differ only in counts."""
+        return self.kind(data, **self.settings)
+
+    def refit(self, session, clock, began):
+        """Maximize the normalized model agreement over C10, C12 and phi12 from the previous frame's values.
+
+        ``began`` is when the frame's setup started (before its session opened), so ``setup_s`` covers both.
+        """
+        objective = _objective(session, gradients=True)
+        clock["setup_s"] = time.perf_counter() - began
+        began = time.perf_counter()
+        coordinates, evaluations, stop = _refit(objective, self.reference, self.start, self.bounds)
+        clock["refit_s"] = time.perf_counter() - began
+        optics, tilt, depth = public_params(objective, coordinates, 5)
+        return objective, coordinates, evaluations, stop, optics, tilt, depth
+
+    def reconstruct(self, session, optics, tilt, depth, upsampling, strengths):
+        """Every requested method at the frame's optics; returns the fit copy that carries them."""
+        chosen = copy.copy(self.fit)
+        chosen.aberrations, chosen.sample_tilt_mrad, chosen.depth_spread_nm = optics, tilt, depth
+        reconstructed, sampling, seconds = _reconstruct(session, chosen, self.runs, upsampling, strengths)
+        return chosen, reconstructed, sampling, seconds
+
+    def place(self, index, reconstructed, sampling, saved=None):
+        """Register the frame's SSB phase and add every method's image to its canvas in register.
+
+        Frame 0 starts the canvases and has no pair to score (infinite confidence). Later frames are
+        registered against the last confidently placed frame unless ``saved`` gives the shift and
+        confidence already measured; a frame below ``CONFIDENCE`` stays out of every combined image.
+        """
+        if index == 0:
+            self.lattice = _lattice(reconstructed["ssb"], sampling)
+            # The SSB canvas registers the frames; every other image only follows its shifts.
+            self.canvases = {key: _start(reconstructed[key]) for key in ("ssb", *_keys(self.methods)) if key in reconstructed}
+            self.placed = [(0, (0.0, 0.0))]
+            return (0.0, 0.0), float("inf")
+        if saved is None:
+            shift, score = _place(self.canvases["ssb"], reconstructed["ssb"], self.lattice, sampling, REACH_A,
+                                  _guess(self.placed, index))
+        else:
+            shift, score = saved
+            if score >= CONFIDENCE:
+                _add(self.canvases["ssb"], reconstructed["ssb"], shift)
+        if score >= CONFIDENCE:
+            self.placed.append((index, shift))
+            for key, canvas in self.canvases.items():
+                if key != "ssb":
+                    _add(canvas, reconstructed[key], shift)
+        return shift, score
+
+    def advance(self, coordinates):
+        """The next frame's refit starts from this frame's low-order values."""
+        self.start = coordinates[VARIED].copy()
+
+
+def series(ptycho, sources, fit: SSBResult, *, refit="defocus", method="ssb", upsampling="auto", save_dir=None,
+           show: bool = True, verbose: bool = True, **strengths) -> "SSBSeries":
     """Refit C10, C12 and phi12 on each source with ``fit``'s higher orders, tilt and depth held.
 
-    Each source is read compressed onto the reference session's GPU and opened with the reference
+    Each source, a recorded file or a scan already resident as an ANS dataset (``ArinaListener.datasets``), is
+    read compressed onto the reference session's GPU and opened with the reference
     calibration (voltage, semiangle, scan step, fitted detector sampling and bright-field disk, rotation),
     so frames differ only in their counts. Frame ``k`` starts from frame ``k - 1``'s low-order values and
     maximizes the normalized model agreement ``A(z) / A(z_start)`` over the three coordinates; its
     conventional SSB phase is reconstructed with the result, and so is each ``method`` (``"ssb"``,
     ``"phase"``, ``"complex"`` or a tuple of them) at the same optics, the regularized ones with
-    ``strengths`` (``run``'s ``phase_regularization``, ``amplitude_regularization``, ``smoothness_inv_A``,
+    ``strengths`` (``run``'s ``phase_damping``, ``amplitude_damping``, ``smoothness_inv_A``,
     ``detector_weighting``). ``fit`` must be a fifth-order fit (``search="standard"`` or ``"broad"``) of
-    the reference session.
+    the reference session. ``refit="full"`` instead fits every frame independently (``fit_aberrations``,
+    standard search, the reference rotation kept): the baseline the defocus refit is compared with.
 
     Each SSB phase is then registered against the last confidently placed frame (``_place``: lattice-safe
     band registration with frame 0's Bragg spots), whatever the methods: the regularized images move by
@@ -80,165 +171,33 @@ def stream(ptycho, sources, fit: DirectPtychoResult, *, method="ssb", upsampling
     saved optics and places it at its saved shift, then refits the first unrecorded frame from the last
     recorded one, so the series equals one uninterrupted run (``_recorded`` says what must match). The
     records hold no images, so a resumed call may ask for other methods or strengths.
+
+    The frames are added one at a time (``SSBSeries.add``), so a series given no sources is the same
+    series built while scans arrive: each ``add`` is one more frame of this loop.
     """
-    methods = (method,) if isinstance(method, str) else tuple(dict.fromkeys(method))
-    # SSB first: its phase is what each frame is registered on.
-    runs = ("ssb", *(name for name in methods if name != "ssb"))
-    reference = np.array(fit.optimizer["coordinates"])
-    bounds = np.array(fit.optimizer["bounds"])[VARIED]
-    device = f"cuda:{cp.cuda.runtime.getDevice()}"
-    settings = {
-        "backend": ptycho.backend, "voltage_kV": ptycho.voltage_kV, "semiangle_mrad": ptycho.semiangle_mrad,
-        "scan_sampling_A": ptycho.scan_sampling_A, "detector_sampling_mrad": ptycho.detector_sampling_mrad,
-        "bright_field_center_px": ptycho.bright_field_center_px, "bright_field_radius_px": ptycho.bright_field_radius_px,
-        "scan_detector_rotation_deg": fit.scan_detector_rotation_deg,
-        "scan_detector_rotation_flipped": fit.scan_detector_rotation_flipped,
-    }
-    # Every frame has the reference calibration, so "auto" is resolved (and a capped factor announced) once.
-    factor = ptycho._resolve_upsampling_factor(upsampling_factor)
-    records = None if save_dir is None else Path(save_dir).expanduser() / "stream"
-    # What every frame's record shares: the reference fit it refits from and the code that ran it.
-    shared = None if records is None else {
-        "reference": {"coordinates": fit.optimizer["coordinates"], "bounds": fit.optimizer["bounds"],
-                      "signature": fit.metadata.get("signature")},
-        "settings": {**settings, "upsampling_factor": upsampling_factor}, "software": software_signature(),
-    }
-    resuming, previous = records is not None, None
-    sources = [Path(source) for source in sources]
+    # Files are read one at a time and freed after their frame; scans already resident (a live stream's
+    # encoded datasets) are used in place and stay the caller's.
+    sources = [Path(source) if isinstance(source, (str, Path)) else source for source in sources]
+    result = SSBSeries._begin(ptycho, fit, refit=refit, method=method, upsampling=upsampling, save_dir=save_dir,
+                              show=show, strengths=strengths, frames=len(sources))
     iterator = sources
     if verbose:
         from tqdm.auto import tqdm
 
-        iterator = tqdm(sources, desc="Streaming defocus and astigmatism", unit="frame")
-    start = reference[VARIED].copy()
-    phase = images = canvases = None
-    aberrations, refits, fits, timings, shifts, confidence = [], [], [], [], [], []
-    # What each load did with the detector's flagged pixels, announced once for the series below.
-    flagged = {}
-    panel = _LivePanel(fit.phase_limits, methods[0], enabled=show)
+        iterator = tqdm(sources, desc="Fitting every frame" if refit == "full" else "Refitting defocus and astigmatism",
+                        unit="frame")
     for index, source in enumerate(iterator):
-        name = source.name.removesuffix("_master.h5")
-        clock = {}
-        began = time.perf_counter()
-        data = io.load(source, device=device, verbose=False)
-        clock["load_s"] = time.perf_counter() - began
-        if "hot_pixel_correction" in data.metadata:
-            flagged.setdefault(hot_pixel_outcome(data.metadata["hot_pixel_correction"]), []).append(name)
-        scan = tuple(data.shape[:2])
-        if index == 0:
-            first_scan = scan
-        elif scan != first_scan:
-            # Frames are placed by shifting whole images onto one canvas; another scan size is another field.
-            raise ValueError(f"{name} has scan shape {scan}, the series began with {first_scan}: "
-                             "stream frames of one scan shape")
-        began = time.perf_counter()
-        session = type(ptycho)(data, **settings)
-        saved = objective = None
-        if records is not None:
-            # A frame's refit starts from the frame before and its placement from the frames placed
-            # before it, so its identity holds the SHA-256 of the previous frame's record, which holds
-            # the one before it: a recomputed frame invalidates every later record, also when the run
-            # stopped before rewriting them, and only an unbroken chain from the first frame is reused.
-            identity = {**shared, "index": index, "previous": previous, "source": acquisition_identity(
-                source, hot_pixel_correction=data.metadata.get("hot_pixel_correction"))}
-            saved = _recorded(records / f"{name}.json", identity) if resuming else None
-            resuming = saved is not None
-        if saved is None:
-            objective = _objective(session, gradients=True)
-            clock["setup_s"] = time.perf_counter() - began
-            began = time.perf_counter()
-            coordinates, evaluations, stop = _refit(objective, reference, start, bounds)
-            clock["refit_s"] = time.perf_counter() - began
-            optics, tilt, depth = public_params(objective, coordinates, 5)
-        else:
-            clock["setup_s"], clock["refit_s"] = time.perf_counter() - began, 0.0
-            coordinates, evaluations, stop = np.array(saved["coordinates"]), saved["evaluations"], saved["stop"]
-            optics, tilt, depth = saved["aberrations"], tuple(saved["sample_tilt_mrad"]), saved["depth_spread_nm"]
-        chosen = copy.copy(fit)
-        chosen.aberrations, chosen.sample_tilt_mrad, chosen.depth_spread_nm = optics, tilt, depth
-        reconstructed, sampling, seconds = _reconstruct(session, chosen, runs, factor, strengths)
-        clock.update(seconds)
-        began = time.perf_counter()
-        if index == 0:
-            # One stack per image, filled in place: stacking a list at the end held every frame twice.
-            phase = cp.empty((len(sources), *reconstructed["ssb"].shape), dtype=cp.float32)
-            images = {key: phase if key == "ssb" else cp.empty_like(phase) for key in _keys(methods)}
-        phase[index] = reconstructed["ssb"]
-        for key, stack in images.items():
-            if key != "ssb":
-                stack[index] = reconstructed[key]
-        if index == 0:
-            lattice = _lattice(phase[0], sampling)
-            # The SSB canvas registers the frames; every other image only follows its shifts.
-            canvases = {"ssb": _start(phase[0])} | {key: _start(stack[0]) for key, stack in images.items() if key != "ssb"}
-            placed = [(0, (0.0, 0.0))]
-            shift, score = (0.0, 0.0), float("inf")
-        else:
-            if saved is None:
-                shift, score = _place(canvases["ssb"], phase[index], lattice, sampling, REACH_A, _guess(placed, index))
-            else:
-                shift, score = tuple(saved["shift_px"]), saved["confidence"]
-                if score >= CONFIDENCE:
-                    _add(canvases["ssb"], phase[index], shift)
-            if score >= CONFIDENCE:
-                placed.append((index, shift))
-                for key, canvas in canvases.items():
-                    if key != "ssb":
-                        _add(canvas, images[key][index], shift)
-        shifts.append(shift)
-        confidence.append(score)
-        cp.cuda.Device().synchronize()
-        clock["align_s"] = time.perf_counter() - began
-        began = time.perf_counter()
-        panel.update(name, images[methods[0]][index], canvases[methods[0]], np.array(shifts) * np.array(sampling),
-                     sampling, len(placed), final=index == len(sources) - 1)
-        clock["display_s"] = time.perf_counter() - began
-        clock["total_s"] = sum(clock.values())
-        aberrations.append(dict(optics))
-        refits.append({"evaluations": evaluations, "stop": stop, "resumed": saved is not None})
-        fits.append(chosen)
-        timings.append(clock)
-        if records is not None and saved is None:
-            # Frame 0 has no pair to score (its confidence is infinite); strict JSON has no Infinity.
-            record = json_value({
-                "schema": RECORD_SCHEMA, "identity": identity, "frame": name, "aberrations": optics,
-                "sample_tilt_mrad": tilt, "depth_spread_nm": depth, "coordinates": coordinates,
-                "evaluations": evaluations, "stop": stop, "shift_px": shift,
-                "shift_A": np.array(shift) * np.array(sampling), "confidence": None if index == 0 else score,
-                "object_sampling_A": sampling, "timings": clock,
-            })
-            _write_atomically(records / f"{name}.json", "w",
-                              lambda handle: json.dump(record, handle, indent=1, allow_nan=False), encoding="utf-8")
-        if records is not None:
-            previous = hashlib.sha256(json.dumps(saved or record, sort_keys=True, allow_nan=False).encode()).hexdigest()
-        start = coordinates[VARIED].copy()
-        # close breaks the engine's cycle with its thick-sample model, so the frame's 10 GB of resident
-        # counts and spectra go now; after del alone they waited for the cycle collector (measured
-        # series: 66 GB process peak over 40 frames, 40.5 GB with close).
-        session.close()
-        # The session borrows the dataset, so its encoded resident is released here.
-        data.close()
-        del data, session, objective, reconstructed
-        cp.get_default_memory_pool().free_all_blocks()
+        result._add(source, final=index == len(sources) - 1)
     # The registration's torch blocks are reused frame to frame; return them once the series is done.
     torch.cuda.empty_cache()
     if verbose:
-        for outcome, names in flagged.items():
-            print(f"Stream: {len(names)} of {len(sources)} frames, {outcome}.")
-    return DirectPtychoStream(
-        frames=tuple(source.name.removesuffix("_master.h5") for source in sources), phase=phase, images=images,
-        methods=methods, aberrations=tuple(aberrations), refits=tuple(refits), fits=tuple(fits),
-        timings=tuple(timings), reference=fit, object_sampling_A=tuple(float(value) for value in sampling),
-        shifts_A=np.array(shifts) * np.array(sampling), confidence=tuple(float(value) for value in confidence),
-        placed=tuple(score >= CONFIDENCE for score in confidence),
-        combined={key: _combined(canvases[key]) for key in images}, cover=canvases["ssb"].cover, sources=tuple(sources),
-        session={"kind": type(ptycho), "settings": settings, "upsampling_factor": factor, "device": device},
-    )
+        result._announce_flagged()
+    return result
 
 
 @dataclass
-class DirectPtychoStream:
-    """A streamed series: per frame the low-order optics (``aberrations``, higher orders, tilt and depth
+class SSBSeries:
+    """A recorded series: per frame the low-order optics (``aberrations``, higher orders, tilt and depth
     are ``reference``'s), the exact parameters each reconstruction received (``fits``), the refit's
     bookkeeping (``refits``: evaluations, stop, resumed from a record), the SSB phase every frame is
     registered on (``phase``), one stack per requested image (``images``: each method's phase in rad,
@@ -252,18 +211,195 @@ class DirectPtychoStream:
     methods: tuple[str, ...]
     aberrations: tuple[dict, ...]
     refits: tuple[dict, ...] = field(repr=False)
-    fits: tuple[DirectPtychoResult, ...] = field(repr=False)
+    fits: tuple[SSBResult, ...] = field(repr=False)
     timings: tuple[dict, ...] = field(repr=False)
-    reference: DirectPtychoResult = field(repr=False)
+    reference: SSBResult = field(repr=False)
     object_sampling_A: tuple[float, float]
     shifts_A: np.ndarray = field(repr=False)
     confidence: tuple[float, ...] = field(repr=False)
     placed: tuple[bool, ...] = field(repr=False)
     combined: dict = field(repr=False)
     cover: object = field(repr=False)
-    sources: tuple[Path, ...] = field(repr=False)
+    sources: tuple = field(repr=False)  # recorded files (Path) or resident ANS datasets
     session: dict = field(repr=False)
     sigma_A: np.ndarray | None = field(default=None, repr=False)
+    # What adding the next frame needs: the frame step, the record chain and the growing image stacks.
+    _state: SimpleNamespace | None = field(default=None, repr=False)
+
+    @classmethod
+    def _begin(cls, ptycho, fit, *, refit, method, upsampling, save_dir, show, strengths, frames=0):
+        """An empty series on ``ptycho``'s calibration; ``frames`` sizes the image stacks when known."""
+        if refit not in ("defocus", "full"):
+            raise ValueError(f'refit={refit!r}: use "defocus" (C10, C12, phi12 from the frame before) or "full" '
+                             "(fit_aberrations on every frame).")
+        records = None if save_dir is None else Path(save_dir).expanduser() / "stream"
+        if records is not None and refit == "full":
+            raise ValueError('save_dir resumes defocus refits; refit="full" keeps no frame records.')
+        methods = (method,) if isinstance(method, str) else tuple(dict.fromkeys(method))
+        step = _FrameStep(ptycho, fit, methods)
+        device = f"cuda:{cp.cuda.runtime.getDevice()}"
+        # Every frame has the reference calibration, so "auto" is resolved (and a capped factor announced) once.
+        factor = ptycho._resolve_upsampling(upsampling)
+        # What every frame's record shares: the reference fit it refits from and the code that ran it.
+        shared = None if records is None else {
+            "reference": {"coordinates": fit.optimizer["coordinates"], "bounds": fit.optimizer["bounds"],
+                          "signature": fit.metadata.get("signature")},
+            "settings": {**step.settings, "upsampling": upsampling}, "software": software_signature(),
+        }
+        state = SimpleNamespace(
+            step=step, refit=refit, strengths=strengths, factor=factor, records=records, shared=shared,
+            resuming=records is not None, previous=None, panel=_LivePanel(fit.phase_limits, methods[0], enabled=show),
+            # What each load did with the detector's flagged pixels, announced once for the series.
+            flagged={}, capacity=frames, stacks=None, scan=None, views=[], frozen=False,
+        )
+        return cls(frames=(), phase=None, images={}, methods=methods, aberrations=(), refits=(), fits=(), timings=(),
+                   reference=fit, object_sampling_A=None, shifts_A=np.zeros((0, 2)), confidence=(), placed=(),
+                   combined={}, cover=None, sources=(),
+                   session={"kind": type(ptycho), "settings": step.settings, "upsampling": factor, "device": device},
+                   _state=state)
+
+    def add(self, scan) -> dict:
+        """Add one more completed scan: refit (or fit), reconstruct, place it, and return its report row.
+
+        ``scan`` is a recorded file or a resident ANS dataset (one ``ArinaListener`` scan); it is processed
+        exactly as ``series`` processes its next frame, so a series built scan by scan as scans arrive
+        equals ``series`` of the same scans. A resident scan is named by its acquisition (``series``
+        metadata). Open interactive views (``show(interactive=True)``) are redrawn with it. Pass
+        ``series.add`` as an ``ArinaListener`` ``process`` to reconstruct every scan while reception continues.
+        """
+        with cp.cuda.Device(int(self.session["device"].split(":")[1])):
+            self._add(Path(scan) if isinstance(scan, (str, Path)) else scan, final=True)
+        return {"Frame": self.frames[-1], **self.report(to_dict=True)[self.frames[-1]]}
+
+    def _add(self, source, *, final):
+        """One frame of the series: load (a file), open the session with the reference calibration, refit,
+        reconstruct each method, store the images, place the SSB phase, refresh the views, write the record."""
+        state, step, methods = self._state, self._state.step, self.methods
+        if state.frozen:
+            raise RuntimeError("This series was aligned or reconstructed again; start a new series to add scans.")
+        index = len(self.frames)
+        resident = not isinstance(source, Path)
+        if resident and state.records is not None:
+            raise ValueError("save_dir resumes a series of recorded files; resident scans have no file to identify "
+                             "them by. Leave save_dir unset, or save the scans first and pass their paths.")
+        if resident:
+            name = str(source.metadata.get("series") or f"scan {index + 1}")
+        else:
+            name = source.name.removesuffix("_master.h5")
+        clock = {}
+        began = time.perf_counter()
+        data = source if resident else io.load(source, device=self.session["device"], verbose=False)
+        clock["load_s"] = time.perf_counter() - began
+        if "hot_pixel_correction" in data.metadata:
+            state.flagged.setdefault(hot_pixel_outcome(data.metadata["hot_pixel_correction"]), []).append(name)
+        scan = tuple(data.shape[:2])
+        if state.scan is None:
+            state.scan = scan
+        elif scan != state.scan:
+            # Frames are placed by shifting whole images onto one canvas; another scan size is another field.
+            raise ValueError(f"{name} has scan shape {scan}, the series began with {state.scan}: "
+                             "pass frames of one scan shape")
+        began = time.perf_counter()
+        session = step.open(data)
+        saved = objective = None
+        if state.records is not None:
+            # A frame's refit starts from the frame before and its placement from the frames placed
+            # before it, so its identity holds the SHA-256 of the previous frame's record, which holds
+            # the one before it: a recomputed frame invalidates every later record, also when the run
+            # stopped before rewriting them, and only an unbroken chain from the first frame is reused.
+            identity = {**state.shared, "index": index, "previous": state.previous, "source": acquisition_identity(
+                source, hot_pixel_correction=data.metadata.get("hot_pixel_correction"))}
+            saved = _recorded(state.records / f"{name}.json", identity) if state.resuming else None
+            state.resuming = saved is not None
+        if saved is not None:
+            clock["setup_s"], clock["refit_s"] = time.perf_counter() - began, 0.0
+            coordinates, evaluations, stop = np.array(saved["coordinates"]), saved["evaluations"], saved["stop"]
+            optics, tilt, depth = saved["aberrations"], tuple(saved["sample_tilt_mrad"]), saved["depth_spread_nm"]
+        elif state.refit == "full":
+            clock["setup_s"] = time.perf_counter() - began
+            began = time.perf_counter()
+            # The reference rotation is kept: the session is opened with it and a flipped frame is another calibration.
+            fitted = session.fit_aberrations(check_rotation=False, compute_loss=False, show=False, verbose=False)
+            clock["refit_s"] = time.perf_counter() - began
+            coordinates, evaluations = np.array(fitted.optimizer["coordinates"]), fitted.optimizer.get("evaluations")
+            stop = fitted.optimizer.get("stop", "full fit")
+            optics, tilt, depth = fitted.aberrations, fitted.sample_tilt_mrad, fitted.depth_spread_nm
+        else:
+            objective, coordinates, evaluations, stop, optics, tilt, depth = step.refit(session, clock, began)
+        chosen, reconstructed, sampling, seconds = step.reconstruct(session, optics, tilt, depth, state.factor,
+                                                                    state.strengths)
+        clock.update(seconds)
+        began = time.perf_counter()
+        phase, images = self._store(index, reconstructed)
+        shift, score = step.place(index, reconstructed, sampling,
+                                  None if saved is None or index == 0 else (tuple(saved["shift_px"]), saved["confidence"]))
+        cp.cuda.Device().synchronize()
+        clock["align_s"] = time.perf_counter() - began
+        clock["display_s"] = clock["total_s"] = 0.0
+        # Published in one statement, after the frame is complete: a view or report read from another thread
+        # (a live stream's worker adds scans while the notebook reads) sees whole frames only.
+        (self.phase, self.images, self.object_sampling_A, self.frames, self.sources, self.shifts_A, self.confidence,
+         self.placed, self.combined, self.cover, self.aberrations, self.refits, self.fits, self.timings) = (
+            phase, images, tuple(float(value) for value in sampling), (*self.frames, name), (*self.sources, source),
+            np.vstack([self.shifts_A, np.array(shift) * np.array(sampling)]), (*self.confidence, float(score)),
+            (*self.placed, score >= CONFIDENCE), {key: _combined(step.canvases[key]) for key in images},
+            step.canvases["ssb"].cover, (*self.aberrations, dict(optics)),
+            (*self.refits, {"evaluations": evaluations, "stop": stop, "resumed": saved is not None}),
+            (*self.fits, chosen), (*self.timings, clock))
+        began = time.perf_counter()
+        state.panel.update(name, images[methods[0]][index], step.canvases[methods[0]], self.shifts_A, sampling,
+                           len(step.placed), final=final)
+        self._redraw()
+        clock["display_s"] = time.perf_counter() - began
+        clock["total_s"] = sum(clock.values())
+        if state.records is not None and saved is None:
+            # Frame 0 has no pair to score (its confidence is infinite); strict JSON has no Infinity.
+            record = json_value({
+                "schema": RECORD_SCHEMA, "identity": identity, "frame": name, "aberrations": optics,
+                "sample_tilt_mrad": tilt, "depth_spread_nm": depth, "coordinates": coordinates,
+                "evaluations": evaluations, "stop": stop, "shift_px": shift,
+                "shift_A": np.array(shift) * np.array(sampling), "confidence": None if index == 0 else score,
+                "object_sampling_A": sampling, "timings": clock,
+            })
+            _write_atomically(state.records / f"{name}.json", "w",
+                              lambda handle: json.dump(record, handle, indent=1, allow_nan=False), encoding="utf-8")
+        if state.records is not None:
+            state.previous = hashlib.sha256(json.dumps(saved or record, sort_keys=True, allow_nan=False).encode()).hexdigest()
+        if state.refit == "defocus":
+            step.advance(coordinates)
+        # close breaks the engine's cycle with its thick-sample model, so the frame's 10 GB of resident
+        # counts and spectra go now; after del alone they waited for the cycle collector (measured
+        # series: 66 GB process peak over 40 frames, 40.5 GB with close).
+        session.close()
+        # The session borrows the dataset, so a loaded file's encoded resident is released here.
+        if not resident:
+            data.close()
+        del data, session, objective, reconstructed
+        cp.get_default_memory_pool().free_all_blocks()
+
+    def _store(self, index, reconstructed):
+        """Write frame ``index``'s images into one stack per image, filled in place (stacking a list at the end
+        held every frame twice), and return the SSB stack and the images through this frame; a series of
+        unknown length doubles its stacks when full."""
+        state = self._state
+        if state.stacks is None:
+            phase = cp.empty((max(state.capacity, 1), *reconstructed["ssb"].shape), dtype=cp.float32)
+            state.stacks = {"ssb": phase, **{key: cp.empty_like(phase) for key in _keys(self.methods) if key != "ssb"}}
+        elif index == len(state.stacks["ssb"]):
+            grown = {}
+            for key, stack in state.stacks.items():
+                grown[key] = cp.empty((2 * len(stack), *stack.shape[1:]), dtype=stack.dtype)
+                grown[key][:index] = stack
+            state.stacks = grown
+        for key, stack in state.stacks.items():
+            stack[index] = reconstructed[key]
+        phase = state.stacks["ssb"][:index + 1]
+        return phase, {key: phase if key == "ssb" else state.stacks[key][:index + 1] for key in _keys(self.methods)}
+
+    def _announce_flagged(self):
+        for outcome, flagged_names in self._state.flagged.items():
+            print(f"Series: {len(flagged_names)} of {len(self.frames)} frames, {outcome}.")
+
 
     def align(self):
         """The final pass: every pair of frames up to three apart by its own lattice-safe search,
@@ -275,33 +411,38 @@ class DirectPtychoStream:
         from quantem.gpu.drift import drift
 
         found = drift(torch.from_dlpack(self.phase), list(range(len(self.frames))), sampling_A=self.object_sampling_A)
+        self._freeze()
         self.shifts_A, self.sigma_A, self.placed = found.displacement_A, found.sigma_A, (True,) * len(self.frames)
         for key in self.images:
             self.combined[key], self.cover = self._combine(key)
         return found
 
     def reconstruct(self, method, **strengths):
-        """Reconstruct ``method`` again on every frame after the series, at its streamed optics.
+        """Reconstruct ``method`` again on every frame after the series, at its refitted optics.
 
-        For trying other strengths without refitting or registering: each source is read again with
-        the stream's calibration and upsampling, ``method`` runs at ``fits[k]`` with ``strengths`` (they
+        For trying other strengths without refitting or registering: each source is read again (a resident
+        scan is used in place, so it must still be held, not released) with
+        the series' calibration and upsampling, ``method`` runs at ``fits[k]`` with ``strengths`` (they
         apply to the regularized methods only), and the result is placed at ``shifts_A`` (the live
         shifts, or align()'s after align). Replaces
         ``images`` and ``combined`` for the method (and ``"amplitude"`` for ``"complex"``) and returns
         those combined images by name."""
         session = self.session
+        self._freeze()
         stacks = {}
         with cp.cuda.Device(int(session["device"].split(":")[1])):
             for index, (source, chosen) in enumerate(zip(self.sources, self.fits, strict=True)):
-                data = io.load(source, device=session["device"], verbose=False)
+                resident = not isinstance(source, Path)
+                data = source if resident else io.load(source, device=session["device"], verbose=False)
                 frame = session["kind"](data, **session["settings"])
-                reconstructed, _, _ = _reconstruct(frame, chosen, (method,), session["upsampling_factor"], strengths)
+                reconstructed, _, _ = _reconstruct(frame, chosen, (method,), session["upsampling"], strengths)
                 for key, image in reconstructed.items():
                     if index == 0:
                         stacks[key] = cp.empty((len(self.frames), *image.shape), dtype=cp.float32)
                     stacks[key][index] = image
                 frame.close()
-                data.close()
+                if not resident:
+                    data.close()
                 del data, frame, reconstructed
                 cp.get_default_memory_pool().free_all_blocks()
             self.images.update(stacks)
@@ -312,6 +453,32 @@ class DirectPtychoStream:
             for key in stacks:
                 self.combined[key], self.cover = self._combine(key)
         return {key: self.combined[key] for key in stacks}
+
+    def _view(self, keys):
+        """The interactive view's panels: the latest scan's first image, labelled with its acquisition and fitted
+        defocus and astigmatism, then each combined image; Show2D takes finite pixels only, so pixels no frame
+        reaches hold the median of the covered pixels, a flat field."""
+        covered = self.cover > 0
+        latest, optics = self.frames[-1], self.aberrations[-1]
+        limits = [self.reference.phase_limits, *(_limits(self.combined[key], covered) if key == "amplitude"
+                                                 else self.reference.phase_limits for key in keys)]
+        images = [host_array(self.images[keys[0]][-1]), *(host_array(cp.where(covered, self.combined[key],
+                  cp.median(self.combined[key][covered]))) for key in keys)]
+        labels = [f"{latest}: C10 {optics['C10_nm']:.2f} nm, C12 {optics['C12_nm']:.2f} nm, "
+                  f"phi12 {optics['phi12_deg']:.1f} deg", *(f"{_NAMES[key]}, combined" for key in keys)]
+        return images, labels, f"{len(self.frames)} scans, {sum(self.placed)} combined", limits
+
+    def _redraw(self):
+        """Refresh every open interactive view with the scan just added."""
+        for view, keys in self._state.views:
+            images, labels, title, _ = self._view(keys)
+            view.set_image(images, labels=labels)
+            view.title = title
+
+    def _freeze(self):
+        """align and reconstruct replace stacks and shifts that adding a frame extends; no frame is added after."""
+        if self._state is not None:
+            self._state.frozen = True
 
     def _combine(self, key):
         """images[key] in register and its cover: frame 0 at the origin, every placed frame at its
@@ -357,24 +524,26 @@ class DirectPtychoStream:
         blue-gray in the static figure; Show2D takes finite pixels only, so there they hold the
         median of the covered pixels, a flat field. Static: the images side by side with scale bars and
         colour bars over a strip of the displacement against frame 0 (row, column, Å) with C10 and
-        C12 (nm) on a second axis. Interactive returns a Show2D of the combined images at full
-        resolution; ``size`` is a preset name or a panel width in pixels for either.
+        C12 (nm) on a second axis. Interactive returns a Show2D of the latest scan (labelled with its
+        acquisition and fitted C10, C12, phi12) and the combined images at full resolution, redrawn with
+        every scan ``add`` brings; ``size`` is a preset name or a panel width in pixels for either.
         """
         keys = list(self.combined) if method is None else [method, *(["amplitude"] if method == "complex" else [])]
-        covered = self.cover > 0
-        limits = [_limits(self.combined[key], covered) if key == "amplitude" else self.reference.phase_limits
-                  for key in keys]
         if interactive:
             from quantem.widget import Show2D
 
-            images = [host_array(cp.where(covered, self.combined[key], cp.median(self.combined[key][covered])))
-                      for key in keys]
+            images, labels, title, limits = self._view(keys)
             width = {"size": size} if isinstance(size, str) else {"panel_width_px": size}
-            return Show2D(images, labels=[_NAMES[key] for key in keys],
-                          title=f"Combined, {sum(self.placed)} of {len(self.frames)} frames", cmap=cmap,
-                          sampling=self.object_sampling_A[1], units="Å", vmin=[low for low, _ in limits],
-                          vmax=[high for _, high in limits], link_contrast=False, display_bin=1, verbose=False,
-                          **width)
+            view = Show2D(images, labels=labels, title=title, cmap=cmap, sampling=self.object_sampling_A[1], units="Å",
+                          vmin=[low for low, _ in limits], vmax=[high for _, high in limits], link_contrast=False,
+                          display_bin=1, verbose=False, **width)
+            if self._state is not None:
+                # A series still growing redraws this view with every added scan.
+                self._state.views.append((view, keys))
+            return view
+        covered = self.cover > 0
+        limits = [_limits(self.combined[key], covered) if key == "amplitude" else self.reference.phase_limits
+                  for key in keys]
         import matplotlib.pyplot as plt
 
         from quantem.gpu.display._layout import panel_figure, panel_inches
@@ -414,18 +583,18 @@ _UNCOVERED = "#b9c7d6"
 
 
 def _keys(methods):
-    """The images a stream keeps: each method's phase, then the complex method's amplitude."""
+    """The images a series keeps: each method's phase, then the complex method's amplitude."""
     return [key for name in methods for key in ((name, "amplitude") if name == "complex" else (name,))]
 
 
-def _reconstruct(session, chosen, methods, upsampling_factor, strengths):
+def _reconstruct(session, chosen, methods, upsampling, strengths):
     """Run each method once on one frame at ``chosen``: the images by name (phase in rad, and the
     complex method's amplitude), the object sampling (Å per pixel) and seconds per method. SSB takes
     no strengths; force rebuilds a regularized method's prepared equations for this frame's counts."""
     images, seconds, sampling = {}, {}, None
     for name in methods:
         began = time.perf_counter()
-        result = session.run(chosen, method=name, upsampling_factor=upsampling_factor, compute_loss=False,
+        result = session.reconstruct(chosen, method=name, upsampling=upsampling, compute_loss=False,
                              force=True, verbose=False, **({} if name == "ssb" else strengths))
         images[name] = cp.asarray(result.phase, dtype=cp.float32)
         if name == "complex":
@@ -444,7 +613,7 @@ def _limits(image, covered):
 
 
 class _LivePanel:
-    """The stream's live view, only in a notebook kernel: the latest frame and the combined image of
+    """The series' live view, only in a notebook kernel: the latest frame and the combined image of
     the first requested method and the drift so far in one figure, redrawn at most twice a second (as
     FitDisplay.progress) so drawing stays a small part of each frame's time."""
 
@@ -487,9 +656,15 @@ def _live_figure(frame, method, phase, canvas, shifts_A, sampling_A, placed, pha
     width = panel_inches(size)
     figure, axes = panel_figure(1, 3, width, width, title_lines=2, bottom_in=.6)
     titles = [f"{_NAMES[method]}\n{frame}, rad", f"{_NAMES[method]}\ncombined, {placed} of {len(shifts_A)} frames, rad"]
-    images, uncovered = (host_array(phase), host_array(_combined(canvas))), (None, host_array(canvas.cover == 0))
-    for axis, image, title, empty in zip(axes[0, :2], images, titles, uncovered):
-        _panel(figure, axis, image, title, phase_limits, sampling_A, width, "gray", uncovered=empty)
+    if canvas is None:
+        # A live run's first frame, shown while its rows arrive: nothing is combined yet.
+        _panel(figure, axes[0, 0], host_array(phase), titles[0], phase_limits, sampling_A, width, "gray")
+        axes[0, 1].set_axis_off()
+        axes[0, 1].set_title("combined image\nafter the first frame", fontsize=min(14, max(8, width * 2.2)))
+    else:
+        images, uncovered = (host_array(phase), host_array(_combined(canvas))), (None, host_array(canvas.cover == 0))
+        for axis, image, title, empty in zip(axes[0, :2], images, titles, uncovered):
+            _panel(figure, axis, image, title, phase_limits, sampling_A, width, "gray", uncovered=empty)
     trace = axes[0, 2]
     trace.plot(shifts_A[:, 0], "o-", ms=3, label="row")
     trace.plot(shifts_A[:, 1], "s-", ms=3, label="column")
@@ -562,7 +737,7 @@ def _lattice(phase, sampling_A, band_A=(50.0, 0.67)):
     """What the live registration balances, from the first frame alone: each lattice's Bragg spots
     (spots) and every other spot to cut from the aperiodic part (peaks: moiré and its harmonics), in
     Å⁻¹, so the bands can be drawn on any crop (bands); drift finds them on the series' mean power
-    spectrum, which a stream does not have yet."""
+    spectrum, which a series does not have yet."""
     power = torch.fft.fft2(prepared(torch.from_dlpack(phase).float())).abs().square()
     return SimpleNamespace(layers=spots(power, sampling_A), notch=peaks(power, sampling_A, band_A), band_A=band_A)
 
@@ -643,7 +818,3 @@ def _grow(canvas, whole, shape):
         canvas.total, canvas.cover = cp.pad(canvas.total, width), cp.pad(canvas.cover, width)
         canvas.origin = (canvas.origin[0] + before[0], canvas.origin[1] + before[1])
     return top + before[0], left + before[1]
-
-
-# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
-SSBStream = DirectPtychoStream

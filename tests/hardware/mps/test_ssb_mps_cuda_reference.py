@@ -101,7 +101,7 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     2026-10-05 a session opened on the columns ignored ``detector_sampling_mrad`` and divided the semiangle by it.
     """
     pytest.importorskip("mlx.core")
-    from quantem.gpu.direct_ptycho.mps.backend import MpsDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
     from quantem.gpu.direct_ptycho.mps.frames import load_bf_columns_mps
 
     source = tmp_path / "source"
@@ -126,7 +126,7 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     (tmp_path / "cal.json").write_text(json.dumps(calibration))
 
     frames = load_bf_columns_mps(tmp_path)
-    session = MpsDirectPtychoBackend(
+    session = MpsSSBBackend(
         frames, voltage_kV=300, semiangle_mrad=20, scan_sampling=1.0, detector_sampling_mrad=None,
         bright_field_intensity_threshold=0.0, bright_field_center_px=None, bright_field_radius_px=None, scan_detector_rotation_deg=0.0,
     )
@@ -190,7 +190,7 @@ def test_mps_backend_writes_exact_integer_bf_columns(
     """C1: export uses the smallest lossless dtype without changing counts."""
     pytest.importorskip("mlx.core")
     from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
-    from quantem.gpu.direct_ptycho.mps.backend import MpsDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
     from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
 
     class RawFrames:
@@ -218,7 +218,7 @@ def test_mps_backend_writes_exact_integer_bf_columns(
     )
     raw_frames = RawFrames(source_values)
     detector_sum = source_values.sum(axis=1, dtype=np.uint64).reshape(3, 4)
-    backend = MpsDirectPtychoBackend.__new__(MpsDirectPtychoBackend)
+    backend = MpsSSBBackend.__new__(MpsSSBBackend)
     backend._frames = raw_frames
     backend._selection = selection
     backend._scan_shape = (2, 3)
@@ -288,7 +288,7 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
     """C1: exact BF columns expose the same neutral contract as CUDA."""
     pytest.importorskip("mlx.core")
     from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
-    from quantem.gpu.direct_ptycho.mps.backend import MpsDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
     from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
 
     rows = np.asarray([1, 1, 2, 2], dtype=np.int32)
@@ -312,7 +312,7 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
         max_value=int(columns.max()),
     )
 
-    engine = MpsDirectPtychoBackend(
+    engine = MpsSSBBackend(
         frames,
         voltage_kV=300.0,
         semiangle_mrad=30.0,
@@ -816,7 +816,7 @@ def test_mps_object_fourier_sum_matches_looped_reference() -> None:
     mx = pytest.importorskip("mlx.core")
     from quantem.gpu.direct_ptycho.mps.kernels.corrected import corrected_from_dynamic_geometry
     from quantem.gpu.direct_ptycho.mps.kernels.object_sum import object_fourier_sum_dynamic
-    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho, ifft2_chunked
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, ifft2_chunked
     from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
 
     n = 16
@@ -832,7 +832,7 @@ def test_mps_object_fourier_sum_matches_looped_reference() -> None:
     dc_mask[0, 0] = True
     q_row_mx = mx.array(q_row, dtype=mx.float32)
     q_col_mx = mx.array(q_col, dtype=mx.float32)
-    prepared = PreparedMpsDirectPtycho(
+    prepared = PreparedMpsSSB(
         mx=mx,
         g_qk=g_qk,
         qx=q_row_mx[None, :, None],
@@ -993,7 +993,7 @@ def test_mps_reconstruct_cached_geometry_512_loss_matches_mlx_reference() -> Non
     mx = pytest.importorskip("mlx.core")
     from quantem.gpu.direct_ptycho.mps.kernels.corrected import corrected_from_cached_geometry
     from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sums_from_complex
-    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho, compute_geometry
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, compute_geometry
     from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
 
     n = 512
@@ -1044,7 +1044,7 @@ def test_mps_reconstruct_cached_geometry_512_loss_matches_mlx_reference() -> Non
     )
     dc_mask = np.zeros((n, n), dtype=bool)
     dc_mask[0, 0] = True
-    prepared = PreparedMpsDirectPtycho(
+    prepared = PreparedMpsSSB(
         mx=mx,
         g_qk=g_qk,
         qx=qx,
@@ -1162,7 +1162,7 @@ def test_mps_row_ifft512_dynamic_matches_mlx_reference() -> None:
     mx = pytest.importorskip("mlx.core")
     from quantem.gpu.direct_ptycho.mps.kernels.corrected import corrected_from_dynamic_geometry
     from quantem.gpu.direct_ptycho.mps.kernels.row_ifft import row_ifft512_from_dynamic_geometry
-    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB
 
     n = 512
     num_bright_field_pixels = 3
@@ -1177,7 +1177,7 @@ def test_mps_row_ifft512_dynamic_matches_mlx_reference() -> None:
     dc_mask[0, 0] = True
     q_row_mx = mx.array(q_row, dtype=mx.float32)
     q_col_mx = mx.array(q_col, dtype=mx.float32)
-    prepared = PreparedMpsDirectPtycho(
+    prepared = PreparedMpsSSB(
         mx=mx,
         g_qk=g_qk,
         qx=q_row_mx[None, :, None],
@@ -1255,7 +1255,7 @@ def test_mps_row_ifft_small_dynamic_matches_mlx_reference(n: int) -> None:
     from quantem.gpu.direct_ptycho.mps.kernels.row_ifft import (
         row_ifft_small_from_dynamic_geometry,
     )
-    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB
 
     num_bright_field_pixels = 3
     q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
@@ -1269,7 +1269,7 @@ def test_mps_row_ifft_small_dynamic_matches_mlx_reference(n: int) -> None:
     dc_mask[0, 0] = True
     q_row_mx = mx.array(q_row, dtype=mx.float32)
     q_col_mx = mx.array(q_col, dtype=mx.float32)
-    prepared = PreparedMpsDirectPtycho(
+    prepared = PreparedMpsSSB(
         mx=mx,
         g_qk=g_qk,
         qx=q_row_mx[None, :, None],
@@ -1359,7 +1359,7 @@ def test_mps_reconstruct_prepared_uses_scalar_loss_for_small_fused_path() -> Non
     mx = pytest.importorskip("mlx.core")
     from quantem.gpu.direct_ptycho.mps.kernels.corrected import corrected_from_dynamic_geometry
     from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sums_from_complex
-    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirectPtycho
+    from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB
     from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
 
     n = 128
@@ -1375,7 +1375,7 @@ def test_mps_reconstruct_prepared_uses_scalar_loss_for_small_fused_path() -> Non
     dc_mask[0, 0] = True
     q_row_mx = mx.array(q_row, dtype=mx.float32)
     q_col_mx = mx.array(q_col, dtype=mx.float32)
-    prepared = PreparedMpsDirectPtycho(
+    prepared = PreparedMpsSSB(
         mx=mx,
         g_qk=g_qk,
         qx=q_row_mx[None, :, None],
@@ -1455,11 +1455,11 @@ def test_mps_fit_reads_the_prepared_session_evidence() -> None:
     """
     pytest.importorskip("mlx.core")
     pytest.importorskip("optuna")
-    from quantem.gpu.direct_ptycho.mps.backend import MpsDirectPtychoBackend
+    from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
 
     rng = np.random.default_rng(61)
     data = rng.poisson(4, size=(8, 8, 12, 12)).astype(np.uint16)
-    session = MpsDirectPtychoBackend(
+    session = MpsSSBBackend(
         data, voltage_kV=300, semiangle_mrad=21.4, scan_sampling=1.0, detector_sampling_mrad=None,
         bright_field_intensity_threshold=0.0, bright_field_center_px=None, bright_field_radius_px=3, scan_detector_rotation_deg=0.0,
     )
@@ -1484,7 +1484,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
 
     pytest.importorskip("mlx.core")
     pytest.importorskip("optuna")
-    from quantem.gpu import SSB, DirectPtychoResult
+    from quantem.gpu import SSB, SSBResult
 
     rng = np.random.default_rng(7)
     data = rng.poisson(4, size=(8, 8, 12, 12)).astype(np.uint16)
@@ -1505,8 +1505,8 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     )
     result = workflow.reconstruct()
 
-    assert type(optimized) is DirectPtychoResult
-    assert type(result) is DirectPtychoResult
+    assert type(optimized) is SSBResult
+    assert type(result) is SSBResult
     assert optimized is result
     assert optimized.backend == result.backend == "mps"
     assert workflow._compute._prepared is not None

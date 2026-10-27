@@ -21,13 +21,12 @@ from quantem.gpu.direct_ptycho.mps.frames import (
     MpsBfColumnFrames,
     MpsTensorFrames,
     TensorChunkedFrames,
-    mlx_count_type,
 )
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
 
 @dataclass
-class PreparedMpsDirectPtycho:
+class PreparedMpsSSB:
     """Device-resident BF FFT stack and geometry for repeated SSB loss calls."""
 
     mx: object
@@ -78,9 +77,6 @@ class PreparedMpsDirectPtycho:
     row_steps: tuple | None = None
     # Trial-independent detector geometry used by the resident joint objective.
     fit_probe_geometry: object | None = None
-    # the low-order fit's aperture radii (``resident_fit.aperture_radii``); optics only, so rotation and BF subsets
-    # keep them
-    fit_radii: object | None = None
     # the regularized direct methods' optics-free layout (``direct._layout``) and its key
     direct_layout: tuple | None = None
 
@@ -98,7 +94,7 @@ def prepare_selection(
     chunk_bf: int,
     compact_inactive: bool = False,
     dc_value_override: complex | None = None,
-) -> PreparedMpsDirectPtycho:
+) -> PreparedMpsSSB:
     """Precompute BF-column FFTs and static geometry for MPS SSB fitting."""
     if scan_shape[0] != scan_shape[1]:
         raise ValueError(
@@ -196,7 +192,7 @@ def prepare_selection(
 
     dc_mask_np = np.zeros(scan_shape, dtype=bool)
     dc_mask_np[0, 0] = True
-    return PreparedMpsDirectPtycho(
+    return PreparedMpsSSB(
         mx=mx,
         g_qk=g_qk,
         qx=qx,
@@ -260,7 +256,7 @@ def _encoded_g_qk(mx, frames: EncodedBrightFieldFrames, rows: np.ndarray, cols: 
     half = scan_cols // 2 + 1
     g_qk = mx.zeros((count, scan_rows, half), dtype=mx.complex64)
     _eval_in_place(mx, g_qk)
-    stored = mlx_count_type(mx, frames.dtype)
+    stored = {1: mx.uint8, 2: mx.uint16, 4: mx.uint32}[frames.dtype.itemsize]
     for row_start, row_stop, counts in frames.scan_row_blocks(rows, cols):
         block_rows = row_stop - row_start
         staged = staged_tensor(mx, counts, stored)
@@ -324,21 +320,6 @@ def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_
         if isinstance(frames, ArrayFrames):
             stack_mx = None
             stack_np = frames.columns(rows, cols).reshape(int(rows.size), *scan_shape).astype(np.float32, copy=False)
-        elif isinstance(frames, MpsBfColumnFrames):
-            # The stored counts are read into GPU memory as they are and become float32 there: the values a host
-            # conversion would write (uint8 and uint16 are exact in float32), so G(q, k) keeps every bit, while the
-            # host writes 1 or 2 bytes per count in parallel reads instead of converting 4 bytes per count on one
-            # thread (most of the 1.5 s a 512 x 512 scan took to prepare; it takes 0.7 s).
-            counts_mx = mx.empty((int(rows.size), *scan_shape), dtype=mlx_count_type(mx, frames.dtype))
-            mx.eval(counts_mx)
-            frames.columns_into(rows, cols, out=np.asarray(counts_mx).reshape(int(rows.size), -1))
-            stack_mx = counts_mx.astype(mx.float32)
-            del counts_mx
-            stack_np = None
-            if compact_inactive and dc_value_override is None:
-                # the DC sums below are host sums of these float32 values
-                mx.eval(stack_mx)
-                stack_np = np.asarray(stack_mx)
         else:
             # Gather into MLX-owned storage: a resident gather without an output allocates a Metal buffer that
             # nothing releases, so every preparation would strand one chunk of driver memory.
@@ -385,7 +366,7 @@ def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_
 
 
 def retarget_prepared_rotation(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     selection: BrightfieldDisk,
     scan_detector_rotation_deg: float,
@@ -539,7 +520,7 @@ def resolve_bf_selection(
 
 
 def pk_from_prepared(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     C10: float,
     C12: float,
@@ -562,7 +543,7 @@ def pk_from_prepared(
 
 
 def pk_batch_from_prepared(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     start: int,
     stop: int,
@@ -592,7 +573,7 @@ def pk_batch_from_prepared(
 
 
 def bf_storage_chunks(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     logical_chunk_bf: int,
 ):
     """Yield packed storage slices without moving logical reduction boundaries."""
@@ -612,7 +593,7 @@ def bf_storage_chunks(
 
 
 def bf_storage_chunk_packs(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     logical_chunk_bf: int,
     max_storage_bf: int,
 ) -> list[list[tuple[int, int]]]:
@@ -637,7 +618,7 @@ def bf_storage_chunk_packs(
     return packs
 
 
-# The cached k, q - k and q + k probe geometry of a PreparedMpsDirectPtycho, in the order _pair_geometry computes it.
+# The cached k, q - k and q + k probe geometry of a PreparedMpsSSB, in the order _pair_geometry computes it.
 _PAIR_GEOMETRY_FIELDS = (
     "alpha_k2", "cos2_k", "sin2_k", "aperture_k",
     "alpha_m2", "cos2_m", "sin2_m", "ap_m",
@@ -739,7 +720,3 @@ def _spatial_frequencies(shape: tuple[int, int], sampling: tuple[float, float]):
 
 def _exp_neg_i(mx, chi):
     return mx.cos(chi) - (1j * mx.sin(chi))
-
-
-# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
-PreparedMpsSSB = PreparedMpsDirectPtycho

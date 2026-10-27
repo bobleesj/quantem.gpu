@@ -1,6 +1,6 @@
 # CUDA SSB region latency — 2026-10-21
 
-> **Historical:** describes the code as of 2026-10-21; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-21; its fits refined with the finite-difference Newton, since replaced by exact derivatives, so its fit timings are not current. See the [current fit methods](../../../api/ssb.md).
 
 Closing a regional SSB session used to call Python's global garbage collector.
 That scanned unrelated objects in the notebook process on every region change.

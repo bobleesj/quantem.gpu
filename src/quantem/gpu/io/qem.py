@@ -52,26 +52,6 @@ from quantem.gpu.resident.mps.counts import MPSStreamedCounts, _Chunk
 from quantem.gpu.resident.mps.precision import PrecisionSource, _ANSPart
 
 
-_COPY_STREAMS = r"""
-extern "C" __global__ void copy_streams(const unsigned char* source, const unsigned int* source_offsets,
-                                        const unsigned int* offsets, const unsigned int* streams,
-                                        unsigned char* payload, unsigned int count) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= count) return;
-    unsigned int stream = streams[i], first = source_offsets[stream], stop = source_offsets[stream + 1];
-    unsigned char* out = payload + offsets[stream];
-    for (unsigned int j = first; j < stop; ++j) out[j - first] = source[j];
-}
-"""
-
-
-def _copy_streams(grid, block, arguments):
-    """Copy kept count streams (one detector pixel over 512 scans each) into a compact payload, a thread each."""
-    import cupy as cp
-
-    cp.RawKernel(_COPY_STREAMS, "copy_streams")(grid, block, arguments)
-
-
 def save_streamed(path, source, metadata: dict | None = None) -> None:
     """Atomically save exact encoded arrays as ``.qem``; never decode or overwrite."""
     metal = isinstance(source, MPSStreamedCounts)
@@ -374,219 +354,33 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
                     arrays.append(arena[spec["offset"]:end].view(dtype))
                 source.chunks.append(Chunk(chunk["first"], chunk["scans"], tuple(arrays)))
             source.ready_scans = math.prod(shape[:2])
-            metadata = _counts_metadata(path, header, source, selected, started, dict(
-                encode_seconds=0.0, index_seconds=0.0, pinned_staging_bytes=workers * capacity,
-                verified_read_workers=workers, verified_encoded_bytes=header["bytes"]))
+            metadata = qem_metadata.effective_metadata(dict(header["metadata"]), header["scientific_metadata"])
+            metadata["scientific_metadata"] = header["scientific_metadata"]
+            metadata["container"] = header["container"]
+            metadata["container_version"] = header["container_version"]
+            metadata.setdefault("original_source_path", metadata.get("source_path"))
+            # source_dtype, file_counts_exact and working_counts_exact stay as the header states them: they are the
+            # evidence of how the stored counts relate to the original acquisition (format 0.0.4, retained block).
+            # Replaced here by what this load knows (the stored dtype, exact), a copy of a file rewrote a uint32
+            # source as uint16 and counts changed by a pixel correction as exact.
+            metadata.update(
+                resident_metadata(shape, source.dtype, source.nbytes, backend="cuda"),
+                source_kind="resident", source_path=str(Path(path).resolve()),
+                source_logical_tensor_bytes=math.prod(shape) * source.dtype.itemsize,
+                device=f"cuda:{selected}", resident_profile=INTEGER_CODEC,
+                index_bytes=source.index_nbytes,
+                lossless_exact=True,
+                load_timings=dict(resident_ready_seconds=time.perf_counter() - started,
+                                  encode_seconds=0.0, index_seconds=0.0,
+                                  pinned_staging_bytes=workers * capacity,
+                                  verified_read_workers=workers,
+                                  verified_encoded_bytes=header["bytes"]),
+            )
             if verbose:
                 print(f"Restored exact CUDA ANS {shape} in {time.perf_counter() - started:.3f} s.")
             return Dataset4dstemGPU(source, metadata)
         except BaseException:
             stream.synchronize()
-            source.release()
-            raise
-
-
-def _counts_metadata(path, header, source, selected, started, timings) -> dict:
-    """The metadata of a CUDA counts resident restored from ``header``."""
-    shape = tuple(header["shape"])
-    metadata = qem_metadata.effective_metadata(dict(header["metadata"]), header["scientific_metadata"])
-    metadata["scientific_metadata"] = header["scientific_metadata"]
-    metadata["container"] = header["container"]
-    metadata["container_version"] = header["container_version"]
-    metadata.setdefault("original_source_path", metadata.get("source_path"))
-    # source_dtype, file_counts_exact and working_counts_exact stay as the header states them: they are the
-    # evidence of how the stored counts relate to the original acquisition (format 0.0.4, retained block).
-    # Replaced here by what this load knows (the stored dtype, exact), a copy of a file rewrote a uint32
-    # source as uint16 and counts changed by a pixel correction as exact.
-    metadata.update(
-        resident_metadata(shape, source.dtype, source.nbytes, backend="cuda"),
-        source_kind="resident", source_path=str(Path(path).resolve()),
-        source_logical_tensor_bytes=math.prod(shape) * source.dtype.itemsize,
-        device=f"cuda:{selected}", resident_profile=INTEGER_CODEC,
-        index_bytes=source.index_nbytes,
-        lossless_exact=True,
-        load_timings=dict(resident_ready_seconds=time.perf_counter() - started, **timings),
-    )
-    return metadata
-
-
-def read_metadata(path) -> tuple[dict, dict]:
-    """The header and the effective metadata of a ``.qem`` file, without reading its body."""
-    header, _ = read_header_with_digest(path)[:2]
-    return header, qem_metadata.effective_metadata(dict(header["metadata"]), header["scientific_metadata"])
-
-
-def _blocks_in_order(path, header, start, workers: int = 8):
-    """Yield ``(offset, pinned bytes)`` of every verified 64 MiB body block in file order.
-
-    Workers read and hash the next blocks while the caller uploads one; a block's buffer is reused only after the
-    caller asks for the following block, so the caller must finish with it (a synchronous upload) first.
-    """
-    import cupy as cp
-    from collections import deque
-
-    total, blocks = header["bytes"], len(header["sha256"])
-    workers = max(1, min(workers, blocks))
-    owners = [cp.cuda.alloc_pinned_memory(min(BLOCK_BYTES, total)) for _ in range(workers)]
-    buffers = [np.frombuffer(owner, np.uint8, count=min(BLOCK_BYTES, total)) for owner in owners]
-    with ExitStack() as stack:
-        handles = [stack.enter_context(open(path, "rb", buffering=0)) for _ in range(workers)]
-        pool = stack.enter_context(ThreadPoolExecutor(max_workers=workers))
-
-        def read(number, slot):
-            count = min(BLOCK_BYTES, total - number * BLOCK_BYTES)
-            view = memoryview(buffers[slot][:count])
-            handles[slot].seek(start + number * BLOCK_BYTES)
-            cursor = 0
-            while cursor < count:
-                length = handles[slot].readinto(view[cursor:])
-                if not length:
-                    raise ValueError("ANS snapshot ended during loading; recopy it.")
-                cursor += length
-            if hashlib.sha256(view).hexdigest() != header["sha256"][number]:
-                raise ValueError(f"ANS checksum mismatch in block {number}; recopy the file.")
-            return count
-
-        pending = deque((number, pool.submit(read, number, number)) for number in range(workers))
-        following = workers
-        while pending:
-            number, future = pending.popleft()
-            count = future.result()
-            yield number * BLOCK_BYTES, buffers[number % workers][:count]
-            if following < blocks:
-                pending.append((following, pool.submit(read, following, following % workers)))
-                following += 1
-
-
-def _chunks_in_order(path, header, start):
-    """Yield ``(chunk entry, device arrays)`` of every chunk, staged through a bounded device window.
-
-    The window holds one chunk and the blocks around it (about 64 MiB more than the largest chunk, twice), so a
-    file larger than the GPU can be read chunk by chunk; the arrays are views into it, valid until the next chunk.
-    """
-    import cupy as cp
-
-    spans = []
-    for chunk in header["chunks"]:
-        first = chunk["arrays"][0]["offset"]
-        last = chunk["arrays"][-1]
-        dtype = ARRAY_DTYPES[len(chunk["arrays"]) - 1]
-        spans.append((first, last["offset"] + last["count"] * np.dtype(dtype).itemsize))
-    capacity = max(stop - first for first, stop in spans) + 2 * BLOCK_BYTES
-    windows = [cp.empty(capacity, cp.uint8), cp.empty(capacity, cp.uint8)]
-    current, origin, filled = 0, 0, 0
-    blocks = _blocks_in_order(path, header, start)
-    for chunk, (first, stop) in zip(header["chunks"], spans):
-        aligned = (first // BLOCK_BYTES) * BLOCK_BYTES
-        if aligned > origin:
-            kept = origin + filled - aligned
-            other = 1 - current
-            if kept > 0:
-                windows[other][:kept] = windows[current][aligned - origin:aligned - origin + kept]
-            current, origin, filled = other, aligned, max(kept, 0)
-        while origin + filled < stop:
-            offset, block = next(blocks)
-            if offset != origin + filled:
-                raise ValueError("QEM body blocks arrived out of order; reopen the file.")
-            windows[current][filled:filled + block.size].set(block)
-            cp.cuda.get_current_stream().synchronize()
-            filled += block.size
-        arrays = []
-        for spec, dtype in zip(chunk["arrays"], ARRAY_DTYPES):
-            begin = spec["offset"] - origin
-            arrays.append(windows[current][begin:begin + spec["count"] * np.dtype(dtype).itemsize].view(dtype))
-        yield chunk, arrays
-    for _ in blocks:  # every block is checked, the padding after the last chunk included
-        pass
-
-
-def load_counts_pixels(path, select, *, device=None, verbose: bool = False) -> Dataset4dstemGPU:
-    """Restore a CUDA counts ``.qem`` keeping only the detector pixels ``select`` names, chunk by chunk.
-
-    A first pass sums every pixel over the scan (exact uint64); ``select(total, valid)`` returns the boolean
-    detector mask to keep. A second pass copies the kept pixels' count streams into compact arrays; every other
-    pixel becomes an empty constant-zero stream, so it reads 0, and the spatial index is not loaded. The exact
-    full-detector total stays with the resident (``detector.mean`` is unchanged). Memory holds the kept streams
-    and one staged chunk, never the whole file, so an acquisition larger than the GPU loads when its kept pixels
-    fit. The resident records ``kept_pixels``; a reader that needs another pixel must refuse. Callers announce the
-    selection; this is for an algorithm that owns the resident and reads only those pixels.
-    """
-    import cupy as cp
-
-    started = time.perf_counter()
-    header, start, header_digest = read_header_with_digest(path)
-    if header["codec"] != INTEGER_CODEC:
-        raise NotImplementedError("Selected-pixel loading needs an integer counts .qem.")
-    shape = tuple(header["shape"])
-    selected = cuda_device_index(device)
-    valid = decode_valid(header["valid"], shape[2:])
-    pixels = math.prod(shape[2:])
-    with cp.cuda.Device(selected):
-        source = StreamedCounts(shape, np.dtype(header["dtype"]), valid)
-        try:
-            errors = cp.zeros(1, cp.uint32)
-            with cp.cuda.using_allocator():  # retained, so outside the memory pool (see counts.retain)
-                total = cp.zeros(shape[2:], cp.uint64)
-            # each chunk's encoded bytes per detector pixel, so the kept streams get one allocation of exact size:
-            # a few thousand separate allocations would each round up and waste gigabytes at 4096 x 4096
-            pixel_bytes = []
-            for chunk, arrays in _chunks_in_order(path, header, start):
-                streams = math.ceil(chunk["scans"] / source.interval) * pixels
-                source.kernels["total"](
-                    ((streams + 127) // 128,), (128,),
-                    (*arrays[:3], source.decoding, total, errors, np.uint32(chunk["scans"]), np.uint32(pixels),
-                     np.uint32(source.interval)),
-                )
-                pixel_bytes.append(cp.diff(arrays[1].astype(cp.int64)).reshape(-1, pixels).sum(axis=0))
-            if int(errors.get()[0]):
-                raise ValueError("An encoded count stream failed reconstruction.")
-            summed = time.perf_counter() - started
-            keep = np.asarray(select(total, valid), bool)
-            if keep.shape != shape[2:]:
-                raise ValueError("select must return a detector-shaped mask.")
-            kept = cp.asarray(keep.ravel())
-            payload_sizes = [int(sizes[kept].sum()) for sizes in pixel_bytes]
-            stream_counts = [math.ceil(chunk["scans"] / source.interval) * pixels for chunk in header["chunks"]]
-            del pixel_bytes
-            with cp.cuda.using_allocator():  # retained, so outside the memory pool (see counts.retain)
-                payload_arena = cp.empty(max(1, sum(payload_sizes)), cp.uint8)
-                offsets_arena = cp.empty(sum(count + 1 for count in stream_counts), cp.uint32)
-                models_arena = cp.empty(sum(stream_counts), cp.uint8)
-            at = [0, 0, 0]
-            for (chunk, arrays), size, count in zip(_chunks_in_order(path, header, start), payload_sizes, stream_counts):
-                payload, offsets, models = arrays[:3]
-                mask = kept[cp.arange(models.size, dtype=cp.int64) % pixels]
-                sizes = cp.diff(offsets).astype(cp.uint32) * mask
-                streams = cp.flatnonzero(mask).astype(cp.uint32)
-                compact = payload_arena[at[0]:at[0] + size]
-                compact_offsets = offsets_arena[at[1]:at[1] + count + 1]
-                compact_models = models_arena[at[2]:at[2] + count]
-                at = [at[0] + size, at[1] + count + 1, at[2] + count]
-                compact_offsets[0] = 0
-                cp.cumsum(sizes, dtype=cp.uint32, out=compact_offsets[1:])
-                # model 253: an empty stream of the constant 0
-                cp.copyto(compact_models, cp.where(mask, models, np.uint8(253)).astype(cp.uint8))
-                _copy_streams((max(1, math.ceil(streams.size / 128)),), (128,),
-                              (payload, offsets, compact_offsets, streams, compact, np.uint32(streams.size)))
-                cp.cuda.get_current_stream().synchronize()
-                source.chunks.append(Chunk(chunk["first"], chunk["scans"], (compact, compact_offsets, compact_models)))
-            source.ready_scans = math.prod(shape[:2])
-            source.spatial_index = False
-            source._detector_total = total
-            source.kept_pixels = keep
-            cp.get_default_memory_pool().free_all_blocks()
-            metadata = _counts_metadata(path, header, source, selected, started, dict(
-                detector_sum_seconds=summed, verified_encoded_bytes=header["bytes"]))
-            metadata["kept_detector_pixels"] = int(keep.sum())
-            with open(path, "rb") as handle:
-                if handle.read(56)[24:].hex() != header_digest:
-                    raise ValueError("QEM changed while loading; reopen the completed file.")
-            metadata["qem_header_sha256"] = header_digest
-            if verbose:
-                print(f"Restored {int(keep.sum())} of {pixels} detector pixels of CUDA ANS {shape} "
-                      f"in {time.perf_counter() - started:.3f} s.")
-            return Dataset4dstemGPU(source, metadata)
-        except BaseException:
             source.release()
             raise
 

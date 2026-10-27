@@ -2,7 +2,7 @@
 
 Every backend evaluates chi = (pi / lambda[A]) alpha^2 (C10 + C12 cos 2(phi - phi12)) with no conversion, so the
 numbers it takes and returns are Angstrom and radians. Before 2026-09-24 they were passed through and reported as "nm"
-(known-defocus check: abTEM C10 = -100 A came back as C10 = -100.26 "nm"). The Direct Ptycho session converts here, so every
+(known-defocus check: abTEM C10 = -100 A came back as C10 = -100.26 "nm"). The SSB session converts here, so every
 aberration a user or a stored record sees carries its unit in its key (``C10_nm``, ``C12_nm``, ``phi12_deg``), while
 kernels, backend parity tests and fixtures keep Angstrom and radians.
 """
@@ -11,7 +11,7 @@ import math
 
 import numpy as np
 
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 ENGINE_PER_NM = 10.0
 PRIMARY = ("C10_nm", "C12_nm", "phi12_deg")
@@ -88,7 +88,7 @@ def higher_order_arrays(aberrations: dict[str, float]) -> tuple[np.ndarray, np.n
     Slots 0 and 1 repeat C10, C12 and phi12, as the full aberration kernel reads all 14 coefficients from these
     arrays. A mapping with only the three primary keys returns None, so it keeps the two-term kernels.
 
-    The magnitudes stay in nm here because the session still decides from them which kernel runs; ``DirectPtycho.preview``
+    The magnitudes stay in nm here because the session still decides from them which kernel runs; ``SSB.preview``
     multiplies all 14 by ``ENGINE_PER_NM`` once, in float32, before it calls ``preview`` on either backend. CUDA
     and MPS therefore both receive Angstrom (their ``magnitudes_A`` arguments), never these nm values.
     """
@@ -137,7 +137,7 @@ def refine_lock_to_engine(refine_lock: list[str] | None) -> list[str] | None:
     return [{"C10_nm": "C10", "C12_nm": "C12", "phi12_deg": "phi12"}[name] for name in refine_lock]
 
 
-def result_from_engine(result: DirectPtychoResult) -> DirectPtychoResult:
+def result_from_engine(result: SSBResult) -> SSBResult:
     """Convert a result computed by a backend (Angstrom, radians) to the public nm and degrees, in place."""
     result.aberrations = aberrations_from_engine(result.aberrations)
     if result.trial_records:

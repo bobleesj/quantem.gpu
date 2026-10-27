@@ -16,20 +16,20 @@ def test_preview_compares_three_final_methods_without_refitting(monkeypatch, siz
     import numpy as np
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
     plt.switch_backend("Agg")
     display = Mock(return_value=Mock())
     monkeypatch.setattr(ipython, "get_ipython", lambda: SimpleNamespace(kernel=object()))
     monkeypatch.setattr(IPython.display, "display", display)
     wave = np.exp(1j * np.arange(256).reshape(16, 16) / 100)
-    image = DirectPtychoResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2))
-    complex_image = DirectPtychoResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
+    image = SSBResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2))
+    complex_image = SSBResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
                               reconstruction_method="complex",
-                              reconstruction_options={"phase_regularization": .03, "amplitude_regularization": .03})
-    phase_image = DirectPtychoResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
-                            reconstruction_method="phase", reconstruction_options={"phase_regularization": .03})
-    ssb = SimpleNamespace(run=Mock(side_effect=[image, image, complex_image, phase_image]),
+                              reconstruction_options={"phase_damping": .03, "amplitude_damping": .03})
+    phase_image = SSBResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
+                            reconstruction_method="phase", reconstruction_options={"phase_damping": .03})
+    ssb = SimpleNamespace(reconstruct=Mock(side_effect=[image, image, complex_image, phase_image]),
                           _accept_result=Mock(), backend="cuda", _streamed=None)
     initial, final = object(), object()
     view = FitDisplay(ssb, enabled=True, size=size, columns=columns)
@@ -55,10 +55,10 @@ def test_preview_compares_three_final_methods_without_refitting(monkeypatch, siz
     assert all(figure.bbox.contains(title.x0, title.y0)
                and figure.bbox.contains(title.x1, title.y1) for title in titles)
     assert not any(left.overlaps(right) for left, right in zip(titles, titles[1:]))
-    assert [call.args[0] for call in ssb.run.call_args_list] == [initial, final, final, final]
-    assert all(call.kwargs["upsampling_factor"] == "auto" and not call.kwargs["compute_loss"]
-               for call in ssb.run.call_args_list)
-    assert [call.kwargs.get("method", "ssb") for call in ssb.run.call_args_list] == [
+    assert [call.args[0] for call in ssb.reconstruct.call_args_list] == [initial, final, final, final]
+    assert all(call.kwargs["upsampling"] == "auto" and not call.kwargs["compute_loss"]
+               for call in ssb.reconstruct.call_args_list)
+    assert [call.kwargs.get("method", "ssb") for call in ssb.reconstruct.call_args_list] == [
         "ssb", "ssb", "complex", "phase",
     ]
     ssb._accept_result.assert_called_with(final)
@@ -68,9 +68,9 @@ def test_preview_compares_three_final_methods_without_refitting(monkeypatch, siz
 def test_disabled_or_cli_fit_creates_no_display(monkeypatch, enabled, notebook):
     ipython = pytest.importorskip("IPython")
     monkeypatch.setattr(ipython, "get_ipython", lambda: SimpleNamespace(kernel=object()) if notebook else None)
-    ssb = SimpleNamespace(run=Mock())
+    ssb = SimpleNamespace(reconstruct=Mock())
     FitDisplay(ssb, enabled=enabled).update(object(), final=True)
-    ssb.run.assert_not_called()
+    ssb.reconstruct.assert_not_called()
 
 
 @pytest.mark.parametrize("size,width", [("large", 6), (750, 7.5)])
@@ -86,7 +86,7 @@ def test_large_convergence_is_live_throttled_and_does_not_reconstruct(monkeypatc
     monkeypatch.setattr(IPython.display, "display", display)
     clock = [1.0]
     monkeypatch.setattr("quantem.gpu.direct_ptycho.fit_display.time.perf_counter", lambda: clock[0])
-    ssb = SimpleNamespace(run=Mock())
+    ssb = SimpleNamespace(reconstruct=Mock())
     view = FitDisplay(ssb, enabled=False, size=size, show_convergence=True)
     view.progress(0)
     view.progress(1, 1.1)
@@ -99,7 +99,7 @@ def test_large_convergence_is_live_throttled_and_does_not_reconstruct(monkeypatc
     assert display.return_value.update.call_count == 2
     assert list(view.line.get_ydata()) == [1.1, 1.2, 1.3]
     assert view.figure.get_size_inches()[0] == width
-    ssb.run.assert_not_called()
+    ssb.reconstruct.assert_not_called()
 
 
 def test_default_does_not_collect_live_chart_history():
@@ -115,13 +115,13 @@ def test_fit_heading_clears_the_phase_title(size):
     """An inline fit preview keeps its heading above the full image title."""
     import numpy as np
     from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
-    image = DirectPtychoResult(
+    image = SSBResult(
         object_wave=np.exp(1j * np.arange(256).reshape(16, 16) / 100),
-        backend="mps", object_sampling_A=(0.2, 0.2), upsampling_factor=3,
+        backend="mps", object_sampling_A=(0.2, 0.2), upsampling=3,
     )
-    ssb = SimpleNamespace(run=Mock(return_value=image), _accept_result=Mock(), backend="mps")
+    ssb = SimpleNamespace(reconstruct=Mock(return_value=image), _accept_result=Mock(), backend="mps")
     view = FitDisplay(ssb, enabled=True, size=size)
     view.display = Mock(return_value=Mock())
     view.update(image, final=True)
@@ -183,18 +183,18 @@ def test_regional_preview_boxes_measured_positions_at_auto_sampling(monkeypatch,
     import IPython
     import IPython.display
     import numpy as np
-    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
     display = Mock(return_value=Mock())
     monkeypatch.setattr(IPython, "get_ipython", lambda: SimpleNamespace(kernel=object()))
     monkeypatch.setattr(IPython.display, "display", display)
     # A 126-position acquisition was padded to 128; the context omits padding.
-    full = DirectPtychoResult(
+    full = SSBResult(
         object_wave=np.exp(1j * np.arange(256 * 256).reshape(256, 256) / 1e5),
-        backend="mps", object_sampling_A=(0.2, 0.2), upsampling_factor=2,
+        backend="mps", object_sampling_A=(0.2, 0.2), upsampling=2,
     )
-    fit = DirectPtychoResult(object_wave=np.ones((64, 64)), backend="mps", fit_scan_region=(32, 96, 16, 80))
-    session = SimpleNamespace(input_scan_shape=(126, 126), run=Mock(return_value=full),
+    fit = SSBResult(object_wave=np.ones((64, 64)), backend="mps", fit_scan_region=(32, 96, 16, 80))
+    session = SimpleNamespace(input_scan_shape=(126, 126), reconstruct=Mock(return_value=full),
                               _accept_result=Mock(), backend=backend, _streamed=None)
     view = FitDisplay(session, enabled=True, size=750, columns=columns,
                       scan_region=fit.fit_scan_region)

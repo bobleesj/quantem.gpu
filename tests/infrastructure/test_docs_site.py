@@ -128,7 +128,7 @@ def test_scientific_docs_use_k_for_detector_and_nu_for_scan_frequency() -> None:
     data_model = Path("docs/kernels/data-model.md").read_text(encoding="utf-8")
     assert "\\mathbf R=(R_r,R_c)" in data_model
     assert "\\mathbf k=(k_r,k_c)" in data_model
-    for page in ("direct-ptycho.md", "com-dpc-idpc.md"):
+    for page in ("ssb.md", "com-dpc-idpc.md"):
         assert "\\boldsymbol{\\nu}" in Path("docs/kernels", page).read_text(encoding="utf-8")
 
 
@@ -153,7 +153,7 @@ def test_compute_docs_do_not_depend_on_application_frameworks() -> None:
 
 
 def test_scientific_kernel_pages_define_coordinates_contract_and_optimization() -> None:
-    for name in ("load-decode-bin", "virtual-detectors", "com-dpc-idpc", "direct-ptycho", "scan-regions"):
+    for name in ("load-decode-bin", "virtual-detectors", "com-dpc-idpc", "ssb", "scan-regions"):
         text = Path("docs/kernels", f"{name}.md").read_text(encoding="utf-8")
         assert "(row, column)" in text, name
         assert "(r, c)" in text, name
@@ -180,7 +180,7 @@ def test_backend_pages_support_implementers_not_only_api_users() -> None:
 
 
 def test_public_api_pages_are_contracts() -> None:
-    for name in ("images_dpc.md", "direct_ptycho.md", "movie.md"):
+    for name in ("images_dpc.md", "ssb.md", "movie.md"):
         text = Path("docs/api", name).read_text(encoding="utf-8")
         for section in (
             "## Inputs and outputs",

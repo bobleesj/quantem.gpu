@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 from quantem.gpu.direct_ptycho.workflow import SSB
 
 
@@ -17,12 +17,12 @@ from quantem.gpu.direct_ptycho.workflow import SSB
 def test_regional_fit_keeps_scope_panels_and_parent_state(tmp_path, search, saved):
     region = (64, 192, 128, 256)
     events = []
-    initial = DirectPtychoResult(
+    initial = SSBResult(
         object_wave=np.ones((128, 128), dtype=np.complex64), backend="mps",
         aberrations={"C10_nm": 2.0, "C12_nm": 0.0, "phi12_deg": 0.0},
         sample_tilt_mrad=(1.0, -2.0), depth_spread_nm=12.0,
     )
-    result = DirectPtychoResult(
+    result = SSBResult(
         object_wave=np.ones((128, 128), dtype=np.complex64), backend="mps",
         aberrations={"C10_nm": 2.0, "C12_nm": 0.0, "phi12_deg": 0.0, "C50_nm": 3.0},
         sample_tilt_mrad=(1.0, -2.0), depth_spread_nm=12.0,
@@ -53,7 +53,7 @@ def test_regional_fit_keeps_scope_panels_and_parent_state(tmp_path, search, save
         events.append("save")
         return updated
 
-    child = SimpleNamespace(find_aberrations=fit, _save_result=Mock(side_effect=save))
+    child = SimpleNamespace(fit_aberrations=fit, _save_result=Mock(side_effect=save))
     @contextmanager
     def select_region(chosen):
         assert chosen == region
@@ -68,7 +68,7 @@ def test_regional_fit_keeps_scope_panels_and_parent_state(tmp_path, search, save
         parent._reconstruction = updated
         return updated
     parent._accept_result = Mock(side_effect=accept)
-    fitted = inspect.unwrap(SSB.find_aberrations)(
+    fitted = inspect.unwrap(SSB.fit_aberrations)(
         parent, search=search, scan_region=region, show=False,
         on_initial_fit=received.append, save_dir=tmp_path if saved else None,
     )
@@ -90,5 +90,5 @@ def test_regional_fit_keeps_scope_panels_and_parent_state(tmp_path, search, save
 def test_regional_fifth_order_rejects_invalid_or_padded_fit_regions(region):
     parent = SimpleNamespace(input_scan_shape=(512, 512), select_region=Mock())
     with pytest.raises(ValueError, match="scan_region"):
-        inspect.unwrap(SSB.find_aberrations)(parent, scan_region=region, show=False)
+        inspect.unwrap(SSB.fit_aberrations)(parent, scan_region=region, show=False)
     parent.select_region.assert_not_called()

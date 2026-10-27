@@ -45,7 +45,7 @@ def sample_to_propagator_tilt(
     Parameters
     ----------
     sample_tilt_mrad : (float, float)
-        Sample tilt in mrad, (row, col) along the scan axes, as ``DirectPtychoResult.sample_tilt_mrad`` states it.
+        Sample tilt in mrad, (row, col) along the scan axes, as ``SSBResult.sample_tilt_mrad`` states it.
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees, the session's ``scan_detector_rotation_deg``.
     scan_detector_rotation_flipped : bool

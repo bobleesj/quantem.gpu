@@ -41,9 +41,9 @@ Native Swift/Metal products for macOS and iOS clients:
   `Metal4DSTEMResidentCacheIO`, and `Metal4DSTEMResidentSummaryIO` for explicit
   native load, resource, resident-cache, and exact prepared-product provenance.
   See [Native 4D-STEM load and cache contract](../api/native_4dstem_io.md).
-- `MetalDirectPtychoEngine` and `MetalDirectPtychoJointModel` for exact native 128×128, 256×256 and
+- `MetalSSBEngine` and `MetalSSBJointModel` for exact native 128×128, 256×256 and
   512×512 SSB: the engine prepares the Fourier evidence, and the joint model fits
-  (`DirectPtychoModelFit`) and reconstructs SSB, Phase and Complex. See
+  (`SSBModelFit`) and reconstructs SSB, Phase and Complex. See
   [native SSB](#native-swift-and-metal).
 
 Native clients call these endpoints directly. They are not a local Python
@@ -64,7 +64,7 @@ from the Python MPS and CUDA backends.
 (native-swift-and-metal)=
 ## Native Swift and Metal
 
-`MetalDirectPtychoEngine` consumes exact plane-major BF columns with layout
+`MetalSSBEngine` consumes exact plane-major BF columns with layout
 `[logical_brightfield, scan_row, scan_column]`, source dtype `uint8` by default
 (`prepare(brightfield:countType:)` also accepts `uint16` and `uint32`), and square
 scan shapes 128×128, 256×256, or 512×512. Geometry must be complete and finite,
@@ -73,18 +73,12 @@ raises rather than silently cropping, binning, changing precision, or falling
 back to CPU. The engine computes in float32/complex64. It retains every
 logical BF term in normalization and skips only the proven-zero aperture union.
 
-The product was named `MetalSSBKernels` until 2026-10-26. That name remains for one pin cycle as a
-deprecated re-export with an alias for each renamed type (for example `SSBFitOptions` for
-`DirectPtychoFitOptions`); the SSB-method types such as `SSBPhaseArtifact` keep their names. A packaged app
-copies the shaders' resource bundle, now `MetalKernels_MetalDirectPtychoKernels.bundle`, into
-`Contents/Resources`.
-
 ```swift
 import Metal
-import MetalDirectPtychoKernels
+import MetalSSBKernels
 
 let device = MTLCreateSystemDefaultDevice()!
-let engine = try MetalDirectPtychoEngine(
+let engine = try MetalSSBEngine(
   device: device,
   geometry: calibratedGeometry,
   cacheBudgetBytes: availableSSBCacheBytes
@@ -92,7 +86,7 @@ let engine = try MetalDirectPtychoEngine(
 
 try engine.prepare(brightfield: planeMajorUInt8Buffer)
 let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
-let fit = try DirectPtychoModelFit.findAberrations(
+let fit = try SSBModelFit.findAberrations(
   model: model, rotationDegrees: rotation,
   darkField: darkField, scanSampling: scanSampling)
 let phase = try model.reconstruct(fit.fit.point, upsamplingFactor: autoFactor)
@@ -108,7 +102,7 @@ staged fit is described in `native/swift/README.md`.
 The engine's own non-model reconstruction (`reconstruct(aberrations:)`), its
 phase-variance objective (`phaseVariance`), the seeded TPE and Nelder–Mead search
 over it (`optimize`, `SSBOptimizer`) and its optional BF sampling are retired.
-`DirectPtychoFitOptions(objective: .phaseVariance)` still decodes from saved runs and is
+`SSBFitOptions(objective: .phaseVariance)` still decodes from saved runs and is
 refused as a fit.
 
 `cacheBudgetBytes: nil` requests a complete Hermitian `G(k)` cache. A finite
@@ -120,7 +114,7 @@ plots.
 
 ### Saved native runs
 
-`MetalDirectPtychoJointSavedRun` saves a joint-model result: the phase, the exact model
+`MetalSSBJointSavedRun` saves a joint-model result: the phase, the exact model
 point, calibration, sampling, region and fit record.
 
 `MetalSSBSavedRun` is the format of the retired non-model engine. It records
@@ -133,7 +127,7 @@ SHA-256 checksums for the two image payloads. Runs saved with it still open:
 let previous = try MetalSSBSavedRun.load(
     from: resultURL, matchingSourceIdentity: sourceSHA256)
 let images = try previous.reconstruction(device: device)
-let phase = try MetalDirectPtychoEngine(
+let phase = try MetalSSBEngine(
     device: device, geometry: previous.geometry, cacheBudgetBytes: 0
 ).phase(of: images)
 ```

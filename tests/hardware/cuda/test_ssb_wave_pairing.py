@@ -45,7 +45,7 @@ def ptycho():
 
 
 def test_paired_frequencies_match_the_full_plane_for_odd_orders(ptycho, monkeypatch):
-    options = dict(compute_loss=False, upsampling_factor=3, sample_tilt_mrad=(1.5, -0.8), depth_spread_nm=8.0,
+    options = dict(compute_loss=False, upsampling=3, sample_tilt_mrad=(1.5, -0.8), depth_spread_nm=8.0,
                    output="native")
     columns = []
     pairing = ThickSample._wave_columns

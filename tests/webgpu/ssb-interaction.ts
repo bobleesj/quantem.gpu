@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { WebGPUDirectPtychoBackend } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
+import { WebGPUSSBBackend } from "../../src/quantem/gpu/direct_ptycho/webgpu/backend";
 
 /** A stopped diagnostic must leave the next complete reconstruction usable. */
 export async function runSsbInteractionParity(base: string): Promise<Record<string, number>> {
@@ -9,7 +9,7 @@ export async function runSsbInteractionParity(base: string): Promise<Record<stri
   const source = (url: string) => ({ json: JSON.stringify({ kind: "bf_columns", url,
     dtype: "uint16", encoding: "uint16", num_bright_field_pixels: cal.num_bright_field_pixels,
     plane, scan_shape: cal.g_shape.slice(1), bytes_per_bright_field_pixel: plane * 2, bits_per_value: 16 }) });
-  const engine = new WebGPUDirectPtychoBackend(calibration, source(base + "ssb-columns.u16"));
+  const engine = new WebGPUSSBBackend(calibration, source(base + "ssb-columns.u16"));
   const options = { computeLoss: true, phaseEstimator: "mean_phase" as const,
     sample: { sampleTiltMrad: [2.2, -3.1] as [number, number], depthSpreadA: 140 } };
   try {
@@ -37,12 +37,12 @@ export async function runSsbInteractionParity(base: string): Promise<Record<stri
   const constant = new Uint16Array(plane * cal.num_bright_field_pixels);
   for (let bf = 0; bf < cal.num_bright_field_pixels; bf++) constant.fill(100 + bf, bf * plane, (bf + 1) * plane);
   const url = URL.createObjectURL(new Blob([constant.buffer]));
-  const flat = new WebGPUDirectPtychoBackend(calibration, source(url));
+  const flat = new WebGPUSSBBackend(calibration, source(url));
   let maximum = 0;
   try {
     for (const factor of [1, 2, 4, 8] as const) for (const depth of [0, 180]) {
       const result = await flat.reconstruct(-80, 40, -0.7, { computeLoss: false,
-        upsamplingFactor: factor, sample: { sampleTiltMrad: [-9, 5], depthSpreadA: depth } });
+        upsampling: factor, sample: { sampleTiltMrad: [-9, 5], depthSpreadA: depth } });
       for (const phase of result.phase) maximum = Math.max(maximum, Math.abs(phase));
       if (!(maximum < 1e-7)) throw new Error(`Constant scan acquired phase contrast: ${maximum}`);
     }

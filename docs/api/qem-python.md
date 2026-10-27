@@ -169,7 +169,7 @@ CUDA native reads normally return CuPy arrays. FP8 uses an owned byte wrapper
 with `dtype`, `shape`, `get()`, `to_torch()`, and `release()`, because CuPy has
 no corresponding numeric dtype. Default reads return typed Torch tensors on
 either accelerator. See {ref}`original FP8 input <original-fp8-input>`.
-Metal display and Direct Ptycho products round to
+Metal display and SSB products round to
 float32 on the GPU without modifying the saved float64 measurements.
 
 ## Review calibration once
@@ -177,7 +177,7 @@ float32 on the GPU without modifying the saved float64 measurements.
 `data.calibration` shows voltage, convergence angle, scan sampling and detector
 sampling, with units and Recorded / Overridden / Missing status. Set a value
 by name; a single number for a sampling applies to both (row, col) axes. The notebook
-summary and `io.inspect(path)` expose these quantities without decoding counts.
+summary and `io.report(path)` expose these quantities without decoding counts.
 Unknown calibration does not prevent raw inspection or saving.
 
 ```python
@@ -190,11 +190,11 @@ io.save("calibrated.qem", data)
 Use measured values for your acquisition. Values you set are kept beside the recorded
 metadata and survive save, move, reopen and resave. Nothing saves automatically.
 Recreate an existing reconstruction session after editing its calibration.
-Direct Ptycho needs voltage and scan sampling, plus detector sampling or a calibrated
+SSB needs voltage and scan sampling, plus detector sampling or a calibrated
 convergence angle from which the disk radius can determine detector sampling.
 It cannot determine an absolute angular scale from the disk radius alone.
 
-For a header-only check without a GPU, use `io.inspect("gold.qem")`.
+For a header-only table without a GPU, use `io.report("gold.qem")`.
 For a stored-file integrity check:
 
 ```bash

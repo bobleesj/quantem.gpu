@@ -5,7 +5,7 @@ export interface WebGPUOptimizationOptions {
   readonly seed: number;
 }
 
-export interface DirectPtychoPrecision {
+export interface SSBPrecision {
   readonly real_dtype: "float32";
   readonly complex_dtype: "complex64";
 }
@@ -17,7 +17,7 @@ export interface SSBOptimizationResult {
 }
 
 export interface WebGPUReconstructionOptions {
-  readonly upsamplingFactor?: 1 | 2 | 4 | 8;
+  readonly upsampling?: 1 | 2 | 4 | 8;
   readonly phaseEstimator?: "phase_of_mean" | "mean_phase";
   /** No effect: every count is the strided subset `numBrightFieldPixels` selects. */
   readonly preview?: boolean;
@@ -39,9 +39,9 @@ export interface WebGPUSampleOptions {
   readonly depthSpreadA: number;
 }
 
-export interface DirectPtychoProtocol<Result> {
+export interface SSBProtocol<Result> {
   readonly backend: "webgpu";
-  readonly precision: DirectPtychoPrecision;
+  readonly precision: SSBPrecision;
   prepare(): Promise<void>;
   fit(
     options: WebGPUOptimizationOptions,
@@ -54,6 +54,3 @@ export interface DirectPtychoProtocol<Result> {
   ): Promise<Result>;
   close(): void;
 }
-
-// The names before the Direct Ptycho rename, kept for existing imports.
-export type { DirectPtychoPrecision as SSBPrecision, DirectPtychoProtocol as SSBProtocol };

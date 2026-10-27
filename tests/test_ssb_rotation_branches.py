@@ -158,9 +158,9 @@ class _Session:
     def __init__(self):
         self.calls = []
 
-    def panels(self, branches, upsampling_factor):
-        self.calls.append(upsampling_factor)
-        factor = self.FACTOR if upsampling_factor == "auto" else upsampling_factor
+    def panels(self, branches, upsampling):
+        self.calls.append(upsampling)
+        factor = self.FACTOR if upsampling == "auto" else upsampling
         return factor, tuple(np.kron(branch.phase, np.ones((factor, factor), np.float32)) for branch in branches.branches)
 
 
@@ -182,13 +182,13 @@ def test_record_round_trip_and_figure():
     np.testing.assert_array_equal(restored.columns, branches.columns)
     np.testing.assert_array_equal(restored.branches[1].phase, branches.branches[1].phase)
     figure = branches.show(panels=False)
-    tail_axis, column_axis = figure.axes[:2]
+    tail_axis, = figure.axes
     assert tail_axis.get_yscale() == "log"
     solid, dashed = tail_axis.get_lines()[:2]
     assert solid.get_color() == "#29243e" and solid.get_linestyle() == "-"
     assert dashed.get_color() == "#cc4b42" and dashed.get_linestyle() == "--"
     assert tail_axis.get_legend().get_texts()[0].get_text().startswith("0.0° · S = +")
-    assert "z = +" in column_axis.get_legend().get_texts()[0].get_text()
+    assert "high-passed" not in tail_axis.get_xlabel()
     assert not np.any(solid.get_ydata() == 0)
 
 
@@ -201,7 +201,7 @@ def test_figure_shows_both_fits_upsampled_with_columns_on_the_display_grid():
     native = [(branch.phase_skewness, branch.column_z) for branch in branches.branches]
     branches.bind_session(session.panels)
     figure = branches.show()
-    assert session.calls == ["auto"] and branches.upsampling_factor == 3
+    assert session.calls == ["auto"] and branches.upsampling == 3
     assert branches.object_sampling_A == pytest.approx((0.264 / 3, 0.264 / 3))
     image_axes = [axis for axis in figure.axes if axis.images]
     assert [axis.get_title() for axis in image_axes] == ["0.0° kept · 3× auto (rad)", "180.0° · 3× auto (rad)"]
@@ -216,8 +216,8 @@ def test_figure_shows_both_fits_upsampled_with_columns_on_the_display_grid():
     assert tail_axis.get_legend().get_texts()[0].get_text() == f"0.0° · S = +{native[0][0]:.3f}"
     branches.show()
     assert session.calls == ["auto"]   # reconstructed once
-    branches.show(upsampling_factor=1)
-    assert session.calls == ["auto", 1] and branches.upsampling_factor == 1
+    branches.show(upsampling=1)
+    assert session.calls == ["auto", 1] and branches.upsampling == 1
 
 
 def test_auto_panels_are_saved_with_the_record_once_reconstructed():
@@ -226,7 +226,7 @@ def test_auto_panels_are_saved_with_the_record_once_reconstructed():
     shown = branches.upsampled_phases()
     record, arrays = branches.to_record()
     restored = RotationBranches.from_record(record, arrays)
-    assert restored.upsampling_factor == 3
+    assert restored.upsampling == 3
     np.testing.assert_array_equal(restored.upsampled_phases()[1], shown[1])
 
 
@@ -243,7 +243,7 @@ def test_panels_need_the_session_that_fitted_the_branches():
     del session   # held weakly: a dropped session is never kept alive by its result
     with pytest.raises(ValueError, match="closed"):
         branches.upsampled_phases()
-    assert len(branches.show(panels=False).axes) == 2
+    assert len(branches.show(panels=False).axes) == 1
 
 
 def test_display_helpers_default_to_the_auto_factor():
@@ -252,15 +252,15 @@ def test_display_helpers_default_to_the_auto_factor():
 
     from quantem.gpu.direct_ptycho.workflow import SSB
 
-    assert inspect.signature(SSB.show_trials).parameters["upsampling_factor"].default == "auto"
-    assert inspect.signature(RotationBranches.show).parameters["upsampling_factor"].default == "auto"
-    assert inspect.signature(SSB.reconstruct).parameters["upsampling_factor"].default == 1   # the fit grid
+    assert inspect.signature(SSB.show_trials).parameters["upsampling"].default == "auto"
+    assert inspect.signature(RotationBranches.show).parameters["upsampling"].default == "auto"
+    assert inspect.signature(SSB.reconstruct).parameters["upsampling"].default == 1   # the fit grid
     for step, factor in ((0.264, 2), (0.373, 3), (0.5, 4)):
         calibration = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(step, step))
-        assert SSB._resolve_upsampling_factor(calibration, "auto") == factor
-    assert SSB._resolve_upsampling_factor(calibration, 2) == 2
+        assert SSB._resolve_upsampling(calibration, "auto") == factor
+    assert SSB._resolve_upsampling(calibration, 2) == 2
     coarse = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(2.0, 2.0))
-    assert SSB._resolve_upsampling_factor(coarse, "auto") == 4   # capped; the notice is tested in test_ssb_auto_sampling
+    assert SSB._resolve_upsampling(coarse, "auto") == 4   # capped; the notice is tested in test_ssb_auto_sampling
 
 
 def test_a_native_phase_view_names_the_auto_factor(capsys):
@@ -269,16 +269,16 @@ def test_a_native_phase_view_names_the_auto_factor(capsys):
 
     matplotlib.use("Agg")
     pytest.importorskip("quantem.core")
-    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
     wave = np.exp(1j * _lattice(n=32))
-    native = DirectPtychoResult(object_wave=wave, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
+    native = SSBResult(object_wave=wave, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
                        object_sampling_A=(0.5, 0.5))
     native.show(axsize=(2, 2))
     assert capsys.readouterr().out.strip() == (
         "SSB: showing this phase at 1x, the grid it was reconstructed on; "
-        "ssb.run(result, upsampling_factor='auto') shows it at 4x.")
-    auto = DirectPtychoResult(object_wave=np.exp(1j * _lattice(n=128)), backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
-                     object_sampling_A=(0.125, 0.125), upsampling_factor=4)
+        "ssb.reconstruct(result, upsampling='auto') shows it at 4x.")
+    auto = SSBResult(object_wave=np.exp(1j * _lattice(n=128)), backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
+                     object_sampling_A=(0.125, 0.125), upsampling=4)
     auto.show(axsize=(2, 2))
     assert capsys.readouterr().out == ""

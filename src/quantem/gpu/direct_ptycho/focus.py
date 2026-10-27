@@ -12,13 +12,13 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from quantem.widget import Show2D, Show3D
 
-    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
     from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
 
 def show_focus(
     session: "DirectPtycho",
-    fit: "DirectPtychoResult",
+    fit: "SSBResult",
     *,
     region: tuple[int, int, int, int] | None = None,
     mode: Literal["interactive", "static"] = "interactive",
@@ -31,7 +31,6 @@ def show_focus(
     rows: int | None = None,
     cmap: str = "inferno",
     save: str | Path | None = None,
-    max_cols: int | None = None,
 ) -> "Show2D | Show3D | Figure":
     """Reconstruct full-field phase for every pair, then crop the displayed region."""
     if mode not in ("interactive", "static"):
@@ -47,7 +46,7 @@ def show_focus(
     if offsets.ndim != 1 or not offsets.size or not np.isfinite(offsets).all():
         raise ValueError("Give finite focus_offsets_nm, for example (-5, 0, 5), relative to the joint fit.")
     if fit.sample_tilt_mrad is None or fit.depth_spread_nm is None:
-        raise ValueError("Focus/depth images require a joint fit. Run ssb.find_aberrations(tilt=True) first.")
+        raise ValueError("Focus/depth images require a joint fit. Run ssb.fit_aberrations(tilt=True) first.")
     depths = (
         np.unique(np.maximum(0.0, fit.depth_spread_nm + np.array([-5.0, 0.0, 5.0])))
         if depth_spread_nm is None else np.atleast_1d(np.asarray(depth_spread_nm, dtype=float))
@@ -57,7 +56,7 @@ def show_focus(
     panel_count = len(depths) if mode == "interactive" and layout == "stack" else len(depths) * len(offsets)
     default_columns = (len(depths) if layout == "stack" else len(offsets)) if mode == "interactive" else 2
     columns = resolve_columns(
-        panel_count, columns=columns, rows=rows, default=default_columns, legacy_columns=max_cols,
+        panel_count, columns=columns, rows=rows, default=default_columns,
     )
     if mode == "interactive":
         try:
@@ -65,7 +64,7 @@ def show_focus(
         except ImportError as exc:
             raise ImportError("Interactive focus images need quantem.widget; install it, or use mode='static'.") from exc
 
-    factor = session._resolve_upsampling_factor("auto")
+    factor = session._resolve_upsampling("auto")
     sampling = session._output_sampling(factor)
     crop = (slice(None), slice(None))
     if region is not None:
@@ -81,7 +80,7 @@ def show_focus(
                 aberrations = {**fit.aberrations, "C10_nm": fit.aberrations["C10_nm"] + float(offset)}
                 phase, _ = session.preview(
                     aberrations, sample_tilt_mrad=fit.sample_tilt_mrad,
-                    depth_spread_nm=float(depth), upsampling_factor=factor,
+                    depth_spread_nm=float(depth), upsampling=factor,
                     compute_loss=False,
                 )
                 row_images.append(phase[crop].copy())

@@ -10,7 +10,7 @@ from quantem.gpu.direct_ptycho.workflow import SSB
 
 
 def call(session, **options):
-    return inspect.unwrap(SSB.find_aberrations)(session, **options)
+    return inspect.unwrap(SSB.fit_aberrations)(session, **options)
 
 
 def test_primary_preserves_budget_seed_and_options():
@@ -104,7 +104,7 @@ def _exact_session(monkeypatch, start, refine, *, study=None, **session):
         monkeypatch.setattr(fifth_order_fit, "make_independent_sampler", lambda **kwargs: None)
     return SimpleNamespace(
         backend="cuda", _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object(), band_power=lambda band: 1.0),
-        run=lambda result, **kwargs: result, _accept_result=lambda result: result, **session)
+        reconstruct=lambda result, **kwargs: result, _accept_result=lambda result: result, **session)
 
 
 def _record(point, stop="test stop"):
@@ -159,7 +159,7 @@ def test_trial_budget_comparison_keeps_start_and_saved_results_independent(tmp_p
             child.aberrations["C10_nm"] = 99.
             options.append(kwargs)
             return SimpleNamespace(aberrations=dict(child.aberrations), num_trials=kwargs["trials"])
-        child.find_aberrations = run
+        child.fit_aberrations = run
         try:
             yield child
         finally:

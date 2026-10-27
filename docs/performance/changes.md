@@ -1,5 +1,14 @@
 # Revision and change ledger
 
+## 2026-10-25: joint ANS detector launches and validation
+
+Residual queries group up to sixteen scan blocks per CUDA block; stored counts
+and masks are unchanged. Aligned byte buffering reduces dependent payload loads.
+The [seven-acquisition record](virtual-detectors/reports/2026-10-25-seven-ans-acquisitions.md)
+keeps paired controls and identifies misleading preliminary timings caused by
+changing contention. Malformed-stream shortcuts now fail before publishing an
+image, and CoM preserves the acquisition axis.
+
 ## 2026-10-23: IO publication review
 
 The FP8 detector-product comparison now explicitly requests
@@ -320,7 +329,7 @@ The current values and distributions live only in
 Accepted and rejected performance experiments remain in the
 [optimization ledger](../maintainer/backend-optimization-matrix.md); older SSB
 layout experiments remain in the
-[SSB performance history](../maintainer/direct-ptycho-performance.md).
+[SSB performance history](../maintainer/ssb-performance.md).
 
 ## Adding a new revision
 

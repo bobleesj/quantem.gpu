@@ -1,6 +1,6 @@
 # Exact-derivative SSB fit in Python on CUDA and MPS, 2026-10-25
 
-> **Historical:** describes the code as of 2026-10-25; `refinement="newton"` (the finite-difference reference) is retired, and the default higher-order box is now ±20 with the half-band check. See the [current fit methods](../../../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-25; `refinement="newton"` (the finite-difference reference) is retired, and the default higher-order box is now ±20 with the half-band check. See the [current fit methods](../../../api/ssb.md).
 
 ## Question
 
@@ -16,7 +16,7 @@ plain-PyTorch float64 ground truth.
   frequencies are float64. Values come from the production objective kernels, with the band sum in float64.
 - `_gradient_refinement.py`: the bounded trust-region quasi-Newton (BFGS) of the native search. It starts from
   a Hessian of every 64th BF pixel, applies D scaling and an active set at the box, climbs on every 8th pixel,
-  then converges on all of them. `find_aberrations(refinement="auto")` selects it; `"newton"` keeps the
+  then converges on all of them. `fit_aberrations(refinement="auto")` selects it; `"newton"` keeps the
   finite-difference Newton as the reference trajectory.
 - `_exact_newton.py`: the low-order trust-region Newton on the exact gradient and Hessian. Trust region,
   pruning and second polish are unchanged; derivatives are computed only where a step uses them. The 200-trial
@@ -34,7 +34,7 @@ plain-PyTorch float64 ground truth.
 
 Five measured 512 × 512 × 192 × 192 acquisitions at 300 kV and 30 mrad, with 8,800–9,300 BF pixels: three at a
 0.373 Å scan step and two at 0.525 Å. Calibration and rotation are fixed at each acquisition's kept 180° branch.
-`DirectPtycho.find_aberrations()` uses its defaults. Wall clock is measured with device synchronization in fresh
+`DirectPtycho.fit_aberrations()` uses its defaults. Wall clock is measured with device synchronization in fresh
 sessions: before and after alternate in two processes of three sessions each, and the table gives the median of
 six. Hardware: NVIDIA RTX PRO 6000 Blackwell Workstation Edition, 4 CPU threads. Another user's jobs were active
 in about a third of the samples; medians are within 1–8 % of minima. Before is `oct-25-native-direct-methods`
@@ -50,7 +50,7 @@ in about a third of the samples; medians are within 1–8 % of minima. Before is
 | D (0.525 Å) | 14.06 | 1.06 | 13.3 | 3,341 → 15 (+9) |
 | E (0.525 Å) | 14.60 | 1.25 | 11.7 | 5,000 → 19 (+11) |
 
-`io.load` (0.5–1.1 s) and `run(method, upsampling_factor="auto")` for SSB, Phase and Complex (0.04–0.5 s) are
+`io.load` (0.5–1.1 s) and `reconstruct(method, upsampling="auto")` for SSB, Phase and Complex (0.04–0.5 s) are
 unchanged. With both 180° branches compared (measured on an RTX PRO 6000 Blackwell Max-Q, quiet), the total drops
 from 8.3–19.2 s to 0.70–1.66 s, and every acquisition keeps the same branch by the same test.
 
@@ -82,7 +82,7 @@ finite-difference Newton stops.
 
 ## MPS and the native app
 
-On an Apple M5 Max (Python MPS, fresh sessions, under a shared GPU lock), `find_aberrations()` goes from
+On an Apple M5 Max (Python MPS, fresh sessions, under a shared GPU lock), `fit_aberrations()` goes from
 67.6–218.9 s to 6.7–20.5 s (6.7–16.4×). The fifth-order stage drops from 57.7–168.7 s to 0.95–4.7 s. On MPS the
 200-trial search (2.0–6.3 s) and the low-order Newton (1.7–7.7 s) are now most of the time. The MPS kernels agree
 with the float64 reference in the hardware tests at the same tolerances as CUDA.

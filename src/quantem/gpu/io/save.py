@@ -1,4 +1,4 @@
-"""Save encoded acquisitions as ``.qem`` copies and arrays as Arina HDF5."""
+"""Save acquisitions as ``.qem`` copies or bounded Arina HDF5 exports."""
 
 import json
 import math
@@ -11,7 +11,8 @@ import numpy as np
 import torch
 
 from quantem.gpu.device.cuda_runtime import cp
-from quantem.gpu.formats.qem.metadata import MAPED_RECORDS, json_metadata
+from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE
+from quantem.gpu.formats.qem.metadata import HOT_PIXEL_SCHEMA, MAPED_RECORDS, json_metadata
 from quantem.gpu.formats.qem.reference import save_array
 from quantem.gpu.io import qem
 from quantem.gpu.io.dataset import Dataset4dstemGPU
@@ -31,6 +32,7 @@ from quantem.gpu.io.precision import precision_name, save_precision
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
+from quantem.gpu.resident.hot_pixels import hot_pixel_record
 
 
 @dataclass
@@ -101,7 +103,7 @@ def save(
     backend: str = "auto",
     compression: str = "auto",
 ) -> SaveResult:
-    """Save encoded acquisitions as QEM or array results as HDF5.
+    """Save encoded acquisitions as QEM or GPU data as HDF5.
 
     ``format="quantem"`` instead writes one self-contained ``.qem`` copy, not an
     HDF5 master/shard set. A complete encoded CUDA or MPS/Metal resident saves
@@ -125,6 +127,11 @@ def save(
     public compression method is Bitshuffle/LZ4; ``backend="auto"`` chooses the
     CUDA or MPS/Metal implementation from the input data. The CPU reference
     writer is available only when requested explicitly.
+    Complete CUDA integer ANS datasets decode in bounded GPU batches when
+    exported to HDF5; no dense acquisition is allocated. Keep the dataset
+    resident until this call returns before releasing it.
+    The resident's detector validity and correction record are retained;
+    reopening these saved counts does not apply pixel correction again.
 
     ``format="arina"`` names the acquisition/layout and writes HDF5 files;
     compression is selected separately.
@@ -314,6 +321,8 @@ def save(
         data = data.data
         if isinstance(data, torch.Tensor) and data.is_cuda:
             data = cp.from_dlpack(data.detach())
+    elif isinstance(data, Dataset4dstemGPU) and isinstance(data.data, StreamedCounts):
+        data = _CountBlocks(data, batch_size)
     normalized_backend = str(backend).lower()
     if normalized_backend not in {"auto", "cuda", "mps", "cpu"}:
         raise ValueError("backend must be 'auto', 'cuda', 'mps', or 'cpu'")
@@ -391,6 +400,38 @@ def save(
         )
     result = SaveResult(str(filepath), "cuda", complete=bool(wait))
     return result.wait() if wait else result
+
+
+class _CountBlocks:
+    """Decode complete CUDA integer residents within a 32 MiB frame buffer."""
+
+    def __init__(self, dataset, batch_size):
+        self.source = dataset.data
+        self.shape, self.dtype = self.source.shape, self.source.dtype
+        self.save_metadata = dict(dataset.metadata)
+        self.source.check_readable(0, math.prod(self.shape[:2]))
+        # This mask describes the saved measurements. The correction record
+        # separately retains the original hardware flags and any replacement.
+        self.save_metadata["pixel_mask"] = (~self.source.valid_pixels).astype(np.uint32)
+        correction = dataset.metadata.get("hot_pixel_correction")
+        if correction is None:
+            correction = hot_pixel_record(self.save_metadata["pixel_mask"], "none", backend="cuda")
+        if not isinstance(correction, dict) or correction.get("schema") != HOT_PIXEL_SCHEMA:
+            raise ValueError("Cannot preserve this detector correction record; reopen the original acquisition.")
+        self.save_metadata[HOT_PIXEL_CORRECTION_ATTRIBUTE] = correction
+        frame_bytes = math.prod(self.shape[2:]) * self.dtype.itemsize
+        count = 512 if batch_size is None else int(batch_size)
+        if count <= 0:
+            raise ValueError("batch_size must be positive.")
+        if frame_bytes > 32 << 20:
+            raise MemoryError("One detector frame exceeds the 32 MiB save decode limit.")
+        self.batch_size = min(count, (32 << 20) // frame_bytes)
+
+    def blocks(self):
+        with cp.cuda.Device(self.source.device):
+            frames = math.prod(self.shape[:2])
+            for first in range(0, frames, self.batch_size):
+                yield self.source.decode_scan_range_device(first, min(first + self.batch_size, frames))
 
 
 def _save_blocks(filepath, data, backend, dtype, metadata, scan_shape,

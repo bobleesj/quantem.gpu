@@ -71,7 +71,7 @@ def aperture_phase(z, wavelength: float, semiangle_rad: float, order: int = 5, p
 
     Every aberration order counts, C10 and C12 included; tilt and depth spread do not enter chi. The samples are the
     centres of a ``points`` x ``points`` grid on the aperture's square that fall inside it (the native
-    ``DirectPtychoHigherOrderConsistency.apertureDisagreement`` grid), so a plain mean over them is an area average.
+    ``SSBHigherOrderConsistency.apertureDisagreement`` grid), so a plain mean over them is an area average.
     """
     unit = (np.arange(points) + 0.5) / points * 2 - 1
     x, y = np.meshgrid(unit, unit, indexing="ij")

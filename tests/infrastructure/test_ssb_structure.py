@@ -13,7 +13,8 @@ def test_public_ssb_api_has_one_workflow() -> None:
 
     for name in (
         "open",
-        "find_aberrations",
+        "fit_aberrations",
+        "scan_rotations",
         "show_trials",
         "reconstruct",
         "preview",
@@ -36,7 +37,7 @@ def test_ssb_operations_share_saved_result_controls() -> None:
 
     from quantem.gpu import SSB
 
-    for operation in (SSB.find_aberrations, SSB.reconstruct):
+    for operation in (SSB.fit_aberrations, SSB.reconstruct):
         signature = inspect.signature(operation)
         assert signature.parameters["save_dir"].default is None
         assert signature.parameters["force"].default is False
@@ -91,7 +92,7 @@ def test_reconstruct_series_reuses_only_exact_results(
 
     import numpy as np
 
-    from quantem.gpu import SSB, DirectPtychoResult
+    from quantem.gpu import SSB, SSBResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
@@ -134,7 +135,7 @@ def test_reconstruct_series_reuses_only_exact_results(
             return None
 
         def _result(self, phase):
-            return DirectPtychoResult(
+            return SSBResult(
                 object_wave=np.exp(
                     1j * np.full((8, 9), phase, dtype=np.float32)
                 ).astype(np.complex64),
@@ -145,12 +146,12 @@ def test_reconstruct_series_reuses_only_exact_results(
                 reused=True,
             )
 
-        def find_aberrations(self, **kwargs):
+        def fit_aberrations(self, **kwargs):
             assert kwargs["save_dir"].name == "ssb-fit"
             assert kwargs["num_trials"] == 200
             return self._result(0.1 * self.index)
 
-        def run(self, **kwargs):
+        def reconstruct(self, **kwargs):
             assert kwargs["aberrations"] == aberrations
             assert kwargs["save_dir"].name == "ssb-locked"
             return self._result(0.3 + 0.1 * self.index)
@@ -233,7 +234,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
     """
     import numpy as np
 
-    from quantem.gpu import SSB, DirectPtychoResult, screening
+    from quantem.gpu import SSB, SSBResult, screening
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
@@ -260,9 +261,9 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
         def __exit__(self, *args):
             return None
 
-        def find_aberrations(self, **kwargs):
+        def fit_aberrations(self, **kwargs):
             rotation = self.kwargs["scan_detector_rotation_deg"]
-            return DirectPtychoResult(object_wave=np.ones((4, 4), np.complex64), backend="mps",
+            return SSBResult(object_wave=np.ones((4, 4), np.complex64), backend="mps",
                              aberrations={"C10_nm": 15.8, "C12_nm": 6.7, "phi12_deg": 17.5},
                              scan_detector_rotation_deg=158.9 if rotation is None else rotation,
                              scan_detector_rotation_flipped=False if rotation is None else self.kwargs["scan_detector_rotation_flipped"],
@@ -335,7 +336,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
     """Non-consecutive endpoint IDs should include intervening acquisitions."""
     import numpy as np
 
-    from quantem.gpu import SSB, DirectPtychoResult
+    from quantem.gpu import SSB, SSBResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
@@ -385,8 +386,8 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
         def __exit__(self, *args):
             return None
 
-        def find_aberrations(self, **kwargs):
-            return DirectPtychoResult(
+        def fit_aberrations(self, **kwargs):
+            return SSBResult(
                 object_wave=np.exp(
                     1j * np.full((2, 3), 0.1 * self.index, dtype=np.float32)
                 ).astype(np.complex64),
@@ -420,7 +421,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     """A probe reference whose stored fit lacks the current schema is fitted, never trusted (fit mocked at SSB.open)."""
     import numpy as np
 
-    from quantem.gpu import SSB, DirectPtychoResult
+    from quantem.gpu import SSB, SSBResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
@@ -459,14 +460,14 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
             return None
 
         def _result(self, aberrations):
-            return DirectPtychoResult(object_wave=np.ones((2, 3), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+            return SSBResult(object_wave=np.ones((2, 3), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                              scan_detector_rotation_deg=12.0, loss=0.25)
 
-        def find_aberrations(self, **kwargs):
+        def fit_aberrations(self, **kwargs):
             fits.append(self.name)
             return self._result(fitted)
 
-        def run(self, **kwargs):
+        def reconstruct(self, **kwargs):
             reconstructions.append((self.name, kwargs["aberrations"]))
             return self._result(kwargs["aberrations"])
 
@@ -608,7 +609,7 @@ def test_reconstruct_series_initializes_missing_live_results(
 
     import numpy as np
 
-    from quantem.gpu import SSB, DirectPtychoResult
+    from quantem.gpu import SSB, SSBResult
     from quantem.gpu import screening
 
     raw = tmp_path / "raw"
@@ -637,8 +638,8 @@ files:
         def __exit__(self, *args):
             return None
 
-        def find_aberrations(self, **kwargs):
-            return DirectPtychoResult(
+        def fit_aberrations(self, **kwargs):
+            return SSBResult(
                 object_wave=np.full((3, 4), 1 + 1j, dtype=np.complex64),
                 backend="cuda",
                 aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)},

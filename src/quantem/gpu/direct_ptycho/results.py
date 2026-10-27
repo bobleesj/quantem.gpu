@@ -51,13 +51,13 @@ def retired_estimator_note(phase_estimator: object, record: str) -> str | None:
     if method is None:
         return None
     return (f"SSB: {record} was saved with the retired {phase_estimator} estimator and loads as saved; "
-            f"run(method='ssb') reconstructs the phase of the mean wave, run(method='{method}') replaces "
+            f"reconstruct(method='ssb') reconstructs the phase of the mean wave, reconstruct(method='{method}') replaces "
             f"{phase_estimator}.")
 
 
 @dataclass
-class DirectPtychoResult(Mapping[str, float]):
-    """Result of a Direct Ptycho fit or reconstruction (SSB, phase or complex).
+class SSBResult(Mapping[str, float]):
+    """Result from SSB ptychographic reconstruction.
 
     The primary output is ``object_wave``, the complex transmission function.
     Convenience properties ``phase`` and ``amplitude`` are derived from it.
@@ -65,7 +65,7 @@ class DirectPtychoResult(Mapping[str, float]):
     Read coefficients directly with ``aberrations["C10_nm"]``,
     ``aberrations["C12_nm"]`` (nm), and ``aberrations["phi12_deg"]`` (degrees).
     ``dict(aberrations)`` copies the coefficients. Tilt, rotation, phase, and
-    trial history remain properties. After ``find_aberrations(tilt=True)``,
+    trial history remain properties. After ``fit_aberrations(tilt=True)``,
     C10 is the defocus at the model's mid-depth. Use reconstruction overrides
     to explore changed coefficients without modifying the fitted result.
 
@@ -74,7 +74,7 @@ class DirectPtychoResult(Mapping[str, float]):
     object_wave : cp.ndarray
         Complex transmission function (scan_row, scan_col).
     sample_tilt_mrad : tuple[float, float] | None
-        Sample tilt (row, col) in mrad, scan frame, from ``find_aberrations(tilt=True)``; None for standard SSB.
+        Sample tilt (row, col) in mrad, scan frame, from ``fit_aberrations(tilt=True)``; None for standard SSB.
     depth_spread_nm : float | None
         Depth over which the tilted columns spread in the thick-sample model (a model parameter, not a measured
         thickness); None for standard SSB.
@@ -87,25 +87,25 @@ class DirectPtychoResult(Mapping[str, float]):
         (> 1: the tilt explains more); None when ``compare_standard=False``.
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees, in [0, 360). The CoM curl fixes it only modulo 180 degrees;
-        for an estimated rotation ``find_aberrations`` fits both branches and keeps one (``rotation_branches``).
+        for an estimated rotation ``fit_aberrations`` fits both branches and keeps one (``rotation_branches``).
     scan_detector_rotation_flipped : bool
         Whether the detector axes were exchanged before applying the rotation.
     rotation_branches : RotationBranches | None
         Both 180-degree branches, fitted independently, with the atomic-column and phase-tail evidence and the branch
         kept; ``show("rotation")`` draws it. None when no comparison ran (a given or recorded rotation).
     rotation_refined : bool
-        Whether ``find_aberrations(refine_rotation=True)`` refined the estimated rotation; ``scan_detector_rotation_deg``
+        Whether ``fit_aberrations(refine_rotation=True)`` refined the estimated rotation; ``scan_detector_rotation_deg``
         is then the refined angle.
     rotation_estimate_deg : float | None
         The estimated rotation (on the kept 180-degree branch) the refinement started from; None when not refined.
     rotation_refinement : dict | None
         The refinement's record: ``estimate_deg``, ``refined_deg``, the agreement (``estimate_agreement``,
         ``refined_agreement``) and loss at both, the angles evaluated, ``evaluations`` and ``seconds``.
-    upsampling_factor : int
+    upsampling : int
         Output factor relative to the native scan grid. ``object_sampling_A``
         records output pixel spacing, preserving the physical field of view.
     object_sampling_A : tuple[float, float] | None
-        Pixel size of the reconstructed image in Angstrom, (row, col): the scan step divided by ``upsampling_factor``.
+        Pixel size of the reconstructed image in Angstrom, (row, col): the scan step divided by ``upsampling``.
     reconstruction_method : str
         ``ssb``, ``phase`` or ``complex``. The regularized methods are experimental.
     reconstruction_options : dict[str, object]
@@ -131,7 +131,7 @@ class DirectPtychoResult(Mapping[str, float]):
     optimizer : dict[str, object]
         Numerical search/refinement device, precision, and Newton diagnostics.
     objective : str | None
-        What ``find_aberrations`` maximized: ``"agreement"`` (the least-squares agreement of the SSB model with the
+        What ``fit_aberrations`` maximized: ``"agreement"`` (the least-squares agreement of the SSB model with the
         data, with or without tilt) or ``"broad_fifth_agreement"`` (the same through fifth order); None for a result
         that was not fitted. Results saved by earlier versions may say ``"phase_variance"`` (a retired search).
     refinement : str | None
@@ -171,7 +171,7 @@ class DirectPtychoResult(Mapping[str, float]):
     voltage_kV: float | None = None
     semiangle_mrad: float | None = None
     object_sampling_A: tuple[float, float] | None = None
-    upsampling_factor: int = 1
+    upsampling: int = 1
     reconstruction_method: str = "ssb"
     reconstruction_options: dict[str, object] = field(default_factory=dict)
     reconstruction_diagnostics: dict[str, object] = field(default_factory=dict)
@@ -198,7 +198,7 @@ class DirectPtychoResult(Mapping[str, float]):
     _calibration_source: dict[str, object] | None = field(default=None, repr=False, compare=False)
     sample_agreement: float | None = None
     objective: str | None = None
-    # find_aberrations(refine_rotation=True): the estimate it started from and the search (rotation_refinement.py)
+    # fit_aberrations(refine_rotation=True): the estimate it started from and the search (rotation_refinement.py)
     rotation_refined: bool = False
     rotation_estimate_deg: float | None = None
     rotation_refinement: dict[str, object] | None = None
@@ -212,7 +212,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> aberrations = ssb.find_aberrations()
+        >>> aberrations = ssb.fit_aberrations()
         >>> defocus_nm = aberrations["C10_nm"]
         """
         return self.aberrations[coefficient]
@@ -227,7 +227,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
     def __repr__(self) -> str:
         lines = ["SSB Result" if self.reconstruction_method == "ssb" else f"Direct {self.reconstruction_method} result"]
-        lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsampling_factor}x output")
+        lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsampling}x output")
         if self.phase_estimator is not None:
             lines.append(f"  Estimator      {self.phase_estimator}")
         if not self.amplitude_estimated:
@@ -333,7 +333,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> fit = ptycho.find_aberrations()  # doctest: +SKIP
+        >>> fit = ptycho.fit_aberrations()  # doctest: +SKIP
         >>> fit.report()  # doctest: +SKIP
         >>> fit.report(columns=2)  # doctest: +SKIP
         >>> parameters = fit.report(to_dict=True)  # doctest: +SKIP
@@ -394,10 +394,10 @@ class DirectPtychoResult(Mapping[str, float]):
 
             required = ssb_upsampling_requirement(
                 voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-                scan_sampling_A=tuple(float(step) * self.upsampling_factor for step in self.object_sampling_A),
+                scan_sampling_A=tuple(float(step) * self.upsampling for step in self.object_sampling_A),
             )
-            if self.upsampling_factor < required - 1e-12:
-                record["upsampling_factor"] = self.upsampling_factor
+            if self.upsampling < required - 1e-12:
+                record["upsampling"] = self.upsampling
                 record["nominal_upsampling_requirement"] = required
         if to_dict:
             return record
@@ -426,7 +426,7 @@ class DirectPtychoResult(Mapping[str, float]):
             row["Stopping reason"] = record["stop_reason"]
         row.update({f"Timing: {name} (s)": seconds for name, seconds in self.timings.items()})
         if "nominal_upsampling_requirement" in record:
-            row["Output sampling (×)"] = record["upsampling_factor"]
+            row["Output sampling (×)"] = record["upsampling"]
             row["Nominal requirement (×)"] = record["nominal_upsampling_requirement"]
         model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
         table = pd.DataFrame.from_dict(row, orient="index", columns=[model]).rename_axis("Parameter")
@@ -524,7 +524,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.run(aberrations)
+        >>> result = ssb.reconstruct(aberrations)
         >>> probe = result.probe()
         >>> probe_fourier = result.probe(space="fourier")
         """
@@ -560,7 +560,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> fit = ssb.find_aberrations(search="broad")
+        >>> fit = ssb.fit_aberrations(search="broad")
         >>> fit.show("convergence")
         >>> fit.save_calibration("ssb-results/calibration.json")
         """
@@ -592,8 +592,7 @@ class DirectPtychoResult(Mapping[str, float]):
             aberrations are encoded in the complex Fourier probe's phase.
             ``rotation`` draws the 180-degree branch evidence of an estimated
             rotation (``rotation_branches.show()``): both branches' fits at
-            ``upsampling_factor="auto"`` above their native phase tails and
-            phase at the dark-field atomic columns. A phase view coarser than
+            ``upsampling="auto"`` above their native phase distributions. A phase view coarser than
             ``"auto"`` (a native fit) is shown as reconstructed, and one line
             names the auto factor.
             ``depth`` shows the conditional focus-depth agreement slice;
@@ -609,7 +608,7 @@ class DirectPtychoResult(Mapping[str, float]):
             Convergence axis. Auto uses recorded elapsed time when every fit
             has it, otherwise evaluations. Time starts before the primary fit;
             loading and plotting are excluded. Missing times are not estimated.
-        compare : DirectPtychoResult, sequence of DirectPtychoResult, or mapping, optional
+        compare : SSBResult, sequence of SSBResult, or mapping, optional
             For convergence, a fit or labeled mapping of fits from the same
             data, calibration, region and objective. The current fit is included
             once. Different refinement methods are supported.
@@ -666,7 +665,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.run(aberrations, upsampling_factor="auto")
+        >>> result = ssb.reconstruct(aberrations, upsampling="auto")
         >>> result.show()
         >>> result.show("probe")
         >>> result.show(size="large")
@@ -711,9 +710,11 @@ class DirectPtychoResult(Mapping[str, float]):
                 panel_size = (12, 12)
             axsize = (width, width * panel_size[1] / panel_size[0])
         if view == "phase" and (compare is not None or region is not None or show_fft or interactive):
-            others = [] if compare is None else ([compare] if isinstance(compare, DirectPtychoResult) else compare)
-            if (not isinstance(others, Sequence) or (compare is not None and not others)
-                    or not all(isinstance(result, DirectPtychoResult) for result in others)):
+            others = [] if compare is None else ([compare] if isinstance(compare, SSBResult) else compare)
+            if isinstance(others, Mapping):
+                others = [result for result in others.values() if result is not self]
+            if (not isinstance(others, Sequence) or (compare is not None and not others and not isinstance(compare, Mapping))
+                    or not all(isinstance(result, SSBResult) for result in others)):
                 raise ValueError("Compare phase images with show(compare=other) or show(compare=[second, third]).")
             figure = _phase_comparison(self, *others, axsize=axsize, cmap=cmap,
                                        region=("center" if compare is not None else None) if region is None else region,
@@ -726,7 +727,7 @@ class DirectPtychoResult(Mapping[str, float]):
             if self.rotation_branches is None:
                 raise ValueError(
                     "This result has no 180-degree branch comparison: its rotation was given or recorded, or "
-                    "check_rotation=False. Run ssb.compare_rotation_branches() to fit and compare both branches.")
+                    "check_rotation=False. Run ssb.scan_rotations(report=False, ) to fit and compare both branches.")
             return self.rotation_branches.show(axsize=axsize, cmap=cmap, save=save)
         if view == "convergence":
             from quantem.gpu.direct_ptycho.convergence import plot_convergence
@@ -789,8 +790,8 @@ class DirectPtychoResult(Mapping[str, float]):
 
 
 @dataclass
-class DirectPtychoSeriesResult:
-    """One independent or fixed-probe Direct Ptycho reconstruction series (SSB phase)."""
+class SSBSeriesResult:
+    """One independent or fixed-probe SSB reconstruction series."""
 
     phase: np.ndarray
     bright_field: np.ndarray
@@ -864,7 +865,7 @@ def column_sign(phase: object) -> float:
 def phase_skewness(phase: object) -> float:
     """Mean-centred third-moment ratio of the phase, ``mean(p**3) / mean(p**2)**1.5`` with ``p = phase - mean(phase)``.
 
-    The phase-tail test of the 180-degree branch choice (``DirectPtycho.compare_rotation_branches``): positive when a few bright
+    The phase-tail test of the 180-degree branch choice (``SSB.scan_rotations``): positive when a few bright
     atomic columns sit over a flatter background. Unlike ``column_sign`` it centres on the mean, not the median.
 
     Examples
@@ -940,8 +941,8 @@ def _is_cupy_array(value: object) -> bool:
     return cp is not None and isinstance(value, cp.ndarray)
 
 
-def _announce_below_auto(result: DirectPtychoResult) -> None:
-    """Say in one line when a shown phase is coarser than ``upsampling_factor="auto"`` and how to get the auto one."""
+def _announce_below_auto(result: SSBResult) -> None:
+    """Say in one line when a shown phase is coarser than ``upsampling="auto"`` and how to get the auto one."""
     from quantem.gpu.optics.physics import ssb_upsampling_factor
 
     if None in (result.voltage_kV, result.semiangle_mrad, result.object_sampling_A):
@@ -949,12 +950,12 @@ def _announce_below_auto(result: DirectPtychoResult) -> None:
     try:
         auto = ssb_upsampling_factor(
             voltage_kV=result.voltage_kV, semiangle_mrad=result.semiangle_mrad,
-            scan_sampling_A=tuple(float(step) * result.upsampling_factor for step in result.object_sampling_A))
+            scan_sampling_A=tuple(float(step) * result.upsampling for step in result.object_sampling_A))
     except ValueError:
         return
-    if result.upsampling_factor < auto:
-        print(f"SSB: showing this phase at {result.upsampling_factor}x, the grid it was reconstructed on; "
-              f"ssb.run(result, upsampling_factor='auto') shows it at {auto}x.")
+    if result.upsampling < auto:
+        print(f"SSB: showing this phase at {result.upsampling}x, the grid it was reconstructed on; "
+              f"ssb.reconstruct(result, upsampling='auto') shows it at {auto}x.")
 
 
 @cache
@@ -1000,23 +1001,23 @@ def _format_aberrations(aberrations: dict) -> str:
     return "\n".join(lines)
 
 
-def _phase_title(result: DirectPtychoResult, area: str = "Full field") -> str:
+def _phase_title(result: SSBResult, area: str = "Full field") -> str:
     """Name the measured channel, reconstruction method and recorded strengths."""
     method = result.reconstruction_method
     options = result.reconstruction_options
     if method == "ssb":
         heading = "Conventional SSB"
-        detail = "No reconstruction regularization"
+        detail = "No damping"
     else:
         heading = "Regularized phase-only" if method == "phase" else "Amplitude + phase"
-        strength = options.get("phase_regularization")
+        strength = options.get("phase_damping")
         phase = "not recorded" if strength is None else f"{strength:g}"
-        detail = f"Phase regularization {phase}"
+        detail = f"Phase damping {phase}"
         if method == "complex":
-            strength = options.get("amplitude_regularization")
+            strength = options.get("amplitude_damping")
             amplitude = "not recorded" if strength is None else f"{strength:g}"
-            detail = f"Regularization: phase {phase}, amplitude {amplitude}"
-    return f"{heading}\n{detail}\n{area} · {result.upsampling_factor}× upsampling · phase (rad)"
+            detail = f"Damping: phase {phase}, amplitude {amplitude}"
+    return f"{heading}\n{detail}\n{area} · {result.upsampling}× upsampling · phase (rad)"
 
 
 def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "inferno",
@@ -1176,8 +1177,3 @@ def _phase_spectra(phases: list[np.ndarray], sampling: list[np.ndarray]):
     spectra = [20 * np.log10(np.maximum(spectrum / peak, 1e-3)) for spectrum in spectra]
     frequency_sampling = 1 / (np.asarray(phases[0].shape) * sampling[0])
     return spectra, frequency_sampling
-
-
-# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
-SSBResult = DirectPtychoResult
-SSBSeriesResult = DirectPtychoSeriesResult

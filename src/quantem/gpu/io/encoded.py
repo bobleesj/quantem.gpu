@@ -20,6 +20,7 @@ import numpy as np
 from quantem.gpu.device.cuda_runtime import _release_pinned, cp, cuda_device_index
 from quantem.gpu.device.metal_runtime import release_buffer
 from quantem.gpu.formats.hdf5.reads import FrameReader
+from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
 from quantem.gpu.io import arrays
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
@@ -73,6 +74,10 @@ def load_h5_ans(
     """Load bounded native chunks into a backend-owned runtime encoded resident."""
     started = time.perf_counter()
     info = inspect(path, scan_shape=scan_shape, dataset_path=dataset_path)
+    saved_correction = info.metadata.get(HOT_PIXEL_CORRECTION_ATTRIBUTE)
+    if saved_correction is not None:
+        # Saved measurements already have their recorded correction policy.
+        hot_pixel_correction = "none"
     # workflows over several acquisitions (MAPED tilts, focal series) label each
     # one by the file it came from; every branch below copies info.metadata
     info.metadata["source_path"] = str(path)
@@ -82,6 +87,8 @@ def load_h5_ans(
         info=info,
     )
     if generic is not None:
+        if saved_correction is not None:
+            generic.metadata.update(arrays.correction_metadata(saved_correction))
         return generic
     if backend == "mps":
         return _load_h5_ans_mps(path, info, hot_pixel_correction, verbose)
@@ -195,7 +202,7 @@ def load_h5_ans(
             index_bytes=0 if bit_lanes else source.index_nbytes,
             pixel_mask=info.pixel_mask,
             resident_profile=source.header["codec"] if bit_lanes else INTEGER_CODEC,
-            **arrays.correction_metadata(corrector.record),
+            **arrays.correction_metadata(saved_correction or corrector.record),
             load_timings=dict(
                 resident.load_metrics,
                 resident_ready_seconds=time.perf_counter() - started,
@@ -387,7 +394,7 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
         ),
         pixel_mask=info.pixel_mask,
         resident_profile=source.header["codec"] if bit_lanes else INTEGER_CODEC,
-        **arrays.correction_metadata(corrector.record),
+        **arrays.correction_metadata(info.metadata.get(HOT_PIXEL_CORRECTION_ATTRIBUTE) or corrector.record),
         load_timings=dict(
             resident.load_metrics,
             resident_ready_seconds=time.perf_counter() - started,

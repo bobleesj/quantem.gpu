@@ -1,7 +1,4 @@
-"""Streaming refits only defocus and astigmatism and holds every other coordinate.
-
-The stream registers and combines frames on CuPy arrays: without CuPy only the refit test runs.
-"""
+"""Streaming refits only defocus and astigmatism and holds every other coordinate."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,7 +48,7 @@ def lattice_image(rows, sampling_A, seed):
     """A periodic test specimen: a hexagonal lattice near MoS2's 0.35 Å⁻¹ (spots on the FFT grid, so
     a Fourier shift moves it exactly) over a smooth random background at periods past 3 Å, the
     aperiodic features the coarse registration needs."""
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     generator = np.random.default_rng(seed)
     q = np.fft.fftfreq(rows, sampling_A)
@@ -69,7 +66,7 @@ def test_place_recovers_each_shift_and_sums_the_frames_in_register():
     """Six noisy frames of one specimen, each moved a known sub-pixel amount further: each is
     registered against the frame before it to 0.02 px, and the sum in register is the specimen with
     the noise averaged down by sqrt(6)."""
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     from quantem.gpu.drift import shifted
     from quantem.gpu.direct_ptycho.stream import (
@@ -113,17 +110,17 @@ def test_place_recovers_each_shift_and_sums_the_frames_in_register():
 def test_align_replaces_the_live_shifts_with_the_pairwise_drift():
     """The final pass runs the pairwise drift on the phase stack, takes its displacement (Å) and
     rebuilds the combined image from it."""
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     from quantem.gpu.drift import shifted
-    from quantem.gpu.direct_ptycho.stream import DirectPtychoStream, _add, _combined, _start
+    from quantem.gpu.direct_ptycho.stream import SSBSeries, _add, _combined, _start
 
     rows, sampling = 256, (0.2, 0.2)
     specimen = lattice_image(rows, sampling[0], seed=3)
     truth = np.array([(0, 0), (2.3, 1.1), (4.45, 2.6), (6.1, 4.35)])
     generator = cupy.random.default_rng(4)
     phase = cupy.stack([shifted(specimen, shift) + 0.3 * generator.standard_normal((rows, rows)) for shift in truth]).astype(cupy.float32)
-    series = DirectPtychoStream(frames=tuple("abcd"), phase=phase, images={"ssb": phase}, methods=("ssb",), aberrations=(),
+    series = SSBSeries(frames=tuple("abcd"), phase=phase, images={"ssb": phase}, methods=("ssb",), aberrations=(),
                        refits=(), fits=(), timings=(), reference=None, object_sampling_A=sampling,
                        shifts_A=np.zeros((4, 2)), confidence=(), placed=(True, False, False, False), combined={},
                        cover=None, sources=(), session={})
@@ -147,6 +144,7 @@ class FrameObjective(PeakedObjective):
     calls = 0
 
     def values(self, points, stride=1):
+        # the refit reads values and exact gradients; every values call counts as refit work
         FrameObjective.calls += len(np.atleast_2d(points))
         return super().values(points, stride)
 
@@ -170,19 +168,19 @@ class FakeSession:
         FakeSession.open -= self.data is not None
         self.data = None
 
-    def _resolve_upsampling_factor(self, upsampling_factor):
-        from quantem.gpu.direct_ptycho.workflow import SSB
+    def _resolve_upsampling(self, upsampling):
+        from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
-        return SSB._resolve_upsampling_factor(self, upsampling_factor)
+        return DirectPtycho._resolve_upsampling(self, upsampling)
 
-    def run(self, chosen, *, method, **options):
-        cupy = pytest.importorskip("cupy")
+    def reconstruct(self, chosen, *, method, **options):
+        import cupy
 
         strengths = {name: value for name, value in options.items() if name not in (
-            "upsampling_factor", "compute_loss", "force", "verbose")}
+            "upsampling", "compute_loss", "force", "verbose")}
         FakeSession.runs.append(SimpleNamespace(frame=self.data.name, method=method, chosen=chosen,
                                                 optics=dict(chosen.aberrations), strengths=strengths,
-                                                factor=options["upsampling_factor"]))
+                                                factor=options["upsampling"]))
         if method == "ssb":
             return SimpleNamespace(phase=self.data.phase, object_sampling_A=(0.2, 0.2))
         generator = cupy.random.default_rng(sum(map(ord, self.data.name)) * 3 + "spc".index(method[0]))
@@ -194,7 +192,7 @@ def fake_stream(monkeypatch, tmp_path, rows=256, noise_frames=()):
     """Five frames of one specimen drifting a known amount, each with its own defocus peak, written
     as small files so their identities are real; returns the sources and the reference fit. A frame
     in noise_frames shows noise only, so its registration cannot be confident."""
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     from quantem.gpu.drift import shifted
     from quantem.gpu.direct_ptycho import stream as stream_module
@@ -223,7 +221,7 @@ def fake_stream(monkeypatch, tmp_path, rows=256, noise_frames=()):
                                metadata={}, close=lambda: None)
 
     monkeypatch.setattr(stream_module.io, "load", load)
-    monkeypatch.setattr(stream_module, "_objective", lambda session, gradients=False: FrameObjective(
+    monkeypatch.setattr(stream_module, "_objective", lambda session, **kwargs: FrameObjective(
         peaks[loaded["name"]] + np.r_[1e-3 * loaded["bytes"], np.zeros(27)]))
     monkeypatch.setattr(stream_module, "public_params", lambda objective, z, order: (
         {"C10_nm": z[0], "C12_nm": z[1], "phi12_deg": z[2]}, (0.0, 0.0), 1.0))
@@ -234,16 +232,16 @@ def fake_stream(monkeypatch, tmp_path, rows=256, noise_frames=()):
 
 
 def streamed(sources, fit, save_dir, **options):
-    from quantem.gpu.direct_ptycho.stream import stream
+    from quantem.gpu.direct_ptycho.stream import series as series_of
 
     FrameObjective.calls = 0
     FakeSession.runs, FakeSession.open = [], 0
-    series = stream(FakeSession(), sources, fit, save_dir=save_dir, show=False, verbose=False, **options)
+    series = series_of(FakeSession(), sources, fit, save_dir=save_dir, show=False, verbose=False, **options)
     return series, FrameObjective.calls
 
 
 def assert_same_stream(left, right):
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     assert left.aberrations == right.aberrations
     assert [{name: refit[name] for name in ("evaluations", "stop")} for refit in left.refits] == \
@@ -338,11 +336,11 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
     """method=("phase", "complex") runs SSB (for registration) and both regularized methods once per
     frame, each at that frame's refit optics with the strengths given; images and combined hold the
     phase of each method and the complex method's amplitude, every image moved by the same shifts."""
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
-    series, _ = streamed(sources, fit, None, method=("phase", "complex"), phase_regularization=0.07,
-                         amplitude_regularization=0.2)
+    series, _ = streamed(sources, fit, None, method=("phase", "complex"), phase_damping=0.07,
+                         amplitude_damping=0.2)
     assert list(series.images) == ["phase", "complex", "amplitude"]
     assert list(series.combined) == ["phase", "complex", "amplitude"]
     assert series.methods == ("phase", "complex")
@@ -353,7 +351,7 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
         assert run.chosen is series.fits[index]
         assert run.optics == series.aberrations[index] == series.fits[index].aberrations
         assert run.strengths == ({} if run.method == "ssb" else
-                                 {"phase_regularization": 0.07, "amplitude_regularization": 0.2})
+                                 {"phase_damping": 0.07, "amplitude_damping": 0.2})
     assert "evaluations" not in series.aberrations[0] and set(series.refits[0]) == {"evaluations", "stop", "resumed"}
     assert series.phase.shape == series.images["phase"].shape == (5, 256, 256)
     # the regularized images are the fake's noise, placed with the shifts measured on the SSB phase
@@ -364,19 +362,19 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
     assert {"SSB (s)", "Phase-only (s)", "Amplitude + phase (s)", "Near threshold"} <= set(table.columns)
 
 
-def test_a_capped_auto_factor_is_announced_once_per_stream(monkeypatch, tmp_path, capsys):
+def test_a_capped_auto_factor_is_announced_once_per_series(monkeypatch, tmp_path, capsys):
     """At a 1 A step (300 kV, 30 mrad) the scan sampling supports 8x: auto is resolved once to 4x, one line
     says so, and every frame runs at 4x; an explicit 8 runs at 8x without the line."""
-    from quantem.gpu.direct_ptycho.stream import stream
+    from quantem.gpu.direct_ptycho.stream import series
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     monkeypatch.setattr(FakeSession, "scan_sampling_A", 1.0)
     for requested, factor, notice in (("auto", 4, "SSB: auto upsampling capped at 4× (the scan sampling supports "
-                                                  "8×); pass upsampling_factor=8 for the full factor.\n"),
+                                                  "8×); pass upsampling=8 for the full factor.\n"),
                                       (8, 8, "")):
         FakeSession.runs, FakeSession.open = [], 0
         capsys.readouterr()
-        stream(FakeSession(), sources, fit, upsampling_factor=requested, show=False, verbose=False)
+        series(FakeSession(), sources, fit, upsampling=requested, show=False, verbose=False)
         assert capsys.readouterr().out == notice
         assert {run.factor for run in FakeSession.runs} == {factor}
 
@@ -384,7 +382,7 @@ def test_a_capped_auto_factor_is_announced_once_per_stream(monkeypatch, tmp_path
 def test_registration_uses_the_ssb_phase_whatever_the_method(monkeypatch, tmp_path):
     """A stream asking for the phase method only still registers each frame on its SSB phase: the
     shifts and confidences equal an SSB stream's exactly, though the regularized images are noise."""
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     ssb, _ = streamed(sources, fit, None)
@@ -399,15 +397,15 @@ def test_registration_uses_the_ssb_phase_whatever_the_method(monkeypatch, tmp_pa
 def test_reconstruct_rebuilds_a_method_from_the_saved_optics_and_shifts(monkeypatch, tmp_path):
     """After a stream, reconstruct("phase", ...) reloads each frame, runs the phase method once per
     frame at fits[k] with the new strength, and places it at shifts_A; nothing is refit."""
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     series, _ = streamed(sources, fit, None)
     FakeSession.runs, FrameObjective.calls = [], 0
-    combined = series.reconstruct("phase", phase_regularization=0.05)
+    combined = series.reconstruct("phase", phase_damping=0.05)
     assert FrameObjective.calls == 0
     assert [(run.frame, run.method, run.strengths) for run in FakeSession.runs] == [
-        (source.name, "phase", {"phase_regularization": 0.05}) for source in sources]
+        (source.name, "phase", {"phase_damping": 0.05}) for source in sources]
     assert all(run.chosen is chosen for run, chosen in zip(FakeSession.runs, series.fits, strict=True))
     assert list(combined) == ["phase"] and series.methods == ("ssb", "phase")
     cupy.testing.assert_array_equal(combined["phase"], series.combined["phase"])
@@ -441,7 +439,8 @@ def test_near_threshold_flags_confidence_just_above_the_cut(monkeypatch, tmp_pat
 
 def test_show_draws_each_combined_image_and_the_drift(monkeypatch, tmp_path):
     """Static: one image panel per combined image (phase, complex phase, amplitude) over the drift
-    strip, the amplitude on its own limits; interactive: a Show2D of the same images by name."""
+    strip, the amplitude on its own limits; interactive: a Show2D of the latest scan, labelled with its fitted
+    defocus and astigmatism, then the same images by name."""
     sources, fit = fake_stream(monkeypatch, tmp_path)
     series, _ = streamed(sources, fit, None, method=("phase", "complex"))
     figure = series.show()
@@ -451,7 +450,8 @@ def test_show_draws_each_combined_image_and_the_drift(monkeypatch, tmp_path):
     assert images[0].images[0].get_clim() == fit.phase_limits != images[2].images[0].get_clim()
     assert len(series.show("phase").axes) == len(figure.axes) - 4
     viewer = series.show(interactive=True)
-    assert type(viewer).__name__ == "Show2D" and viewer.n_images == 3
+    assert type(viewer).__name__ == "Show2D" and viewer.n_images == 4
+    assert viewer.labels[0].startswith(f"{series.frames[-1]}: C10 ")
 
 
 def test_every_session_is_closed_before_the_next_frame(monkeypatch, tmp_path):
@@ -494,7 +494,7 @@ def test_a_frame_below_confidence_stays_out_of_every_combined_image(monkeypatch,
     which each equal the by-hand sum of the confident frames. CONFIDENCE (0.04) is set from the
     measured series; on this specimen good pairs score 0.39 and the noise frame 0.053, so the cut is
     raised to 0.1 here to put the noise frame below it."""
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     from quantem.gpu.direct_ptycho import stream as stream_module
 
@@ -513,7 +513,7 @@ def test_a_frame_below_confidence_stays_out_of_every_combined_image(monkeypatch,
 def test_reconstruct_after_align_places_every_frame_at_the_pairwise_shifts(monkeypatch, tmp_path):
     """After align, reconstruct places every frame, including one the live pass left out, at
     align's shifts_A, and report() shows the pairwise σ in place of the live threshold flag."""
-    cupy = pytest.importorskip("cupy")
+    import cupy
 
     sources, fit = fake_stream(monkeypatch, tmp_path, noise_frames=(3,))
     series, _ = streamed(sources, fit, None)
@@ -543,7 +543,7 @@ def test_flagged_pixel_handling_is_announced_once_for_the_series(monkeypatch, tm
     the detector's flagged pixels still changes the data, so it is announced once, by outcome."""
     from quantem.gpu.resident.hot_pixels import hot_pixel_record
     from quantem.gpu.direct_ptycho import stream as stream_module
-    from quantem.gpu.direct_ptycho.stream import stream
+    from quantem.gpu.direct_ptycho.stream import series
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     load = stream_module.io.load
@@ -559,8 +559,123 @@ def test_flagged_pixel_handling_is_announced_once_for_the_series(monkeypatch, tm
 
     monkeypatch.setattr(stream_module.io, "load", flagged)
     FakeSession.runs, FakeSession.open = [], 0
-    stream(FakeSession(), sources, fit, show=False, verbose=True)
-    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Stream:")]
+    series(FakeSession(), sources, fit, show=False, verbose=True)
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Series:")]
     assert quiet == [False] * len(sources)
-    assert lines == [f"Stream: {len(sources)} of {len(sources)} frames, 2 bad pixels replaced by neighbor median "
+    assert lines == [f"Series: {len(sources)} of {len(sources)} frames, 2 bad pixels replaced by neighbor median "
                      '(hot_pixel_correction="none" keeps the recorded values).']
+
+
+def test_resident_scans_give_the_series_of_their_files_and_stay_the_callers(monkeypatch, tmp_path):
+    """A live stream's scans (resident ANS datasets) give the series their recorded files give; the
+    series reads no file for them and closes none of them, in the series and in reconstruct, and a
+    save_dir, which identifies frames by file, is refused for them."""
+    from quantem.gpu.direct_ptycho import stream as stream_module
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    from_files, _ = streamed(sources, fit, None, method="phase")
+    closed, scans, objectives = [], [], {}
+    for source in sources:
+        scan = stream_module.io.load(source, device="cuda:0")
+        scan.close = lambda name=source.name: closed.append(name)
+        objectives[scan.name] = stream_module._objective(None)
+        scans.append(scan)
+    monkeypatch.setattr(stream_module, "_objective", lambda session, **kwargs: objectives[session.data.name])
+    monkeypatch.setattr(stream_module.io, "load", lambda *args, **kwargs: pytest.fail("a resident scan was read"))
+    from_scans, _ = streamed(scans, fit, None, method="phase")
+    assert_same_stream(from_files, from_scans)
+    assert from_scans.frames == tuple(f"scan {index + 1}" for index in range(len(scans)))
+    from_scans.reconstruct("complex")
+    assert closed == [] and FakeSession.open == 0
+    with pytest.raises(ValueError, match="resident scans"):
+        streamed(scans, fit, tmp_path / "records")
+
+
+def test_series_without_a_fit_fits_this_session_once_and_uses_that_fit(monkeypatch):
+    """ptycho.series(scans) needs no fit: the session's own scan is fitted once (quietly) and that fit drives the
+    per-scan refit; a given fit is used as is."""
+    from quantem.gpu.direct_ptycho import stream as stream_module
+    from quantem.gpu.direct_ptycho.workflow import DirectPtycho
+
+    fitted, calls, used = object(), [], []
+    session = SimpleNamespace(_device=None, fit_aberrations=lambda **options: calls.append(options) or fitted)
+    monkeypatch.setattr(stream_module, "series", lambda ptycho, sources, fit, **options: used.append(fit) or "series")
+    assert DirectPtycho.series(session, ["a", "b"], verbose=False) == "series"
+    assert calls == [{"show": False, "verbose": False}] and used == [fitted]
+    given = object()
+    DirectPtycho.series(session, ["a"], given)
+    assert len(calls) == 1 and used[-1] is given
+
+
+def test_a_series_built_scan_by_scan_equals_the_series_of_all_scans(monkeypatch, tmp_path):
+    """A series started empty and given each scan with add, as a live stream does when every scan completes,
+    is the series of all of them at once (optics, refits, shifts, confidence, every stack and combined image),
+    its stacks growing past their first size; each add returns that scan's report row, and an open interactive
+    view is redrawn with every scan."""
+    from quantem.gpu.direct_ptycho.stream import SSBSeries
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    at_once, _ = streamed(sources, fit, None, method="phase")
+    FakeSession.runs, FakeSession.open = [], 0
+    growing = SSBSeries._begin(FakeSession(), fit, refit="defocus", method="phase", upsampling="auto", save_dir=None,
+                               show=False, strengths={})
+    rows = [growing.add(sources[0])]
+    viewer = growing.show(interactive=True)
+    rows += [growing.add(source) for source in sources[1:]]
+    assert_same_stream(at_once, growing)
+    assert [row["Frame"] for row in rows] == list(growing.frames)
+    assert [row["C10 (nm)"] for row in rows] == [optics["C10_nm"] for optics in at_once.aberrations]
+    assert len(growing._state.stacks["ssb"]) == 8 and growing.phase.shape[0] == len(sources)
+    assert viewer.labels[0].startswith(f"{growing.frames[-1]}: ") and viewer.title == f"5 scans, {sum(growing.placed)} combined"
+    assert FakeSession.open == 0
+
+
+def test_a_live_scan_is_named_by_its_acquisition(monkeypatch, tmp_path):
+    """A resident scan carrying its acquisition id (series metadata) is reported under it."""
+    from quantem.gpu.direct_ptycho import stream as stream_module
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    scans = []
+    for index, source in enumerate(sources[:2]):
+        scan = stream_module.io.load(source, device="cuda:0")
+        scan.metadata = {"series": f"acquisition-{index:03d}"}
+        scans.append(scan)
+    objectives = {scan.name: stream_module._objective(None) for scan in scans}
+    monkeypatch.setattr(stream_module, "_objective", lambda session, **kwargs: objectives[session.data.name])
+    series, _ = streamed(scans, fit, None)
+    assert series.frames == ("acquisition-000", "acquisition-001")
+
+
+def test_full_refit_fits_every_scan_independently(monkeypatch, tmp_path):
+    """refit="full" runs fit_aberrations on each scan's session, rotation kept, and reconstructs at that fit's
+    optics; the low-order refit is not run, and saving records (which resume a defocus refit) is refused."""
+    from quantem.gpu.direct_ptycho import stream as stream_module
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    fits = []
+
+    def fit_aberrations(self, **options):
+        fits.append(options)
+        value = 0.1 * len(fits)
+        return SimpleNamespace(aberrations={"C10_nm": value, "C12_nm": -value, "phi12_deg": 10 * value},
+                               sample_tilt_mrad=(0.0, 0.0), depth_spread_nm=1.0,
+                               optimizer={"coordinates": np.zeros(28).tolist(), "evaluations": 7})
+
+    monkeypatch.setattr(FakeSession, "fit_aberrations", fit_aberrations, raising=False)
+    monkeypatch.setattr(stream_module, "_objective", lambda *args, **kwargs: pytest.fail("the low-order refit ran"))
+    series, _ = streamed(sources, fit, None, refit="full")
+    assert len(fits) == len(sources) and all(options["check_rotation"] is False for options in fits)
+    assert [optics["C10_nm"] for optics in series.aberrations] == pytest.approx([0.1 * (index + 1) for index in range(5)])
+    assert [run.optics["C10_nm"] for run in FakeSession.runs] == [optics["C10_nm"] for optics in series.aberrations]
+    assert [refit["evaluations"] for refit in series.refits] == [7] * 5
+    with pytest.raises(ValueError, match="defocus refits"):
+        streamed(sources, fit, tmp_path / "records", refit="full")
+
+
+def test_no_scan_is_added_after_align_or_reconstruct(monkeypatch, tmp_path):
+    """align and reconstruct rebuild the stacks and shifts adding a scan would extend: adding then stops clearly."""
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    series, _ = streamed(sources[:3], fit, None)
+    series.reconstruct("ssb")
+    with pytest.raises(RuntimeError, match="start a new series"):
+        series.add(sources[3])

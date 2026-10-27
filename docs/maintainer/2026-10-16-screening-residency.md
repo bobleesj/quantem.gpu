@@ -9,7 +9,7 @@ from quantem.gpu import io, screening, SSB
 with io.load(path) as data:
     preview = screening.prepare(data)
     with SSB(data, source_path=str(path), **calibration) as ssb:
-        result = ssb.find_aberrations(tilt=True)
+        result = ssb.fit_aberrations(tilt=True)
 ```
 
 Screening excludes the stored flagged detector pixels from exact count sums,

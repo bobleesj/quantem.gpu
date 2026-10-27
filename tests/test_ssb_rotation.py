@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from quantem.gpu.direct_ptycho import SSB
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 # ---
 
@@ -27,7 +27,7 @@ from quantem.gpu.direct_ptycho.results import DirectPtychoResult
     ],
 )
 def test_result_holds_one_physical_rotation(angle, expected):
-    result = DirectPtychoResult(object_wave=np.ones((4, 4), np.complex64), backend="mps", scan_detector_rotation_deg=angle)
+    result = SSBResult(object_wave=np.ones((4, 4), np.complex64), backend="mps", scan_detector_rotation_deg=angle)
     assert result.scan_detector_rotation_deg == pytest.approx(expected)
     assert 0.0 <= result.scan_detector_rotation_deg < 360.0
     assert result.scan_detector_rotation_flipped is False
@@ -38,7 +38,7 @@ def test_result_holds_one_physical_rotation(angle, expected):
 def test_angle_below_180_with_reversal_flag_is_not_a_result_field(retired):
     """A record of the earlier form is not read as the physical angle: its two names are refused."""
     with pytest.raises(TypeError):
-        DirectPtychoResult(object_wave=np.ones((4, 4), np.complex64), backend="mps", **retired)
+        SSBResult(object_wave=np.ones((4, 4), np.complex64), backend="mps", **retired)
 
 
 def test_transposition_preserves_original_detector_coordinates(monkeypatch):
@@ -53,7 +53,7 @@ def test_transposition_preserves_original_detector_coordinates(monkeypatch):
     assert np.shares_memory(session._data, patterns)
     assert session._center_in_data() == (2., 1.5)
     assert session._sampling_in_data() == (3., 2.)
-    result = DirectPtychoResult(object_wave=np.ones((2, 3), np.complex64), backend="mps",
+    result = SSBResult(object_wave=np.ones((2, 3), np.complex64), backend="mps",
                        bright_field_center_px=(2., 1.5))
     session._in_detector_frame(result)
     assert result.bright_field_center_px == (11.5, 22.)

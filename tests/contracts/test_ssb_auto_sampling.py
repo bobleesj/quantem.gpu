@@ -73,7 +73,7 @@ def test_interaction_parameter_at_300_kV_and_invalid_voltages():
 
 
 NOTICE = ("SSB: auto upsampling capped at 4× (the scan sampling supports 8×); "
-          "pass upsampling_factor=8 for the full factor.\n")
+          "pass upsampling=8 for the full factor.\n")
 
 
 def test_max_factor_changes_the_cap_and_explicit_factors_are_unchanged():
@@ -93,12 +93,12 @@ def test_a_capped_auto_factor_is_announced_once_per_session(capsys):
     from quantem.gpu.direct_ptycho.workflow import SSB
 
     coarse = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(1.0, 1.0))
-    assert SSB._resolve_upsampling_factor(coarse, "auto") == 4
+    assert SSB._resolve_upsampling(coarse, "auto") == 4
     assert capsys.readouterr().out == NOTICE
-    assert SSB._resolve_upsampling_factor(coarse, "auto") == 4
-    assert SSB._resolve_upsampling_factor(coarse, 8) == 8
+    assert SSB._resolve_upsampling(coarse, "auto") == 4
+    assert SSB._resolve_upsampling(coarse, 8) == 8
     assert capsys.readouterr().out == ""
     for step, factor in ((0.264, 2), (0.373, 3)):
         session = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(step, step))
-        assert SSB._resolve_upsampling_factor(session, "auto") == factor
+        assert SSB._resolve_upsampling(session, "auto") == factor
     assert capsys.readouterr().out == ""

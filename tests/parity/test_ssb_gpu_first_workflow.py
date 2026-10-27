@@ -10,9 +10,9 @@ import pytest
 def _stub_gate(tmp_path: Path) -> Path:
     scripts = tmp_path / "scripts"
     scripts.mkdir()
-    (scripts / "check_direct_ptycho_parity.sh").write_text(Path("scripts/check_direct_ptycho_parity.sh").read_text())
-    (scripts / "check_direct_ptycho_fit_trajectory.sh").write_text('printf "gpu-fit %s\\n" "$*"\n')
-    return scripts / "check_direct_ptycho_parity.sh"
+    (scripts / "check_ssb_parity.sh").write_text(Path("scripts/check_ssb_parity.sh").read_text())
+    (scripts / "check_ssb_fit_trajectory.sh").write_text('printf "gpu-fit %s\\n" "$*"\n')
+    return scripts / "check_ssb_parity.sh"
 
 
 def test_default_parity_uses_the_gpu_agreement_gate(tmp_path):

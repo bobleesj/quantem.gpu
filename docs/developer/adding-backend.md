@@ -5,7 +5,7 @@ physical evidence, and consumer integration land together.
 
 ## 1. Choose the owning domain
 
-Place the implementation under IO, detector, DPC, display, Direct Ptycho, or another
+Place the implementation under IO, detector, DPC, display, SSB, or another
 existing scientific domain. If no domain owns the operation, define the
 backend-neutral contract before writing accelerator code.
 

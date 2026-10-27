@@ -21,6 +21,39 @@ def test_uint64_series_sum_never_truncates_high_counts():
     )
 
 
+def test_uint32_series_display_rounding_preserves_exact_native_sums():
+    """Display sums round once at float32 ties; native count sums stay exact."""
+    cp = pytest.importorskip("cupy")
+    if cp.cuda.runtime.getDeviceCount() == 0:
+        pytest.skip("CUDA device required")
+    from quantem.gpu.resident.cuda.counts import StreamedCounts
+
+    totals = np.array(
+        [0, 1, 2**24 - 1, 2**24 + 1, 2**24 + 3,
+         2**31 - 65, 2**31 + 129, 192 * 192 * 65535],
+        dtype=np.uint32,
+    )
+    counts = np.zeros((8, 192 * 192), dtype=np.uint16)
+    for row, total in zip(counts, totals, strict=True):
+        full, remainder = divmod(int(total), 65535)
+        row[:full] = 65535
+        if remainder:
+            row[full] = remainder
+    source = StreamedCounts((2, 4, 192, 192), "uint16")
+    source.append(cp.asarray(counts.reshape(8, 192, 192)))
+    session = detector.prepare([source, source])
+    mask = np.ones((192, 192), dtype=bool)
+    native = session.masked_sum(mask, output="native")
+    assert native.dtype == cp.uint32
+    expected = np.broadcast_to(totals.reshape(2, 4), (2, 2, 4))
+    np.testing.assert_array_equal(native.get(), expected)
+    displayed = session.masked_sum(mask)
+    np.testing.assert_array_equal(displayed.view(np.uint32), expected.astype(np.float32).view(np.uint32))
+    session.masked_sum(np.zeros_like(mask))
+    np.testing.assert_array_equal(displayed.view(np.uint32), expected.astype(np.float32).view(np.uint32))
+    np.testing.assert_array_equal(session.masked_sum_exact(mask), expected)
+
+
 def test_series_of_dense_arrays_is_refused():
     """A series joins acquisitions that io.load encoded; dense arrays are queried one at a time."""
     cp = pytest.importorskip("cupy")

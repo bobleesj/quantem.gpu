@@ -9,6 +9,13 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
+## Joint ANS detector queries, 2026-10-25
+
+The [seven-acquisition CUDA record](virtual-detectors/reports/2026-10-25-seven-ans-acquisitions.md)
+measures 1.98× faster ADF and 2.65× faster displaced DF queries with exact
+full-image agreement. Measurements interleave both implementations under GPU
+contention and separate loading, query and host transfer from rendering.
+
 ## SSB reconstruction and interaction, 2026-10-24
 
 The [direct phase viewer handoff check](ssb/reports/2026-10-24-direct-live-handoff.md)
@@ -717,7 +724,7 @@ domain-specific maintainer records instead of being copied into this page.
 | July native CUDA/MPS IO and compressed-save work | Historical diagnostic; some host/storage fields were not retained | [Optimization ledger](../maintainer/backend-optimization-matrix.md) |
 | WebGPU local-file, selected-block, and display campaigns | Historical implementation evidence, not current full-stack or physical-8-GB signoff | [Optimization ledger](../maintainer/backend-optimization-matrix.md) and [WebGPU history](../maintainer/history/index.md) |
 | WebGPU full-native batch-2 load candidate | Refuted for performance: exact output but prepared-index/source-pages-unspecified p50/p95/max `1.128484/1.140200/1.141501 s` missed the strict subsecond gate and did not replace the accepted `1.080860 s` single observation | Sealed evidence `75eec9cccd5c1a9814068a83a23e67253227a363` |
-| SSB size sweeps and rejected kernel layouts | Historical or rejected unless promoted into the current table above | [SSB performance history](../maintainer/direct-ptycho-performance.md) |
+| SSB size sweeps and rejected kernel layouts | Historical or rejected unless promoted into the current table above | [SSB performance history](../maintainer/ssb-performance.md) |
 | Physical M2 Air application loading | Separate application-level evidence; never substituted for a library benchmark | [M2 Air Metal evidence](../maintainer/m2-air-lz4-match-unroll-2026-08-18.md) |
 | Rejected first-chunk screening and nondeterministic CUDA calibration | Failed scientific gates; retained to prevent repetition, never shown as current speed | [Revision and change ledger](changes.md) and [optimization ledger](../maintainer/backend-optimization-matrix.md) |
 

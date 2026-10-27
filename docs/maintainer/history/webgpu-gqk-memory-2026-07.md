@@ -6,8 +6,8 @@
 > `quantem.widget` so the compute repository retains the experimental setup,
 > formulas, measurements, rejected ideas, and debugging lessons. It is not a
 > claim that every flag, source path, transport, or timing below still matches
-> the current runtime. [SSB performance](../direct-ptycho-performance.md) holds the later
-> (also historical) backend notes; use [SSB architecture](../direct-ptycho-architecture.md)
+> the current runtime. [SSB performance](../ssb-performance.md) holds the later
+> (also historical) backend notes; use [SSB architecture](../ssb-architecture.md)
 > for current ownership and API contracts.
 
 ## What must be reverified
@@ -114,7 +114,7 @@ now reads half the bytes. Strictly better on every axis => **`herm` is the new
 default Exact path**; the old n x n storage branch has been removed from the
 runtime and now exists only as historical baseline data in this report.
 
-## Implementation (`quantem.gpu.ssb.webgpu/backend.ts`)
+## Implementation (`quantem.gpu.direct_ptycho.webgpu/backend.ts`)
 
 - `GqkMode` = `herm | herm16`, resolved from `?gqk=` URL param or
   `globalThis.__QUANTEM_SHOWPTYCHO_GQK_MODE__`; default `herm`. Public aliases:
@@ -171,7 +171,7 @@ builds `G(q,k)` as the scan-space FFT of real intensity traces, so the
 Hermitian identity `G(-q,k) = conj(G(q,k))` holds everywhere, and the
 per-BF-pixel snorm16/int16 block quantization transfers directly.
 
-| Optimization | WebGPU (`quantem.gpu/ssb/webgpu/backend.ts`, generated under the matching widget engine tree) | CUDA (`quantem.gpu/ssb/cuda`) | MPS (`quantem.gpu/ssb/mps`) |
+| Optimization | WebGPU (`quantem.gpu/direct_ptycho/webgpu/backend.ts`, generated under the matching widget engine tree) | CUDA (`quantem.gpu/ssb/cuda`) | MPS (`quantem.gpu/ssb/mps`) |
 |---|---|---|---|
 | Exact Hermitian half-plane G(q,k) (2x, bit-exact, faster) | **DONE — default** | TODO — `self.G_qk` is n x n complex64; also the streaming `result_buffer`/staging buffers (batch x bf x scan^2 x c64) would halve | TODO — `mx.complex64` n x n storage; gamma kernels at mps.py:430-440 already compute conj explicitly, mirror fetch slots in there |
 | Compact preview snorm16/int16 block storage (4x, ~1e-4 rad error) | **DONE — opt-in** `?gqk=preview` (`?gqk=herm16` alias) | TODO — cupy int16 pairs + per-BF f32 scale; dequant inside the variance/correction kernels | TODO — mx int16 + scale; check MLX gather perf before committing |

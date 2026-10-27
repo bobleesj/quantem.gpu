@@ -1,5 +1,6 @@
 """Header-only acquisition metadata readers; no resident allocation."""
 
+import json
 import math
 from pathlib import Path
 
@@ -8,7 +9,9 @@ import numpy as np
 
 from quantem.gpu.formats.hdf5.nxem_metadata import _nxem_companion, _read_nxem_metadata
 from quantem.gpu.formats.hdf5.stem_metadata import _read_stem_metadata
-from quantem.gpu.formats.qem.metadata import maped_records
+from quantem.gpu.formats.qem.metadata import HOT_PIXEL_SCHEMA, maped_records
+
+HOT_PIXEL_CORRECTION_ATTRIBUTE = "quantem_hot_pixel_correction"
 
 
 def read_pixel_mask(filepath):
@@ -112,8 +115,8 @@ def get_metadata(filepath: str) -> dict:
         def visit(name, item):
             if not isinstance(item, h5py.Dataset):
                 return
-            if item.size > 100:
-                return  # skip large arrays (flatfield, pixel_mask, etc.)
+            if item.ndim >= 3 or item.size > 100:
+                return  # skip diffraction data and large calibration arrays
             if "data_" in name:
                 return  # skip data chunk links
             try:
@@ -153,6 +156,15 @@ def get_metadata(filepath: str) -> dict:
             metadata.setdefault("source_dtype", str(detector_dataset.dtype))
             if detector_dataset.ndim >= 3:
                 metadata.setdefault("n_frames", int(np.prod(detector_dataset.shape[:-2])))
+    saved_correction = metadata.get(HOT_PIXEL_CORRECTION_ATTRIBUTE)
+    if saved_correction is not None:
+        record = json.loads(saved_correction)
+        if (not isinstance(record, dict) or record.get("schema") != HOT_PIXEL_SCHEMA
+                or record.get("method") not in {"none", "zero", "median"}
+                or type(record.get("applied")) is not bool):
+            raise ValueError("Unsupported saved detector correction; reopen the original acquisition.")
+        metadata[HOT_PIXEL_CORRECTION_ATTRIBUTE] = record
+        metadata["hot_pixel_correction"] = record
     recorded_shape = metadata.get("scan_shape")
     _derive_fields(metadata)
     reader = _read_nxem_metadata if _nxem_companion(Path(filepath)) else _read_stem_metadata

@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 from quantem.gpu.direct_ptycho.units import validate_aberrations
 
 # drag-window tiles kept per control: a drag back and forth across one tile edge needs two
@@ -20,8 +20,8 @@ TILES = 3
 
 def settings(
     method,
-    phase_regularization,
-    amplitude_regularization,
+    phase_damping,
+    amplitude_damping,
     smoothness_inv_A,
     detector_weighting,
 ):
@@ -32,30 +32,30 @@ def settings(
         if any(
             value is not None
             for value in (
-                phase_regularization,
-                amplitude_regularization,
+                phase_damping,
+                amplitude_damping,
                 smoothness_inv_A,
                 detector_weighting,
             )
         ):
             raise ValueError(
-                "Regularization controls need method='phase' or 'complex'; omit them for method='ssb'."
+                "Damping and prior controls need method='phase' or 'complex'; omit them for method='ssb'."
             )
         return {}
-    if method == "phase" and amplitude_regularization is not None:
+    if method == "phase" and amplitude_damping is not None:
         raise ValueError(
-            "amplitude_regularization needs method='complex'; omit it for method='phase'."
+            "amplitude_damping needs method='complex'; omit it for method='phase'."
         )
     strengths = {
-        "phase_regularization": 0.03
-        if phase_regularization is None
-        else float(phase_regularization)
+        "phase_damping": 0.03
+        if phase_damping is None
+        else float(phase_damping)
     }
     if method == "complex":
-        strengths["amplitude_regularization"] = (
+        strengths["amplitude_damping"] = (
             0.03
-            if amplitude_regularization is None
-            else float(amplitude_regularization)
+            if amplitude_damping is None
+            else float(amplitude_damping)
         )
     for name, value in strengths.items():
         if not math.isfinite(value) or value <= 0:
@@ -88,13 +88,9 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
     MPS prepares on the Apple GPU and solves in float64 on the CPU
     (``direct_ptycho.mps.direct``), from the same model and layout.
     """
-    if session._streams_full_scan:
-        # Above 1024 the systems are summed over streamed detector columns and solved once; nothing is retained.
-        optics = {"aberrations": coefs, "sample_tilt_mrad": tilt or (0.0, 0.0), "depth_spread_nm": depth or 0.0}
-        return session._streamed.direct(
-            optics, factor, policy, voltage_kV=session.voltage_kV, semiangle_mrad=session.semiangle_mrad,
-            scan_sampling_A=session.scan_sampling_A, rotation_deg=session.scan_detector_rotation_deg,
-            compute_loss=compute_loss,
+    if session._streamed is not None:
+        raise NotImplementedError(
+            "Regularized direct reconstruction needs a resident region; use select_region(...) first."
         )
     if session.backend == "cuda":
         from quantem.gpu.direct_ptycho.cuda.direct import PreparedDirect
@@ -120,8 +116,8 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
         )
         cached[1][policy["method"]] = prepared
     return prepared.solve(
-        policy["phase_regularization"],
-        policy.get("amplitude_regularization"),
+        policy["phase_damping"],
+        policy.get("amplitude_damping"),
         compute_loss=compute_loss,
     )
 
@@ -167,7 +163,7 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     value = float(coefs.get(control, 0.0))
     if method == "ssb":
         return window.phase(value)
-    wave, _ = window.solve(value, policy["phase_regularization"], policy.get("amplitude_regularization"),
+    wave, _ = window.solve(value, policy["phase_damping"], policy.get("amplitude_damping"),
                            complex_object=method == "complex")
     return _phase(session, wave)
 
@@ -196,7 +192,7 @@ def advance(session) -> bool:
 
 def _windowed(session, factor, policy) -> bool:
     """Whether drags of this method can use a window: a resident region, and for SSB CUDA's fine-grid coherent sum."""
-    if session._streams_full_scan:
+    if session._streamed is not None:
         return False
     if policy.get("method", "ssb") == "ssb":
         return session.backend == "cuda" and factor > 1
@@ -258,7 +254,7 @@ def _exact(session, coefs, tilt, depth, factor, policy):
     """The exact phase, as ``preview(..., output="native")`` computes it."""
     method = policy.get("method", "ssb")
     if method == "ssb":
-        phase, _ = session.preview(coefs, compute_loss=False, upsampling_factor=factor, sample_tilt_mrad=tilt or (0.0, 0.0),
+        phase, _ = session.preview(coefs, compute_loss=False, upsampling=factor, sample_tilt_mrad=tilt or (0.0, 0.0),
                                    depth_spread_nm=depth or 0.0, output="native")
         return phase
     wave, _ = solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
@@ -318,12 +314,12 @@ def run(
     verbose,
 ):
     """Apply one regularized method with explicit provenance and saved reuse."""
-    if parameters is not None and not isinstance(parameters, DirectPtychoResult):
+    if parameters is not None and not isinstance(parameters, SSBResult):
         raise TypeError(
-            "Pass the result of find_aberrations(), or coefficients through aberrations={...}."
+            "Pass the result of fit_aberrations(), or coefficients through aberrations={...}."
         )
     if parameters is None and aberrations is None and not session._aberrations_explicit:
-        parameters = session.find_aberrations(verbose=verbose)
+        parameters = session.fit_aberrations(verbose=verbose)
     correction = parameters
     if correction is not None:
         coefs, tilt, depth = (
@@ -345,7 +341,7 @@ def run(
         aberrations=coefs,
         sample_tilt_mrad=tilt,
         depth_spread_nm=depth,
-        upsampling_factor=factor,
+        upsampling=factor,
         compute_loss=bool(compute_loss),
     )
     paths = signature = None
@@ -376,7 +372,7 @@ def run(
     )
     if session.backend == "cuda":
         cp.cuda.get_current_stream().synchronize()
-    result = DirectPtychoResult(
+    result = SSBResult(
         object_wave=wave,
         backend=session.backend,
         aberrations=coefs,
@@ -388,7 +384,7 @@ def run(
         voltage_kV=session.voltage_kV,
         semiangle_mrad=session.semiangle_mrad,
         object_sampling_A=session._output_sampling(factor),
-        upsampling_factor=factor,
+        upsampling=factor,
         phase_estimator=policy["method"],
         amplitude_estimated=policy["method"] == "complex",
         reconstruction_method=policy["method"],

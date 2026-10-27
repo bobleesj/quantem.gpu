@@ -354,7 +354,7 @@ def measure(master, reps=20, load_reps=3, log=print):
 
     def drag(factor, loss):
         def call(index):
-            ssb.preview({**base, "C10_nm": 2.0 + 0.05 * index}, compute_loss=loss, upsampling_factor=factor)
+            ssb.preview({**base, "C10_nm": 2.0 + 0.05 * index}, compute_loss=loss, upsampling=factor)
         return call
 
     synchronize()
@@ -413,7 +413,7 @@ def measure(master, reps=20, load_reps=3, log=print):
     ssb.preview(base, compute_loss=False)
     synchronize()
     started = time.perf_counter()
-    fit = ssb.find_aberrations(search="primary", tilt=False, verbose=False)
+    fit = ssb.fit_aberrations(search="primary", tilt=False, verbose=False)
     synchronize()
     metrics["find_aberrations_standard"] = summary([1e3 * (time.perf_counter() - started)])
     report["values"]["fit_standard"] = fit_values(fit)

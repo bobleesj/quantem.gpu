@@ -118,7 +118,7 @@ class StreamedSeriesCompute(DetectorQueries):
             raise ValueError(
                 "This chunk count exceeds the joint CUDA launch limit; use larger loading chunks."
             )
-        self.residual_warps = min(4, math.ceil(self.max_scans / self.interval))
+        self.residual_warps = min(16, math.ceil(self.max_scans / self.interval))
         self.valid_pixels = np.stack([source.valid_pixels for source in sources])
         with cp.cuda.Device(self.device):
             self.descriptors = cp.asarray(rows, dtype=cp.uint64)

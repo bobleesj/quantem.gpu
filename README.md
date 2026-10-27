@@ -6,7 +6,7 @@
 
 GPU-accelerated 4D-STEM analysis in Python: load acquisitions, explore
 virtual detectors, calculate CoM/DPC, and reconstruct phase with
-model-based direct ptychography (SSB, phase and complex). Use Python MPS on Apple Silicon or
+single-sideband ptychography (SSB). Use Python MPS on Apple Silicon or
 NVIDIA CUDA on Linux through the same public Python API.
 
 [Documentation](https://bobleesj.github.io/quantem.gpu/) ·
@@ -17,7 +17,7 @@ NVIDIA CUDA on Linux through the same public Python API.
 [BF/ADF](#bright-field-and-annular-dark-field-images) ·
 [Detector preview](#preview-the-detector-selection) ·
 [Save as QEM](#why-qem-one-research-format-across-detector-vendors) ·
-[Direct Ptycho](#reconstruct-phase-with-direct-ptycho)
+[SSB](#reconstruct-phase-with-ssb)
 
 ## Citing quantem.gpu
 
@@ -376,26 +376,26 @@ An existing destination is not overwritten.
 data.close()
 ```
 
-## Reconstruct phase with Direct Ptycho
+## Reconstruct phase with SSB
 
-### Direct Ptycho in quantem.gpu
+### SSB in quantem.gpu
 
-quantem fits the aberrations with a physical model of the measurement, not an
+quantem fits SSB aberrations with a physical model of the measurement, not an
 image-quality score: for each trial set of aberrations, sample tilt and depth
 spread it predicts the bright-field data the detector should have recorded and
 keeps the parameters whose prediction agrees best (least squares). This
-model-based, tilt-corrected fit is the default everywhere, and it is where Direct
-Ptycho in quantem is heading.
+model-based, tilt-corrected fit is the default everywhere, and it is where SSB
+in quantem is heading.
 
 | Call | Method | Use it for |
 |---|---|---|
-| `find_aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
-| `find_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `fit_aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
+| `fit_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
 
 Both refine on exact derivatives of the model agreement. The earlier
 phase-variance search (`objective="phase_variance"`), which scored how well the
 bright-field pixels' phase images agree instead of predicting the data, is
-retired. Backend support and evidence: [Direct Ptycho fit methods](docs/api/direct_ptycho.md#fit-methods-model-based-by-default).
+retired. Backend support and evidence: [SSB fit methods](docs/api/ssb.md#fit-methods-model-based-by-default).
 
 ### Find the aberrations, then reconstruct
 
@@ -411,8 +411,8 @@ ptycho = DirectPtycho.open(
     semiangle_mrad=30,  # mrad
     scan_sampling_A=(0.264, 0.264),  # Å per scan pixel, (row, column)
 )
-aberrations = ptycho.find_aberrations()  # on the native scan grid
-result = ptycho.run(aberrations, upsampling_factor="auto")
+aberrations = ptycho.fit_aberrations()  # on the native scan grid
+result = ptycho.reconstruct(aberrations, upsampling="auto")
 result.show()  # large phase image at the factor the sampling allows (2x here)
 ```
 
@@ -429,7 +429,7 @@ internally; these settings do not change the scientific sampling.
 
 The rotation is opened with the file's or the given angle, else estimated
 modulo 180° from the centre-of-mass curl. For an estimated angle,
-`find_aberrations()` fits both 180° branches independently and keeps the one
+`fit_aberrations()` fits both 180° branches independently and keeps the one
 whose dark-field atomic columns have positive phase (the larger phase tail
 when no columns are resolved); a given or recorded angle is fitted once and
 kept. See the evidence in a separate cell:
@@ -440,10 +440,10 @@ aberrations.show("rotation")  # both branches at the auto factor, then their pha
 
 For a native/upsampled comparison, use `result.show(compare=result_4x,
 axsize=(7, 7))`. The library marks matching central crops on the full images.
-The [Direct Ptycho API](docs/api/direct_ptycho.md#settle-the-180-branch) explains the branch test.
+The [SSB API](docs/api/ssb.md#settle-the-180-branch) explains the branch test.
 
 Advanced users can inspect search trials with shared phase contrast, shown at
-`upsampling_factor="auto"`:
+`upsampling="auto"`:
 
 ```python
 ptycho.show_trials(best=5)     # five lowest-loss search trials
@@ -467,15 +467,15 @@ result.object_sampling_A  # Å per output pixel, (row, column)
 probe = result.probe()  # centered complex real-space model probe
 probe_fourier = result.probe(space="fourier")  # centered complex reciprocal-space probe
 result.probe_sampling_A  # Å per probe pixel, (row, column)
-result = ptycho.run(aberrations, upsampling_factor=4)  # CUDA: same parameters, finer output
-adjusted = ptycho.run(aberrations, aberrations={"C10_nm": 12.5})  # nm
+result = ptycho.reconstruct(aberrations, upsampling=4)  # CUDA: same parameters, finer output
+adjusted = ptycho.reconstruct(aberrations, aberrations={"C10_nm": 12.5})  # nm
 ptycho.close()
 ```
 
 Searches use the native scan grid. Finer output sampling does not add detector
 measurements or guarantee additional resolution. Reconstruction reuses the
 selected aberrations, tilt, depth spread and rotation; it does not refit them.
-See the [Direct Ptycho API](docs/api/direct_ptycho.md) for trial replay and saved results.
+See the [SSB guide](docs/api/ssb.md) for trial replay and saved results.
 
 ## What can I do?
 
@@ -484,7 +484,7 @@ See the [Direct Ptycho API](docs/api/direct_ptycho.md) for trial replay and save
 | Load, inspect, and save acquisitions | [I/O](docs/api/io.md) |
 | BF, DF, ADF and other virtual detectors | [Detector reductions](docs/kernels/virtual-detectors.md) |
 | CoM, DPC and integrated DPC | [CoM/DPC](docs/kernels/com-dpc-idpc.md) |
-| Phase reconstruction and aberration fitting | [Direct Ptycho](docs/api/direct_ptycho.md) |
+| Phase reconstruction and aberration fitting | [SSB](docs/api/ssb.md) |
 | Browse acquisitions on a remote CUDA host | [Remote browsing](docs/remote/index.md) |
 
 Arrays use `I[R_r,R_c,k_r,k_c]`: scan row, scan column, detector row,

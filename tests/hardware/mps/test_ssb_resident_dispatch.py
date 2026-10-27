@@ -18,15 +18,14 @@ def test_runtime_batch_matches_specialized_shader(batch, monkeypatch):
     reference = device.xp.fast.metal_kernel(
         name="ssb_specialized_batch_reference",
         input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky",
-                     "trial", "scalars", "probe_geometry", "neighbour", "step_k", "radii"],
+                     "trial", "scalars", "probe_geometry", "neighbour", "step_k"],
         output_names=["numer_real", "numer_imag", "denom"],
         source=resident_fit._ANGLE_SUM_SOURCE,
-        header=resident_fit.FIT_HEADER,
+        header=resident_fit._THICK_FIT_BATCH_HEADER + resident_fit._SINC_HEADER,
     )
 
     def specialized(**kwargs):
-        # drop the runtime batch count; the aperture radii stay
-        kwargs["inputs"] = [*kwargs["inputs"][:-2], kwargs["inputs"][-1]]
+        kwargs["inputs"] = kwargs["inputs"][:-1]
         kwargs["template"] = [*kwargs["template"], ("TOTAL", batch)]
         return reference(**kwargs)
 
@@ -47,7 +46,6 @@ def test_cached_probe_geometry_matches_trial_kernel_and_rotation():
     _require_mps()
     from quantem.gpu.direct_ptycho._resident_search import _Device, _trial
     from quantem.gpu.direct_ptycho.mps import resident_fit
-    from quantem.gpu.direct_ptycho.mps.thick_sample import _trial_probe_kernel
 
     device = _Device("mps")
     mx = device.xp
@@ -64,7 +62,7 @@ def test_cached_probe_geometry_matches_trial_kernel_and_rotation():
                 prepared.ang_y_rad, prepared.ang_x_rad, prepared.factor,
             ], dtype=mx.float32)
             count = int(prepared.kx.size)
-            expected, _ = _trial_probe_kernel()(
+            expected, _ = resident_fit._trial_probe_kernel()(
                 inputs=[prepared.kx, prepared.ky, scalars, trial.reshape(-1)],
                 template=[("NUM_BF", count), ("B", 1)],
                 grid=(count, 1, 1), threadgroup=(256, 1, 1),

@@ -1,6 +1,6 @@
 # Calibration speed-up on main: the tilt fit's Newton polish and resident sessions - 2026-10-13
 
-> **Historical:** describes the code as of 2026-10-13; `refinement="newton"` with finite-difference steps and the Nelder–Mead polish are retired; fits refine on exact derivatives. See the [current fit methods](../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-13; `refinement="newton"` with finite-difference steps and the Nelder–Mead polish are retired; fits refine on exact derivatives. See the [current fit methods](../api/ssb.md).
 
 ## Question
 
@@ -16,7 +16,7 @@ the branch's numbers?
 
 | branch feature | on main |
 |---|---|
-| `fit(tilt=True, refinement="newton")`, Newton polish with bounded trust steps | `find_aberrations(tilt=True, refinement="newton")`, `thick_sample_fit.newton_polish` |
+| `fit(tilt=True, refinement="newton")`, Newton polish with bounded trust steps | `fit_aberrations(tilt=True, refinement="newton")`, `thick_sample_fit.newton_polish` |
 | `compare_standard=False` | same keyword; `tilt_fit_gain` is None |
 | `fit(tilt=True, trials=0)` refines the previous scan's fit | `num_trials=0` from the session's `aberrations`, `sample_tilt_mrad`, `depth_spread_nm` |
 | `SSB.open(acquisition, scan_region=, mean_pattern=)` | `SSB(dataset, scan_region=, mean_pattern=)`; main's constructor already took a dataset |
@@ -25,7 +25,7 @@ the branch's numbers?
 | `io.load.bin` | same path; integer input sums in a 64-bit integer (the branch summed CuPy counts in uint32 and Torch uint16 in float32), and `edge="partial"` applies to 2D and 3D input too |
 
 Not moved, because main already has its own form: the 180-degree branch taken from the first joint fit by symmetry
-(`find_aberrations(check_rotation=True)` reuses the fit on CUDA), fused FFT kernels built per device, a deterministic
+(`fit_aberrations(check_rotation=True)` reuses the fit on CUDA), fused FFT kernels built per device, a deterministic
 fused sum for the wave-averaged thick preview (`ThickSample._reconstruct_wave`), and the preview context that follows a
 rotation change. The branch's threaded Nelder-Mead batching is not moved: main evaluates one point per launch so that
 every value repeats bit for bit.

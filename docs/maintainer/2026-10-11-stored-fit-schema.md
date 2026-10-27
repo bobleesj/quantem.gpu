@@ -1,6 +1,6 @@
 # Stored SSB fits carry a schema, and only the current one is read - 2026-10-11
 
-> **Historical:** describes the code as of 2026-10-11; the `mean_phase` estimator is retired, and later schema versions replaced the one described. See the [current fit methods](../api/direct_ptycho.md).
+> **Historical:** describes the code as of 2026-10-11; the `mean_phase` estimator is retired, and later schema versions replaced the one described. See the [current fit methods](../api/ssb.md).
 
 ## Question
 

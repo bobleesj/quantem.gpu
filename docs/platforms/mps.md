@@ -14,7 +14,7 @@ MLX/PyObjC/Metal and chunk-backed unified-memory representations.
 | Detector adapter | `src/quantem/gpu/resident/mps/frames.py`, `virtual_image.py` and `src/quantem/gpu/detector/mps/dense.py` | chunk-backed frame and reduction interface |
 | Detector shader | `src/quantem/gpu/resident/mps/kernels/reductions.msl` | exact sums and detector moments |
 | DPC | `src/quantem/gpu/dpc/workflow.py` | CoM/DPC from the detector session's Metal moments |
-| Direct Ptycho | `src/quantem/gpu/direct_ptycho/mps` | MLX preparation, size-specific kernels, exact objective, optimizer |
+| SSB | `src/quantem/gpu/direct_ptycho/mps` | MLX preparation, size-specific kernels, exact objective, optimizer |
 
 The IO call path is:
 
@@ -69,7 +69,7 @@ access honestly rather than inventing “upload” time.
 
 Use `loaded.close()` after the final reader of a `Dataset4dstemGPU` has
 finished. Array indexing returns a Torch MPS tensor and requires PyTorch;
-MLX and Metal still implement the accelerated loading and Direct Ptycho paths.
+MLX and Metal still implement the accelerated loading and SSB paths.
 
 ### Retained dense-loader measurements
 

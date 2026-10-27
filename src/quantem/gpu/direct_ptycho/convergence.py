@@ -27,7 +27,7 @@ def plot_convergence(result, *, axsize, rows=None, columns=None, compare=None, x
                 groups.setdefault(key, []).append(record)
     if not groups:
         raise ValueError("This result has no recorded search history. Use the result returned by "
-                         "ssb.find_aberrations(), or reload a fit saved with its history.")
+                         "ssb.fit_aberrations(), or reload a fit saved with its history.")
     if "broad" in groups and x == "time" and not _broad_history(result)[-1]:
         raise ValueError("This fit has no complete elapsed-time history. Use x='evaluations', or rerun it.")
     count = len(groups)
@@ -95,10 +95,10 @@ def _broad_history(result):
 def _comparison_fits(result, compare):
     """Require comparable scientific contexts and keep each fit once."""
     from collections.abc import Mapping
-    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
     entries = [(f"{result.num_trials} trials", result)]
-    if isinstance(compare, DirectPtychoResult):
+    if isinstance(compare, SSBResult):
         entries.append((f"{compare.num_trials} trials", compare))
     elif isinstance(compare, Mapping):
         entries = [(f"{key} trials" if isinstance(key, int) else str(key), fit)
@@ -113,7 +113,7 @@ def _comparison_fits(result, compare):
               "voltage_kV", "semiangle_mrad", "object_sampling_A", "scan_detector_rotation_deg",
               "scan_detector_rotation_flipped")
     for label, fit in entries:
-        if not isinstance(fit, DirectPtychoResult):
+        if not isinstance(fit, SSBResult):
             raise ValueError(f"Comparison {label!r} is not an SSB fit. Supply fitted results.")
         if id(fit) in seen:
             continue

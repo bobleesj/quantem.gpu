@@ -131,7 +131,7 @@ def test_alias_sampling_preserves_gpu_model_and_native_loss(factor, depth_nm):
         expected = _zero_inserted_reference(
             prepared, factor, (-80.0, 40.0, -0.7), (-9, 5), depth_nm * 10
         )
-        phase, loss = ssb.preview(coefs, **sample, upsampling_factor=factor)
+        phase, loss = ssb.preview(coefs, **sample, upsampling=factor)
         assert phase.shape == (128 * factor, 128 * factor)
         np.testing.assert_allclose(phase, expected, rtol=0, atol=2e-5)
         assert loss == native_loss
@@ -191,7 +191,7 @@ def test_slider_changes_match_fresh_sessions():
         for aberrations, tilt, depth, rotation, factor in states:
             options = dict(
                 sample_tilt_mrad=tilt, depth_spread_nm=depth,
-                upsampling_factor=factor, compute_loss=False,
+                upsampling=factor, compute_loss=False,
             )
             reused.set_rotation(rotation)
             phase, _ = reused.preview(aberrations, **options)
@@ -210,7 +210,7 @@ def test_cancelled_preview_returns_no_partial_result_and_session_recovers(factor
     coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
     if higher:
         coefs.update(C21_nm=20., phi21_deg=12.)
-    settings = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18., upsampling_factor=factor)
+    settings = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18., upsampling=factor)
     with _disk_session() as ssb:
         expected, expected_loss = ssb.preview(coefs, **settings)
         checks = []
@@ -241,7 +241,7 @@ def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch)
     monkeypatch.setattr(upsampling, "_WORK_BYTES", (128 * 3) ** 2 * 8 * 3)
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     settings = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=18.0,
-                    upsampling_factor=3, compute_loss=False)
+                    upsampling=3, compute_loss=False)
     with _poisson_disk_session() as ssb:
         expected, _ = ssb.preview(coefs, **settings)
         assert ssb._backend()._prepared.g_qk.shape[0] > 4 * 64
@@ -288,24 +288,24 @@ def test_automatic_sampling_rotation_and_saved_result(tmp_path):
 
     coefs = {"C10_nm": 3.0, "C12_nm": 0.5, "phi12_deg": 15.0}
     with _disk_session(source_path=tmp_path / "source.npy") as ssb:
-        fine = ssb.reconstruct(aberrations=coefs, upsampling_factor="auto")
+        fine = ssb.reconstruct(aberrations=coefs, upsampling="auto")
         factor = ssb_upsampling_factor(
             voltage_kV=300,
             semiangle_mrad=30,
             scan_sampling_A=(0.3, 0.3),
         )
-        assert fine.upsampling_factor == factor
+        assert fine.upsampling == factor
         assert fine.phase.shape == (128 * factor, 128 * factor)
         np.testing.assert_allclose(fine.object_sampling_A, (0.3 / factor,) * 2)
         assert fine.amplitude_estimated is False
         original = fine.phase.copy()
         ssb.set_rotation(180.0)
-        opposite = ssb.reconstruct(aberrations=coefs, upsampling_factor="auto")
+        opposite = ssb.reconstruct(aberrations=coefs, upsampling="auto")
         assert opposite.scan_detector_rotation_deg == 180.0
         assert not np.array_equal(original, opposite.phase)
         ssb.set_rotation(0.0)
         restored = ssb.reconstruct(
-            aberrations=coefs, upsampling_factor="auto", save_dir=tmp_path / "fine"
+            aberrations=coefs, upsampling="auto", save_dir=tmp_path / "fine"
         )
         np.testing.assert_array_equal(restored.phase, original)
         assert (tmp_path / "fine" / "ssb-reconstruct.npz").is_file()
@@ -321,13 +321,13 @@ def test_coherent_half_spectrum_retains_full_complex_result(monkeypatch, depth_n
     sample = {"sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": depth_nm}
     with _disk_session() as ssb:
         ssb.set_rotation(165.8)
-        half, _ = ssb.preview(coefs, **sample, upsampling_factor=4, compute_loss=False)
+        half, _ = ssb.preview(coefs, **sample, upsampling=4, compute_loss=False)
         prepared = ssb._backend()._prepared
         assert upsampling._coherent_columns(prepared, 512) == 257
         # Native Nyquist frequencies intersect the aperture and are unpaired.
         assert upsampling._coherent_columns(prepared, 128) == 128
         monkeypatch.setattr(upsampling, "_coherent_columns", lambda prepared, n: n)
-        full, _ = ssb.preview(coefs, **sample, upsampling_factor=4, compute_loss=False)
+        full, _ = ssb.preview(coefs, **sample, upsampling=4, compute_loss=False)
         np.testing.assert_allclose(half, full, rtol=0, atol=2e-5)
 
 
@@ -352,7 +352,7 @@ def test_coherent_reduction_keeps_partial_bf_groups(
     sample = {"sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": depth_nm}
     with _poisson_disk_session() as ssb:
         ssb.set_rotation(165.8)
-        actual, loss = ssb.preview(coefs, **sample, upsampling_factor=3)
+        actual, loss = ssb.preview(coefs, **sample, upsampling=3)
         stored = int(ssb._backend()._prepared.g_qk.shape[0])
         chunk = upsampling._WORK_BYTES // ((128 * 3) ** 2 * 8 * 3)
         assert stored > chunk
@@ -384,10 +384,10 @@ def test_coherent_reduction_keeps_partial_bf_groups(
 
         with monkeypatch.context() as ungrouped:
             ungrouped.setattr(upsampling, "_coherent_spectrum", per_detector)
-            expected, expected_loss = ssb.preview(coefs, **sample, upsampling_factor=3)
+            expected, expected_loss = ssb.preview(coefs, **sample, upsampling=3)
         np.testing.assert_allclose(actual, expected, rtol=0, atol=2e-5)
         assert loss == expected_loss
-        repeated, repeated_loss = ssb.preview(coefs, **sample, upsampling_factor=3)
+        repeated, repeated_loss = ssb.preview(coefs, **sample, upsampling=3)
         np.testing.assert_array_equal(repeated, actual)
         assert repeated_loss == loss
 
@@ -401,7 +401,7 @@ def test_coherent_reconstruction_preserves_anisotropic_aperture(depth_nm):
         ssb.set_rotation(165.8)
         phase, _ = ssb.preview(
             coefs, sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm,
-            upsampling_factor=3, compute_loss=False,
+            upsampling=3, compute_loss=False,
         )
         expected = _zero_inserted_reference(
             ssb._backend()._prepared, 3, (-80.0, 40.0, -0.7),
@@ -422,7 +422,7 @@ def test_zero_depth_specialization_preserves_all_phase_bits(monkeypatch, higher)
     with _disk_session() as ssb:
         settings = dict(
             sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=0.0,
-            upsampling_factor=3, compute_loss=higher,
+            upsampling=3, compute_loss=higher,
         )
         actual, actual_loss = ssb.preview(coefs, **settings)
         coherent = up._coherent_alias_kernel
@@ -456,10 +456,10 @@ def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detec
     with _disk_session(detector_sampling=detector_sampling) as ssb:
         ssb.set_rotation(165.8)
         for coefs in cases:
-            actual, _ = ssb.preview(coefs, upsampling_factor=factor, compute_loss=False)
+            actual, _ = ssb.preview(coefs, upsampling=factor, compute_loss=False)
             with monkeypatch.context() as reference:
                 reference.setattr(up, "_SEPARABLE", False)
-                expected, _ = ssb.preview(coefs, upsampling_factor=factor, compute_loss=False)
+                expected, _ = ssb.preview(coefs, upsampling=factor, compute_loss=False)
             difference = np.angle(np.exp(1j * (actual.astype(np.float64) - expected)))
             assert np.abs(difference).max() < 2e-6, (coefs, np.abs(difference).max())
         prepared = ssb._backend()._prepared
@@ -482,7 +482,7 @@ def test_separable_depth_weights_match_per_term_transfer(monkeypatch, factor, de
     with _disk_session(detector_sampling=detector_sampling) as ssb:
         ssb.set_rotation(165.8)
         for coefs, tilt, depth in cases:
-            sample = dict(sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor, compute_loss=False)
+            sample = dict(sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling=factor, compute_loss=False)
             actual, _ = ssb.preview(coefs, **sample)
             for aliases in (1, 3):
                 # one fine row per thread, or every fine row of a source row: the same arithmetic per output
@@ -510,7 +510,7 @@ def test_odd_region_spectrum_matches_full_gpu_transfer(monkeypatch, factor, dept
         coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
         settings = dict(
             sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm,
-            upsampling_factor=factor, compute_loss=False,
+            upsampling=factor, compute_loss=False,
         )
         with monkeypatch.context() as reference:
             reference.setattr(up, "_SEPARABLE", False)
@@ -544,10 +544,10 @@ def test_paired_rows_at_2x_keep_every_phase_bit(monkeypatch):
     with _disk_session(detector_sampling=(10.0, 7.0)) as ssb:
         ssb.set_rotation(165.8)
         for coefs, tilt in cases:
-            paired, _ = ssb.preview(coefs, upsampling_factor=2, compute_loss=False, sample_tilt_mrad=tilt)
+            paired, _ = ssb.preview(coefs, upsampling=2, compute_loss=False, sample_tilt_mrad=tilt)
             with monkeypatch.context() as single:
                 single.setattr(up, "_PAIRED", False)
-                expected, _ = ssb.preview(coefs, upsampling_factor=2, compute_loss=False, sample_tilt_mrad=tilt)
+                expected, _ = ssb.preview(coefs, upsampling=2, compute_loss=False, sample_tilt_mrad=tilt)
             np.testing.assert_array_equal(paired.view(np.uint32), expected.view(np.uint32))
 
 

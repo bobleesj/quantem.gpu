@@ -3,14 +3,11 @@
 MPS SSB streams one bright-field detector pixel over all scan positions at a time, so every source answers "these
 (row, col) columns as float32". An export from ShowPtycho or ``DirectPtycho.export_brightfield`` keeps exactly those columns as
 integers on disk with a declaration that names them; ``find_bf_columns`` looks for one beside the acquisition before
-``DirectPtycho.open`` falls back to decoding the detector. Those columns also answer "as stored" (``columns_into``), so
-G(q, k) preparation reads the integers straight into GPU memory and converts them there.
+``DirectPtycho.open`` falls back to decoding the detector.
 """
 
 import json
-import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -28,7 +25,7 @@ from quantem.gpu.device.metal_runtime import (
 )
 from quantem.gpu.resident.mps.frames import ChunkedFrames
 from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
-from quantem.gpu.direct_ptycho.calibration import CALIBRATION_SCHEMA
+from quantem.gpu.direct_ptycho.calibration import READABLE_CALIBRATION_SCHEMAS
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
 # The layout of a ShowPtycho folder's snapshots/cal.json as quantem.widget writes it; another value is refused.
@@ -38,13 +35,6 @@ from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 # 3: the display-only phase negation is display_negate_phase (flip_phase before), and scan_detector_rotation_flipped
 #    is part of the layout.
 BROWSER_CALIBRATION_SCHEMA = "quantem.ssb-browser-calibration/3"
-
-# Threads that read exact BF columns from their file. Each runs positioned reads (``os.preadv``, which releases the
-# GIL) of whole columns into the destination. On an M5 Max four read 2.4 GB at the SSD's ~13 GB/s from disk and in
-# 0.08 s from the page cache; eight were no faster.
-COLUMN_READ_THREADS = 4
-# Bytes one positioned read asks for: neighbouring columns are contiguous in the file and read together.
-COLUMN_READ_BYTES = 8 * 1024**2
 
 
 def find_bf_columns(
@@ -126,7 +116,7 @@ def load_bf_columns_mps(
     payload = json.loads(cal_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"ShowPtycho calibration must be a JSON object: {cal_path}")
-    if payload.get("schema") == CALIBRATION_SCHEMA and not any(
+    if payload.get("schema") in READABLE_CALIBRATION_SCHEMAS and not any(
         key in payload for key in ("bf_column_companion_path", "bf_column_encoding")
     ):
         # A fitted Python calibration carries optics, not detector-column data.
@@ -255,11 +245,10 @@ def load_bf_columns_mps(
 class MpsBfColumnFrames:
     """Exact disk-backed BF columns for MPS SSB fitting and reconstruction.
 
-    The stored values remain integer-exact. Requested columns are read from the
-    file in parallel, as stored, into unified memory (``columns_into``); the
-    float32 conversion, detector sums, FFTs, objectives, refinement and final
-    reconstruction run on MPS/Metal. The full detector stack is never
-    materialized.
+    The stored values remain integer-exact. File reads and unified-memory copies
+    are host I/O, while detector sums, FFTs, objectives, refinement, and final
+    reconstruction use MPS/Metal. Only requested detector columns are copied into
+    MLX storage; the full detector stack is never materialized.
     """
 
     def __init__(
@@ -279,7 +268,7 @@ class MpsBfColumnFrames:
         verbose: bool = False,
     ) -> None:
         self.source_path = Path(path).expanduser().resolve()
-        # (row, col) mrad per detector pixel the columns were exported with; DirectPtycho uses it when given none
+        # (row, col) mrad per detector pixel the columns were exported with; SSB uses it when given none
         self.detector_sampling_mrad = detector_sampling_mrad
         self.metadata = dict(metadata or {})
         self.scan_shape = tuple(int(value) for value in scan_shape)
@@ -391,22 +380,32 @@ class MpsBfColumnFrames:
         return self._detector_sum
 
     def _detector_sum_mps(self) -> np.ndarray:
-        """Exact uint64 sum of every stored column, read as stored and summed in uint64 on Metal."""
+        """Reduce BF columns on Metal without a CPU scientific fallback."""
         mx = require_mlx()
-        sums = np.empty(self.selection.size, dtype=np.uint64)
-        stored = mlx_count_type(mx, self._np_dtype)
-        # 64 MiB of counts per block, so the uint64 copy the sum reads stays at most 512 MiB
-        block = max(1, (64 * 1024**2) // (self._n * self._np_dtype.itemsize))
-        indices = np.arange(self.selection.size, dtype=np.intp)
-        for start in range(0, self.selection.size, block):
-            stop = min(start + block, self.selection.size)
-            counts = mx.empty((stop - start, self._n), dtype=stored)
-            mx.eval(counts)
-            _read_file_rows(self.source_path, indices[start:stop], np.asarray(counts))
-            total = mx.sum(counts.astype(mx.uint64), axis=1)
-            mx.eval(total)
-            sums[start:stop] = np.asarray(total)
-            del counts, total
+        sums = np.zeros(self.selection.size, dtype=np.uint64)
+        # Every float32 partial remains an exactly representable integer. The
+        # small returned partial vectors are accumulated as uint64 metadata.
+        safe_scan = max(1, int((2**24 - 1) // max(1, self.max_value)))
+        safe_scan = min(self._n, safe_scan)
+        for bf_start in range(0, self.selection.size, 64):
+            bf_stop = min(bf_start + 64, self.selection.size)
+            partial = np.zeros(bf_stop - bf_start, dtype=np.uint64)
+            for scan_start in range(0, self._n, safe_scan):
+                scan_stop = min(scan_start + safe_scan, self._n)
+                block = mx.array(
+                    np.asarray(
+                        self._columns[
+                            bf_start:bf_stop,
+                            scan_start:scan_stop,
+                        ]
+                    ),
+                    dtype=mx.float32,
+                )
+                reduced = mx.sum(block, axis=1)
+                mx.eval(reduced)
+                partial += np.rint(np.asarray(reduced)).astype(np.uint64)
+                del block, reduced
+            sums[bf_start:bf_stop] = partial
         mx.clear_cache()
         detector_sum = np.zeros(self.detector_shape, dtype=np.uint64)
         detector_sum[self.selection.rows, self.selection.cols] = sums
@@ -434,27 +433,7 @@ class MpsBfColumnFrames:
 
     def columns(self, rows, cols) -> np.ndarray:
         """Return requested exact BF columns as ``(BF, scan)`` integers."""
-        out = np.empty((np.size(rows), self._n), dtype=self._np_dtype)
-        return self.columns_into(rows, cols, out)
-
-    def columns_into(self, rows, cols, out: np.ndarray) -> np.ndarray:
-        """Read the requested exact columns, as stored, into ``out``: a C-contiguous ``(BF, scan)`` array of the file's dtype.
-
-        ``prepare_selection`` passes the host view of an MLX array and converts the counts to float32 on the GPU, so
-        the host writes one byte (uint8) or two (uint16) per count instead of four and converts nothing.
-        """
-        indices = self._indices(rows, cols)
-        expected_shape = (int(indices.size), self._n)
-        if tuple(int(value) for value in out.shape) != expected_shape:
-            raise ValueError(
-                f"Output shape {out.shape} does not match {expected_shape}."
-            )
-        if out.dtype != self._np_dtype or not out.flags.c_contiguous:
-            raise ValueError(
-                f"Output must be a C-contiguous {self._np_dtype} array, got a {out.dtype} array."
-            )
-        _read_file_rows(self.source_path, indices, out)
-        return out
+        return np.asarray(self._columns[self._indices(rows, cols)])
 
     def columns_float32_into(
         self,
@@ -462,24 +441,23 @@ class MpsBfColumnFrames:
         cols,
         out: np.ndarray,
     ) -> np.ndarray:
-        """Copy the requested exact columns as ``(BF, scan)`` float32 into ``out``, the column contract of every MPS source.
-
-        G(q, k) preparation reads ``columns_into`` instead; this answers the few closed-aperture columns the direct
-        methods sum and a re-export.
-        """
-        counts = self.columns(rows, cols)
-        if tuple(int(value) for value in out.shape) != counts.shape:
+        """Copy requested exact columns directly into MLX unified storage."""
+        indices = self._indices(rows, cols)
+        expected_shape = (int(indices.size), self._n)
+        if tuple(int(value) for value in out.shape) != expected_shape:
             raise ValueError(
-                f"Output shape {out.shape} does not match {counts.shape}."
+                f"Output shape {out.shape} does not match {expected_shape}."
             )
-        out[...] = counts
+        for start in range(0, int(indices.size), 32):
+            stop = min(start + 32, int(indices.size))
+            out[start:stop] = self._columns[indices[start:stop]]
         return out
 
 
 class EncodedBrightFieldCrop:
     """The bright-field crop of an encoded acquisition, left encoded: what ``crop_bright_field`` decodes, never decoded whole.
 
-    It stands in a Direct Ptycho session where the decoded crop stood, with the same 4D shape (scan rows, scan columns, crop
+    It stands in an SSB session where the decoded crop stood, with the same 4D shape (scan rows, scan columns, crop
     rows, crop columns), dtype and counts (invalid detector pixels read 0). MPS SSB reads its bright-field columns from
     the encoded source a few scan rows at a time, only while it builds G(q, k) (``EncodedBrightFieldFrames``), so a
     512 x 512 scan holds no 6 GB decoded copy. Slicing the scan axes (``crop[r0:r1, c0:c1]``) or swapping the
@@ -906,56 +884,6 @@ def frames_scan_shape(frames) -> tuple[int, int]:
     if side * side != frame_count:
         raise ValueError("scan_shape is required for non-square frame counts.")
     return side, side
-
-
-def mlx_count_type(mx, dtype: np.dtype):
-    """The MLX dtype holding the same unsigned counts as ``dtype``."""
-    return {1: mx.uint8, 2: mx.uint16, 4: mx.uint32}[np.dtype(dtype).itemsize]
-
-
-def _read_file_rows(path: Path, indices: np.ndarray, out: np.ndarray) -> np.ndarray:
-    """Read rows ``indices`` of the headerless row-major file ``path`` into the C-contiguous ``out``, one row each.
-
-    A row is ``out.shape[1]`` items of ``out.dtype``. Runs of consecutive rows are read together, at most
-    ``COLUMN_READ_BYTES`` per ``os.preadv``, on ``COLUMN_READ_THREADS`` threads, straight into ``out``.
-    """
-    indices = np.asarray(indices, dtype=np.int64).reshape(-1)
-    if out.shape[0] != indices.size or not out.flags.c_contiguous:
-        raise ValueError(f"Expected a C-contiguous output of {indices.size} rows, got shape {out.shape}.")
-    if indices.size == 0:
-        return out
-    row_bytes = int(out.shape[1]) * out.itemsize
-    rows_per_read = max(1, COLUMN_READ_BYTES // max(1, row_bytes))
-    breaks = (np.flatnonzero(np.diff(indices) != 1) + 1).tolist()
-    reads = [
-        (start, min(start + rows_per_read, stop))
-        for run_start, stop in zip([0, *breaks], [*breaks, int(indices.size)])
-        for start in range(run_start, stop, rows_per_read)
-    ]
-    rows = out.reshape(int(out.shape[0]), -1)
-    descriptor = os.open(path, os.O_RDONLY)
-
-    def read(span: tuple[int, int]) -> None:
-        start, stop = span
-        target = memoryview(rows[start:stop]).cast("B")
-        offset = int(indices[start]) * row_bytes
-        done = 0
-        while done < target.nbytes:
-            count = os.preadv(descriptor, [target[done:]], offset + done)
-            if count <= 0:
-                raise OSError(f"{path} ended {target.nbytes - done} bytes before row {int(indices[start])}'s data.")
-            done += count
-
-    try:
-        if len(reads) == 1:
-            read(reads[0])
-        else:
-            with ThreadPoolExecutor(min(COLUMN_READ_THREADS, len(reads))) as pool:
-                for _ in pool.map(read, reads):
-                    pass
-    finally:
-        os.close(descriptor)
-    return out
 
 
 class _BfColumnDetectorView:

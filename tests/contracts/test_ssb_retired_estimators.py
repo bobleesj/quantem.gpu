@@ -39,11 +39,11 @@ def _session(monkeypatch):
 def test_a_retired_estimator_raises_naming_its_replacement(monkeypatch, estimator, replacement):
     session, backend = _session(monkeypatch)
     with pytest.raises(ValueError, match=f"{estimator}' was retired.*{replacement}"):
-        session.run(phase_estimator=estimator)
+        session.reconstruct(phase_estimator=estimator)
     with pytest.raises(ValueError, match=f"{estimator}' was retired.*{replacement}"):
         session.preview(ABERRATIONS, phase_estimator=estimator)
     with pytest.raises(ValueError, match=f"{estimator}' was retired"):
-        session.run(method="phase", phase_estimator=estimator)
+        session.reconstruct(method="phase", phase_estimator=estimator)
     assert backend.calls == []
 
 
@@ -57,7 +57,7 @@ def test_phase_of_mean_is_what_ssb_records_and_still_accepted(monkeypatch):
     session, backend = _session(monkeypatch)
     phase, loss = session.preview(ABERRATIONS, phase_estimator="phase_of_mean", compute_loss=False)
     assert phase.shape == (2, 2) and loss is None
-    result = session.run(compute_loss=True)
+    result = session.reconstruct(compute_loss=True)
     assert result.phase_estimator == "phase_of_mean"
     assert not result.amplitude_estimated
     assert result.loss == 0.5
@@ -66,11 +66,11 @@ def test_phase_of_mean_is_what_ssb_records_and_still_accepted(monkeypatch):
 
 def test_a_result_saved_with_a_retired_estimator_loads_with_a_notice(tmp_path, capsys):
     from quantem.gpu.direct_ptycho.persistence import load_result, result_paths, save_result
-    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+    from quantem.gpu.direct_ptycho.results import SSBResult
 
-    paths = result_paths(tmp_path, "find_aberrations")
-    signature = {"operation": "find_aberrations"}
-    saved = DirectPtychoResult(object_wave=np.exp(1j * np.ones((2, 2), np.float32)), backend="mps",
+    paths = result_paths(tmp_path, "reconstruct")
+    signature = {"operation": "reconstruct"}
+    saved = SSBResult(object_wave=np.exp(1j * np.ones((2, 2), np.float32)), backend="mps",
                       aberrations=dict(ABERRATIONS), phase_estimator="phase_of_mean", amplitude_estimated=False)
     save_result(saved, paths=paths, signature=signature, input_metadata={})
     record = json.loads(paths[1].read_text())
@@ -85,9 +85,9 @@ def test_a_result_saved_with_a_retired_estimator_loads_with_a_notice(tmp_path, c
 
 
 def test_an_unrecorded_estimator_is_not_shown():
-    from quantem.gpu.direct_ptycho.results import DirectPtychoResult, retired_estimator_note
+    from quantem.gpu.direct_ptycho.results import SSBResult, retired_estimator_note
 
-    assert "Estimator" not in repr(DirectPtychoResult(object_wave=np.ones((2, 2), np.complex64), backend="mps"))
+    assert "Estimator" not in repr(SSBResult(object_wave=np.ones((2, 2), np.complex64), backend="mps"))
     assert retired_estimator_note("phase_of_mean", "fit.json") is None
     assert retired_estimator_note(None, "fit.json") is None
     assert "method='complex'" in retired_estimator_note("complex_wave", "fit.json")

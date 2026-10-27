@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 from quantem.gpu.direct_ptycho.workflow import SSB
 
 
@@ -16,7 +16,7 @@ def _saved_result():
     section = dict(column_values=[-1, 0, 1], row_values=[-1, 0, 1],
                    relative_agreement=[[0.3, 0.4, 0.3], [0.7, 1, 0.7], [0.3, 0.4, 0.3]],
                    fitted_point=[0, 0])
-    return DirectPtychoResult(
+    return SSBResult(
         object_wave=np.exp(1j * phase), backend="mps", aberrations={"C10_nm": 0},
         object_sampling_A=(0.5, 0.5), sample_tilt_mrad=(0, 0), depth_spread_nm=0,
         parameter_slices={"scan_detector_rotation_deg": 17,
@@ -80,17 +80,17 @@ def test_method_comparison_marks_the_same_physical_zoom(region, start):
     conventional = _saved_result()
     phase = replace(
         conventional, reconstruction_method="phase",
-        reconstruction_options={"phase_regularization": 0.03},
+        reconstruction_options={"phase_damping": 0.03},
     )
     fine = replace(
         conventional, object_wave=np.repeat(np.repeat(conventional.object_wave, 4, axis=0), 4, axis=1),
-        upsampling_factor=4, object_sampling_A=(0.125, 0.125),
+        upsampling=4, object_sampling_A=(0.125, 0.125),
     )
     original = phase.object_wave.copy()
     figure = phase.show(compare=fine, region=region, cmap="gray", size="large")
     axes = [axis for axis in figure.axes if axis.images]
     assert "Regularized phase-only" in axes[0].get_title()
-    assert "Phase regularization 0.03" in axes[0].get_title()
+    assert "Phase damping 0.03" in axes[0].get_title()
     assert "Conventional SSB" in axes[1].get_title()
     assert "4× upsampling" in axes[1].get_title()
     assert f"{region.capitalize()} zoom" in axes[2].get_title()
@@ -110,7 +110,7 @@ def test_method_comparison_marks_the_same_physical_zoom(region, start):
 def test_complex_phase_display_names_both_regularization_strengths():
     result = replace(
         _saved_result(), reconstruction_method="complex",
-        reconstruction_options={"phase_regularization": 0.03, "amplitude_regularization": 0.1},
+        reconstruction_options={"phase_damping": 0.03, "amplitude_damping": 0.1},
     )
     for show_parameters in (False, True):
         figure = result.show(show_parameters=show_parameters, size="large")
@@ -127,7 +127,7 @@ def test_comparison_titles_stay_separate_and_inside_figure(size, columns):
 
     results = [replace(
         _saved_result(), reconstruction_method="phase",
-        reconstruction_options={"phase_regularization": value},
+        reconstruction_options={"phase_damping": value},
     ) for value in (0.01, 0.03, 0.05)]
     figure = results[0].show(
         compare=results[1:], region="bottom-left", show_fft=True, columns=columns, size=size,
@@ -148,14 +148,14 @@ def test_compare_regularization_strengths_uses_one_contrast_and_region():
     original = baseline.object_wave.copy()
     results = [replace(
         baseline, object_wave=baseline.object_wave ** factor,
-        reconstruction_method="phase", reconstruction_options={"phase_regularization": strength},
+        reconstruction_method="phase", reconstruction_options={"phase_damping": strength},
         phase_clim=(-factor, factor),
     ) for strength, factor in ((0.01, 1), (0.03, 0.8), (0.05, 0.6))]
     figure = results[0].show(compare=results[1:], region="bottom-left", cmap="gray")
     axes = [axis for axis in figure.axes if axis.images]
     assert len(axes) == 6
     for result, full, zoom in zip(results, axes[:3], axes[3:], strict=True):
-        assert f"Phase regularization {result.reconstruction_options['phase_regularization']:g}" in full.get_title()
+        assert f"Phase damping {result.reconstruction_options['phase_damping']:g}" in full.get_title()
         np.testing.assert_array_equal(zoom.images[0].get_array(), full.images[0].get_array()[12:16, :4])
         # The gallery must use the first result's limits even when another
         # result has its own contrast range saved.
@@ -193,9 +193,8 @@ def test_crop_fft_uses_selected_region_and_preserves_relative_signal():
 
 @pytest.mark.parametrize("size,width", [("small", 300), ("medium", 450), ("large", 600), ("xlarge", 900), (750, 750), (900, 900)])
 def test_interactive_phase_comparison_keeps_native_crops_and_shared_fft_scale(size, width):
-    # interactive=True draws with quantem.widget, which no install extra brings
-    VBox = pytest.importorskip("ipywidgets").VBox
-    Show2D = pytest.importorskip("quantem.widget").Show2D
+    from ipywidgets import VBox
+    from quantem.widget import Show2D
 
     result = _saved_result()
     widget = result.show(compare=[result, result], region="bottom-left",

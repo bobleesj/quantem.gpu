@@ -75,18 +75,18 @@ class FitDisplay:
         if self.display is None or not self.enabled:
             return
         try:
-            image = self.ssb.run(
-                fit, upsampling_factor="auto", compute_loss=False, verbose=False,
+            image = self.ssb.reconstruct(
+                fit, upsampling="auto", compute_loss=False, verbose=False,
             )
             comparisons = ()
             if final and self.ssb.backend == "cuda" and self.ssb._streamed is None:
                 # Prepare only after fitting. Finish with phase so subsequent
                 # regularization exploration can reuse its prepared equations.
-                complex_image = self.ssb.run(
-                    fit, method="complex", upsampling_factor="auto", compute_loss=False,
+                complex_image = self.ssb.reconstruct(
+                    fit, method="complex", upsampling="auto", compute_loss=False,
                 )
-                phase_image = self.ssb.run(
-                    fit, method="phase", upsampling_factor="auto", compute_loss=False,
+                phase_image = self.ssb.reconstruct(
+                    fit, method="phase", upsampling="auto", compute_loss=False,
                 )
                 comparisons = (phase_image, complex_image)
             if self.scan_region is not None:
@@ -125,7 +125,7 @@ def _show_fit_region(image, scan_region, scan_shape, *, width: float, final: boo
     from quantem.gpu.display._layout import panel_figure, scalebar
     from quantem.gpu.direct_ptycho.results import _phase_title, host_array
 
-    factor = image.upsampling_factor
+    factor = image.upsampling
     row_start, row_stop, col_start, col_stop = scan_region
     # Drop FFT padding from the overview: the box is in measured scan positions.
     results = (image, *compare)

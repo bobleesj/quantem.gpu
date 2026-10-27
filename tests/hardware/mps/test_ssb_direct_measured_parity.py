@@ -27,7 +27,6 @@ from .test_ssb_thick_sample_mps import _require_mps
 pytestmark = pytest.mark.slow
 
 # CUDA reference records name the strengths by their earlier keywords
-_KEYWORDS = {"phase_damping": "phase_regularization", "amplitude_damping": "amplitude_regularization"}
 
 
 def _session(root: Path, rotation_deg: float):
@@ -89,15 +88,15 @@ def test_three_methods_match_cuda():
                 ptycho.set_rotation(optics["rotation_deg"])
             ptycho.sample_tilt_mrad = tuple(optics["sample_tilt_mrad"])
             ptycho.depth_spread_nm = optics["depth_spread_nm"]
-            auto = ptycho._resolve_upsampling_factor("auto")
+            auto = ptycho._resolve_upsampling("auto")
             for entry in record["references"]:
                 if entry["optics"] != optics["name"] or not (every or entry["setting"] in (None, "default")):
                     continue
                 if entry["factor"] == "auto":
                     assert entry["upsampling"] == auto, "Auto factor differs from CUDA's"
-                options = {_KEYWORDS.get(key, key): value for key, value in (entry.get("requested") or {}).items()}
-                result = ptycho.run(None, method=entry["method"], aberrations=dict(optics["aberrations"]),
-                                    upsampling_factor=entry["upsampling"], compute_loss=False, **options)
+                options = dict(entry.get("requested") or {})
+                result = ptycho.reconstruct(None, method=entry["method"], aberrations=dict(optics["aberrations"]),
+                                            upsampling=entry["upsampling"], compute_loss=False, **options)
                 stem = Path(entry["file"]).name[: -len("-phase.npy")]
                 label = f"{optics['name']} {stem}"
                 p = _compare(result.phase, np.load(root / entry["file"]), wrap=True)

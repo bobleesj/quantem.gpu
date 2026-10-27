@@ -618,7 +618,7 @@ class PreparedDirect:
                 groups.append(_Group(group.count, sums, group.positions, group.prior))
         return cls(layout.shape, factor, groups, complex_object, layout.scale, power, layout.dose)
 
-    def solve(self, phase_regularization: float, amplitude_regularization: float | None, *, compute_loss: bool):
+    def solve(self, phase_damping: float, amplitude_damping: float | None, *, compute_loss: bool):
         """Evaluate arbitrary strengths, returning a fresh wave and diagnostics."""
         rows, cols = self.shape
         spectrum = np.zeros((rows * cols, 2), np.float32)
@@ -632,7 +632,7 @@ class PreparedDirect:
             losses = np.zeros(group.sums.shape[0] if compute_loss else 0)
             failed = _solve_group(
                 group.sums, width, count, dim, complex_object, group.prior,
-                float(amplitude_regularization or 0.0) * self.scale, float(phase_regularization) * self.scale,
+                float(amplitude_damping or 0.0) * self.scale, float(phase_damping) * self.scale,
                 self.incident_scale, group.positions, cols, rows, np.float32(self.factor**2), spectrum,
                 compute_loss, losses,
             )
@@ -640,7 +640,7 @@ class PreparedDirect:
             if compute_loss:
                 residual += float(losses.sum())
         if invalid:
-            raise ValueError('Direct inversion diverged; increase regularization or use method="phase".')
+            raise ValueError('Direct inversion diverged; increase phase_damping or amplitude_damping, or use method="phase".')
         wave, diagnostics = _wave(spectrum.view(np.complex64).reshape(rows, cols), complex_object,
                                   self.incident_scale)
         if compute_loss:
@@ -697,7 +697,7 @@ class DragWindow:
                                            prepared.scale, prepared.signal_power, prepared.incident_scale)
         return self.series.ready
 
-    def solve(self, value: float, phase_regularization: float, amplitude_regularization: float | None,
+    def solve(self, value: float, phase_damping: float, amplitude_damping: float | None,
               *, complex_object: bool):
         """The wave at control ``value`` (inside the window), as `PreparedDirect.solve` without the loss."""
         if complex_object and not self.complex_object:
@@ -715,7 +715,7 @@ class DragWindow:
             at += sums.size
             failed += _solve_group(
                 sums, width, count, 2 * count if complex_object else count, complex_object, group.prior,
-                float(amplitude_regularization or 0.0) * template.scale, float(phase_regularization) * template.scale,
+                float(amplitude_damping or 0.0) * template.scale, float(phase_damping) * template.scale,
                 template.incident_scale, group.positions, cols, rows, np.float32(self.factor**2), spectrum, False,
                 np.zeros(0), count if self.complex_object and not complex_object else 0,
             )
@@ -985,7 +985,7 @@ def _wave(spectrum: np.ndarray, complex_object: bool, incident_scale: float):
     step = -(-field.shape[0] // 8)
     list(_solver_pool().map(fill, [slice(start, start + step) for start in range(0, field.shape[0], step)]))
     if not np.isfinite(wave).all():
-        raise ValueError('Direct inversion diverged; increase regularization or use method="phase".')
+        raise ValueError('Direct inversion diverged; increase phase_damping or amplitude_damping, or use method="phase".')
     diagnostics = {
         "model": "T = exp(eta + i phi), linearized about unity",
         "normalization": "zero mean phase and log-amplitude; relative amplitude only",

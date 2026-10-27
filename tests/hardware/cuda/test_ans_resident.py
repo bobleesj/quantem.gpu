@@ -1,11 +1,11 @@
 """CUDA tests for exact, bounded resident ANS reads."""
 
-from quantem.gpu.io.dataset import Dataset4dstemGPU
-
 import os
 
 import numpy as np
 import pytest
+
+from quantem.gpu.io.dataset import Dataset4dstemGPU
 
 cp = pytest.importorskip("cupy")
 pytestmark = pytest.mark.skipif(
@@ -32,6 +32,249 @@ def test_streamed_ans_decodes_selected_scan_ranges(dtype):
         for first, stop in ((510, 515), (695, 705), (1490, 1510)):
             observed = source.decode_scan_range_device(first, stop)
             assert bool(cp.all(observed == flat[first:stop]))
+    finally:
+        source.release()
+
+
+@pytest.mark.parametrize("alignment", range(4))
+def test_buffered_reads_keep_unaligned_payloads_and_short_tails_exact(alignment):
+    """Mixed codecs decode exactly at every byte alignment and partial block."""
+    from quantem.gpu import detector
+
+    shape = (1, 1031, 9, 11)
+    raw = cp.random.default_rng(7).poisson(5, size=(1031, 9, 11)).astype(cp.uint16)
+    flat = raw.reshape(1031, -1)
+    scan = cp.arange(1031, dtype=cp.uint32)
+    flat[:, 0], flat[:, 1] = 0, 65535
+    flat[:, 2] = (scan * 15427 % 65536).astype(cp.uint16)
+    flat[:, 3] = cp.where(scan % 13 == 0, 50000 + scan % 500, scan % 7).astype(cp.uint16)
+    source = StreamedCounts(shape, np.uint16)
+    source.interval = 93
+    session = None
+    try:
+        for first, stop in ((0, 129), (129, 895), (895, 1031)):
+            source.append(cp.ascontiguousarray(raw[first:stop]))
+        modes, ans_lengths = set(), set()
+        for chunk in source.chunks:
+            payload, offsets, models, *index = chunk.arrays
+            padded = cp.empty(payload.size + alignment, cp.uint8)
+            padded[alignment:] = payload
+            chunk.arrays = (padded[alignment:], offsets, models, *index)
+            modes.update(cp.unique(models).get().tolist())
+            ans_lengths.update(cp.unique((offsets[1:] - offsets[:-1])[models < 64] % 4).get().tolist())
+        assert {253, 254, 255} <= modes and any(mode < 64 for mode in modes)
+        assert int(source.chunks[0].arrays[2][3].get()) < 64
+        assert {1, 2, 3} <= ans_lengths
+        for first, stop in ((0, 1031), (92, 95), (128, 132), (894, 897), (1029, 1031)):
+            decoded = source.decode_scan_range_device(first, stop)
+            assert bool(cp.array_equal(decoded, raw[first:stop]))
+        session = detector.prepare(source)
+        rows, cols = np.indices(shape[2:])
+        for mask in ((rows + cols) % 3 == 0, cols < 5, rows >= 4):
+            expected = raw[:, cp.asarray(mask)].sum(axis=1, dtype=cp.uint64)
+            actual = session.masked_sum(mask, output="native").reshape(-1)
+            assert bool(cp.array_equal(actual, expected))
+        assert bool(cp.array_equal(session.frame(1030, output="native"), raw[-1]))
+    finally:
+        if session is not None:
+            session.close()
+        source.release()
+
+
+@pytest.mark.parametrize("damage", ["header", "raw", "renormalization", "escape", "trailing"])
+def test_buffered_reads_reject_truncated_or_trailing_bytes(damage):
+    """Prefetch cannot consume bytes outside a stream or conceal unused bytes."""
+    from quantem.gpu import detector
+
+    scan = cp.arange(93, dtype=cp.uint32)
+    raw = cp.full((93, 3, 3), 11, dtype=cp.uint16)
+    raw[:, 1, 1] = (scan * 15427 % 65536 if damage == "raw" else scan % 7).astype(cp.uint16)
+    if damage == "escape":
+        raw[-1, 1, 1] = 50000
+    source = StreamedCounts((1, 93, 3, 3), np.uint16)
+    session = None
+    try:
+        source.append(raw)
+        chunk = source.chunks[0]
+        payload, offsets, models, *index = chunk.arrays
+        padded = cp.empty(payload.size + 1, cp.uint8)
+        padded[1:] = payload
+        chunk.arrays = (padded[1:], offsets, models, *index)
+        mode = int(models[4].get())
+        assert mode == 254 if damage == "raw" else mode < 64
+        begin, end = int(offsets[4].get()), int(offsets[5].get())
+        offsets[5] = begin + 3 if damage == "header" else end + (1 if damage == "trailing" else -1)
+        with pytest.raises(ValueError, match="failed reconstruction"):
+            source.decode_scan_range_device(0, 93, detector_region=(1, 2, 1, 2))
+        session = detector.prepare(source)
+        mask = np.zeros((3, 3), bool)
+        mask[1, 1] = True
+        with pytest.raises(ValueError, match="exact decoding"):
+            session.masked_sum(mask, output="native")
+        offsets[5] = end
+        assert bool(cp.array_equal(source.decode_scan_range_device(0, 93), raw))
+        actual = session.masked_sum(mask, output="native").reshape(-1)
+        assert bool(cp.array_equal(actual, raw[:, 1, 1]))
+    finally:
+        if session is not None:
+            session.close()
+        source.release()
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+@pytest.mark.parametrize("interval", [512, 93])
+def test_many_field_detector_masks_keep_exact_sums(dtype, interval):
+    """Full and incremental masks retain high counts across partial scan blocks."""
+    from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
+
+    shape = (1, 133, 257, 257)
+    maximum = np.iinfo(dtype).max
+    values = (maximum - cp.arange(np.prod(shape), dtype=cp.uint32) % 31)
+    values = values.astype(dtype).reshape(-1, *shape[2:])
+    valid = np.ones(shape[2:], bool)
+    valid[3, 5] = False
+    rows, cols = np.indices(shape[2:])
+    checker = ((rows // 8 + cols // 8) % 2) == 0
+    changed = checker.copy()
+    changed[64:72, 64:72] ^= True
+    radius = (rows - 123.5) ** 2 + (cols - 131.5) ** 2
+    masks = [
+        np.ones(shape[2:], bool),
+        checker,
+        changed,
+        checker,
+        (radius >= 40**2) & (radius < 110**2),
+        np.zeros(shape[2:], bool),
+    ]
+    source = StreamedCounts(shape, dtype, valid)
+    source.interval = interval
+    try:
+        source.append(cp.ascontiguousarray(values[:129]))
+        source.append(cp.ascontiguousarray(values[129:]))
+        query = StreamedSeriesCompute([source])
+        for mask in masks:
+            expected = values[:, cp.asarray(mask & valid)].sum(axis=1, dtype=cp.uint64)
+            observed = query.masked_sum_exact_native(mask).reshape(-1)
+            assert bool(cp.array_equal(observed, expected))
+        if dtype == np.uint16:
+            expected = values[:, cp.asarray(valid)].sum(axis=1, dtype=cp.uint64)
+            assert bool(cp.all(expected > np.iinfo(np.uint32).max))
+    finally:
+        source.release()
+
+
+def _alternative_stream(mode):
+    """One selected sparse, constant or zero stream, with neighboring payloads."""
+    raw = cp.zeros((16, 8, 8), cp.uint16)
+    raw[:, 1, 0] = 3
+    raw[:, 1, 2] = 11
+    if mode == 252:
+        raw[1, 1, 1], raw[7, 1, 1] = 5, 9
+    elif mode == 255:
+        raw[:, 1, 1] = 65535
+    source = StreamedCounts((1, 16, 8, 8), np.uint16)
+    source.append(raw)
+    mask = np.zeros((8, 8), bool)
+    mask[1, 1] = True
+    assert int(source.chunks[0].arrays[2][9].get()) == mode
+    return source, raw, mask
+
+
+def test_seven_acquisitions_keep_tail_scans_and_moments_exact():
+    """Joint detector and CoM queries include the scan after sixteen full blocks."""
+    from quantem.gpu import detector
+
+    shape = (1, 8193, 17, 19)
+    values = cp.arange(np.prod(shape), dtype=cp.uint32).reshape(-1, *shape[2:])
+    raw = [(values * (index + 1) % 17).astype(cp.uint16) for index in range(7)]
+    sources = [StreamedCounts(shape, np.uint16) for _ in raw]
+    session = None
+    try:
+        for source, counts in zip(sources, raw):
+            source.append(counts)
+        session = detector.prepare(sources)
+        rows, cols = np.indices(shape[2:])
+        radius = (rows - 8) ** 2 + (cols - 9) ** 2
+        for mask in (radius < 7**2, radius >= 7**2, (rows + cols) % 3 == 0):
+            expected = cp.stack([counts[:, cp.asarray(mask)].sum(1, dtype=cp.uint64) for counts in raw])
+            actual = session.masked_sum(mask, output="native").reshape(7, -1)
+            assert bool(cp.array_equal(actual, expected))
+        observed_row, observed_col = session.center_of_mass(mask)
+        denominator = cp.maximum(expected.astype(cp.float64), 1)
+        for coordinates, observed in ((cols, observed_col), (rows, observed_row)):
+            weights = cp.asarray(coordinates * mask)
+            moments = cp.stack([(counts * weights).sum((1, 2), dtype=cp.uint64) for counts in raw])
+            reference = (moments.astype(cp.float64) / denominator).astype(cp.float32)
+            np.testing.assert_array_equal(observed.reshape(7, -1), reference.get())
+        np.testing.assert_array_equal(session.frame(8192), cp.stack([counts[-1] for counts in raw]).get())
+    finally:
+        if session is not None:
+            session.close()
+        for source in sources:
+            source.release()
+
+
+@pytest.mark.parametrize("operation", ["detector", "moments"])
+@pytest.mark.parametrize(
+    "mode,damage",
+    [(252, "odd"), (252, "duplicate"), (252, "reversed"),
+     (252, "backwards_extent"), (255, "short"), (255, "long"),
+     (255, "backwards_extent"), (253, "nonempty")],
+)
+def test_malformed_alternative_streams_invalidate_detector_cache(operation, mode, damage):
+    """Malformed shortcuts raise and cannot seed a later incremental detector image."""
+    from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
+
+    source, raw, mask = _alternative_stream(mode)
+    try:
+        query = StreamedSeriesCompute([source])
+        query.masked_sum_native(np.zeros_like(mask))
+        payload, offsets = source.chunks[0].arrays[:2]
+        original_payload, original_offsets = payload.copy(), offsets.copy()
+        begin, end = int(offsets[9].get()), int(offsets[10].get())
+        if damage == "duplicate":
+            payload[begin + 2:begin + 4] = payload[begin:begin + 2]
+        elif damage == "reversed":
+            payload[begin:begin + 4] = payload[begin:begin + 4].reshape(2, 2)[::-1].copy().ravel()
+        elif damage == "backwards_extent":
+            offsets[10] = begin - 1
+        else:
+            offsets[10] = end + (-1 if damage in {"odd", "short"} else 1)
+        with pytest.raises(ValueError, match="exact decoding"):
+            if operation == "detector":
+                query.masked_sum_native(mask)
+            else:
+                query._moments(mask.astype(np.uint32), mask.astype(np.uint32))
+        assert query.previous_mask is None
+        payload[:], offsets[:] = original_payload, original_offsets
+        expected = raw[:, cp.asarray(mask)].sum(axis=1, dtype=cp.uint64)
+        assert bool(cp.array_equal(query.masked_sum_native(mask).reshape(-1), expected))
+        assert not query.last["incremental"]
+    finally:
+        source.release()
+
+
+def test_queued_delta_cannot_publish_after_a_malformed_stream():
+    """A delta queued before a decode error is reported also fails, then a full retry recovers."""
+    from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
+
+    source, raw, mask = _alternative_stream(252)
+    try:
+        query = StreamedSeriesCompute([source])
+        query.masked_sum_native(np.zeros_like(mask))
+        offsets = source.chunks[0].arrays[1]
+        end = int(offsets[10].get())
+        offsets[10] = end - 1
+        query.masked_sum_native(mask, wait=False)
+        query.masked_sum_native(mask, wait=False)
+        for _ in range(2):
+            with pytest.raises(ValueError, match="exact decoding"):
+                query.finish()
+        assert query.previous_mask is None
+        offsets[10] = end
+        expected = raw[:, cp.asarray(mask)].sum(axis=1, dtype=cp.uint64)
+        assert bool(cp.array_equal(query.masked_sum_native(mask).reshape(-1), expected))
+        assert not query.last["incremental"]
     finally:
         source.release()
 

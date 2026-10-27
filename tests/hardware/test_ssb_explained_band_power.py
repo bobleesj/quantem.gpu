@@ -60,10 +60,10 @@ def test_band_power_is_the_float64_sum_and_bounds_the_agreement(ptycho):
 
 def test_every_fit_reports_the_explained_fraction_and_the_fifth_order_gain(ptycho):
     primaries = []
-    fit = ptycho.find_aberrations(search="standard", trials=50, show=False, verbose=False,
+    fit = ptycho.fit_aberrations(search="standard", trials=50, show=False, verbose=False,
                                   on_initial_fit=primaries.append)
     primary = primaries[0]
-    standard = ptycho.find_aberrations(search="primary", tilt=False, trials=50, verbose=False)
+    standard = ptycho.fit_aberrations(search="primary", tilt=False, trials=50, verbose=False)
     assert 0 < standard.sample_agreement < primary.sample_agreement < fit.sample_agreement <= 1
     assert fit.sample_agreement > 0.99
     # the fifth-order objective at the low-order fit is that fit's own fraction of the band power
@@ -72,7 +72,7 @@ def test_every_fit_reports_the_explained_fraction_and_the_fifth_order_gain(ptych
     assert primary.tilt_fit_gain > 1
     assert fit.tilt_fit_gain == pytest.approx(primary.tilt_fit_gain * fit.optimizer["normalized_agreement"])
 
-    unmeasured = ptycho.find_aberrations(search="standard", trials=50, show=False, verbose=False,
+    unmeasured = ptycho.fit_aberrations(search="standard", trials=50, show=False, verbose=False,
                                          compare_standard=False)
     assert unmeasured.tilt_fit_gain is None
     assert unmeasured.sample_agreement == pytest.approx(fit.sample_agreement, rel=1e-6)

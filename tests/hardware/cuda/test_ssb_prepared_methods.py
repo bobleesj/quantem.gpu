@@ -89,16 +89,16 @@ def test_prepared_systems_match_previous_implementation(ptycho):
 
 def test_switching_methods_keeps_both_prepared(ptycho):
     """phase -> complex -> phase at one optics prepares each method once; the third call reuses the first."""
-    first = ptycho.run(method="phase", upsampling_factor=3, compute_loss=False)
-    ptycho.run(method="complex", upsampling_factor=3, compute_loss=False)
+    first = ptycho.reconstruct(method="phase", upsampling=3, compute_loss=False)
+    ptycho.reconstruct(method="complex", upsampling=3, compute_loss=False)
     assert set(ptycho._prepared_direct[1]) == {"phase", "complex"}
     cp.cuda.Device().synchronize()
     start = time.perf_counter()
-    third = ptycho.run(method="phase", upsampling_factor=3, compute_loss=False)
+    third = ptycho.reconstruct(method="phase", upsampling=3, compute_loss=False)
     cp.cuda.Device().synchronize()
     assert time.perf_counter() - start < 0.1
     cp.testing.assert_array_equal(third.object_wave, first.object_wave)
-    ptycho.run(method="phase", aberrations={**ABERRATIONS, "C10_nm": 13.0}, upsampling_factor=3, compute_loss=False)
+    ptycho.reconstruct(method="phase", aberrations={**ABERRATIONS, "C10_nm": 13.0}, upsampling=3, compute_loss=False)
     assert set(ptycho._prepared_direct[1]) == {"phase"}
 
 

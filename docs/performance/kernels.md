@@ -11,7 +11,7 @@ traced to a row here.
   replaces the older one; the older one is retired, not kept as a silent
   fallback. Any case the new kernel cannot serve is named below and in code.
 - **Version on change.** Editing a kernel's `.metal` source or its numerical
-  contract requires a new version here and in `DirectPtychoKernelRegistry`.
+  contract requires a new version here and in `SSBKernelRegistry`.
   `SSBKernelRegistryTests` fails when a shipped source digest does not match
   its registered version, or when this page lacks the version or digest.
 - **Active means measured.** A version becomes active only with parity tests
@@ -24,7 +24,7 @@ Pro, Apple M5 Max, 40-core GPU, 128 GB, macOS 26.4. Data: a thick-crystal acquis
 rows use the same acquisition's full detector at a 256² scan
 (`docs/performance/ssb/reports/2026-10-24-native-metal-ssb-redraw.md`).
 
-## Native SSB reconstruction (`MetalDirectPtychoKernels`)
+## Native SSB reconstruction (`MetalSSBKernels`)
 
 | Kernel | Status | Source digest | Serves | Validated | Fifth order, 512², 3× | Low order, 512², 3× | Fifth order, 256², 3× | Parity | Replaced by | Retired |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -37,13 +37,13 @@ rows use the same acquisition's full detector at a 256² scan
 
 The first render after a fit costs about 100–130 ms in the app (pipeline
 variant compilation and warm-up); the steady drag rate above excludes it.
-In-app timings are `MetalDirectPtychoJointPhase.wallSeconds` on an otherwise idle GPU
+In-app timings are `MetalSSBJointPhase.wallSeconds` on an otherwise idle GPU
 with one app instance on the built-in display.
 
-## Native regularized direct reconstruction (`MetalDirectPtychoKernels`)
+## Native regularized direct reconstruction (`MetalSSBKernels`)
 
-Methods `phase` and `complex` of `MetalDirectPtychoJointModel.reconstruct(_:upsamplingFactor:method:regularization:)`
-(`DirectPtychoSolver`, `ssb_direct.metal`), the port of the CUDA `PreparedDirect`: per scan frequency the normal
+Methods `phase` and `complex` of `MetalSSBJointModel.reconstruct(_:upsamplingFactor:method:regularization:)`
+(`SSBDirectSolver`, `ssb_direct.metal`), the port of the CUDA `PreparedDirect`: per scan frequency the normal
 equations of every supported output alias (`direct_normal_equations`: the weak-object transfer per BF pixel in
 float32 with CUDA's expressions, products of open alias pairs, float32 batch sums met in float-float across BF
 batches), then float64 Cholesky solves of the damped systems on the CPU, then one inverse FFT of the packed
@@ -51,7 +51,7 @@ eta + i phi spectrum (`direct_wave`). The layout (frequencies, aliases, priors, 
 per data, factor, prior and weighting; the prepared normal equations per optics, one per method (a complex
 system also serves `phase`), so a damping change only solves again.
 
-Wall ms on an Apple M5 Max (`metal-direct-ptycho-fit-benchmark --direct-parity` / `--fixture-parity`, 2026-10-25): a
+Wall ms on an Apple M5 Max (`metal-ssb-fit-benchmark --direct-parity` / `--fixture-parity`, 2026-10-25): a
 measured 512 × 512 acquisition (9,298 BF pixels, 0.373 Å step, Auto 3×, 3–6 aliases per frequency) and a
 0.525 Å-step one (9,289 BF pixels, Auto 4×, 7–12 aliases). "Optics change" is a call at new optics (layout and
 kernels kept: prepare + solve + wave; GPU prepare in brackets); "damping change" reuses the prepared system.
@@ -71,11 +71,11 @@ control from 29 exact preparations (50 for an azimuth). At 3× a window builds i
 5–9 ms in the benchmark and, in the app while dragging C10 or C12, 5.4–5.9 ms (phase) and 9.8–10.4 ms (complex) per
 render with a render every 16–21 ms; it agrees with the exact image to about 1e-6 of its standard deviation.
 
-## Native SSB fit (`MetalDirectPtychoKernels`)
+## Native SSB fit (`MetalSSBKernels`)
 
 The primary (low-order) fit's trust-region Newton climbs on the exact gradient and Hessian of the agreement
 in C10, C12 (two Cartesian components), the sample tilt and the depth spread (`ssb_low_order_derivatives.metal`,
-`DirectPtychoLowOrderDerivatives`). It replaces the finite-difference stencil of 13 or 28 objective evaluations per
+`SSBLowOrderDerivatives`). It replaces the finite-difference stencil of 13 or 28 objective evaluations per
 Newton iteration. v0.2 evaluates in stages: a value pass (the objective's sums; the same 256-pixel partials and
 expressions as v0.1's pass 1, with the soft-aperture shortcut, fast `sincos`, Markstein quotients and real
 anchor branches of `ssb-joint-agreement` v0.2), then, where the Newton uses them, the derivatives. Their pass
@@ -87,7 +87,7 @@ pruned second one), a fused pass forms the value sums (bitwise those of the valu
 sums that need no model sum N, projected on conj N in the combine. No derivatives are formed at a rejected step
 or for the starts that the second iteration's pruning stops.
 
-GPU ms per center (median of seven calls, command-buffer GPU time; `metal-direct-ptycho-fit-benchmark --objective-bench`
+GPU ms per center (median of seven calls, command-buffer GPU time; `metal-ssb-fit-benchmark --objective-bench`
 on the kept low-order fit of each app-matched case and three seeded random centers near it), Apple M5 Max,
 2026-10-25. The v0.2 numbers were taken with heavier background GPU load than v0.1's: the unchanged
 `ssb-joint-agreement` v0.2 single candidate measured 8.5 / 9.1 / 17.4 ms with v0.1 and 9.8 / 11.7 / 19.7 ms with
@@ -102,7 +102,7 @@ within 2e-6 nm / 3.2e-5° / 1e-6 mrad.
 | `ssb-low-order-derivatives` v0.2 | **retired** (superseded by v0.3, same kernels) | `6178f0ed1613` | primary-fit Newton (value, gradient, Hessian) | 2026-10-25 | fused 29.4 (one center) / 27.6 (three); value pass 11.2 + derivative pass 24.4 | fused 27.5 / 26.2; value 12.0 + derivatives 25.9 | fused 49.8 / 45.1; value 19.5 + derivatives 44.0 | `SSBModelReconstructionTests.testLowOrderDerivativesMatchFiniteDifferences` (Richardson differences: gradient ≤ 3.8e-5, Hessian ≤ 3.5e-4 relative; value against the agreement objective ≤ 9e-7; fused and two-stage value bitwise equal, derivatives ≤ 7e-6; v0.1 value ≤ 2.2e-7, derivatives ≤ 1.3e-5), `SSBAgreementSearchTests.testStagedExactNewtonMatchesOneStage`; measured on the three acquisitions: value within 5.3e-10 of v0.1 | `ssb-low-order-derivatives` v0.3 | 2026-10-25 |
 | `ssb-low-order-derivatives` v0.1 (`ssb_low_order`) | **deleted** 2026-10-25 (was the test reference of v0.2 and v0.3) | `40da0bd64def` | primary-fit Newton before 2026-10-25 | 2026-10-25 | 53.7 / 53.8 (pass 1 ≈ 16 + pass 2 ≈ 38) | 57.2 / 58.5 | 101.6 / 104.3 | reference for v0.2 | `ssb-low-order-derivatives` v0.2 | 2026-10-25 |
 
-## Native SSB fifth-order gradient (`MetalDirectPtychoKernels`)
+## Native SSB fifth-order gradient (`MetalSSBKernels`)
 
 The exact-gradient search's calls, GPU ms per call (command buffer; the wall time of a call exceeds it by about
 0.3 ms), one candidate unless noted, at the app-matched kept rotation: the value pass, the gradient pass after it, and
@@ -110,12 +110,12 @@ both together on all BF pixels; the same on every 8th BF pixel (coarse stage); t
 candidates on every 64th BF pixel). Min / median over 27 calls from three short runs alternating with v0.1 (the GPU
 throttles under sustained load and shows about 38% background use from the desktop, so long single runs read up to
 1.8x slower). Data as below: the first, a thick-crystal acquisition (8,807 BF pixels, 44,247 band frequencies), the second (9,298,
-44,255) and the third acquisition (8,930, 77,842). Benchmark: `metal-direct-ptycho-fit-benchmark --objective-bench RUN.json
+44,255) and the third acquisition (8,930, 77,842). Benchmark: `metal-ssb-fit-benchmark --objective-bench RUN.json
 --search-kernels-only`, 2026-10-25.
 
 | Kernel | Status | Source digest | Serves | Validated | First | Second | Third | Parity | Replaced by | Retired |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `ssb-fifth-gradient` v0.3 | **active** (`DirectPtychoModelFit.HigherOrderSearch.exactGradient*`) | `16e118d89846` | as v0.2: v0.2 with the deleted `fifth_agreement` removed from the shared `ssb_fifth_order` source; gradient kernels unchanged | 2026-10-25 | as v0.2 | as v0.2 | as v0.2 | outputs bitwise those of v0.2 on the synthetic test scene (agreements, derivatives, gradients, reconstructions, drag previews, full fit; 2026-10-25) | — | — |
+| `ssb-fifth-gradient` v0.3 | **active** (`SSBModelFit.HigherOrderSearch.exactGradient*`) | `16e118d89846` | as v0.2: v0.2 with the deleted `fifth_agreement` removed from the shared `ssb_fifth_order` source; gradient kernels unchanged | 2026-10-25 | as v0.2 | as v0.2 | as v0.2 | outputs bitwise those of v0.2 on the synthetic test scene (agreements, derivatives, gradients, reconstructions, drag previews, full fit; 2026-10-25) | — | — |
 | `ssb-fifth-gradient` v0.2 | **retired** (superseded by v0.3, same kernels) | `9a751b5a12ba` | exact gradient of the fifth-order agreement (28 z: coefficients, depth, tilt) on all BF pixels or every n-th, after the `ssb-fifth-agreement` v0.3 value pass (`fifth_gradient_scale`, `fifth_gradient_rows`) | 2026-10-25 | all BF: value 9.8 / 11.0, gradient 16.5 / 18.4, both 27.8 / 29.2; every 8th: 1.35 / 1.40, 2.11 / 2.25, 3.45 / 3.63; Hessian batch 10.7 / 11.9 | all BF: 10.2 / 11.5, 17.9 / 19.7, 28.5 / 31.6; every 8th: 1.38 / 1.49, 2.21 / 2.33, 3.60 / 3.97; Hessian 11.3 / 12.6 | all BF: 18.4 / 18.8, 30.6 / 32.8, 49.1 / 52.9; every 8th: 2.21 / 2.50, 3.61 / 4.32, 5.97 / 7.06; Hessian 19.9 / 21.4 | `SSBFifthOrderGradientTests` (double-precision central differences of all 28 z: worst 2.9e-6 of max\|g\| on all BF pixels, 2.6e-6 on every 3rd; value pass bit-identical to `fifthOrderAgreements`); measured against v0.1 at the same points: gradients within 3.5e-6 of max\|g\| at the search starts (within 4.6e-5 at the optima, where the gradient is float32 noise), agreements within 1.9e-7 | `ssb-fifth-gradient` v0.3 | 2026-10-25 |
 | `ssb-fifth-gradient` v0.1 | **retired** | `dc8d80c38d16` | before 2026-10-25 (value pass: `fifth_agreement` and its strided copy `fifth_strided_agreement`; BF- or band-subsampled agreement) | 2026-10-25 | all BF: 22.4 / 23.4, 33.0 / 35.4, 57.1 / 59.6; every 8th: 2.76 / 3.05, 4.15 / 4.25, 7.10 / 8.03; Hessian 22.4 / 23.6 | all BF: 23.1 / 24.5, 35.3 / 38.0, 60.5 / 62.9; every 8th: 2.93 / 3.08, 4.34 / 4.68, 7.44 / 7.97; Hessian 23.6 / 24.8 | all BF: 40.0 / 42.0, 60.1 / 64.3, 101.2 / 107.1; every 8th: 4.72 / 5.90, 7.25 / 9.66, 12.5 / 14.4; Hessian 39.7 / 43.1 | `SSBFifthOrderGradientTests` (worst 3.6e-6 of max\|g\|) | `ssb-fifth-gradient` v0.2 | 2026-10-25 |
 
@@ -128,19 +128,19 @@ band frequency) accumulates the 15 even and 21 odd moments of k (36 vector FMAs 
 threadgroup memory; v0.1 evaluated three 28-term bases per pair) and shifts them by its q once; the host maps the 25
 monomial sums to the 28 packed coefficients in double. A BF subsample keeps at least 32 pixels.
 
-Fifth-order stage of the full native fit (`metal-direct-ptycho-fit-benchmark --cache CASE --repeats 3`, median, runs alternating
+Fifth-order stage of the full native fit (`metal-ssb-fit-benchmark --cache CASE --repeats 3`, median, runs alternating
 with v0.1 on the same busy machine): first 0.91 → 0.46 s, second 1.31 → 0.60 s, third 1.36 → 0.68 s; same kept branch
 and rotation; Double-summed final agreement relative to v0.1 +1.5e-7, −1.5e-8, −2.6e-8 (float32 rounding of the
 reassociated value pass; C10 within 3.5e-4 nm).
 
-## Fit objectives (`MetalDirectPtychoJointModel` agreement)
+## Fit objectives (`MetalSSBJointModel` agreement)
 
 GPU ms per candidate objective (median of three calls; command-buffer GPU time, which the wall time of the
 call exceeds by at most 0.3 ms) at a fit's kept rotation. Fifth order: one candidate, four seeded random
 candidates, the 57-point Newton diagonal stencil, 64 random candidates. Low order: one candidate, eight (one
 search-trial batch) and 64 random candidates. Data: the first, a thick-crystal acquisition (8,805 BF pixels, 44,247 band
 frequencies), a second 512² acquisition (9,296 BF, 44,255) and a third (8,928 BF, 77,842), all 300 keV,
-30 mrad. Benchmark: `metal-direct-ptycho-fit-benchmark --objective-bench RUN.json`, 2026-10-25.
+30 mrad. Benchmark: `metal-ssb-fit-benchmark --objective-bench RUN.json`, 2026-10-25.
 
 | Kernel | Status | Source digest | Serves | Validated | First | Second | Third | Parity | Replaced by | Retired |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -171,10 +171,10 @@ instead of the 14-term harmonic sum. Candidates with equal depth and tilt share 
 synthetic test scene both fifth-order kernels are about 1e-6 from the float64 objective and v0.2 is no less
 accurate.
 
-## Retired native engine (`MetalDirectPtychoEngine`, `ssb.metal`)
+## Retired native engine (`MetalSSBEngine`, `ssb.metal`)
 
 The engine's own non-model SSB and its phase-variance fit, retired 2026-10-25: native SSB fits and reconstructs
-with the joint model only. These kernels were never registered in `DirectPtychoKernelRegistry` (the rows below have no
+with the joint model only. These kernels were never registered in `SSBKernelRegistry` (the rows below have no
 version), so trimming `ssb.metal` changed no registered digest. `ssb.metal` keeps `counts_to_complex`, the row
 FFTs (`fft_rows_radix8`, `fft_rows_small_mixed_radix`), `transpose_complex32` and `extract_hermitian_half`, which
 prepare the Fourier evidence of every joint model, and `ssb_object_phase`, which shows a reopened `.ssb` run.
@@ -183,5 +183,5 @@ Last measurements (2026-08-19, private 512² `uint8` fixture `native-ssb-fullbf-
 
 | Kernels | Status | Served | Last measured | Replaced by | Retired |
 |---|---|---|---|---|---|
-| `ssb_gamma_accumulate`, `ssb_gamma_accumulate_half`, `ssb_gamma_accumulate_half_aberrations`, `ssb_gamma_accumulate_full_aberrations`, `ssb_finalize_fourier_sum`, `ssb_precompute_cross_trig` | **retired** (non-model engine removed) | `MetalDirectPtychoEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`: SSB without tilt or depth, C10/C12 plus manual higher orders | warm reconstruction 8.9 ms p50, 512² | `ssb-redraw` (joint model, method `ssb`) | 2026-10-25 |
-| `ssb_precompute_chi_trig`, `ssb_correct_half_ifft_small`, `ssb_ifft_small_phase_moments`, `ssb_correct_half_column_ifft512_hermitian`, `ssb_ifft512_nyquist_correction`, `ssb_ifft512_rows_hermitian_phase_moments`, `ssb_correct_full_for_phase_loss`, `ssb_accumulate_phase_moments`, `ssb_transpose_half_to_column_major`, `ssb_transpose_half_to_row_major` | **retired** (phase-variance fit removed) | `MetalDirectPtychoEngine.phaseVariance` and `optimize` (`SSBOptimizer`: 200 seeded TPE trials, Nelder–Mead); `DirectPtychoFitOptions(objective: .phaseVariance)` | exact loss 25.1 ms p50; 200-trial fit 6.06 s p50, 512² | `ssb-joint-agreement`, `ssb-low-order-derivatives`, `ssb-fifth-agreement`, `ssb-fifth-gradient` (model agreement) | 2026-10-25 |
+| `ssb_gamma_accumulate`, `ssb_gamma_accumulate_half`, `ssb_gamma_accumulate_half_aberrations`, `ssb_gamma_accumulate_full_aberrations`, `ssb_finalize_fourier_sum`, `ssb_precompute_cross_trig` | **retired** (non-model engine removed) | `MetalSSBEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`: SSB without tilt or depth, C10/C12 plus manual higher orders | warm reconstruction 8.9 ms p50, 512² | `ssb-redraw` (joint model, method `ssb`) | 2026-10-25 |
+| `ssb_precompute_chi_trig`, `ssb_correct_half_ifft_small`, `ssb_ifft_small_phase_moments`, `ssb_correct_half_column_ifft512_hermitian`, `ssb_ifft512_nyquist_correction`, `ssb_ifft512_rows_hermitian_phase_moments`, `ssb_correct_full_for_phase_loss`, `ssb_accumulate_phase_moments`, `ssb_transpose_half_to_column_major`, `ssb_transpose_half_to_row_major` | **retired** (phase-variance fit removed) | `MetalSSBEngine.phaseVariance` and `optimize` (`SSBOptimizer`: 200 seeded TPE trials, Nelder–Mead); `SSBFitOptions(objective: .phaseVariance)` | exact loss 25.1 ms p50; 200-trial fit 6.06 s p50, 512² | `ssb-joint-agreement`, `ssb-low-order-derivatives`, `ssb-fifth-agreement`, `ssb-fifth-gradient` (model agreement) | 2026-10-25 |

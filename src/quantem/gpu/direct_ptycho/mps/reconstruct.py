@@ -33,7 +33,7 @@ from quantem.gpu.direct_ptycho.mps.kernels.row_ifft import (
     row_ifft_small_from_dynamic_geometry,
 )
 from quantem.gpu.direct_ptycho.mps.prepared import (
-    PreparedMpsDirectPtycho,
+    PreparedMpsSSB,
     bf_storage_chunks,
     ifft2_chunked,
 )
@@ -55,7 +55,7 @@ _loss_tile_override: ContextVar[int | None] = ContextVar("loss_row_ifft_tile_bf"
 
 @contextmanager
 def fit_loss_tiles():
-    """Run the enclosed loss evaluations with ``FIT_LOSS_ROW_IFFT_TILE_BF`` tiles (``DirectPtycho.find_aberrations``)."""
+    """Run the enclosed loss evaluations with ``FIT_LOSS_ROW_IFFT_TILE_BF`` tiles (``SSB.find_aberrations``)."""
     token = _loss_tile_override.set(FIT_LOSS_ROW_IFFT_TILE_BF)
     try:
         yield
@@ -64,7 +64,7 @@ def fit_loss_tiles():
 
 
 def reconstruct_prepared(
-    prepared: PreparedMpsDirectPtycho,
+    prepared: PreparedMpsSSB,
     *,
     C10: float,
     C12: float,

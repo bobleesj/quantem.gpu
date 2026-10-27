@@ -7,10 +7,10 @@ The examples use one public Python API on supported MPS and CUDA paths.
 | Task | Entry point | Returns | Details |
 |---|---|---|---|
 | Load and select measurements | `io.load`, array indexing | `Dataset4dstemGPU`; selections are GPU Torch tensors | [I/O](io.md) |
-| Save or inspect a file | `io.save`, `io.inspect` | Saved acquisition or header report | [Save and share](qem-python.md) |
+| Save or report acquisition metadata | `io.save`, `io.report` | Saved acquisition or metadata table | [Save and share](qem-python.md) |
 | Mean diffraction, BF, ADF, DF | `detector.mean`, `bf`, `adf`, `df` | Reduced NumPy images | [Detectors](images_dpc.md) |
 | CoM and integrated DPC | `dpc.run` | `DPCResult` | [DPC](images_dpc.md) |
-| Find aberrations; reconstruct phase | `DirectPtycho.find_aberrations`, `DirectPtycho.run` | `DirectPtychoResult` | [Direct Ptycho](direct_ptycho.md) |
+| Find aberrations; reconstruct phase | `SSB.fit_aberrations`, `SSB.reconstruct` | `SSBResult` | [SSB](ssb.md) |
 | Measure and correct drift across a series | `drift.drift`, `Drift.show`, `Drift.corrected` | `Drift`; aligned frames and their mean | [Drift](drift.md) |
 | Render a movie | `movie` | Encoded artifact | [Movies](movie.md) |
 

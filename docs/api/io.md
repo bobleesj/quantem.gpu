@@ -16,31 +16,31 @@ with io.load(files[0]) as data:
 ```
 
 For ordinary work, load once and read metadata from the returned acquisition.
-`inspect` is optional: use it for header-only checks, acquisition-readiness
-polling, or metadata access without an accelerator.
+Use `io.report(path)` for a metadata table before loading, or `io.report(data)`
+for an already-loaded acquisition. Reporting does not decode detector values.
 
 Leave the loaded dataset as the last expression in a notebook cell to show
-its calibration table before starting Direct Ptycho, ptychography, or another algorithm:
+its calibration table before starting SSB, ptychography, or another algorithm:
 
 ```python
 data = io.load("acquisition.qem")
 data
 ```
 
-`data.metadata_table()` returns the same table as a pandas DataFrame. It shows
+`io.report(data)` returns the same table as a pandas DataFrame. It shows
 the recorded geometry, physical values and units, saved calibration overrides,
 and pixel-correction metadata without decoding detector values. Missing
 rotation is shown as **Not recorded**, not as a measured zero. `data.calibration`
 (and `data.calibration.table()`) shows the four microscope calibrations alone,
 with **Value**, **Unit** and **Source** columns. Every calibration table,
-including `DirectPtycho.calibration()`, uses one label set
+including `SSB.calibration()`, uses one label set
 (`quantem.gpu.io.metadata_display.CALIBRATION_LABELS`): **Accelerating
 voltage** (kV), **Convergence semiangle** (mrad), **Scan step (row, col)**
 (angstrom), **Detector step (row, col)** (mrad per pixel, or 1/angstrom per
 pixel), **Scan-detector rotation** (deg) and **Rotation flipped**, with the
 sources **Recorded**, **Overridden**, **Recorded + overridden** and **Not
 recorded**. A zero or negative physical value is **Not recorded**. Complete source
-records remain available in `data.metadata`. Header-only `io.inspect(path)`
+records remain available in `data.metadata`. Header-only `io.report(path)`
 shows the same calibration fields before loading; header inspection does not
 authenticate the detector payload.
 
@@ -110,7 +110,7 @@ smallest larger window that holds one, inside a flagged cluster), rounded half
 to even, and the load line says how many. `hot_pixel_correction="none"` keeps
 the stored values. This master flags no pixels, so both settings return the
 same values here.
-Neither setting fits a detector noise model. Use `io.inspect(master)` for an
+Neither setting fits a detector noise model. Use `io.report(master)` for an
 optional header-only check before loading.
 
 Either download returns the dataset folder with its HDF5 shard, metadata and
@@ -153,9 +153,23 @@ masters = io.discover(
 The optional scan shape uses the public `(row, col)` convention and filters by
 frame count without decoding detector pixels.
 
-## `inspect`
+## `report`
 
-Read headers and external-link metadata without loading the 4D array:
+Show geometry, calibration and readiness without loading the 4D array:
+
+```python
+io.report("scan_master.h5", scan_shape=(512, 512))
+io.report(data)  # Already-loaded acquisition; includes resident size.
+```
+
+The returned pandas DataFrame has **Value**, **Unit** and **Metadata** columns:
+
+```python
+table = io.report("scan_master.h5")
+table[["Value", "Unit"]]
+```
+
+Existing `io.inspect` calls remain available for structured readiness checks:
 
 ```python
 report = io.inspect("scan_master.h5", scan_shape=(512, 512))
@@ -309,7 +323,7 @@ are retained; nonuniform coordinates and unknown units are not guessed.
 The reader retains coordinate vectors up to 4,096 values and records omitted
 larger vectors explicitly. Arrays use scan-row, scan-column, detector-row,
 detector-column order; arbitrary Velox event/image layouts are not implied.
-Use `io.inspect(path, dataset_path="experiment/acquisition/data")` and the same
+Use `io.report(path, dataset_path="experiment/acquisition/data")` and the same
 `dataset_path` in `io.load` when an EMD contains multiple acquisitions.
 
 GPU NumPy/EMPAD loading rejects a dense residency override. Explicit
@@ -359,7 +373,7 @@ Use `backend="cuda"` for an NVIDIA device. Gzip HDF5 uses bounded host reads
 followed by GPU ANS encoding; this is not GPU gzip decompression. Float64 input
 retains all original IEEE bits in typed ANS on both CUDA and MPS. Torch MPS
 cannot represent float64 tensors: use `loaded.read(output="native")` for an
-owned Metal array, and call its `release()` after use. Display and Direct Ptycho products
+owned Metal array, and call its `release()` after use. Display and SSB products
 use float32 arithmetic on Metal; that conversion leaves stored values intact.
 Reconstruction objects, probes and result TIFFs are not diffraction acquisitions.
 These Python paths do not certify the native Swift reader, which still limits
@@ -384,7 +398,7 @@ with io.load(original_fp8_array, backend="mps") as loaded:
 
 Use `backend="cuda"` on NVIDIA. Default reads retain every FP8 byte; inspect
 their bits through `original_pattern.view(torch.uint8)` when the caller's
-tensor library lacks FP8 arithmetic. Detector products and Direct Ptycho interpret the
+tensor library lacks FP8 arithmetic. Detector products and SSB interpret the
 original values in float32 with CUDA/Metal kernels. They do not change stored
 precision. The E8M0 format includes no zero or negative finite values; it is
 not a signed measurement substitute. External tensor or block scales are not
@@ -832,7 +846,7 @@ does not change the bytes of the supported file formats.
 The standalone writer is transactional and never overwrites an existing file.
 Source/working shape, dtype, and calibration are preserved. Saving and reopening
 an encoded acquisition is distinct from low-level representation conversion.
-Use `io.inspect` for supported-container metadata and readiness; successful
+Use `io.report` for supported-container metadata and readiness; successful
 inspection is not payload-integrity or full-volume performance qualification.
 
 ### EMPAD correction provenance
@@ -855,5 +869,5 @@ The loaded acquisition's metadata table also separates **QEM file size** on
 disk, **ANS resident size** (or **Resident size** for other representations),
 and **Uncompressed size** from shape and dtype. All three use decimal GB
 (1 GB = 1,000,000,000 bytes). Resident storage includes the encoded representation
-and its indexes, not temporary Direct Ptycho workspaces or total device memory. Inspecting
+and its indexes, not temporary SSB workspaces or total device memory. Inspecting
 these sizes does not decode the acquisition.

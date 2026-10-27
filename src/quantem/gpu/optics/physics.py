@@ -11,7 +11,7 @@ ELECTRON_MASS = 9.1093837015e-31  # Electron rest mass (kg)
 ELECTRON_CHARGE = 1.602176634e-19  # Elementary charge (C)
 SPEED_OF_LIGHT = 299792458  # Speed of light (m/s)
 
-# The SSB output factors a reconstruction accepts, and the largest one upsampling_factor="auto" chooses.
+# The SSB output factors a reconstruction accepts, and the largest one upsampling="auto" chooses.
 SSB_UPSAMPLING_FACTORS = (1, 2, 3, 4, 8)
 SSB_AUTO_UPSAMPLING_MAX = 4
 
@@ -211,10 +211,10 @@ def ssb_upsampling_factor(
 
     Notes
     -----
-    A capped factor undersamples nominal support. ``upsampling_factor="auto"``
+    A capped factor undersamples nominal support. ``upsampling="auto"``
     uses the default cap and prints one line, once per session, naming the
     factor the scan sampling supports; pass that factor explicitly (for
-    example ``upsampling_factor=8``) to use it. This choice does not change
+    example ``upsampling=8``) to use it. This choice does not change
     fitting.
 
     Examples

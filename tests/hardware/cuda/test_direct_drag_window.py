@@ -89,7 +89,7 @@ def test_drag_builds_between_frames_and_rebuilds_outside(ptycho):
     coefs, tilt, depth = dict(ABERRATIONS), OPTICS["sample_tilt_mrad"], OPTICS["depth_spread_nm"]
 
     def exact(aberrations):
-        return ptycho.preview(aberrations, method="phase", phase_regularization=0.03, upsampling_factor=3,
+        return ptycho.preview(aberrations, method="phase", phase_damping=0.03, upsampling=3,
                               sample_tilt_mrad=tilt, depth_spread_nm=depth, compute_loss=False, output="native")[0]
 
     ptycho._direct_windows = {}
@@ -126,8 +126,8 @@ def test_prepared_windows_serve_the_first_frame_of_a_grab(ptycho):
     moved = {**coefs, "phi12_deg": coefs["phi12_deg"] + 0.5}
     assert ptycho._direct_windows["phi12_deg"][1][0].series.covers(moved["phi12_deg"])
     phase = direct_workflow.drag(ptycho, "phi12_deg", moved, tilt, depth, 3, policy)
-    expected = ptycho.preview(moved, method="complex", phase_regularization=0.03, amplitude_regularization=0.05,
-                              upsampling_factor=3, sample_tilt_mrad=tilt, depth_spread_nm=depth,
+    expected = ptycho.preview(moved, method="complex", phase_damping=0.03, amplitude_damping=0.05,
+                              upsampling=3, sample_tilt_mrad=tilt, depth_spread_nm=depth,
                               compute_loss=False, output="native")[0]
     assert float(cp.abs(phase - expected).max()) <= 2e-6 * float(cp.abs(expected).max())
     # the C10 window held phi12 at its old value
@@ -149,7 +149,7 @@ def test_ssb_window_matches_exact_preview(ptycho, control):
     policy = direct_workflow.settings("ssb", None, None, None, None)
 
     def exact(aberrations):
-        return ptycho.preview(aberrations, upsampling_factor=3, sample_tilt_mrad=tilt, depth_spread_nm=depth,
+        return ptycho.preview(aberrations, upsampling=3, sample_tilt_mrad=tilt, depth_spread_nm=depth,
                               compute_loss=False, output="native")[0]
 
     ptycho._direct_windows = {}

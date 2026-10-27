@@ -8,7 +8,7 @@ from typing import Literal, Protocol
 import numpy as np
 
 from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import SSBResult
 
 # The local refinement a low-order fit applied: the trust-region Newton on the exact derivatives ("newton"), or the
 # exact-gradient quasi-Newton in (C10, C12, phi12) for a standard fit that locks a coefficient, bounds phi12 or holds a
@@ -57,15 +57,15 @@ def auto_refinement(refinement) -> str | None:
 
 
 @dataclass(frozen=True)
-class DirectPtychoPrecision:
-    """Numeric storage required from every Direct Ptycho backend."""
+class SSBPrecision:
+    """Numeric storage required from every SSB backend."""
 
     real_dtype: Literal["float32"] = "float32"
     complex_dtype: Literal["complex64"] = "complex64"
 
 
 @dataclass(frozen=True)
-class DirectPtychoExportState:
+class SSBExportState:
     """Exact compact state consumed by widget and browser integrations."""
 
     backend: Literal["cuda", "mps"]
@@ -84,7 +84,7 @@ class DirectPtychoExportState:
     angular_sampling_rad: tuple[float, float]
     sampling_A: tuple[float, float]
     dc_value: complex
-    precision: DirectPtychoPrecision = DirectPtychoPrecision()
+    precision: SSBPrecision = SSBPrecision()
     bf_source_path: pathlib.Path | None = None
     bf_source_dtype: np.dtype | None = None
     bf_source_max_value: int | None = None
@@ -98,8 +98,8 @@ class DirectPtychoExportState:
         return self.brightfield.size
 
 
-class DirectPtychoProtocol(Protocol):
-    """Backend contract implemented by CUDA and MPS: every call ``DirectPtycho`` makes.
+class SSBProtocol(Protocol):
+    """Backend contract implemented by CUDA and MPS: every call ``SSB`` makes.
 
     CUDA and MPS implement this protocol in Python. Browser WebGPU mirrors the
     same semantic contract in ``webgpu/protocol.ts`` because its execution is
@@ -110,7 +110,7 @@ class DirectPtychoProtocol(Protocol):
     """
 
     backend: Literal["cuda", "mps"]
-    precision: DirectPtychoPrecision
+    precision: SSBPrecision
 
     @property
     def scan_shape(self) -> tuple[int, int]: ...
@@ -132,7 +132,7 @@ class DirectPtychoProtocol(Protocol):
         seed: int,
         verbose: bool,
         compute_loss: bool = True,
-    ) -> DirectPtychoResult: ...
+    ) -> SSBResult: ...
 
     def cache_rotation(self, scan_detector_rotation_rad: float) -> None: ...
 
@@ -156,7 +156,7 @@ class DirectPtychoProtocol(Protocol):
 
     def preview_context(self, num_bright_field_pixels: int) -> AbstractContextManager | None: ...
 
-    def browser_state(self) -> DirectPtychoExportState: ...
+    def browser_state(self) -> SSBExportState: ...
 
     def export_brightfield(
         self,
@@ -167,14 +167,7 @@ class DirectPtychoProtocol(Protocol):
     def close(self) -> None: ...
 
 
-# The names before the Direct Ptycho rename: the same objects, so existing imports, isinstance checks and pickles work.
-SSBPrecision = DirectPtychoPrecision
-SSBExportState = DirectPtychoExportState
-SSBProtocol = DirectPtychoProtocol
-
 __all__ = [
-    "DirectPtychoPrecision",
-    "DirectPtychoProtocol",
     "SSBPrecision",
     "SSBProtocol",
 ]

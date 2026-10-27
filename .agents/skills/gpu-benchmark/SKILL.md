@@ -11,8 +11,7 @@ not authorize publishing, tagging, replacing baselines or stopping other jobs.
 
 ## Choose the existing measurement
 
-- Direct Ptycho joint fitting and regional correction: `quantem-gpu benchmark-direct-ptycho`
-  (`benchmark-ssb` is the same command).
+- SSB joint fitting and regional correction: `quantem-gpu benchmark-ssb`.
   Read [the command and timing boundaries](../../../docs/performance/ssb/joint-fit.md).
 - Other kernels, acquisition IO or native paths: read
   [the test guide](../../../docs/developer/testing.md) and select the existing
@@ -29,7 +28,7 @@ dependency versions, physical GPU, input dimensions/dtype, calibration and
 measurement boundary. Freeze the known-good GPU output before changing compute.
 Use the same acquisition, calibration, precision and workload for the candidate.
 
-For Direct Ptycho, the default interaction is one seed, 200 trials, the exact-derivative
+For SSB, the default interaction is one seed, 200 trials, the exact-derivative
 Newton and the fifth-order refinement with its half-band check. The
 full-field estimated rotation tests two branches. Regions jointly fit optics,
 tilt and depth; reconstruction uses the full scan before cropping the view.
@@ -75,7 +74,7 @@ measurement, not an optimization. Do not silently replace a failing baseline.
 ## Release use
 
 Build a wheel and install it into a new environment, unset `PYTHONPATH`, then
-run the Direct Ptycho command with `--require-installed` separately on MPS and CUDA.
+run the SSB command with `--require-installed` separately on MPS and CUDA.
 The release workflow gates publication on these hardware checks. The widget
 release additionally runs its installed-wheel browser test from fresh Jupyter
 kernels: draw, move, resize, keep regions independent, save and restore.
