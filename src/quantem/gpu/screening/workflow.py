@@ -30,7 +30,8 @@ from quantem.gpu.optics.physics import wrap_degrees
 # 4: the fitted rotation and its flip are scan_detector_rotation_mod180_deg and scan_detector_rotation_flipped; the
 #    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before); the mean
 #    pattern is mean_diffraction_pattern (mean_dp before).
-_CACHE_VERSION = 8
+# 9: sign-preserving, unit-gain inverse-gradient integration.
+_CACHE_VERSION = 9
 _CACHE_SCHEMA = f"quantem.screening-cache/{_CACHE_VERSION}"
 _EXACT_COUNT_PRODUCT_FIELDS = (
     "total_intensity",
