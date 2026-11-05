@@ -573,7 +573,11 @@ extension SSBModelFit {
         rows.append(minus)
       }
       let v = try values(rows)
-      let central = (0..<28).map { (v[2 * $0] - v[2 * $0 + 1]) / (2 * step) }
+      let central: [Double] = (0..<28).map { index in
+        let plus = v[2 * index]
+        let minus = v[2 * index + 1]
+        return (plus - minus) / (2 * step)
+      }
       let scale = central.map(abs).max() ?? 0
       let error = (0..<28).map { abs(central[$0] - gradient[$0]) }
       differences.append([
