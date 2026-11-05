@@ -9,6 +9,12 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
+## Full-scan native Metal SSB, 2026-11-05
+
+The [512 × 512 × 192 × 192 M5 measurement](ssb/reports/2026-11-05-mps-full-scan.md)
+records 200-trial fifth-order fitting, exact transfer parity, a rejected batching
+candidate, and native-app limitations. The two-second full-size target is not met.
+
 ## Joint ANS detector queries, 2026-10-25
 
 The [seven-acquisition CUDA record](virtual-detectors/reports/2026-10-25-seven-ans-acquisitions.md)
