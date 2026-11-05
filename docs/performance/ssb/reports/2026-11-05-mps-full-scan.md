@@ -90,4 +90,19 @@ so visible-window acceptance remains pending. The app currently requires the
 separate fifth-order refinement action. No end-to-end two-second claim, native
 release qualification, or automatic-fifth-order UI claim follows from this test.
 
+A replay with the corrected native UI harness completed both stages. Resident
+presentation took 5.134 s. Initial Run-to-result was 19.502 s including automation
+waits; app timers reported 3.883 s preparation and 14.883 s fitting. The separate
+fifth-order image state was published at 2.122 s and its checks completed at
+6.047 s (7.029 s including automation waits). Run through both stages was
+26.650 s, excluding acquisition loading and calibration setup. Final phase hash
+and fitted coefficients matched the earlier app run exactly. These warmer
+observations are not an optimization speedup.
+
+The corrected harness reports `workflow_pass=true`, `visual_evidence_pass=false`,
+and overall `pass=false`: all three screenshots were denied by macOS. Metal
+allocations sampled after the initial fit were 17.999 GB, falling to 14.122 GB
+after refinement. Neither sample is a measured peak; this does not qualify a
+16 GiB memory limit.
+
 Private evidence ID: `mps-full-scan-20261105`.
