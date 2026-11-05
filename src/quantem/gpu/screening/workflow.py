@@ -48,7 +48,8 @@ class ScreeningResult:
     """Small screening products for instant UI and ptychography setup.
 
     ``total_intensity``, ``annular_bright_field`` and ``annular_dark_field``
-    are exact uint64 count maps. ``scan_detector_rotation_mod180_deg`` is the
+    are exact uint64 maps for unsigned counts, or floating intensity sums
+    for float32 acquisitions. ``scan_detector_rotation_mod180_deg`` is the
     curl fit, known modulo 180 degrees, in [0, 180]: an unrotated scan fits
     the search grid's end point, float32 pi, which reads 180.000005, and 0 and
     180 describe the same estimate. ``scan_detector_rotation_deg`` is the
@@ -104,12 +105,17 @@ def prepare(
     their valid neighbors, ``io.load``'s default, as in SSB. The raw
     acquisition remains the evidence source for reconstruction.
 
+    Float32 acquisitions use the existing GPU detector mean, intensity-sum
+    and centre-of-mass operations without clipping or integer conversion.
+    Their products are labelled floating intensities, not exact counts.
+    Non-finite measurements require an explicitly valid scan region.
+
     Parameters
     ----------
     source : str, Path or Dataset4dstemGPU
         HDF5 master (for example an Arina ``*_master.h5``) or another
-        acquisition that ``io.load`` reads into integer counts. A loaded
-        acquisition is borrowed and stays open. Its flagged pixels count with
+        acquisition that ``io.load`` reads into unsigned counts or float32
+        intensities. A loaded acquisition is borrowed and stays open. Its flagged pixels count with
         the values loading gave them: the median fill when it was applied,
         and excluded when it was loaded with ``hot_pixel_correction="none"``.
         File-cache reuse is disabled for borrowed data.
@@ -250,9 +256,10 @@ def _build_products(
                 "The 4D-STEM source changed while screening products were being "
                 "computed. Wait for acquisition to finish, then retry."
             )
-        if loaded.dtype.kind != "u":
+        integer_counts = loaded.dtype.kind == "u"
+        if not integer_counts and loaded.dtype != np.dtype("float32"):
             raise ValueError(
-                "Screening products are exact detector-count sums; "
+                "Screening supports unsigned counts and float32 intensities; "
                 f"{master.name} stores {loaded.dtype} intensities. Use "
                 "quantem.gpu.detector and quantem.gpu.dpc on the loaded data instead."
             )
@@ -262,7 +269,16 @@ def _build_products(
         detector_shape = session.detector_shape
         frame_count = session.num_frames
         # The exact total divided in float64 and rounded once, like every mean pattern.
-        mean_diffraction_pattern = (session.detector_total() / frame_count).astype(np.float32)
+        mean_diffraction_pattern = (
+            (session.detector_total() / frame_count).astype(np.float32)
+            if integer_counts else session.mean_dp()
+        )
+        if not np.isfinite(mean_diffraction_pattern).all():
+            raise ValueError(
+                "Screening found non-finite diffraction intensities. Preserve the "
+                "original and select a valid scan region; missing measurements "
+                "are not replaced with zeros."
+            )
         valid = np.ones(detector_shape, dtype=bool)
         correction = loaded.metadata.get("hot_pixel_correction") or {}
         # pixels still holding their stored values (loaded with hot_pixel_correction="none") are not measurements
@@ -276,7 +292,11 @@ def _build_products(
             detector.detector_mask(center, inner * radius, outer * radius, detector_shape)
             for inner, outer in _BAND_RADII
         ]
-        sums = session.masked_sums_exact(np.stack(masks) & valid)
+        masks = np.stack(masks) & valid
+        sums = (
+            session.masked_sums_exact(masks) if integer_counts
+            else np.stack([session.masked_sum(mask) for mask in masks])
+        )
         com_row, com_col = session.center_of_mass(valid if unfilled else None)
         working_dtype = loaded.dtype.name
         acquisition_metadata = {
@@ -337,9 +357,11 @@ def _build_products(
             "source": source,
             "parameters": parameters,
             "timing": timing,
-            "exact_accumulation": {
-                "dtype": "uint64",
-                "published_uint64_products": list(_EXACT_COUNT_PRODUCT_FIELDS),
+            ("exact_accumulation" if integer_counts else "intensity_accumulation"): {
+                "dtype": sums.dtype.name,
+                "published_uint64_products": (
+                    list(_EXACT_COUNT_PRODUCT_FIELDS) if integer_counts else []
+                ),
                 "detector_band_order": ["BF", "ABF", "ADF", "DF"],
                 "detector_band_radius_multipliers": [
                     [inner, None if np.isinf(outer) else outer]
@@ -352,7 +374,9 @@ def _build_products(
             "note": (
                 "Products are exact uint64 detector sums of the encoded "
                 "acquisition; the raw source remains the reconstruction "
-                "evidence."
+                "evidence." if integer_counts else
+                "Products are floating intensity reductions of the encoded "
+                "acquisition; negative and fractional measurements are retained."
             ),
         },
         from_cache=False,
@@ -447,6 +471,19 @@ def _source_fingerprint(master: Path) -> dict[str, object]:
     """
     from quantem.gpu.io import inspect as inspect_source
 
+    if master.suffix.lower() == ".qem":
+        # QEM inspection describes its path only. Cache reuse must also bind
+        # the actual saved generation, including an atomic replacement.
+        path = master.resolve()
+        stat = path.stat()
+        return {
+            "master": str(path),
+            "files": [{
+                "path": str(path), "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns, "ctime_ns": stat.st_ctime_ns,
+                "device": stat.st_dev, "inode": stat.st_ino,
+            }],
+        }
     inspection = inspect_source(str(master))
     signature = inspection.source_signature
     if signature:

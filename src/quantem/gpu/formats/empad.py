@@ -68,6 +68,7 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> tuple[np.memmap, d
     xml = path if path.suffix.lower() == ".xml" else _raw_companion(path)
     fields, original, shape, record_rows = {}, {}, scan_shape, 130
     raw = path
+    scan_settings_conflict = False
     if xml.exists():
         text, root = _xml_root(xml)
 
@@ -108,24 +109,36 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> tuple[np.memmap, d
             shape, record_rows = _pair(fields["scan/shape"]), 128
             filename = fields["rawfile/filename"]
         else:
+            element = root.find("raw_file")
+            filename = "" if element is None else element.attrib.get("filename", "")
+            basename = filename.replace("\\", "/").split("/")[-1]
+            if not basename or Path(basename).suffix.lower() != ".raw":
+                raise ValueError("EMPAD XML must name a sibling .raw file.")
+            raw_bytes = (xml.parent / basename).stat().st_size
             candidates = []
             for row_key, col_key in (
                 ("pix_y", "pix_x"),
                 ("acquire/scan_resolution_y", "acquire/scan_resolution_x"),
+                ("search/scan_resolution_y", "search/scan_resolution_x"),
             ):
                 if row_key in fields or col_key in fields:
                     candidates.append(
                         _pair(fields.get(row_key, "0") + "," + fields.get(col_key, "0"))
                     )
-            if not candidates or any(
-                candidate != candidates[0] for candidate in candidates
-            ):
+            matching = {
+                candidate for candidate in candidates
+                if math.prod(candidate) * record_rows * 128 * 4 == raw_bytes
+            }
+            if len(matching) != 1:
                 raise ValueError(
-                    "EMPAD XML needs consistent row/column scan dimensions."
+                    "EMPAD XML needs one unambiguous scan shape matching the RAW "
+                    "length; restore the complete matching XML/RAW acquisition."
                 )
-            shape = candidates[0]
-            element = root.find("raw_file")
-            filename = "" if element is None else element.attrib.get("filename", "")
+            shape = matching.pop()
+            scan_settings_conflict = any(candidate != shape for candidate in candidates)
+            original["empad/resolved_scan_shape"] = list(shape)
+            original["empad/scan_shape_evidence"] = "XML dimensions and RAW byte length"
+            original["empad/scan_settings_conflict"] = scan_settings_conflict
             if fields.get("type", "scan") != "scan":
                 raise ValueError("Only EMPAD raster scans are supported.")
         basename = filename.replace("\\", "/").split("/")[-1]
@@ -228,12 +241,26 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> tuple[np.memmap, d
             return None
         return value if math.isfinite(value) and value > 0 else None
 
+    voltage = positive(
+        "iom_measurements/ColumnSourceHighVoltage"
+        if modern else "iom_measurements/high_voltage"
+    )
+    if voltage is not None:
+        metadata["voltage_kV"] = voltage / 1000
+
     fov_root = "iom_measurements/full_scan_field_of_view/"
     field_col, field_row, scale_factor = (
         positive(fov_root + key) for key in ("x", "y", "scale_factor")
     )
     fov = fields.get("iom_measurements/optics.get_full_scan_field_of_view")
-    if field_col is not None and field_col == field_row and scale_factor is not None:
+    if scan_settings_conflict:
+        # The FOV may belong to the inactive scan mode. Retain its source
+        # values, but require independent sampling before reconstruction.
+        metadata["calibration_notes"] = [
+            "EMPAD XML scan settings disagree; RAW length resolves the shape, "
+            "but scan sampling requires independent calibration."
+        ]
+    elif field_col is not None and field_col == field_row and scale_factor is not None:
         # EMPAD 1.2 records maximum-axis FOV including the instrument scale.
         # Sampling stays isotropic for rectangular scans, matching the native reader.
         metadata["scan_sampling_A"] = [field_col / scale_factor / max(shape) * 1e10] * 2
