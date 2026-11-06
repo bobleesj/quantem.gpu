@@ -411,7 +411,7 @@ comparison with the earlier finite-difference refinement.
 | Public workflow/results | `src/quantem/gpu/direct_ptycho` |
 | CUDA engine and optimizer | `src/quantem/gpu/direct_ptycho/cuda` |
 | Python MPS engine and optimizer | `src/quantem/gpu/direct_ptycho/mps` |
-| Native Swift/Metal preparation, joint model, fit and direct methods | `native/swift/Sources/MetalSSBKernels` |
+| Native Swift/Metal preparation, joint model, fit and direct methods | `native/swift/Sources/MetalDirectPtychoKernels` |
 | WebGPU kernels | `src/quantem/gpu/direct_ptycho/webgpu` |
 
 Parity uses the same source, bright-field selection, physical calibration,

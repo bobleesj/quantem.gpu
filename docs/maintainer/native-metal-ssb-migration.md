@@ -20,19 +20,19 @@ UI, session state, navigation, plots, or cache-policy presentation.
 The original reusable compute was embedded in an application controller. The
 migration moved the FFT, SSB reconstruction, exact objective, and optimizer
 into a SwiftPM library while leaving all UIKit and application ownership behind.
-`MetalSSBKernels` imports only Foundation and Metal.
+`MetalDirectPtychoKernels` imports only Foundation and Metal.
 
 ## Package boundary
 
 | Public surface | Contract |
 |---|---|
-| `MetalSSBGeometry` | Complete calibrated BF geometry in logical source order; row and column reciprocal arrays remain explicitly named |
-| `MetalSSBAberrations` | `c10Angstroms` and `c12Angstroms` in Angstrom; `phi12Radians` in radians |
-| `MetalSSBEngine.prepare(brightfield:)` | Plane-major lossless `uint8` BF buffer shaped `[logical_brightfield, 512, 512]` |
+| `MetalDirectPtychoGeometry` | Complete calibrated BF geometry in logical source order; row and column reciprocal arrays remain explicitly named |
+| `MetalDirectPtychoAberrations` | `c10Angstroms` and `c12Angstroms` in Angstrom; `phi12Radians` in radians |
+| `MetalDirectPtychoEngine.prepare(brightfield:)` | Plane-major lossless `uint8` BF buffer shaped `[logical_brightfield, 512, 512]` |
 | `reconstruct(aberrations:scanDetectorRotationDegrees:)` | Row-major 512×512 complex64 object and Fourier sum (retired 2026-10-25) |
 | `phaseVariance(aberrations:scanDetectorRotationDegrees:)` | Exact full-logical-BF phase-variance objective (retired 2026-10-25) |
 | `optimize(start:scanDetectorRotationDegrees:globalTrials:seed:...)` | Deterministic seeded TPE search, 200 trials by default, then Nelder–Mead (retired 2026-10-25) |
-| `MetalSSBProvenance` | Source/compute dtype, no crop, scan bin 1, logical/executed/proven-zero BF counts, cached/streamed BF counts, and exact cache bytes |
+| `MetalDirectPtychoProvenance` | Source/compute dtype, no crop, scan bin 1, logical/executed/proven-zero BF counts, cached/streamed BF counts, and exact cache bytes |
 
 The engine retains all logical BF terms in normalization. The execution union
 may omit only BF terms proven to remain outside the aperture. It does not crop
