@@ -157,7 +157,7 @@ def ring_parity(q_row, q_col, width=RING_WIDTH_INV_A) -> np.ndarray:
     return np.floor(q / width).astype(np.int64) % 2
 
 
-def higher_order_consistency(objective, start, checked, limit, cap):
+def higher_order_consistency(objective, start, checked, limit, cap, *, tilt=True):
     """The half-band check of a fifth-order fit at ``limit`` with coordinates ``checked``.
 
     The fifth order is refined at ``limit`` from the low-order ``start`` once on each ring half of the band
@@ -171,7 +171,7 @@ def higher_order_consistency(objective, start, checked, limit, cap):
     from .fifth_order_parameters import aperture_phase, aperture_rms
 
     parity = ring_parity(*objective.band_frequencies())
-    bounds = fifth_order_bounds(limit)
+    bounds = fifth_order_bounds(limit, tilt=tilt)
     halves = []
     for ring in (0, 1):
         mask = parity == ring
@@ -198,20 +198,23 @@ def higher_order_consistency(objective, start, checked, limit, cap):
             "start_coordinates": np.asarray(start).tolist(), "checked_coordinates": np.asarray(checked).tolist()}
 
 
-def fifth_order_bounds(higher_order_limit) -> np.ndarray:
+def fifth_order_bounds(higher_order_limit, *, tilt=True) -> np.ndarray:
     """Bounds of the 28 coordinates: C10, the C12 pair, tilt, depth spread, then +-limit for the higher orders.
 
     ``higher_order_limit`` (2 or 20, ``validate_higher_order_limit``) has no default: the fit's own default is 20.
     """
     limit = validate_higher_order_limit(higher_order_limit)
-    return np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-limit, limit)] * 22)
+    bounds = np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-limit, limit)] * 22)
+    if not tilt:
+        bounds[3:6] = 0.0
+    return bounds
 
 
 def fit_fifth_order(
     ssb, *, search, trials, seed, save_dir, force, verbose,
     primary_options, compute_loss=False, compare_standard=True,
     show=True, on_initial_fit=None, size="medium", columns=3, show_convergence=False,
-    higher_order_limit=DEFAULT_HIGHER_ORDER_LIMIT,
+    higher_order_limit=DEFAULT_HIGHER_ORDER_LIMIT, tilt=True,
 ):
     """Fit the fifth-order model; standard skips additional higher-order TPE.
 
@@ -258,6 +261,7 @@ def fit_fifth_order(
         "primary_options": primary_options,
         "compute_loss": bool(compute_loss),
         **({"compare_standard": False} if not compare_standard else {}),
+        **({"tilt": False} if not tilt else {}),
     }
     if higher_order_limit == DEFAULT_HIGHER_ORDER_LIMIT:
         settings["higher_order_check"] = {"ring_width_inv_A": RING_WIDTH_INV_A,
@@ -290,6 +294,8 @@ def fit_fifth_order(
         compute_loss=False,
         verbose=verbose,
         refine_rotation=primary_options["refine_rotation"],
+        **({"tilt": False, "search_ranges": {"C10_nm": (-30, 30),
+                                             "C12_nm": (0, 20)}} if not tilt else {}),
     )
     primary_elapsed_s = time.perf_counter() - started
     handoff_started = time.perf_counter()
@@ -300,7 +306,7 @@ def fit_fifth_order(
     # Keep plotting/caller work out of the numerical fit and convergence clocks.
     started += initial_handoff_s
     objective = _objective(ssb, gradients=True)
-    bounds = fifth_order_bounds(higher_order_limit)
+    bounds = fifth_order_bounds(higher_order_limit, tilt=tilt)
     norm = float(objective.evaluate(vector(primary, 1), 1)[0])
     if not np.isfinite(norm) or norm <= 0:
         raise ValueError(
@@ -318,7 +324,7 @@ def fit_fifth_order(
             direction="maximize", sampler=make_independent_sampler(seed=seed, bounds=bounds)
         )
         zero = np.zeros(28)
-        zero[5] = 1
+        zero[5] = 1 if tilt else 0
         study.enqueue_trial(dict(zip(names, zero.tolist())))
         def coarse(trial):
             point = np.array(
@@ -386,12 +392,14 @@ def fit_fifth_order(
     if higher_order_limit == DEFAULT_HIGHER_ORDER_LIMIT:
         check_started = time.perf_counter()
         low_order = np.clip(vector(primary, 5), bounds[:, 0], bounds[:, 1])
-        consistency = higher_order_consistency(objective, low_order, requested["best_z"], higher_order_limit, 400)
+        consistency = higher_order_consistency(
+            objective, low_order, requested["best_z"], higher_order_limit, 400,
+            **({"tilt": False} if not tilt else {}))
         consistency_s = time.perf_counter() - check_started
         consistency.update(checked_agreement=float(requested["best_score"] / norm), checked_stop=requested["stop"],
                            checked_objectives=int(requested["nfev"]))
         if not consistency["trusted"]:
-            fallback_bounds = fifth_order_bounds(consistency["shown_limit"])
+            fallback_bounds = fifth_order_bounds(consistency["shown_limit"], tilt=tilt)
             shown = refine_within(fallback_bounds, [(name, np.clip(point, fallback_bounds[:, 0], fallback_bounds[:, 1]))
                                                     for name, point in starts])
             fallback_s = shown["elapsed_s"]
@@ -404,11 +412,11 @@ def fit_fifth_order(
     start, best_z, best_score, stop, nfev, trace = (shown[key] for key in (
         "start", "best_z", "best_score", "stop", "nfev", "trace"))
     refinement_start_s, refine_elapsed_s = shown["refinement_start_s"], requested["elapsed_s"]
-    aberrations, tilt, depth = public_params(objective, best_z, 5)
+    aberrations, sample_tilt, depth = public_params(objective, best_z, 5)
     chosen = copy.copy(primary)
     chosen.aberrations = aberrations
-    chosen.sample_tilt_mrad = tilt
-    chosen.depth_spread_nm = depth
+    chosen.sample_tilt_mrad = sample_tilt if tilt else None
+    chosen.depth_spread_nm = depth if tilt else None
     chosen.objective = "broad_fifth_agreement"
     band_power = ssb._backend().band_power((0.2, 0.9))
     chosen.sample_agreement = float(best_score) / band_power
@@ -422,6 +430,8 @@ def fit_fifth_order(
         "search": search,
         "model": "broad_fifth_v1",
         "max_order": 5,
+        **({"tilt": False, "fixed_coordinates": {"sample_tilt_mrad": [0.0, 0.0],
+                                                 "depth_spread_nm": 0.0}} if not tilt else {}),
         "host_numerical_search": True,
         "sampler": "Optuna TPE" if exploration_trials else "none",
         "exploration_trials": exploration_trials,

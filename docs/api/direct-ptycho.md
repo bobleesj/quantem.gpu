@@ -253,13 +253,73 @@ drift = series.align()
 series.show(size="large")
 ```
 
-`series` reads recorded frames (files) one at a time. It fits the full optics once (`fit`, from the first frame) and, for each
-later frame, refits only defocus C10 and two-fold astigmatism C12, phi12,
+`series` reads recorded frames (files) one at a time. If `fit` is omitted, it fits
+the session's reference once. By default, each frame refits only defocus C10 and two-fold astigmatism C12, phi12,
 starting from the previous frame. Higher orders, sample tilt and effective
 depth stay at `fit`. Each frame is read compressed onto the session's GPU with
-the session's calibration and released before the next one. `ptycho.stream(...)`
-is the earlier name of `series` and still works with a `DeprecationWarning`;
-the result class `SSBSeries` was `SSBStream` (kept as an alias).
+the session's calibration and released before the next one. Use
+`DirectPtycho.series(...)`; the previous `stream(...)` spelling was removed.
+
+Use `refit="none"` when every scan should use the complete initial fit unchanged:
+all aberrations, sample tilt, depth and rotation stay fixed, and the report records
+zero fitting evaluations. Reconstruction and drift registration still run for
+each scan. This is a fixed-optics control; it does not test whether the optics
+actually stayed constant. `refit="full"` fits each scan independently, while the
+default `refit="defocus"` keeps the per-scan low-order refinement described above.
+Only the defocus mode supports `save_dir` resume records.
+
+An empty series accepts completed resident scans one at a time:
+
+```python
+fixed = ptycho.series(fit=fit, refit="none", method="phase", show=False)
+fixed.add(completed_scan)
+view = fixed.show(interactive=True)  # updates when another scan is added
+fixed.report()  # row/column drift, confidence and time per completed scan
+```
+
+By default (`max_frames=None`), the series retains every reconstructed image,
+fit and report row. For a rolling result, set the number of recent frames to
+retain explicitly:
+
+```python
+recent = ptycho.series(fit=fit, refit="none", method="phase", max_frames=5, show=False)
+recent.add(completed_scan)
+recent.frame_indices  # absolute zero-based indices of retained frames
+recent.total_frames  # includes results that left the window
+recent.report()
+```
+
+`max_frames=5` retains the latest five processed frames, including rejected
+registrations. Images, sources, fits, timings and report rows leave the window
+together. The combined image contains exactly the accepted frames in that
+window, with its full footprint; old contributions and empty outer margins are
+removed. If no retained frame was accepted, the combined field is uncovered
+and the viewer labels it "no accepted scans". The latest reconstruction remains
+available. Drift keeps its original scan-zero reference even when scan zero
+leaves the window. One last-confident registration image and two accepted
+shifts remain independently of the result window, so eviction does not change
+the drift reference or reset the fit policy.
+
+Bounded reports use absolute `Frame index` rows and a `Frame` name column,
+preserving repeated scan names. The full-history report format is unchanged.
+The interactive latest-image label shows measured row/column drift in Å,
+registration confidence and whether the image was accepted into the combined
+result. A rejected measurement is never labelled as combined.
+`report()`, `show()`, `frame_indices` and `total_frames` wait for an active
+`add()` to finish publishing its frame. Stop or wait for processing before
+reading several array attributes together; separate attribute reads are not
+a single snapshot.
+
+A frame limit bounds result history, not total device bytes: the retained
+spatial span determines canvas size, and reconstruction workspaces, the initial
+reference and caller-held array snapshots remain additional memory. A receiver's
+count-buffer budget is separate. Resident inputs stay owned by the caller:
+save or retain them if you will later call `series.reconstruct(...)`, which
+needs their counts again. In bounded mode it reconstructs only the retained
+window. `align()` requires complete history and rejects bounded series; build
+a new series from saved scans with `max_frames=None` for post-hoc alignment.
+Insufficient overlap with the last confident scan stops registration with a
+recovery message instead of resetting global drift or clipping a scan.
 
 Every frame is reconstructed by SSB, and by each method in `method`
 (`"ssb"`, `"phase"`, `"complex"` or a tuple) at that frame's optics, with
@@ -269,7 +329,8 @@ registration from `quantem.gpu.drift`, Bragg spots from the first frame) and
 added in register to `series.combined[...]`. A frame whose pair confidence
 falls below 0.04 is measured but not added. In a notebook, `show=True` (the
 default) draws the newest frame, the combined image and the drift so far, at
-most twice a second.
+most twice a second. Displacements are relative to the first frame added to the
+series, which can differ from the session used to obtain the initial fit.
 
 On a measured 40-frame series (512 x 512 scan, 192 x 192 detector, 1536 x 1536
 output, one GPU) a frame costs a median 0.84 s with phase-only and amplitude +

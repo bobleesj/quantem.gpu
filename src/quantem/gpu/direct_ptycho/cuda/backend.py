@@ -457,8 +457,9 @@ class CudaSSBBackend:
     def _print_summary(self, stage: str, elapsed_s: float) -> None:
         """Print one-line optimization summary."""
         aberrations = self.aberrations   # engine units (Angstrom); the public API and this line report nm
+        loss = "not computed" if self._best_loss is None else f"{self._best_loss:.6f}"
         print(
-            f"  {stage}: loss={self._best_loss:.6f}  "
+            f"  {stage}: loss={loss}  "
             f"C10={aberrations['C10'] / 10.0:.2f} nm  C12={aberrations['C12'] / 10.0:.2f} nm  "
             f"phi12={math.degrees(aberrations['phi12']):.1f}°  "
             f"{elapsed_s:.1f}s"

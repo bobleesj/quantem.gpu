@@ -90,7 +90,8 @@ def test_columns_decide_before_the_phase_tail():
     assert branches.branches[1].column_z >= COLUMN_Z_MIN
     assert branches.summary.startswith("kept 339.4°: atomic columns positive (z +")
     assert branches.branches[1].column_effect >= COLUMN_EFFECT_MIN
-    assert branches.summary.endswith("; 159.4° negative.")
+    assert "; 159.4° negative." in branches.summary
+    assert branches.summary.endswith(branches.status)
 
 
 def test_a_small_effect_over_many_columns_is_not_decisive():
@@ -282,3 +283,32 @@ def test_a_native_phase_view_names_the_auto_factor(capsys):
                      object_sampling_A=(0.125, 0.125), upsampling=4)
     auto.show(axsize=(2, 2))
     assert capsys.readouterr().out == ""
+
+
+def test_report_exposes_conditional_support_without_changing_selection():
+    """A stable sign heuristic is not an independent instrument calibration."""
+    dark_field = _lattice()
+    result = compare_branches([_fit(10.0, -dark_field), _fit(190.0, dark_field)],
+                              dark_field=dark_field, scan_sampling_A=0.264,
+                              keep_first=False)
+    assert result.chosen_rotation_deg == 190.0
+    assert result.status.startswith("Conditional column support")
+    assert "not an independent rotation calibration" in result.summary
+    assert set(result.report()["status"]) == {result.status}
+    metadata, arrays = result.to_record()
+    restored = RotationBranches.from_record(metadata, arrays)
+    assert restored.status == result.status
+    assert restored.chosen_rotation_deg == result.chosen_rotation_deg
+
+
+def test_phase_tail_report_remains_unresolved_even_with_large_skewness():
+    """Histogram asymmetry alone must not be described as calibration."""
+    phase = np.random.default_rng(12).exponential(size=(96, 96))
+    result = compare_branches([_fit(10.0, -phase), _fit(190.0, phase)],
+                              dark_field=None, scan_sampling_A=0.264,
+                              keep_first=True)
+    assert result.chosen_rotation_deg == 190.0
+    assert result.kept_rotation_deg == 10.0
+    assert result.status == "Unresolved: phase-tail suggestion only."
+    assert result.status in result.summary
+    assert set(result.report()["status"]) == {result.status}

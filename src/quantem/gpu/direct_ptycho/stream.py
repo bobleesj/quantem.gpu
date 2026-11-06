@@ -1,5 +1,7 @@
 """Reconstruct a recorded acquisition series: defocus and astigmatism refit per frame, every other optic held fixed.
 
+``refit="none"`` instead reconstructs every scan at the complete initial fit, with no fitting evaluations.
+
 A full fifth-order fit takes seconds to minutes; between frames of a time series the specimen height and
 the objective lens drift, but coma, trefoil, spherical aberration and the sample tilt change far less.
 ``series`` therefore keeps the reference fit's coordinates and refines only C10 and the two C12 components
@@ -22,8 +24,11 @@ with shifts identical to SSB alone and a 26 GB peak above the reference session.
 """
 
 import copy
+from collections import Counter, deque
+from functools import wraps
 import hashlib
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,6 +62,15 @@ REACH_A = 30.0
 RECORD_SCHEMA = "quantem.ssb-stream-frame/4"
 
 
+def _locked(method):
+    """Keep live additions and public result reads on the same completed frame."""
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
 class _FrameStep:
     """The per-frame work of ``series``: one recorded or resident frame at a time.
 
@@ -68,7 +82,7 @@ class _FrameStep:
     and a recorded frame are processed by the same code.
     """
 
-    def __init__(self, ptycho, fit: SSBResult, methods):
+    def __init__(self, ptycho, fit: SSBResult, methods, *, bounded=False):
         self.fit = fit
         self.methods = methods
         # SSB first: its phase is what each frame is registered on.
@@ -85,8 +99,9 @@ class _FrameStep:
             "scan_detector_rotation_deg": fit.scan_detector_rotation_deg,
             "scan_detector_rotation_flipped": fit.scan_detector_rotation_flipped,
         }
-        self.lattice = self.canvases = None
-        self.placed = []
+        self.lattice = self.canvases = self.anchor = None
+        self.bounded = bounded
+        self.placed = deque(maxlen=2) if bounded else []
 
     def open(self, data):
         """A session on one frame's counts with the reference calibration, so frames differ only in counts."""
@@ -121,22 +136,32 @@ class _FrameStep:
         """
         if index == 0:
             self.lattice = _lattice(reconstructed["ssb"], sampling)
+            if self.bounded:
+                self.anchor = SimpleNamespace(last=SimpleNamespace(
+                    whole=(0, 0), piece=cp.asarray(reconstructed["ssb"], dtype=cp.float64)))
+                self.placed.append((0, (0.0, 0.0)))
+                return (0.0, 0.0), float("inf")
             # The SSB canvas registers the frames; every other image only follows its shifts.
             self.canvases = {key: _start(reconstructed[key]) for key in ("ssb", *_keys(self.methods)) if key in reconstructed}
             self.placed = [(0, (0.0, 0.0))]
             return (0.0, 0.0), float("inf")
+        canvas = self.anchor if self.bounded else self.canvases["ssb"]
         if saved is None:
-            shift, score = _place(self.canvases["ssb"], reconstructed["ssb"], self.lattice, sampling, REACH_A,
-                                  _guess(self.placed, index))
+            shift, score = _place(canvas, reconstructed["ssb"], self.lattice, sampling, REACH_A,
+                                  _guess(self.placed, index), accumulate=not self.bounded)
         else:
             shift, score = saved
             if score >= CONFIDENCE:
-                _add(self.canvases["ssb"], reconstructed["ssb"], shift)
+                if self.bounded:
+                    canvas.last = _positioned(reconstructed["ssb"], shift)
+                else:
+                    _add(canvas, reconstructed["ssb"], shift)
         if score >= CONFIDENCE:
             self.placed.append((index, shift))
-            for key, canvas in self.canvases.items():
-                if key != "ssb":
-                    _add(canvas, reconstructed[key], shift)
+            if not self.bounded:
+                for key, canvas in self.canvases.items():
+                    if key != "ssb":
+                        _add(canvas, reconstructed[key], shift)
         return shift, score
 
     def advance(self, coordinates):
@@ -145,7 +170,7 @@ class _FrameStep:
 
 
 def series(ptycho, sources, fit: SSBResult, *, refit="defocus", method="ssb", upsampling="auto", save_dir=None,
-           show: bool = True, verbose: bool = True, **strengths) -> "SSBSeries":
+           max_frames: int | None = None, show: bool = True, verbose: bool = True, **strengths) -> "SSBSeries":
     """Refit C10, C12 and phi12 on each source with ``fit``'s higher orders, tilt and depth held.
 
     Each source, a recorded file or a scan already resident as an ANS dataset (``ArinaListener.datasets``), is
@@ -159,6 +184,7 @@ def series(ptycho, sources, fit: SSBResult, *, refit="defocus", method="ssb", up
     ``detector_weighting``). ``fit`` must be a fifth-order fit (``search="standard"`` or ``"broad"``) of
     the reference session. ``refit="full"`` instead fits every frame independently (``fit_aberrations``,
     standard search, the reference rotation kept): the baseline the defocus refit is compared with.
+    ``refit="none"`` holds every aberration, sample tilt and depth at the initial fit, without fitting.
 
     Each SSB phase is then registered against the last confidently placed frame (``_place``: lattice-safe
     band registration with frame 0's Bragg spots), whatever the methods: the regularized images move by
@@ -174,17 +200,22 @@ def series(ptycho, sources, fit: SSBResult, *, refit="defocus", method="ssb", up
 
     The frames are added one at a time (``SSBSeries.add``), so a series given no sources is the same
     series built while scans arrive: each ``add`` is one more frame of this loop.
+    ``max_frames=N`` retains the latest N results and combines only accepted frames within that
+    window. Absolute frame indices and drift against the first scan are preserved. The default
+    ``None`` retains the complete history. Input counts remain the caller's responsibility.
     """
     # Files are read one at a time and freed after their frame; scans already resident (a live stream's
     # encoded datasets) are used in place and stay the caller's.
     sources = [Path(source) if isinstance(source, (str, Path)) else source for source in sources]
     result = SSBSeries._begin(ptycho, fit, refit=refit, method=method, upsampling=upsampling, save_dir=save_dir,
-                              show=show, strengths=strengths, frames=len(sources))
+                              show=show, strengths=strengths, frames=len(sources), max_frames=max_frames)
     iterator = sources
     if verbose:
         from tqdm.auto import tqdm
 
-        iterator = tqdm(sources, desc="Fitting every frame" if refit == "full" else "Refitting defocus and astigmatism",
+        description = {"full": "Fitting every frame", "none": "Reconstructing with fixed optics",
+                       "defocus": "Refitting defocus and astigmatism"}[refit]
+        iterator = tqdm(sources, desc=description,
                         unit="frame")
     for index, source in enumerate(iterator):
         result._add(source, final=index == len(sources) - 1)
@@ -203,7 +234,12 @@ class SSBSeries:
     registered on (``phase``), one stack per requested image (``images``: each method's phase in rad,
     and ``"amplitude"`` with ``"complex"``), each image combined in register (``combined``) and how
     many frames reach each of its pixels (``cover``); after ``align``, ``sigma_A`` holds the pairwise
-    solve's σ per frame (row, col, Å)."""
+    solve's σ per frame (row, col, Å).
+
+    By default, image stacks and per-frame records retain the complete series. ``max_frames`` keeps
+    only the latest results and their combined footprint, with a separate last-confident anchor.
+    A caller's resident-count budget does not bound these results or reconstruction workspaces.
+    """
 
     frames: tuple[str, ...]
     phase: object = field(repr=False)
@@ -222,21 +258,25 @@ class SSBSeries:
     cover: object = field(repr=False)
     sources: tuple = field(repr=False)  # recorded files (Path) or resident ANS datasets
     session: dict = field(repr=False)
+    max_frames: int | None = None
     sigma_A: np.ndarray | None = field(default=None, repr=False)
     # What adding the next frame needs: the frame step, the record chain and the growing image stacks.
     _state: SimpleNamespace | None = field(default=None, repr=False)
+    _lock: object = field(default_factory=threading.RLock, init=False, repr=False, compare=False)
 
     @classmethod
-    def _begin(cls, ptycho, fit, *, refit, method, upsampling, save_dir, show, strengths, frames=0):
+    def _begin(cls, ptycho, fit, *, refit, method, upsampling, save_dir, show, strengths, frames=0, max_frames=None):
         """An empty series on ``ptycho``'s calibration; ``frames`` sizes the image stacks when known."""
-        if refit not in ("defocus", "full"):
+        if refit not in ("none", "defocus", "full"):
             raise ValueError(f'refit={refit!r}: use "defocus" (C10, C12, phi12 from the frame before) or "full" '
-                             "(fit_aberrations on every frame).")
+                             '(fit_aberrations on every frame), or "none" (the complete initial fit, unchanged).')
+        if max_frames is not None and (isinstance(max_frames, bool) or not isinstance(max_frames, int) or max_frames < 1):
+            raise ValueError(f"max_frames must be a positive integer or None for complete history; got {max_frames!r}.")
         records = None if save_dir is None else Path(save_dir).expanduser() / "stream"
-        if records is not None and refit == "full":
-            raise ValueError('save_dir resumes defocus refits; refit="full" keeps no frame records.')
+        if records is not None and refit != "defocus":
+            raise ValueError(f'save_dir resumes defocus refits; refit="{refit}" keeps no frame records.')
         methods = (method,) if isinstance(method, str) else tuple(dict.fromkeys(method))
-        step = _FrameStep(ptycho, fit, methods)
+        step = _FrameStep(ptycho, fit, methods, bounded=max_frames is not None)
         device = f"cuda:{cp.cuda.runtime.getDevice()}"
         # Every frame has the reference calibration, so "auto" is resolved (and a capped factor announced) once.
         factor = ptycho._resolve_upsampling(upsampling)
@@ -250,16 +290,30 @@ class SSBSeries:
             step=step, refit=refit, strengths=strengths, factor=factor, records=records, shared=shared,
             resuming=records is not None, previous=None, panel=_LivePanel(fit.phase_limits, methods[0], enabled=show),
             # What each load did with the detector's flagged pixels, announced once for the series.
-            flagged={}, capacity=frames, stacks=None, scan=None, views=[], frozen=False,
+            flagged={} if max_frames is None else deque(maxlen=max_frames),
+            capacity=frames, stacks=None, scan=None, views=[], frozen=False, count=0, shifts_px=(),
         )
         return cls(frames=(), phase=None, images={}, methods=methods, aberrations=(), refits=(), fits=(), timings=(),
                    reference=fit, object_sampling_A=None, shifts_A=np.zeros((0, 2)), confidence=(), placed=(),
                    combined={}, cover=None, sources=(),
                    session={"kind": type(ptycho), "settings": step.settings, "upsampling": factor, "device": device},
-                   _state=state)
+                   max_frames=max_frames, _state=state)
 
+    @property
+    @_locked
+    def total_frames(self) -> int:
+        """Number of processed frames, including results that left the rolling window."""
+        return len(self.frames) if self._state is None else self._state.count
+
+    @property
+    @_locked
+    def frame_indices(self) -> tuple[int, ...]:
+        """Absolute zero-based indices of the retained frames, in chronological order."""
+        return tuple(range(self.total_frames - len(self.frames), self.total_frames))
+
+    @_locked
     def add(self, scan) -> dict:
-        """Add one more completed scan: refit (or fit), reconstruct, place it, and return its report row.
+        """Add a completed scan: apply its selected fit policy, reconstruct, place it and return its report row.
 
         ``scan`` is a recorded file or a resident ANS dataset (one ``ArinaListener`` scan); it is processed
         exactly as ``series`` processes its next frame, so a series built scan by scan as scans arrive
@@ -269,15 +323,22 @@ class SSBSeries:
         """
         with cp.cuda.Device(int(self.session["device"].split(":")[1])):
             self._add(Path(scan) if isinstance(scan, (str, Path)) else scan, final=True)
-        return {"Frame": self.frames[-1], **self.report(to_dict=True)[self.frames[-1]]}
+        key = self.frames[-1] if self.max_frames is None else self.total_frames - 1
+        return {"Frame": self.frames[-1], **self.report(to_dict=True)[key]}
 
+    @_locked
     def _add(self, source, *, final):
         """One frame of the series: load (a file), open the session with the reference calibration, refit,
         reconstruct each method, store the images, place the SSB phase, refresh the views, write the record."""
         state, step, methods = self._state, self._state.step, self.methods
         if state.frozen:
             raise RuntimeError("This series was aligned or reconstructed again; start a new series to add scans.")
-        index = len(self.frames)
+        index = self.total_frames
+        if self.max_frames is not None:
+            # Keep the published anchor/window intact if the next frame cannot finish.
+            step = copy.copy(step)
+            step.placed = deque(step.placed, maxlen=2)
+            step.anchor = None if step.anchor is None else copy.copy(step.anchor)
         resident = not isinstance(source, Path)
         if resident and state.records is not None:
             raise ValueError("save_dir resumes a series of recorded files; resident scans have no file to identify "
@@ -289,91 +350,114 @@ class SSBSeries:
         clock = {}
         began = time.perf_counter()
         data = source if resident else io.load(source, device=self.session["device"], verbose=False)
-        clock["load_s"] = time.perf_counter() - began
-        if "hot_pixel_correction" in data.metadata:
-            state.flagged.setdefault(hot_pixel_outcome(data.metadata["hot_pixel_correction"]), []).append(name)
-        scan = tuple(data.shape[:2])
-        if state.scan is None:
-            state.scan = scan
-        elif scan != state.scan:
-            # Frames are placed by shifting whole images onto one canvas; another scan size is another field.
-            raise ValueError(f"{name} has scan shape {scan}, the series began with {state.scan}: "
-                             "pass frames of one scan shape")
-        began = time.perf_counter()
-        session = step.open(data)
-        saved = objective = None
-        if state.records is not None:
-            # A frame's refit starts from the frame before and its placement from the frames placed
-            # before it, so its identity holds the SHA-256 of the previous frame's record, which holds
-            # the one before it: a recomputed frame invalidates every later record, also when the run
-            # stopped before rewriting them, and only an unbroken chain from the first frame is reused.
-            identity = {**state.shared, "index": index, "previous": state.previous, "source": acquisition_identity(
-                source, hot_pixel_correction=data.metadata.get("hot_pixel_correction"))}
-            saved = _recorded(state.records / f"{name}.json", identity) if state.resuming else None
-            state.resuming = saved is not None
-        if saved is not None:
-            clock["setup_s"], clock["refit_s"] = time.perf_counter() - began, 0.0
-            coordinates, evaluations, stop = np.array(saved["coordinates"]), saved["evaluations"], saved["stop"]
-            optics, tilt, depth = saved["aberrations"], tuple(saved["sample_tilt_mrad"]), saved["depth_spread_nm"]
-        elif state.refit == "full":
-            clock["setup_s"] = time.perf_counter() - began
+        session = None
+        try:
+            clock["load_s"] = time.perf_counter() - began
+            flagged = (hot_pixel_outcome(data.metadata["hot_pixel_correction"])
+                       if "hot_pixel_correction" in data.metadata else None)
+            if flagged is not None and self.max_frames is None:
+                state.flagged.setdefault(flagged, []).append(name)
+            scan = tuple(data.shape[:2])
+            if state.scan is None:
+                state.scan = scan
+            elif scan != state.scan:
+                # Frames are placed by shifting whole images onto one canvas; another scan size is another field.
+                raise ValueError(f"{name} has scan shape {scan}, the series began with {state.scan}: "
+                                 "pass frames of one scan shape")
             began = time.perf_counter()
-            # The reference rotation is kept: the session is opened with it and a flipped frame is another calibration.
-            fitted = session.fit_aberrations(check_rotation=False, compute_loss=False, show=False, verbose=False)
-            clock["refit_s"] = time.perf_counter() - began
-            coordinates, evaluations = np.array(fitted.optimizer["coordinates"]), fitted.optimizer.get("evaluations")
-            stop = fitted.optimizer.get("stop", "full fit")
-            optics, tilt, depth = fitted.aberrations, fitted.sample_tilt_mrad, fitted.depth_spread_nm
-        else:
-            objective, coordinates, evaluations, stop, optics, tilt, depth = step.refit(session, clock, began)
-        chosen, reconstructed, sampling, seconds = step.reconstruct(session, optics, tilt, depth, state.factor,
-                                                                    state.strengths)
-        clock.update(seconds)
-        began = time.perf_counter()
-        phase, images = self._store(index, reconstructed)
-        shift, score = step.place(index, reconstructed, sampling,
-                                  None if saved is None or index == 0 else (tuple(saved["shift_px"]), saved["confidence"]))
-        cp.cuda.Device().synchronize()
-        clock["align_s"] = time.perf_counter() - began
-        clock["display_s"] = clock["total_s"] = 0.0
-        # Published in one statement, after the frame is complete: a view or report read from another thread
-        # (a live stream's worker adds scans while the notebook reads) sees whole frames only.
-        (self.phase, self.images, self.object_sampling_A, self.frames, self.sources, self.shifts_A, self.confidence,
-         self.placed, self.combined, self.cover, self.aberrations, self.refits, self.fits, self.timings) = (
-            phase, images, tuple(float(value) for value in sampling), (*self.frames, name), (*self.sources, source),
-            np.vstack([self.shifts_A, np.array(shift) * np.array(sampling)]), (*self.confidence, float(score)),
-            (*self.placed, score >= CONFIDENCE), {key: _combined(step.canvases[key]) for key in images},
-            step.canvases["ssb"].cover, (*self.aberrations, dict(optics)),
-            (*self.refits, {"evaluations": evaluations, "stop": stop, "resumed": saved is not None}),
-            (*self.fits, chosen), (*self.timings, clock))
-        began = time.perf_counter()
-        state.panel.update(name, images[methods[0]][index], step.canvases[methods[0]], self.shifts_A, sampling,
-                           len(step.placed), final=final)
-        self._redraw()
-        clock["display_s"] = time.perf_counter() - began
-        clock["total_s"] = sum(clock.values())
-        if state.records is not None and saved is None:
-            # Frame 0 has no pair to score (its confidence is infinite); strict JSON has no Infinity.
-            record = json_value({
-                "schema": RECORD_SCHEMA, "identity": identity, "frame": name, "aberrations": optics,
-                "sample_tilt_mrad": tilt, "depth_spread_nm": depth, "coordinates": coordinates,
-                "evaluations": evaluations, "stop": stop, "shift_px": shift,
-                "shift_A": np.array(shift) * np.array(sampling), "confidence": None if index == 0 else score,
-                "object_sampling_A": sampling, "timings": clock,
-            })
-            _write_atomically(state.records / f"{name}.json", "w",
-                              lambda handle: json.dump(record, handle, indent=1, allow_nan=False), encoding="utf-8")
-        if state.records is not None:
-            state.previous = hashlib.sha256(json.dumps(saved or record, sort_keys=True, allow_nan=False).encode()).hexdigest()
-        if state.refit == "defocus":
-            step.advance(coordinates)
-        # close breaks the engine's cycle with its thick-sample model, so the frame's 10 GB of resident
-        # counts and spectra go now; after del alone they waited for the cycle collector (measured
-        # series: 66 GB process peak over 40 frames, 40.5 GB with close).
-        session.close()
-        # The session borrows the dataset, so a loaded file's encoded resident is released here.
-        if not resident:
-            data.close()
+            session = step.open(data)
+            saved = objective = None
+            if state.records is not None:
+                # A frame's refit starts from the frame before and its placement from the frames placed
+                # before it, so its identity holds the SHA-256 of the previous frame's record, which holds
+                # the one before it: a recomputed frame invalidates every later record, also when the run
+                # stopped before rewriting them, and only an unbroken chain from the first frame is reused.
+                identity = {**state.shared, "index": index, "previous": state.previous, "source": acquisition_identity(
+                    source, hot_pixel_correction=data.metadata.get("hot_pixel_correction"))}
+                saved = _recorded(state.records / f"{name}.json", identity) if state.resuming else None
+                state.resuming = saved is not None
+            if saved is not None:
+                clock["setup_s"], clock["refit_s"] = time.perf_counter() - began, 0.0
+                coordinates, evaluations, stop = np.array(saved["coordinates"]), saved["evaluations"], saved["stop"]
+                optics, tilt, depth = saved["aberrations"], tuple(saved["sample_tilt_mrad"]), saved["depth_spread_nm"]
+            elif state.refit == "none":
+                clock["setup_s"], clock["refit_s"] = time.perf_counter() - began, 0.0
+                coordinates, evaluations, stop = step.reference.copy(), 0, "fixed initial fit"
+                optics = dict(step.fit.aberrations)
+                tilt, depth = step.fit.sample_tilt_mrad, step.fit.depth_spread_nm
+            elif state.refit == "full":
+                clock["setup_s"] = time.perf_counter() - began
+                began = time.perf_counter()
+                # The reference rotation is kept: the session is opened with it and a flipped frame is another calibration.
+                fitted = session.fit_aberrations(check_rotation=False, compute_loss=False, show=False, verbose=False)
+                clock["refit_s"] = time.perf_counter() - began
+                coordinates, evaluations = np.array(fitted.optimizer["coordinates"]), fitted.optimizer.get("evaluations")
+                stop = fitted.optimizer.get("stop", "full fit")
+                optics, tilt, depth = fitted.aberrations, fitted.sample_tilt_mrad, fitted.depth_spread_nm
+            else:
+                objective, coordinates, evaluations, stop, optics, tilt, depth = step.refit(session, clock, began)
+            chosen, reconstructed, sampling, seconds = step.reconstruct(session, optics, tilt, depth, state.factor,
+                                                                        state.strengths)
+            clock.update(seconds)
+            began = time.perf_counter()
+            phase, images = self._store(index, reconstructed)
+            shift, score = step.place(index, reconstructed, sampling,
+                                      None if saved is None or index == 0 else (tuple(saved["shift_px"]), saved["confidence"]))
+            window = slice(None) if self.max_frames is None else slice(-self.max_frames, None)
+            shifts = np.vstack([self.shifts_A, np.array(shift) * np.array(sampling)])[window]
+            placed = (*self.placed, score >= CONFIDENCE)[window]
+            if self.max_frames is not None:
+                stacks = {"ssb": phase, **images}
+                shifts_px = (*state.shifts_px, tuple(shift))[window]
+                step.canvases = {key: _window_canvas(stack, np.array(shifts_px), placed,
+                                                    start_index=index + 1 - len(phase))
+                                 for key, stack in stacks.items()}
+            cp.cuda.Device().synchronize()
+            clock["align_s"] = time.perf_counter() - began
+            clock["display_s"] = clock["total_s"] = 0.0
+            # The series lock keeps report/show reads out until these fields and the count agree.
+            (self.phase, self.images, self.object_sampling_A, self.frames, self.sources, self.shifts_A, self.confidence,
+             self.placed, self.combined, self.cover, self.aberrations, self.refits, self.fits, self.timings) = (
+                phase, images, tuple(float(value) for value in sampling), (*self.frames, name)[window],
+                (*self.sources, source)[window], shifts, (*self.confidence, float(score))[window], placed,
+                {key: _combined(step.canvases[key]) for key in images}, step.canvases["ssb"].cover,
+                (*self.aberrations, dict(optics))[window],
+                (*self.refits, {"evaluations": evaluations, "stop": stop, "resumed": saved is not None})[window],
+                (*self.fits, chosen)[window], (*self.timings, clock)[window])
+            state.count = index + 1
+            if self.max_frames is not None:
+                state.step, state.stacks, state.shifts_px = step, stacks, shifts_px
+                state.flagged.append(flagged)
+            began = time.perf_counter()
+            state.panel.update(name, images[methods[0]][-1], step.canvases[methods[0]], self.shifts_A, sampling,
+                               sum(self.placed), final=final, frame_indices=self.frame_indices)
+            self._redraw()
+            clock["display_s"] = time.perf_counter() - began
+            clock["total_s"] = sum(clock.values())
+            if state.records is not None and saved is None:
+                # Frame 0 has no pair to score (its confidence is infinite); strict JSON has no Infinity.
+                record = json_value({
+                    "schema": RECORD_SCHEMA, "identity": identity, "frame": name, "aberrations": optics,
+                    "sample_tilt_mrad": tilt, "depth_spread_nm": depth, "coordinates": coordinates,
+                    "evaluations": evaluations, "stop": stop, "shift_px": shift,
+                    "shift_A": np.array(shift) * np.array(sampling), "confidence": None if index == 0 else score,
+                    "object_sampling_A": sampling, "timings": clock,
+                })
+                _write_atomically(state.records / f"{name}.json", "w",
+                                  lambda handle: json.dump(record, handle, indent=1, allow_nan=False), encoding="utf-8")
+            if state.records is not None:
+                state.previous = hashlib.sha256(json.dumps(saved or record, sort_keys=True, allow_nan=False).encode()).hexdigest()
+            if state.refit == "defocus":
+                step.advance(coordinates)
+        finally:
+            # Close the frame's workspace even if reconstruction, registration or a view fails.
+            # Resident counts belong to the caller; only file inputs were opened by this step.
+            try:
+                if session is not None:
+                    session.close()
+            finally:
+                if not resident:
+                    data.close()
         del data, session, objective, reconstructed
         cp.get_default_memory_pool().free_all_blocks()
 
@@ -382,6 +466,16 @@ class SSBSeries:
         held every frame twice), and return the SSB stack and the images through this frame; a series of
         unknown length doubles its stacks when full."""
         state = self._state
+        if self.max_frames is not None:
+            count = min(index + 1, self.max_frames)
+            stacks = {}
+            for key in ("ssb", *[key for key in _keys(self.methods) if key != "ssb"]):
+                stack = cp.empty((count, *reconstructed[key].shape), dtype=cp.float32)
+                if count > 1:
+                    stack[:-1] = state.stacks[key][-(count - 1):]
+                stack[-1] = reconstructed[key]
+                stacks[key] = stack
+            return stacks["ssb"], {key: stacks[key] for key in _keys(self.methods)}
         if state.stacks is None:
             phase = cp.empty((max(state.capacity, 1), *reconstructed["ssb"].shape), dtype=cp.float32)
             state.stacks = {"ssb": phase, **{key: cp.empty_like(phase) for key in _keys(self.methods) if key != "ssb"}}
@@ -397,10 +491,13 @@ class SSBSeries:
         return phase, {key: phase if key == "ssb" else state.stacks[key][:index + 1] for key in _keys(self.methods)}
 
     def _announce_flagged(self):
-        for outcome, flagged_names in self._state.flagged.items():
-            print(f"Series: {len(flagged_names)} of {len(self.frames)} frames, {outcome}.")
+        counts = ({outcome: len(names) for outcome, names in self._state.flagged.items()}
+                  if self.max_frames is None else Counter(value for value in self._state.flagged if value is not None))
+        for outcome, count in counts.items():
+            print(f"Series: {count} of {len(self.frames)} frames, {outcome}.")
 
 
+    @_locked
     def align(self):
         """The final pass: every pair of frames up to three apart by its own lattice-safe search,
         solved by least squares (quantem.gpu.drift.drift), which outvotes a pair that took a wrong
@@ -408,6 +505,9 @@ class SSBSeries:
         phase; replaces shifts_A (specimen displacement against frame 0, Å), places every frame and
         rebuilds each combined image with it; returns the Drift with its pairs, closure and σ. Frames
         go to drift by index, so Drift.plot draws a numeric frame axis."""
+        if self.max_frames is not None:
+            raise RuntimeError(f"align() needs complete history; this series retains max_frames={self.max_frames}. "
+                               "Build a new series from saved scans with max_frames=None for post-hoc alignment.")
         from quantem.gpu.drift import drift
 
         found = drift(torch.from_dlpack(self.phase), list(range(len(self.frames))), sampling_A=self.object_sampling_A)
@@ -417,6 +517,7 @@ class SSBSeries:
             self.combined[key], self.cover = self._combine(key)
         return found
 
+    @_locked
     def reconstruct(self, method, **strengths):
         """Reconstruct ``method`` again on every frame after the series, at its refitted optics.
 
@@ -454,19 +555,30 @@ class SSBSeries:
                 self.combined[key], self.cover = self._combine(key)
         return {key: self.combined[key] for key in stacks}
 
+    @_locked
     def _view(self, keys):
         """The interactive view's panels: the latest scan's first image, labelled with its acquisition and fitted
         defocus and astigmatism, then each combined image; Show2D takes finite pixels only, so pixels no frame
         reaches hold the median of the covered pixels, a flat field."""
         covered = self.cover > 0
+        has_coverage = bool(covered.any())
         latest, optics = self.frames[-1], self.aberrations[-1]
         limits = [self.reference.phase_limits, *(_limits(self.combined[key], covered) if key == "amplitude"
                                                  else self.reference.phase_limits for key in keys)]
-        images = [host_array(self.images[keys[0]][-1]), *(host_array(cp.where(covered, self.combined[key],
-                  cp.median(self.combined[key][covered]))) for key in keys)]
+        images = [host_array(self.images[keys[0]][-1]), *(host_array(
+            cp.where(covered, self.combined[key], cp.median(self.combined[key][covered])) if has_coverage
+            else cp.full_like(self.combined[key], sum(limits[index + 1]) / 2)) for index, key in enumerate(keys))]
+        shift = self.shifts_A[-1]
+        confidence = "reference" if self.frame_indices[-1] == 0 else f"confidence {self.confidence[-1]:.3f}"
+        placement = "accepted, combined" if self.placed[-1] else "rejected, not combined"
         labels = [f"{latest}: C10 {optics['C10_nm']:.2f} nm, C12 {optics['C12_nm']:.2f} nm, "
-                  f"phi12 {optics['phi12_deg']:.1f} deg", *(f"{_NAMES[key]}, combined" for key in keys)]
-        return images, labels, f"{len(self.frames)} scans, {sum(self.placed)} combined", limits
+                  f"phi12 {optics['phi12_deg']:.1f} deg\n"
+                  f"shift row {shift[0]:.2f}, col {shift[1]:.2f} Å from scan 0; {placement}; {confidence}",
+                  *(f"{_NAMES[key]}, {'combined' if has_coverage else 'no accepted scans'}" for key in keys)]
+        title = f"{len(self.frames)} scans, {sum(self.placed)} combined"
+        if self.max_frames is not None:
+            title = f"scans {self.frame_indices[0]}–{self.frame_indices[-1]} of {self.total_frames}; " + title
+        return images, labels, title, limits
 
     def _redraw(self):
         """Refresh every open interactive view with the scan just added."""
@@ -484,12 +596,17 @@ class SSBSeries:
         """images[key] in register and its cover: frame 0 at the origin, every placed frame at its
         shift (shifts_A over the sampling, px), the frames reaching each pixel averaged."""
         stack = self.images[key]
+        if self.max_frames is not None:
+            canvas = _window_canvas(stack, np.array(self._state.shifts_px), self.placed,
+                                    start_index=self.frame_indices[0])
+            return _combined(canvas), canvas.cover
         canvas = _start(stack[0])
         for image, shift, placed in zip(stack[1:], self.shifts_A[1:], self.placed[1:]):
             if placed:
                 _add(canvas, image, tuple(shift / np.array(self.object_sampling_A)))
         return _combined(canvas), canvas.cover
 
+    @_locked
     def report(self, *, to_dict: bool = False):
         """One row per frame: fitted C10, C12, phi12, refit evaluations, whether the frame came from
         its saved record (its evaluations are then the original refit's), the shift against frame 0,
@@ -501,21 +618,25 @@ class SSBSeries:
 
         rows = {}
         sigma = [None] * len(self.frames) if self.sigma_A is None else self.sigma_A
-        for frame, optics, refit, clock, shift, score, spread in zip(self.frames, self.aberrations, self.refits,
-                                                                     self.timings, self.shifts_A, self.confidence,
-                                                                     sigma, strict=True):
+        values = zip(self.frames, self.aberrations, self.refits, self.timings, self.shifts_A,
+                     self.confidence, sigma, strict=True)
+        for index, (frame, optics, refit, clock, shift, score, spread) in enumerate(
+                values, start=self.total_frames - len(self.frames)):
             methods = {f"{_METHODS[name]} (s)": clock[f"{name}_s"] for name in _METHODS if f"{name}_s" in clock}
             placement = ({"Near threshold": bool(CONFIDENCE <= score < 1.1 * CONFIDENCE)} if spread is None
                          else {"σ row (Å)": spread[0], "σ col (Å)": spread[1]})
-            rows[frame] = {
+            rows[frame if self.max_frames is None else index] = {
+                **({"Frame": frame} if self.max_frames is not None else {}),
                 "C10 (nm)": optics["C10_nm"], "C12 (nm)": optics["C12_nm"], "phi12 (deg)": optics["phi12_deg"],
                 "Refit evaluations": refit["evaluations"], "Resumed": refit["resumed"],
                 "Shift row (Å)": shift[0], "Shift col (Å)": shift[1], "Live confidence": score, **placement,
                 "Load (s)": clock["load_s"], "Setup (s)": clock["setup_s"], "Refit (s)": clock["refit_s"],
                 **methods, "Align (s)": clock["align_s"], "Display (s)": clock["display_s"], "Total (s)": clock["total_s"],
             }
-        return rows if to_dict else pd.DataFrame.from_dict(rows, orient="index").rename_axis("Frame")
+        return rows if to_dict else pd.DataFrame.from_dict(rows, orient="index").rename_axis(
+            "Frame" if self.max_frames is None else "Frame index")
 
+    @_locked
     def show(self, method=None, *, interactive: bool = False, size="medium", cmap: str = "gray"):
         """The combined image of each requested method (or of ``method``), with the drift.
 
@@ -560,11 +681,13 @@ class SSBSeries:
                    uncovered=uncovered)
         drift = figure.add_axes((.9 / figure_width, .6 / figure_height,
                                  1 - 1.9 / figure_width, strip / figure_height))
-        index = np.arange(len(self.frames))
+        index = self.frame_indices
         drift.plot(index, self.shifts_A[:, 0], "o-", ms=3, color="C0", label="row (Å)")
         drift.plot(index, self.shifts_A[:, 1], "s-", ms=3, color="C1", label="column (Å)")
+        held = ("all initial optics, tilt, depth" if self._state is not None and self._state.refit == "none"
+                else "orders 2-5, tilt, depth")
         drift.set(xlabel="Frame index", ylabel="Displacement against frame 0 (Å)",
-                  title="Drift, defocus and astigmatism\nheld: orders 2-5, tilt, depth")
+                  title=f"Drift, defocus and astigmatism\nheld: {held}")
         optics = drift.twinx()
         optics.plot(index, [values["C10_nm"] for values in self.aberrations], "^--", ms=3, color="C2", label="C10 (nm)")
         optics.plot(index, [values["C12_nm"] for values in self.aberrations], "v--", ms=3, color="C3", label="C12 (nm)")
@@ -608,6 +731,8 @@ def _reconstruct(session, chosen, methods, upsampling, strengths):
 def _limits(image, covered):
     """Display limits of an amplitude: its 1st and 99th percentiles over the pixels a frame reaches
     (the empty canvas margin is zero and would set the lower limit)."""
+    if not bool(covered.any()):
+        return 0.0, 1.0
     low, high = cp.percentile(image[covered], (1, 99)).get()
     return float(low), float(high)
 
@@ -628,7 +753,7 @@ class _LivePanel:
         if shell is not None and getattr(shell, "kernel", None) is not None:
             self.display = display
 
-    def update(self, frame, phase, canvas, shifts_A, sampling_A, placed, *, final):
+    def update(self, frame, phase, canvas, shifts_A, sampling_A, placed, *, final, frame_indices=None):
         if self.display is None or (not final and time.perf_counter() - self.last_update < 0.5):
             return
         import io
@@ -636,7 +761,8 @@ class _LivePanel:
         import matplotlib.pyplot as plt
         from IPython.display import Image
 
-        figure = _live_figure(frame, self.method, phase, canvas, shifts_A, sampling_A, placed, self.phase_limits)
+        figure = _live_figure(frame, self.method, phase, canvas, shifts_A, sampling_A, placed, self.phase_limits,
+                              frame_indices=frame_indices)
         # One PNG render: the inline backend's tight bounding box draws the figure twice.
         buffer = io.BytesIO()
         figure.savefig(buffer, format="png")
@@ -648,7 +774,8 @@ class _LivePanel:
         self.last_update = time.perf_counter()
 
 
-def _live_figure(frame, method, phase, canvas, shifts_A, sampling_A, placed, phase_limits, size="medium"):
+def _live_figure(frame, method, phase, canvas, shifts_A, sampling_A, placed, phase_limits, size="medium",
+                 *, frame_indices=None):
     """The latest frame and the combined image of the placed frames under the reference contrast, with
     scale bars, beside each frame's displacement against frame 0 (row and column, Å)."""
     from quantem.gpu.display._layout import panel_figure, panel_inches
@@ -666,8 +793,9 @@ def _live_figure(frame, method, phase, canvas, shifts_A, sampling_A, placed, pha
         for axis, image, title, empty in zip(axes[0, :2], images, titles, uncovered):
             _panel(figure, axis, image, title, phase_limits, sampling_A, width, "gray", uncovered=empty)
     trace = axes[0, 2]
-    trace.plot(shifts_A[:, 0], "o-", ms=3, label="row")
-    trace.plot(shifts_A[:, 1], "s-", ms=3, label="column")
+    indices = np.arange(len(shifts_A)) if frame_indices is None else frame_indices
+    trace.plot(indices, shifts_A[:, 0], "o-", ms=3, label="row")
+    trace.plot(indices, shifts_A[:, 1], "s-", ms=3, label="column")
     trace.set(xlabel="Frame index", title="Displacement against\nframe 0 (Å)")
     # Ticks on the right, clear of the combined image's colorbar in the gap before it.
     trace.yaxis.tick_right()
@@ -700,6 +828,26 @@ def _panel(figure, axis, image, title, limits, sampling_A, width, cmap, *, uncov
 def _combined(canvas):
     """The frames in register averaged where they reach: total over cover, zero where none does."""
     return (canvas.total / cp.maximum(canvas.cover, 1)).astype(cp.float32)
+
+
+def _window_canvas(stack, shifts_px, placed, *, start_index=0):
+    """Combine only accepted retained images, in their original global drift coordinates."""
+    accepted = np.flatnonzero(placed)
+    if not len(accepted):
+        return SimpleNamespace(total=cp.zeros(stack.shape[1:], dtype=cp.float64),
+                               cover=cp.zeros(stack.shape[1:], dtype=cp.float32), origin=(0, 0), last=None)
+    first = int(accepted[0])
+    # Frame zero is unshifted in the original series, without a Fourier round trip.
+    if start_index + first == 0:
+        canvas = _start(stack[first])
+    else:
+        position = _positioned(stack[first], shifts_px[first])
+        canvas = _start(position.piece)
+        canvas.origin = position.whole
+    for index in accepted[1:]:
+        _add(canvas, stack[int(index)], shifts_px[int(index)])
+    canvas.last = None  # The registration anchor is retained separately.
+    return canvas
 
 
 def _recorded(path, identity):
@@ -761,7 +909,7 @@ def _guess(placed, index):
     return tuple(late + (late - early) * (index - after) / (after - before) for early, late in zip(earlier, later))
 
 
-def _place(canvas, phase, lattice, sampling_A, reach_A, guess_px):
+def _place(canvas, phase, lattice, sampling_A, reach_A, guess_px, *, accumulate=True):
     """Register one frame against the frame added last and, when confident, add it in register.
 
     The frame is expected at n = round(guess_px) px from frame 0 and the last one sits at m. Both are
@@ -782,6 +930,12 @@ def _place(canvas, phase, lattice, sampling_A, reach_A, guess_px):
     # Frame 0's pixel r holds what this frame shows at r + n and the last frame's piece at r + m.
     first_row, first_col = max(-whole[0], -last[0]), max(-whole[1], -last[1])
     end_row, end_col = min(-whole[0], -last[0]) + rows, min(-whole[1], -last[1]) + cols
+    if end_row - first_row < 2 or end_col - first_col < 2:
+        raise RuntimeError(
+            f"No usable overlap with the last confidently placed scan: predicted shift {tuple(guess_px)} px, "
+            f"anchor {last} px, image shape {phase.shape}. Stop acquisition and inspect drift; "
+            "reduce the interval between scans or begin a new series on the current field."
+        )
     reference = canvas.last.piece[first_row + last[0]:end_row + last[0], first_col + last[1]:end_col + last[1]]
     moving = phase[first_row + whole[0]:end_row + whole[0], first_col + whole[1]:end_col + whole[1]]
     spectra = [torch.fft.fft2(prepared(torch.from_dlpack(cp.ascontiguousarray(image)).float())) for image in (reference, moving)]
@@ -790,8 +944,18 @@ def _place(canvas, phase, lattice, sampling_A, reach_A, guess_px):
     shift = tuple(step + value for step, value in zip(whole, found.shift_px))
     confidence = min(found.margin, found.parts["coarse"] - found.best["coarse_second"])
     if confidence >= CONFIDENCE:
-        _add(canvas, phase, shift)
+        if accumulate:
+            _add(canvas, phase, shift)
+        else:
+            canvas.last = _positioned(phase, shift)
     return shift, confidence
+
+
+def _positioned(phase, shift_px):
+    """The last-confident image and integer placement, independent of combined history."""
+    whole = tuple(round(value) for value in shift_px)
+    piece = shifted(phase, [whole[0] - shift_px[0], whole[1] - shift_px[1]])
+    return SimpleNamespace(whole=whole, piece=piece)
 
 
 def _add(canvas, phase, shift_px):

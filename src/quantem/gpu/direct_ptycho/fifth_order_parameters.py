@@ -145,9 +145,9 @@ def vector(fit, order):
         a["C10_nm"] / 10,
         a["C12_nm"] / 10 * np.cos(phi),
         a["C12_nm"] / 10 * np.sin(phi),
-        fit.sample_tilt_mrad[0] / 5,
-        fit.sample_tilt_mrad[1] / 5,
-        fit.depth_spread_nm / 10,
+        (fit.sample_tilt_mrad or (0.0, 0.0))[0] / 5,
+        (fit.sample_tilt_mrad or (0.0, 0.0))[1] / 5,
+        (fit.depth_spread_nm or 0.0) / 10,
     ]
     for n, m in ORDERS:
         if 2 <= n <= order:

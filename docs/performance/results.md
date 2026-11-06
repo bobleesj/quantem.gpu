@@ -19,6 +19,10 @@ The [512 × 512 × 192 × 192 M5 measurement](ssb/reports/2026-11-05-mps-full-sc
 records 200-trial fifth-order fitting, exact transfer parity, a rejected batching
 candidate, and native-app limitations. The two-second full-size target is not met.
 
+## Broad SSB candidate overhead, 2026-11-01
+
+The [density batching comparison](ssb/reports/2026-11-01-broad-density-batching.md) preserves every candidate and matched CUDA fit output while reducing host proposal overhead. Default standard fitting is unchanged; broad fitting remains a larger workload.
+
 ## Joint ANS detector queries, 2026-10-25
 
 The [seven-acquisition CUDA record](virtual-detectors/reports/2026-10-25-seven-ans-acquisitions.md)

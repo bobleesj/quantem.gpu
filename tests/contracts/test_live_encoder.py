@@ -67,7 +67,7 @@ def test_borrowed_tail_survives_append_and_compression_rollover():
         live.release()
 
 
-def test_unchanged_aperture_only_decodes_new_counts_across_ans_boundary(monkeypatch):
+def test_unchanged_aperture_uses_indexes_when_counts_cross_ans_boundary(monkeypatch):
     from quantem.gpu.resident.cuda.counts import StreamedCounts
 
     cp = pytest.importorskip("cupy")
@@ -97,12 +97,49 @@ def test_unchanged_aperture_only_decodes_new_counts_across_ans_boundary(monkeypa
                 first_image = image
                 frozen = image.copy()
             np.testing.assert_array_equal(first_image, frozen)
-        assert ranges[0][0] == 128
-        assert ranges[-1][1] == 4608
-        assert all(start >= 128 for start, _ in ranges)
-        mask[:, :16] = False
+        # Encoded progress must not expand the new interval into dense batches.
+        assert ranges == []
+        # Keep the flagged pixel selected as a residual, then restore the full
+        # aperture so both signed corrections preserve detector validity.
+        mask[:, 1:16] = False
         expected = raw[:, cp.asarray(mask & (flags == 0))].sum(1, dtype=cp.uint64).astype(cp.float32).get()
         np.testing.assert_array_equal(session.masked_sum(mask).reshape(-1), expected)
+        mask[:] = True
+        expected = raw[:, cp.asarray(flags == 0)].sum(1, dtype=cp.uint64).astype(cp.float32).get()
+        np.testing.assert_array_equal(session.masked_sum(mask).reshape(-1), expected)
+        assert ranges == []
+    finally:
+        session.close()
+        live.release()
+
+
+def test_failed_encoded_refresh_preserves_previous_image_and_can_retry(monkeypatch):
+    cp = pytest.importorskip("cupy")
+    raw = (cp.arange(4608 * 16 * 16, dtype=cp.uint32) % 65536).astype(cp.uint16).reshape(-1, 16, 16)
+    live = LiveEncoder((9, 512), (16, 16))
+    session = live.detector_session()
+    mask = np.indices((16, 16)).sum(0) % 3 != 0
+    try:
+        live.add(0, raw[:128].copy())
+        previous = session.masked_sum(mask)
+        frozen = previous.copy()
+        live.add(128, raw[128:].copy())
+        encoded_session = session._encoded_session
+
+        def unavailable():
+            raise RuntimeError("simulated interrupted detector query")
+
+        monkeypatch.setattr(session, "_encoded_session", unavailable)
+        with pytest.raises(RuntimeError, match="interrupted detector query"):
+            session.masked_sum(mask)
+        np.testing.assert_array_equal(previous, frozen)
+        assert session.last_received == 128
+        monkeypatch.setattr(session, "_encoded_session", encoded_session)
+        image = session.masked_sum(mask)
+        expected = raw[:, cp.asarray(mask)].sum(1, dtype=cp.uint64).astype(cp.float32).get()
+        np.testing.assert_array_equal(image.reshape(-1), expected)
+        assert session.masked_sum(mask) is image
+        np.testing.assert_array_equal(previous, frozen)
     finally:
         session.close()
         live.release()

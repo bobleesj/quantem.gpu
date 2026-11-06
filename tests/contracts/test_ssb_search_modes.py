@@ -39,7 +39,7 @@ def test_standard_default_and_explicit_broad_dispatch(monkeypatch):
 
 
 @pytest.mark.parametrize("options", [
-    {"search": "coarse"}, {"search": "broad", "tilt": False},
+    {"search": "coarse"},
     {"search": "broad", "search_ranges": {"C10_nm": (-5, 5)}},
 ])
 def test_invalid_options_fail_before_computation(options):

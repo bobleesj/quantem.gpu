@@ -377,7 +377,11 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
                                   verified_encoded_bytes=header["bytes"]),
             )
             if verbose:
-                print(f"Restored exact CUDA ANS {shape} in {time.perf_counter() - started:.3f} s.")
+                print(
+                    f"Restored exact CUDA ANS {shape} in {time.perf_counter() - started:.3f} s. "
+                    f"{metadata['working_logical_tensor_bytes'] / 1e9:.2f} GB uncompressed "
+                    f"to {metadata['physical_resident_bytes'] / 1e9:.2f} GB resident on GPU."
+                )
             return Dataset4dstemGPU(source, metadata)
         except BaseException:
             stream.synchronize()

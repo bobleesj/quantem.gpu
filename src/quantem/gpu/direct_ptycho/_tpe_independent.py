@@ -125,12 +125,39 @@ def _batch_quantiles(quantiles, lower, upper):
     return result
 
 
+def _batch_log_pdf(models, points: np.ndarray) -> np.ndarray:
+    """Evaluate fixed continuous marginals together without changing mixture reductions.
+
+    The dimensions remain independent. Each mixture retains the original
+    component order and float64 reduction over its final axis. This is host
+    proposal work; the scientific objective stays on the selected accelerator.
+    """
+    mixtures = [model._mixture_distribution for model in models]
+    normals = [mixture.distributions[0] for mixture in mixtures]
+    mu = np.asarray([normal.mu for normal in normals])[:, None, :]
+    sigma = np.asarray([normal.sigma for normal in normals])[:, None, :]
+    low = np.asarray([normal.low for normal in normals])[:, None, None]
+    high = np.asarray([normal.high for normal in normals])[:, None, None]
+    density = _truncnorm.logpdf(
+        points[:, :, None], a=(low - mu) / sigma, b=(high - mu) / sigma,
+        loc=mu, scale=sigma,
+    )
+    weighted = np.zeros_like(density)
+    weighted += density
+    weighted += np.log(np.asarray([mixture.weights for mixture in mixtures])[:, None, :])
+    maximum = weighted.max(axis=2)
+    maximum[np.isneginf(maximum)] = 0
+    with np.errstate(divide="ignore"):
+        return np.log(np.exp(weighted - maximum[:, :, None]).sum(axis=2)) + maximum
+
+
 class _IndependentSampler(optuna.samplers.TPESampler):
     """Reuse completed history and batch fixed-space inverse-CDF work.
 
     Candidate RNG draws, Gaussian models, CPU density ranking and acquisition
-    argmax retain Optuna's order. Only independent inverse-CDF iterations are
-    grouped, with a separate convergence mask for every parameter.
+    argmax retain Optuna's order. Independent inverse-CDF iterations and
+    marginal densities are grouped; each parameter keeps its convergence mask
+    and mixture reduction order.
     """
 
     def __init__(self, *, seed, space):
@@ -188,10 +215,14 @@ class _IndependentSampler(optuna.samplers.TPESampler):
         means, scales = np.asarray(means), np.asarray(scales)
         points = _batch_quantiles(np.asarray(quantiles), (np.asarray(lows)[:, None] - means) / scales,
                                  (np.asarray(highs)[:, None] - means) / scales) * scales + means
+        scores_by_parameter = (
+            _batch_log_pdf([models_pair[0] for models_pair in models], points)
+            - _batch_log_pdf([models_pair[1] for models_pair in models], points)
+        )
         self._batch_values = {}
         for i, ((name, distribution), (low_model, high_model)) in enumerate(zip(self._space.items(), models)):
             samples = {name: points[i]}
-            scores = self._compute_acquisition_func(samples, low_model, high_model)
+            scores = scores_by_parameter[i]
             selected = self._compare(samples, scores)[name]
             self._batch_values[name] = distribution.to_external_repr(selected)
         self._batch_key = key
