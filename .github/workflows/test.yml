@@ -45,7 +45,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install -e ".[dev,movie,plot]" ipython
+          python -m pip install -e ".[dev,movie,plot]" ipython "pytest-xdist==3.8.0"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -64,7 +64,7 @@ jobs:
       - name: Type-check the bundled browser sources
         run: npm run typecheck
       - name: Run Python tests
-        run: PYTHONPATH=src pytest -q -m "" --durations=20
+        run: PYTHONPATH=src pytest -q -m "" -n 2 --dist worksteal --durations=20
 
   docs:
     name: Documentation
@@ -99,27 +99,9 @@ jobs:
           native/swift/Sources
           native/swift/Tests
           native/swift/Benchmarks
-      - name: Run Swift tests with two workers
-        run: /usr/bin/time -p swift test -c release --parallel --num-workers 2 --xunit-output "$RUNNER_TEMP/metal-workers-2.xml"
-      - name: Measure Swift tests with three workers
-        run: /usr/bin/time -p swift test -c release --skip-build --parallel --num-workers 3 --xunit-output "$RUNNER_TEMP/metal-workers-3.xml"
-      - name: Verify matched test coverage
-        run: |
-          python3 - <<'PYTEST'
-          import os
-          import pathlib
-          import xml.etree.ElementTree as ET
-          root = pathlib.Path(os.environ["RUNNER_TEMP"])
-          runs = []
-          for count in (2, 3):
-              tree = ET.parse(root / f"metal-workers-{count}.xml")
-              cases = tree.findall(".//testcase")
-              assert cases, "Swift test report must not be empty"
-              assert not tree.findall(".//failure") and not tree.findall(".//error")
-              runs.append({(case.get("classname"), case.get("name")) for case in cases})
-          assert runs[0] == runs[1], "Worker comparison changed test coverage"
-          print(f"Both runs executed the same {len(runs[0])} test cases")
-          PYTEST
+      - name: Run Swift tests
+        # Keep the complete suite and original tolerances on three bounded workers.
+        run: swift test -c release --parallel --num-workers 3
       - name: Exact paired-ANS mean diffraction
         run: bash scripts/check_paired_mean_diffraction.sh --skip-build
       - name: Shared display consumer and parity
