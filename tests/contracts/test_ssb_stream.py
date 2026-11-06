@@ -989,6 +989,7 @@ def test_registration_without_overlap_explains_recovery_before_computing():
         _place(anchor, np.zeros((4, 4)), None, (0.2, 0.2), 30, (20, 20), accumulate=False)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 @pytest.mark.parametrize("max_frames", [1, 3])
 def test_rolling_cuda_results_match_full_history_and_exact_window_combination(monkeypatch, tmp_path, max_frames):
     """Real CUDA registration keeps the same global drift through eviction and a rejected run."""
@@ -1048,6 +1049,7 @@ def test_rolling_cuda_results_match_full_history_and_exact_window_combination(mo
     assert window.total_frames == 15 and all(row["evaluations"] == 0 for row in window.refits)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_rolling_cuda_resume_keeps_global_record_indices(monkeypatch, tmp_path):
     """A bounded defocus series resumes its complete disk record chain without retaining old images."""
     import json
