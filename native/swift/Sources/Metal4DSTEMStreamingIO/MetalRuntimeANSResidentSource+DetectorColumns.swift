@@ -22,25 +22,33 @@ extension MetalRuntimeANSResidentSource {
     // Compile only the layout and scheduling path requested by this resident.
     // Independent chunks share the bounded output; their table is at most 4 KiB.
     let prepared = detectorColumnsPipeline != nil || detectorColumnsFlatPipeline != nil
-    let parallel = detectorColumnChunks != nil || (!prepared
-      && ProcessInfo.processInfo.environment["QUANTEM_METAL_PARALLEL_COLUMNS"] != "0"
-      && (2...128).contains(chunks.count))
+    let parallel =
+      detectorColumnChunks != nil
+      || (!prepared
+        && ProcessInfo.processInfo.environment["QUANTEM_METAL_PARALLEL_COLUMNS"] != "0"
+        && (2...128).contains(chunks.count))
     let library = try Metal4DSTEMKernels.makeRuntimeANSLibrary(device: device)
     let constants = MTLFunctionConstantValues()
     var width = nativeWidth
     constants.setConstantValue(&width, type: .bool, index: 21)
     let function = try library.makeFunction(
-      name: parallel ? "streamed_counts_detector_columns_parallel" : "streamed_counts_detector_columns",
+      name: parallel
+        ? "streamed_counts_detector_columns_parallel" : "streamed_counts_detector_columns",
       constantValues: constants)
     let pipeline = try device.makeComputePipelineState(function: function)
     if parallel && detectorColumnChunks == nil {
       let arguments = function.makeArgumentEncoder(bufferIndex: 0)
       guard arguments.encodedLength == 32 else {
-        throw Self.invalid("Detector-column argument layout is incompatible. Rebuild the backend resources.")
+        throw Self.invalid(
+          "Detector-column argument layout is incompatible. Rebuild the backend resources.")
       }
-      guard let table = device.makeBuffer(length: chunks.count * arguments.encodedLength,
-        options: .storageModeShared) else {
-        throw Self.invalid("Cannot allocate bounded detector-column metadata. Close inactive datasets and retry.")
+      guard
+        let table = device.makeBuffer(
+          length: chunks.count * arguments.encodedLength,
+          options: .storageModeShared)
+      else {
+        throw Self.invalid(
+          "Cannot allocate bounded detector-column metadata. Close inactive datasets and retry.")
       }
       for (index, chunk) in chunks.enumerated() {
         arguments.setArgumentBuffer(table, offset: index * arguments.encodedLength)
@@ -53,8 +61,11 @@ extension MetalRuntimeANSResidentSource {
       detectorColumnChunks = table
     }
     // Publish the pipeline only after all of its resources are prepared.
-    if nativeWidth { detectorColumnsFlatPipeline = pipeline }
-    else { detectorColumnsPipeline = pipeline }
+    if nativeWidth {
+      detectorColumnsFlatPipeline = pipeline
+    } else {
+      detectorColumnsPipeline = pipeline
+    }
     return pipeline
   }
 

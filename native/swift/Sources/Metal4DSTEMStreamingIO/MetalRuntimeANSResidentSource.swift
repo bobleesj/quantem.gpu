@@ -96,7 +96,9 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
 
   public var residentBytes: UInt64 {
     guard !isReleased else { return 0 }
-    let buffers = [decodingTable, failure, diffraction, detectorColumnsValidity, detectorColumnChunks]
+    let buffers = [
+      decodingTable, failure, diffraction, detectorColumnsValidity, detectorColumnChunks,
+    ]
     let queryBytes = buffers.reduce(UInt64(0)) { $0 + UInt64($1?.length ?? 0) }
     return queryBytes + chunks.reduce(UInt64(0)) { $0 + $1.bytes }
   }

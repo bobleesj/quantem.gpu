@@ -485,8 +485,9 @@ public final class MetalDirectPtychoEngine {
         index: 1
       )
       if fusedHalf {
-        var params = FFTParams(n: UInt32(size), log2n: UInt32(size.trailingZeroBitCount),
-                               batch: UInt32(batch), inverse: 0)
+        var params = FFTParams(
+          n: UInt32(size), log2n: UInt32(size.trailingZeroBitCount),
+          batch: UInt32(batch), inverse: 0)
         encoder.setBytes(&params, length: MemoryLayout<FFTParams>.stride, index: 2)
         encoder.dispatchThreadgroups(
           MTLSize(width: (size + 31) / 32, height: (size / 2 + 32) / 32, depth: batch),
@@ -644,9 +645,11 @@ public final class MetalDirectPtychoEngine {
     transposeOutput: Bool = true
   ) {
     if let countsFFTPipeline {
-      encodeFFT(commands, input: rawBuffer, temporary: fftB, output: fftA,
-        params: FFTParams(n: UInt32(size), log2n: UInt32(size.trailingZeroBitCount),
-                          batch: UInt32(batch), inverse: 0),
+      encodeFFT(
+        commands, input: rawBuffer, temporary: fftB, output: fftA,
+        params: FFTParams(
+          n: UInt32(size), log2n: UInt32(size.trailingZeroBitCount),
+          batch: UInt32(batch), inverse: 0),
         transposeOutput: transposeOutput, firstPipeline: countsFFTPipeline)
       return
     }

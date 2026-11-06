@@ -240,7 +240,8 @@ public final class MetalDirectPtychoJointModel {
     let power = BandPowerSum(evidence: bandG, bandCount: bandCount)
     defer { power.wait() }
     try withoutActuallyEscaping(isCancelled) { cancelled in
-      let requestedBatch = Int(ProcessInfo.processInfo.environment["QUANTEM_METAL_GATHER_BATCH"] ?? "128") ?? 128
+      let requestedBatch =
+        Int(ProcessInfo.processInfo.environment["QUANTEM_METAL_GATHER_BATCH"] ?? "128") ?? 128
       let gatherBatch = [8, 32, 64, 128, 256, 512].contains(requestedBatch) ? requestedBatch : 128
       try visit(gatherBatch) { [self] source, offset, half, bfOffset, count in
         if cancelled() { throw CancellationError() }
@@ -931,7 +932,8 @@ private final class BandPowerSum: @unchecked Sendable {
   private let evidence: MTLBuffer
   private let bandCount: Int
   private let blocks: Int
-  private let rowMajor = ProcessInfo.processInfo.environment["QUANTEM_METAL_BAND_POWER_ROW_MAJOR"] != "0"
+  private let rowMajor =
+    ProcessInfo.processInfo.environment["QUANTEM_METAL_BAND_POWER_ROW_MAJOR"] != "0"
   private let perFrequency: UnsafeMutablePointer<Double>
   private let queue = DispatchQueue(label: "quantem.ssb.band-power")
 

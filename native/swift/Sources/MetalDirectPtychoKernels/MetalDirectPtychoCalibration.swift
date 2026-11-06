@@ -129,8 +129,10 @@ public struct MetalDirectPtychoCalibration: Codable, Equatable, Sendable {
   public func validateFittingBand(scanSize: Int, band: ClosedRange<Float> = 0.2...0.9) throws {
     guard [128, 256, 512].contains(scanSize),
       scanSamplingRowAngstroms.isFinite, scanSamplingRowAngstroms > 0,
-      scanSamplingColumnAngstroms.isFinite, scanSamplingColumnAngstroms > 0 else {
-      throw MetalDirectPtychoError.invalidGeometry("Enter positive scan sampling and select a supported square scan.")
+      scanSamplingColumnAngstroms.isFinite, scanSamplingColumnAngstroms > 0
+    else {
+      throw MetalDirectPtychoError.invalidGeometry(
+        "Enter positive scan sampling and select a supported square scan.")
     }
     let rowScale = Double(scanSize) * scanSamplingRowAngstroms
     let columnScale = Double(scanSize) * scanSamplingColumnAngstroms
@@ -142,10 +144,13 @@ public struct MetalDirectPtychoCalibration: Codable, Equatable, Sendable {
         if radius > band.lowerBound && radius < band.upperBound { return }
       }
     }
-    let maximum = hypotf(Float(0.5 / scanSamplingRowAngstroms), Float(0.5 / scanSamplingColumnAngstroms))
-    throw MetalDirectPtychoError.invalidGeometry(String(format:
-      "Direct Ptycho cannot fit this scan: its recorded sampling reaches %.3f Å⁻¹, with no frequencies inside the %.1f–%.1f Å⁻¹ fitting band. Open a finer-sampled acquisition. Correct calibration only if supported by acquisition records; viewing remains available.",
-      maximum, band.lowerBound, band.upperBound))
+    let maximum = hypotf(
+      Float(0.5 / scanSamplingRowAngstroms), Float(0.5 / scanSamplingColumnAngstroms))
+    throw MetalDirectPtychoError.invalidGeometry(
+      String(
+        format:
+          "Direct Ptycho cannot fit this scan: its recorded sampling reaches %.3f Å⁻¹, with no frequencies inside the %.1f–%.1f Å⁻¹ fitting band. Open a finer-sampled acquisition. Correct calibration only if supported by acquisition records; viewing remains available.",
+        maximum, band.lowerBound, band.upperBound))
   }
 
   /// Build the full active aperture, preserving detector order and exclusions.
