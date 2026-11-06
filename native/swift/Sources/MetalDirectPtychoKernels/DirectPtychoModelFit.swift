@@ -267,6 +267,8 @@ public struct DirectPtychoBranchedFit: Codable, Sendable {
   public let columnCount: Int
   /// Branch diagnostics retain the initial native-grid fits; refinement holds the selected rotation.
   public var refinedFit: DirectPtychoFit? = nil
+  /// Bounded rotation search, when explicitly requested; unrelated to a display phase flip.
+  public var rotationRefinement: DirectPtychoRotationRefinement? = nil
   public var fit: DirectPtychoFit { refinedFit ?? fits[kept] }
   /// Whether the 180-degree branches were compared.
   public var comparedBranches: Bool { fits.count == 2 }
@@ -302,13 +304,19 @@ public enum DirectPtychoModelFit {
       progress: progress, onRefinedFit: onRefinedFit, isCancelled: isCancelled)
   }
 
-  private static func fitPrimary(
+  static func fitPrimary(
     model: MetalDirectPtychoJointModel, options: DirectPtychoFitOptions,
-    progress: Progress, isCancelled: () -> Bool
+    progress: Progress, isCancelled: () -> Bool, start: DirectPtychoModelPoint? = nil
   ) throws -> DirectPtychoFit {
     try options.validate()
     var count = 0
-    let total = options.trials
+    let total = start == nil ? options.trials : 0
+    let initial = start.map {
+      [
+        $0.c10Angstroms, $0.c12Angstroms, $0.phi12Radians,
+        $0.sampleTiltMrad[0], $0.sampleTiltMrad[1], $0.depthSpreadAngstroms,
+      ]
+    }
     // Wall time of the search's objective evaluations; the rest of the search is the host's proposals.
     var searchObjectiveSeconds = 0.0
     func evaluate(_ points: [[Double]]) throws -> [Double] {
@@ -354,7 +362,7 @@ public enum DirectPtychoModelFit {
     let rotation = model.scanDetectorRotationDegrees
     if options.tilt {
       var standard: DirectPtychoAgreementSearch.Result?
-      if options.compareStandard {
+      if options.compareStandard && start == nil {
         let started = Date()
         standard = try DirectPtychoAgreementSearch.standardComparison(
           evaluate, seed: options.seed, isCancelled: isCancelled)
@@ -365,8 +373,8 @@ public enum DirectPtychoModelFit {
       let result = try withoutActuallyEscaping(values) { values in
         try withoutActuallyEscaping(derivatives) { derivatives in
           try DirectPtychoAgreementSearch.fitTilt(
-            evaluate, trials: options.trials, seed: options.seed,
-            tiltLimitMrad: options.tiltLimitMrad,
+            evaluate, trials: total, seed: options.seed,
+            tiltLimitMrad: options.tiltLimitMrad, start: initial,
             staged: DirectPtychoAgreementSearch.StagedDerivatives(
               values: values, derivatives: derivatives),
             isCancelled: isCancelled)
@@ -393,7 +401,7 @@ public enum DirectPtychoModelFit {
       let result = try withoutActuallyEscaping(values) { values in
         try withoutActuallyEscaping(derivatives) { derivatives in
           try DirectPtychoAgreementSearch.fitStandard(
-            evaluate, trials: options.trials, seed: options.seed,
+            evaluate, trials: total, seed: options.seed, start: initial,
             staged: DirectPtychoAgreementSearch.StagedDerivatives(
               values: values, derivatives: derivatives),
             isCancelled: isCancelled)
@@ -437,10 +445,22 @@ public enum DirectPtychoModelFit {
     darkField: [Float]?, scanSampling: (Double, Double),
     options: DirectPtychoFitOptions = DirectPtychoFitOptions(),
     checkRotation: Bool = true, keepFirst: Bool = false, progress: Progress = { _, _, _ in },
+    rotationSearchHalfWidthDegrees: Double? = nil,
     onInitialFit: (DirectPtychoFit) throws -> Void = { _ in },
     onRefinedFit: (DirectPtychoFit) throws -> Void = { _ in },
     isCancelled: () -> Bool = { false }
   ) throws -> DirectPtychoBranchedFit {
+    if let halfWidth = rotationSearchHalfWidthDegrees {
+      guard !checkRotation else {
+        throw MetalDirectPtychoError.invalidGeometry(
+          "A bounded rotation prior cannot also select the opposite 180-degree branch. Set checkRotation: false."
+        )
+      }
+      return try findWithinRotationPrior(
+        model: model, center: rotationDegrees, halfWidth: halfWidth,
+        options: options, progress: progress, onInitialFit: onInitialFit,
+        onRefinedFit: onRefinedFit, isCancelled: isCancelled)
+    }
     if !checkRotation {
       try model.retarget(scanDetectorRotationDegrees: rotationDegrees)
       let fitted = try fit(
@@ -555,7 +575,7 @@ public enum DirectPtychoModelFit {
     return result
   }
 
-  private static func refineHigherOrder(
+  static func refineHigherOrder(
     _ primary: DirectPtychoFit, model: MetalDirectPtychoJointModel, options: DirectPtychoFitOptions,
     progress: Progress, onRefinedFit: (DirectPtychoFit) throws -> Void, isCancelled: () -> Bool
   ) throws -> DirectPtychoFit {

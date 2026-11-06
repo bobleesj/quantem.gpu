@@ -802,15 +802,15 @@ public enum DirectPtychoAgreementSearch {
   public static func fitStandard(
     _ evaluate: Evaluate, trials: Int = 200, seed: Int = 42,
     c10RangeAngstroms: ClosedRange<Double> = -400...400, c12MaximumAngstroms: Double = 100,
-    staged: StagedDerivatives, isCancelled: () -> Bool = { false }
+    start: [Double]? = nil, staged: StagedDerivatives, isCancelled: () -> Bool = { false }
   ) throws -> Result {
-    guard trials > 0 else {
+    guard trials >= 0, trials > 0 || start != nil else {
       throw MetalDirectPtychoError.invalidGeometry("Use at least one trial.")
     }
     let lower = [c10RangeAngstroms.lowerBound, 0, -Double.pi / 2, 0, 0, 0]
     let upper = [c10RangeAngstroms.upperBound, c12MaximumAngstroms, Double.pi / 2, 0, 0, 0]
     return try fit(
-      evaluate, lower: lower, upper: upper, trials: trials, seed: seed, thin: true, start: nil,
+      evaluate, lower: lower, upper: upper, trials: trials, seed: seed, thin: true, start: start,
       staged: staged, isCancelled: isCancelled)
   }
 
