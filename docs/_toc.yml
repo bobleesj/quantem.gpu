@@ -155,6 +155,7 @@ parts:
           sections:
           - file: performance/ssb/reports/2026-11-05-direct-ptycho-preparation
           - file: performance/ssb/reports/2026-11-05-mps-full-scan
+          - file: performance/ssb/reports/2026-11-01-broad-density-batching
           - file: performance/ssb/reports/2026-10-25-ssb-exact-derivative-fit
           - file: performance/ssb/reports/2026-10-25-ssb-redraw-precision
           - file: performance/ssb/reports/2026-10-24-ssb-shared-coordinates
