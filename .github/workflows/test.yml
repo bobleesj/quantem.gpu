@@ -64,7 +64,7 @@ jobs:
       - name: Type-check the bundled browser sources
         run: npm run typecheck
       - name: Run Python tests
-        run: PYTHONPATH=src pytest -q -m ""
+        run: PYTHONPATH=src pytest -q -m "" --durations=20
 
   docs:
     name: Documentation
@@ -99,9 +99,29 @@ jobs:
           native/swift/Sources
           native/swift/Tests
           native/swift/Benchmarks
-      - name: Run Swift tests
-        # Optimize the numerical reference loops; keep every test and tolerance.
-        run: swift test -c release --parallel --num-workers 2
+      - name: Build Swift tests
+        run: swift build -c release --build-tests
+      - name: Run Swift tests with two workers
+        run: /usr/bin/time -p swift test -c release --skip-build --parallel --num-workers 2 --xunit-output "$RUNNER_TEMP/metal-workers-2.xml"
+      - name: Measure Swift tests with three workers
+        run: /usr/bin/time -p swift test -c release --skip-build --parallel --num-workers 3 --xunit-output "$RUNNER_TEMP/metal-workers-3.xml"
+      - name: Verify matched test coverage
+        run: |
+          python3 - <<'PYTEST'
+          import os
+          import pathlib
+          import xml.etree.ElementTree as ET
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          runs = []
+          for count in (2, 3):
+              tree = ET.parse(root / f"metal-workers-{count}.xml")
+              cases = tree.findall(".//testcase")
+              assert cases, "Swift test report must not be empty"
+              assert not tree.findall(".//failure") and not tree.findall(".//error")
+              runs.append({(case.get("classname"), case.get("name")) for case in cases})
+          assert runs[0] == runs[1], "Worker comparison changed test coverage"
+          print(f"Both runs executed the same {len(runs[0])} test cases")
+          PYTEST
       - name: Exact paired-ANS mean diffraction
         run: bash scripts/check_paired_mean_diffraction.sh --skip-build
       - name: Shared display consumer and parity
