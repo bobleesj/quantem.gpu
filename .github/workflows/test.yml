@@ -44,6 +44,13 @@ jobs:
           node-version: "22"
       - name: Install browser contract tools
         run: npm ci
+      - name: Build pinned widget for display contract tests
+        run: |
+          git clone --no-checkout https://github.com/bobleesj/quantem.widget.git "$RUNNER_TEMP/widget-contract"
+          git -C "$RUNNER_TEMP/widget-contract" checkout --detach c33dc1b5479246d87f24d611a8ad66c30f4310f4
+          npm --prefix "$RUNNER_TEMP/widget-contract" ci
+          QUANTEM_GPU_SRC="$GITHUB_WORKSPACE/src" PYTHON=python npm --prefix "$RUNNER_TEMP/widget-contract" run build
+          python -m pip install "$RUNNER_TEMP/widget-contract"
       # sources.json lists every file quantem.widget bundles; the entry point alone never reached direct_ptycho/webgpu.
       # npm run typecheck uses the widget's compiler options, so an unused parameter fails here, not in the widget.
       - name: Type-check the bundled browser sources
