@@ -350,10 +350,12 @@ final class SSBDirectReconstructionTests: XCTestCase {
       if method == .complex {
         let amplitude = values(try XCTUnwrap(result.amplitude), count)
         let mean = expected.amplitude.reduce(0, +) / Double(count)
-        let error =
-          (zip(amplitude, expected.amplitude).map { ($0 - $1) * ($0 - $1) }.reduce(0, +)
-          / Double(count))
-          .squareRoot() / mean
+        let squaredErrors: [Double] = zip(amplitude, expected.amplitude).map { lhs, rhs in
+          let difference: Double = lhs - rhs
+          return difference * difference
+        }
+        let meanSquaredError: Double = squaredErrors.reduce(0.0, +) / Double(count)
+        let error = meanSquaredError.squareRoot() / mean
         line += " amplitude rms/mean \(error)"
         XCTAssertLessThan(error, 5e-7)
       } else {

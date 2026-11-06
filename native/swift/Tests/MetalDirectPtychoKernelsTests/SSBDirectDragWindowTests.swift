@@ -55,9 +55,12 @@ final class SSBDirectDragWindowTests: XCTestCase {
       let p = values(x, count)
       let q = values(y, count)
       let average = q.reduce(0, +) / Double(count)
-      amplitude =
-        (zip(p, q).map { ($0 - $1) * ($0 - $1) }.reduce(0, +) / Double(count)).squareRoot()
-        / average
+      let squaredErrors: [Double] = zip(p, q).map { lhs, rhs in
+        let difference: Double = lhs - rhs
+        return difference * difference
+      }
+      let meanSquaredError: Double = squaredErrors.reduce(0.0, +) / Double(count)
+      amplitude = meanSquaredError.squareRoot() / average
     }
     return ((squared / power).squareRoot(), maximum, amplitude)
   }
