@@ -25,6 +25,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+      - name: Install CPU tensor runtime
+        if: runner.os != 'macOS'
+        run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: python -m pip install -e . pytest
       - run: python -m pytest -q tests/test_qem_validation.py tests/test_qem_metadata.py tests/test_qem_reference.py
 
@@ -38,10 +42,14 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install package
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,movie,plot]" ipython
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e ".[dev,movie,plot]" ipython
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
       - name: Install browser contract tools
         run: npm ci
       - name: Build pinned widget for display contract tests
@@ -68,7 +76,9 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install documentation dependencies
-        run: python -m pip install -e ".[docs]" pytest
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e ".[docs]" pytest
       - name: Build and verify documentation
         run: |
           python scripts/check_docs_links.py
@@ -92,7 +102,8 @@ jobs:
       - name: Exact paired-ANS mean diffraction
         run: bash scripts/check_paired_mean_diffraction.sh
       - name: Run Swift tests
-        run: swift test
+        # Optimize the numerical reference loops; keep every test and tolerance.
+        run: swift test -c release
       - name: Check native EMPAD source contract
         run: |
           swift build -c release --package-path tests/hardware/metal/swift_original_packing --product EMPADSourceParity
