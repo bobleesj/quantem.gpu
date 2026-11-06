@@ -11,6 +11,10 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
 
 ## Full-scan native Metal SSB, 2026-11-05
 
+The [Direct Ptycho preparation study](ssb/reports/2026-11-05-direct-ptycho-preparation.md)
+records exact FFT/model preparation improvements and faster bounded QEM column
+decoding. It separates these gains from the unfinished complete-workflow target.
+
 The [512 × 512 × 192 × 192 M5 measurement](ssb/reports/2026-11-05-mps-full-scan.md)
 records 200-trial fifth-order fitting, exact transfer parity, a rejected batching
 candidate, and native-app limitations. The two-second full-size target is not met.

@@ -65,6 +65,8 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
   let interval = 512
   var spatialQuery: RuntimeSpatialQuery?
   var detectorColumnsPipeline: MTLComputePipelineState?
+  var detectorColumnsFlatPipeline: MTLComputePipelineState?
+  var detectorColumnChunks: MTLBuffer?
   var detectorTotalsPipeline: MTLComputePipelineState?
   var regionMeanPipeline: MTLComputePipelineState?
   var exactMomentsPipeline: MTLComputePipelineState?
@@ -94,7 +96,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
 
   public var residentBytes: UInt64 {
     guard !isReleased else { return 0 }
-    let buffers = [decodingTable, failure, diffraction, detectorColumnsValidity]
+    let buffers = [decodingTable, failure, diffraction, detectorColumnsValidity, detectorColumnChunks]
     let queryBytes = buffers.reduce(UInt64(0)) { $0 + UInt64($1?.length ?? 0) }
     return queryBytes + chunks.reduce(UInt64(0)) { $0 + $1.bytes }
   }
@@ -363,6 +365,8 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     diffraction = nil
     detectorColumnsValidity = nil
     detectorColumnsPipeline = nil
+    detectorColumnsFlatPipeline = nil
+    detectorColumnChunks = nil
     detectorTotalsPipeline = nil
     regionMeanPipeline = nil
     exactMomentsPipeline = nil

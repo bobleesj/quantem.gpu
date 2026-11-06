@@ -14,7 +14,7 @@ let package = Package(
     .library(name: "MetalImageFFT", targets: ["MetalImageFFT"]),
     .library(name: "MetalScientificNumerics", targets: ["MetalScientificNumerics"]),
     .library(name: "MetalImageRuntime", targets: ["MetalImageRuntime"]),
-    .library(name: "MetalSSBKernels", targets: ["MetalSSBKernels"]),
+    .library(name: "MetalDirectPtychoKernels", targets: ["MetalDirectPtychoKernels"]),
     .library(name: "Native4DSTEMIO", targets: ["Native4DSTEMIO"]),
     .library(
       name: "Metal4DSTEMStreamingIO",
@@ -37,12 +37,12 @@ let package = Package(
       targets: ["MetalImageRuntimeBenchmark"]
     ),
     .executable(
-      name: "metal-ssb-redraw-benchmark",
-      targets: ["MetalSSBRedrawBenchmark"]
+      name: "metal-direct-ptycho-redraw-benchmark",
+      targets: ["MetalDirectPtychoRedrawBenchmark"]
     ),
     .executable(
-      name: "metal-ssb-fit-benchmark",
-      targets: ["MetalSSBFitBenchmark"]
+      name: "metal-direct-ptycho-fit-benchmark",
+      targets: ["MetalDirectPtychoFitBenchmark"]
     ),
     .executable(
       name: "metal-4dstem-binning-benchmark",
@@ -163,8 +163,8 @@ let package = Package(
       path: "native/swift/Sources/MetalImageRuntime"
     ),
     .target(
-      name: "MetalSSBKernels",
-      path: "native/swift/Sources/MetalSSBKernels",
+      name: "MetalDirectPtychoKernels",
+      path: "native/swift/Sources/MetalDirectPtychoKernels",
       resources: [.copy("Resources")]
     ),
     .executableTarget(
@@ -189,14 +189,14 @@ let package = Package(
       path: "native/swift/Benchmarks/MetalImageRuntimeBenchmark"
     ),
     .executableTarget(
-      name: "MetalSSBRedrawBenchmark",
-      dependencies: ["MetalSSBKernels"],
-      path: "native/swift/Benchmarks/MetalSSBRedrawBenchmark"
+      name: "MetalDirectPtychoRedrawBenchmark",
+      dependencies: ["MetalDirectPtychoKernels"],
+      path: "native/swift/Benchmarks/MetalDirectPtychoRedrawBenchmark"
     ),
     .executableTarget(
-      name: "MetalSSBFitBenchmark",
-      dependencies: ["MetalSSBKernels", "Metal4DSTEMStreamingIO", "Native4DSTEMIO"],
-      path: "native/swift/Benchmarks/MetalSSBFitBenchmark"
+      name: "MetalDirectPtychoFitBenchmark",
+      dependencies: ["MetalDirectPtychoKernels", "Metal4DSTEMStreamingIO", "Native4DSTEMIO"],
+      path: "native/swift/Benchmarks/MetalDirectPtychoFitBenchmark"
     ),
     .executableTarget(
       name: "Metal4DSTEMBinningBenchmark",
@@ -264,9 +264,9 @@ let package = Package(
       path: "native/swift/Tests/MetalImageRuntimeTests"
     ),
     .testTarget(
-      name: "MetalSSBKernelsTests",
-      dependencies: ["MetalSSBKernels"],
-      path: "native/swift/Tests/MetalSSBKernelsTests"
+      name: "MetalDirectPtychoKernelsTests",
+      dependencies: ["MetalDirectPtychoKernels"],
+      path: "native/swift/Tests/MetalDirectPtychoKernelsTests"
     ),
     .testTarget(
       name: "MetalScientificNumericsTests",

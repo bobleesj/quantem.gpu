@@ -1,6 +1,7 @@
 #include <metal_stdlib>
 using namespace metal;
 constant uint float_ans_pixels [[function_constant(20)]];
+constant bool detector_columns_native_width [[function_constant(21)]];
 
 constant uint SC_LOWER = 1u << 23;
 constant uint SC_SCALE = 10;
@@ -550,6 +551,49 @@ kernel void streamed_counts_decode_range(
 
 // Decode selected detector columns directly to plane-major scan storage. Padding
 // is initialized separately; every original scan sample retains its position.
+// Decode independent streams into bounded SIMD-group scratch before contiguous
+// plane-major stores. No count conversion, new persistent buffer or sample loss.
+inline void detector_columns_body(
+    device const uchar *payload, device const uint *offsets, device const uchar *models,
+    device const uint *decoding, device atomic_uint *errors, device uint *output,
+    constant uint *p, device const uint *selected, device const uchar *valid,
+    uint scans, uint firstScan, uint lane, uint2 group, threadgroup uint *tile) {
+    uint pixels = p[1], interval = p[2];
+    if (group.x * 32u * interval >= scans) return;
+    uint ordinal = group.y, pixel = selected[ordinal];
+    if (!valid[pixel] && !p[8]) return; // Uniform across this group.
+    uint block = group.x * 32u + lane, first = block * interval;
+    bool present = first < scans;
+    StreamReader reader;
+    if (present) reader = StreamReader(payload, offsets, models, decoding, block * pixels + pixel);
+    ulong base = ulong(ordinal) * p[6] * p[7];
+    for (uint begin = 0; begin < interval; begin += 32u) {
+        if (reader.model < SC_MODELS) {
+            for (uint i = 0; i < 32u; ++i) {
+                bool measured = present && begin + i < interval && first + begin + i < scans;
+                tile[lane * 33u + i] = measured && reader.valid ? reader.next_entropy() : 0;
+            }
+        } else {
+            for (uint i = 0; i < 32u; ++i) {
+                bool measured = present && begin + i < interval && first + begin + i < scans;
+                tile[lane * 33u + i] = measured ? reader.next() : 0;
+            }
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint stream = 0; stream < 32u; ++stream) {
+            uint local = (group.x * 32u + stream) * interval + begin + lane;
+            if (begin + lane < interval && local < scans) {
+                uint scan = firstScan + local;
+                uint index = detector_columns_native_width
+                    ? scan : (scan / p[5]) * p[7] + scan % p[5];
+                output[base + index] = tile[stream * 33u + lane];
+            }
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (present && !reader.finished()) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
 kernel void streamed_counts_detector_columns(
     device const uchar *payload [[buffer(0)]],
     device const uint *offsets [[buffer(1)]],
@@ -560,20 +604,11 @@ kernel void streamed_counts_detector_columns(
     constant uint *p [[buffer(6)]],
     device const uint *selected [[buffer(7)]],
     device const uchar *valid [[buffer(8)]],
-    uint job [[thread_position_in_grid]]) {
-    uint scans = p[0], pixels = p[1], interval = p[2], columns = p[3];
-    uint blocks = (scans + interval - 1) / interval;
-    if (job >= blocks * columns) return;
-    uint ordinal = job % columns, block = job / columns;
-    uint pixel = selected[ordinal], first = block * interval;
-    if (!valid[pixel]) return;
-    StreamReader reader(payload, offsets, models, decoding, block * pixels + pixel);
-    for (uint i = 0; i < min(interval, scans - first); ++i) {
-        uint scan = p[4] + first + i;
-        uint value = reader.next();
-        output[ulong(ordinal) * p[6] * p[7] + (scan / p[5]) * p[7] + scan % p[5]] = value;
-    }
-    if (!reader.finished()) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+    uint lane [[thread_index_in_simdgroup]],
+    uint2 group [[threadgroup_position_in_grid]]) {
+    threadgroup uint tile[32 * 33];
+    detector_columns_body(payload, offsets, models, decoding, errors, output,
+                          p, selected, valid, p[0], p[4], lane, group, tile);
 }
 
 kernel void streamed_counts_detector_total(
@@ -1256,4 +1291,29 @@ kernel void streamed_counts_exact_moments_totals_narrow(
     uint localIndex [[thread_index_in_threadgroup]]) {
     sc_exact_moments_body<true, true>(
         payload, offsets, models, decoding, errors, output, p, job, localIndex, totals, valid, partials);
+}
+
+// Independent chunks write disjoint scan positions in the existing output.
+struct DetectorColumnChunk {
+    device const uchar *payload [[id(0)]];
+    device const uint *offsets [[id(1)]];
+    device const uchar *models [[id(2)]];
+    uint scanCount [[id(3)]];
+    uint firstScan [[id(4)]];
+};
+kernel void streamed_counts_detector_columns_parallel(
+    device const DetectorColumnChunk *chunks [[buffer(0)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device uint *output [[buffer(5)]],
+    constant uint *p [[buffer(6)]],
+    device const uint *selected [[buffer(7)]],
+    device const uchar *valid [[buffer(8)]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint3 group [[threadgroup_position_in_grid]]) {
+    DetectorColumnChunk chunk = chunks[group.z];
+    threadgroup uint tile[32 * 33];
+    detector_columns_body(chunk.payload, chunk.offsets, chunk.models, decoding, errors,
+                          output, p, selected, valid, chunk.scanCount, chunk.firstScan,
+                          lane, group.xy, tile);
 }
