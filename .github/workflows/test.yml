@@ -103,7 +103,7 @@ jobs:
         run: bash scripts/check_paired_mean_diffraction.sh
       - name: Run Swift tests
         # Optimize the numerical reference loops; keep every test and tolerance.
-        run: swift test -c release
+        run: swift test -c release --parallel --num-workers 2
       - name: Check native EMPAD source contract
         run: |
           swift build -c release --package-path tests/hardware/metal/swift_original_packing --product EMPADSourceParity

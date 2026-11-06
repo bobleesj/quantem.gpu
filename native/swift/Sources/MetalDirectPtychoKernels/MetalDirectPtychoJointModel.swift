@@ -89,6 +89,7 @@ public final class MetalDirectPtychoJointModel {
   private let validatePreparation: () throws -> Void
   private let geometry: MetalDirectPtychoGeometry
   private let provenance: MetalDirectPtychoProvenance
+  private let preciseMath: Bool
   /// The scan-detector rotation the model's BF coordinates are rotated to; `retarget` changes it.
   public private(set) var scanDetectorRotationDegrees: Double
   public let bandInverseAngstroms: ClosedRange<Float>
@@ -162,6 +163,7 @@ public final class MetalDirectPtychoJointModel {
         "Choose a finite rotation and a nonempty positive frequency band.")
     }
     self.device = device
+    preciseMath = device.name.hasPrefix("Apple Paravirtual")
     self.geometry = geometry
     self.provenance = provenance
     self.visit = visit
@@ -174,6 +176,10 @@ public final class MetalDirectPtychoJointModel {
     self.queue = queue
     let options = MTLCompileOptions()
     options.fastMathEnabled = false
+    // The virtual Metal driver exceeds the branch and drag-window error bounds
+    // with fast intrinsics even when fast-math optimization is disabled.
+    // Keep the qualified physical-device path unchanged.
+    if preciseMath { options.preprocessorMacros = ["fast": "precise" as NSString] }
     let library = try device.makeLibrary(
       source: MetalDirectPtychoShaderSource.load([
         "ssb_fft", "ssb_joint", "ssb_model", "ssb_separable", "ssb_fifth_order",
@@ -731,7 +737,14 @@ public final class MetalDirectPtychoJointModel {
       phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
       wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
       scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
-      point: point, kernel: coherent.lastKernel)
+      point: point, kernel: mathIdentity(coherent.lastKernel))
+  }
+
+  private func mathIdentity(_ identity: MetalKernelIdentity?) -> MetalKernelIdentity? {
+    guard preciseMath, let identity else { return identity }
+    return MetalKernelIdentity(
+      name: identity.name, version: identity.version, sourceSHA256: identity.sourceSHA256,
+      variant: identity.variant + " math=precise")
   }
 
   /// `.phase` / `.complex` of `reconstruct(_:upsamplingFactor:method:regularization:isCancelled:)`.
@@ -756,13 +769,14 @@ public final class MetalDirectPtychoJointModel {
       wallSeconds: Date().timeIntervalSince(started), parameters: point.jointParameters,
       scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
       point: point, amplitude: amplitude,
-      kernel: MetalKernelIdentity(
-        name: DirectPtychoKernelRegistry.direct.name,
-        version: DirectPtychoKernelRegistry.direct.version,
-        sourceSHA256: solver.sourceSHA256,
-        variant:
-          "\(complex ? "complex" : "phase") factor=\(upsamplingFactor) depth=\(point.depthSpreadAngstroms != 0 ? "on" : "off")"
-      ))
+      kernel: mathIdentity(
+        MetalKernelIdentity(
+          name: DirectPtychoKernelRegistry.direct.name,
+          version: DirectPtychoKernelRegistry.direct.version,
+          sourceSHA256: solver.sourceSHA256,
+          variant:
+            "\(complex ? "complex" : "phase") factor=\(upsamplingFactor) depth=\(point.depthSpreadAngstroms != 0 ? "on" : "off")"
+        )))
     result.method = complex ? .complex : .phase
     result.regularization = regularization
     return result
@@ -832,13 +846,14 @@ public final class MetalDirectPtychoJointModel {
       wallSeconds: Date().timeIntervalSince(started), parameters: point.jointParameters,
       scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
       point: point, amplitude: method == .complex ? amplitude : nil,
-      kernel: MetalKernelIdentity(
-        name: DirectPtychoKernelRegistry.direct.name,
-        version: DirectPtychoKernelRegistry.direct.version,
-        sourceSHA256: solver.sourceSHA256,
-        variant:
-          "\(method == .complex ? "complex" : "phase") factor=\(upsamplingFactor) drag-window order=\(window.order)"
-      ))
+      kernel: mathIdentity(
+        MetalKernelIdentity(
+          name: DirectPtychoKernelRegistry.direct.name,
+          version: DirectPtychoKernelRegistry.direct.version,
+          sourceSHA256: solver.sourceSHA256,
+          variant:
+            "\(method == .complex ? "complex" : "phase") factor=\(upsamplingFactor) drag-window order=\(window.order)"
+        )))
     result.method = method
     result.regularization = regularization
     result.preview = window
