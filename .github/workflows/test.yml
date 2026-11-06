@@ -99,10 +99,8 @@ jobs:
           native/swift/Sources
           native/swift/Tests
           native/swift/Benchmarks
-      - name: Build Swift tests
-        run: swift build -c release --build-tests
       - name: Run Swift tests with two workers
-        run: /usr/bin/time -p swift test -c release --skip-build --parallel --num-workers 2 --xunit-output "$RUNNER_TEMP/metal-workers-2.xml"
+        run: /usr/bin/time -p swift test -c release --parallel --num-workers 2 --xunit-output "$RUNNER_TEMP/metal-workers-2.xml"
       - name: Measure Swift tests with three workers
         run: /usr/bin/time -p swift test -c release --skip-build --parallel --num-workers 3 --xunit-output "$RUNNER_TEMP/metal-workers-3.xml"
       - name: Verify matched test coverage
