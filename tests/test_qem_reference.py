@@ -155,6 +155,40 @@ def test_empad_rectangular_modern_calibration_survives_conversion(tmp_path):
         assert restored.metadata["source_metadata"]["empad_xml"] == xml.read_text()
 
 
+def test_empad_stale_scan_settings_resolve_without_inventing_sampling(tmp_path):
+    """Retain a complete scan despite inactive acquisition settings in XML."""
+    raw = np.arange(3 * 5 * 130 * 128, dtype=np.float32).reshape(3, 5, 130, 128)
+    raw[1, 2, 7, 8] = np.nan
+    raw.tofile(tmp_path / "scan.raw")
+    xml = tmp_path / "scan.xml"
+    xml.write_text(
+        '<root><raw_file filename="scan.raw"/>'
+        '<scan_parameters mode="search"><scan_resolution_y>3</scan_resolution_y>'
+        '<scan_resolution_x>5</scan_resolution_x></scan_parameters>'
+        '<scan_parameters mode="acquire"><scan_resolution_y>2</scan_resolution_y>'
+        '<scan_resolution_x>2</scan_resolution_x></scan_parameters>'
+        '<iom_measurements><high_voltage>300000</high_voltage>'
+        '<full_scan_field_of_view><x>6e-9</x><y>6e-9</y>'
+        '<scale_factor>2</scale_factor></full_scan_field_of_view>'
+        '</iom_measurements></root>'
+    )
+    with io.load(xml, backend="cpu") as original:
+        np.testing.assert_array_equal(
+            original.data.view(np.uint32), raw[:, :, :128].view(np.uint32)
+        )
+        assert original.metadata["voltage_kV"] == 300
+        assert original.metadata.get("scan_sampling_A") is None
+        io.save(tmp_path / "scan.qem", original, backend="cpu")
+    with io.load(tmp_path / "scan.qem", backend="cpu") as restored:
+        assert restored.metadata["voltage_kV"] == 300
+        assert restored.metadata.get("scan_sampling_A") is None
+        assert restored.metadata["source_metadata"]["empad_xml"] == xml.read_text()
+        assert restored.metadata["source_metadata"]["empad/scan_settings_conflict"]
+        np.testing.assert_array_equal(
+            restored.data.view(np.uint32), raw[:, :, :128].view(np.uint32)
+        )
+
+
 def test_empad_and_numpy_sources_convert_using_public_python_calls(tmp_path):
     raw = (
         np.arange(2 * 3 * 130 * 128, dtype=np.float32).reshape(2, 3, 130, 128) / 4 - 20

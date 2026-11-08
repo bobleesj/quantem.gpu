@@ -80,11 +80,11 @@ mean DP and CoM images in that same folder. This low-level exporter writes only
 the verified phase and metadata. Pairs of another schema, including version-1
 `live.ssb` pairs, are refused by `read_result` with the schema it found.
 
-Swift `MetalSSBKernels.SSBPhaseArtifact.load` reads `.json` pairs of this
+Swift `MetalDirectPtychoKernels.SSBPhaseArtifact.load` reads `.json` pairs of this
 schema and `savePair(to:)` writes them, with the same keys and checks as the
 Python reader. `MetalSSBSavedRun.savePhasePair(to:phase:)` exports runs saved
 by the retired non-model native engine (`.ssb`) without reconstruction buffers: the native engine works in Angstrom and
-radians (`MetalSSBAberrations.c10Angstroms`, `c12Angstroms`, `phi12Radians`), and
+radians (`MetalDirectPtychoAberrations.c10Angstroms`, `c12Angstroms`, `phi12Radians`), and
 the record states them once, as `C10_nm`, `C12_nm` and `phi12_deg`, with the
 rotation in [0, 360) and `scan_detector_rotation_flipped` false. Swift does not invoke
 Python. Single-file `.ssbresult` copies and version-1 pairs are refused; export

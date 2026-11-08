@@ -108,12 +108,13 @@ def run(data, scan_shape=None, *, scan_detector_rotation_deg=None, scan_detector
 
 
 def integrate(com_row, com_col) -> np.ndarray:
-    """Integrate row/column DPC gradients into a float32 phase image.
+    """Integrate scan-frame gradients without an implicit polarity reversal.
 
-    Solves the Poisson equation in Fourier space,
-    ``phase(k) = -0.25 i (k_row G_row + k_col G_col) / |k|^2`` with the
-    ``k = 0`` term set to 0, then zero-means and negates the phase (STEM
-    convention: atoms appear dark).
+    Uses frequencies in cycles per scan pixel and the inverse-gradient factor
+    ``-1j / (2*pi)``. A known positive scalar field is recovered from its
+    gradient with positive sign and unit gain. The result is zero mean.
+    Units are input-vector units times scan pixels, not calibrated radians;
+    physical phase requires detector-angle, scan-spacing and wavelength factors.
     """
     spectrum_row = np.fft.fft2(com_row.astype(np.float32))
     spectrum_col = np.fft.fft2(com_col.astype(np.float32))
@@ -124,10 +125,10 @@ def integrate(com_row, com_col) -> np.ndarray:
     )
     k_squared = k_row ** 2 + k_col ** 2
     k_squared[0, 0] = 1.0
-    phase_fft = (-1j * 0.25) * (k_row * spectrum_row + k_col * spectrum_col) / k_squared
+    phase_fft = (-1j / (2 * np.pi)) * (k_row * spectrum_row + k_col * spectrum_col) / k_squared
     phase_fft[0, 0] = 0
     phase = np.real(np.fft.ifft2(phase_fft)).astype(np.float32)
-    return -(phase - phase.mean())
+    return phase - phase.mean()
 
 
 def find_optimal_rotation(com_row, com_col, *, scan_detector_rotation_flipped=None):

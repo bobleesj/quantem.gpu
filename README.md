@@ -327,6 +327,7 @@ It is an evolving format, not an established industry standard.
 ### What does a `.qem` file contain?
 
 Convert an ARINA acquisition with `quantem-gpu convert scan_master.h5 --out ./qem`.
+For a whole session with full verification, agents follow [`skills/h5-to-qem`](skills/h5-to-qem/SKILL.md).
 See [single-file conversion, manual calibration, and median correction](docs/api/qem-python.md#convert-one-hdf5-acquisition).
 
 | Content | Why it matters |

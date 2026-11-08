@@ -708,9 +708,16 @@ def staged_tensor(mx, tensor, dtype):
 
 def copy_tensor_into(tensor, out: np.ndarray) -> np.ndarray:
     """Copy a Torch MPS tensor's bytes into the start of ``out``, the host view of an MLX array, on the GPU."""
-    view = _mps_tensor_view(tensor)
-    if view.nbytes > out.nbytes:
-        raise ValueError(f"The tensor has {view.nbytes} bytes, more than the output's {out.nbytes}.")
+    import torch
+
+    tensor = tensor.contiguous()
+    nbytes = tensor.numel() * tensor.element_size()
+    if nbytes > out.nbytes:
+        raise ValueError(f"The tensor has {nbytes} bytes, more than the output's {out.nbytes}.")
+    torch.mps.synchronize()
+    # Private Metal buffers have no host view; the blit only needs their handle.
+    source = tensor_buffer(tensor)
+    offset = tensor.storage_offset() * tensor.element_size()
     target = metal_device().newBufferWithBytesNoCopy_length_options_deallocator_(
         out, out.nbytes, metal_module().MTLResourceStorageModeShared, None,
     )
@@ -719,7 +726,7 @@ def copy_tensor_into(tensor, out: np.ndarray) -> np.ndarray:
     try:
         command = metal_queue().commandBuffer()
         encoder = command.blitCommandEncoder()
-        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(view._mtl, 0, target, 0, view.nbytes)
+        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(source, offset, target, 0, nbytes)
         encoder.endEncoding()
         complete_command(command, "SSB MPS column transfer")
     finally:
@@ -845,24 +852,7 @@ class MpsTensorFrames:
             dtype=torch.int64, device="mps",
         )
         values = self._flat.index_select(1, indices).T.to(torch.float32).contiguous()
-        view = _mps_tensor_view(values)
-        buffer = view._mtl
-        target = metal_device().newBufferWithBytesNoCopy_length_options_deallocator_(
-            out, out.nbytes, metal_module().MTLResourceStorageModeShared, None,
-        )
-        if target is None:
-            raise RuntimeError("Metal could not wrap the MLX output; use contiguous float32 output.")
-        try:
-            command = metal_queue().commandBuffer()
-            encoder = command.blitCommandEncoder()
-            encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(
-                buffer, 0, target, 0, out.nbytes,
-            )
-            encoder.endEncoding()
-            complete_command(command, "SSB MPS column transfer")
-        finally:
-            target.release()
-        return out
+        return copy_tensor_into(values, out)
 
 
 def frames_scan_shape(frames) -> tuple[int, int]:

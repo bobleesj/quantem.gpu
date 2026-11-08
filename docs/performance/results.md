@@ -16,6 +16,20 @@ The [streaming index record](io/reports/2026-11-07-stream-index.md) measures
 The smaller tile mapping reaches 91% of available DRAM throughput in its kernel
 profile; the complete streaming pipeline remains below its unestablished limit.
 
+## Full-scan native Metal SSB, 2026-11-05
+
+The [Direct Ptycho preparation study](ssb/reports/2026-11-05-direct-ptycho-preparation.md)
+records exact FFT/model preparation improvements and faster bounded QEM column
+decoding. It separates these gains from the unfinished complete-workflow target.
+
+The [512 × 512 × 192 × 192 M5 measurement](ssb/reports/2026-11-05-mps-full-scan.md)
+records 200-trial fifth-order fitting, exact transfer parity, a rejected batching
+candidate, and native-app limitations. The two-second full-size target is not met.
+
+## Broad SSB candidate overhead, 2026-11-01
+
+The [density batching comparison](ssb/reports/2026-11-01-broad-density-batching.md) preserves every candidate and matched CUDA fit output while reducing host proposal overhead. Default standard fitting is unchanged; broad fitting remains a larger workload.
+
 ## Joint ANS detector queries, 2026-10-25
 
 The [seven-acquisition CUDA record](virtual-detectors/reports/2026-10-25-seven-ans-acquisitions.md)

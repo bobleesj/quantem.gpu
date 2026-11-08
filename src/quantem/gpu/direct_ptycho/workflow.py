@@ -1989,6 +1989,9 @@ class DirectPtycho:
         holds it through the refinement at the search's value, and ``fixed_aberrations`` does both:
         ``fit_aberrations(search='primary', tilt=False, fixed_aberrations={"C12_nm": 0.0})``.
 
+        ``fit_aberrations(tilt=False)`` also refines through fifth order,
+        holding specimen tilt and depth spread at zero in every fitting stage.
+
         ``check_rotation=True`` (default) settles the 180-degree ambiguity of an estimated scan-detector rotation. The
         centre-of-mass curl cannot tell omega from omega + 180 degrees and both fit equally well (the second is the
         conjugate object with C10 of the opposite sign). So the fit runs twice, at the estimate and at the estimate
@@ -2166,7 +2169,7 @@ class DirectPtycho:
                 self._reconstruction = None
                 self.trial_history = list(result.trial_records or ())
                 return result
-            if (not tilt or objective != "agreement"
+            if (objective != "agreement"
                     or search_ranges is not None or refine_lock is not None
                     or fixed_aberrations is not None or refinement is None
                     or tilt_limit_mrad != 25.0):
@@ -2186,6 +2189,7 @@ class DirectPtycho:
                 compute_loss=False if compute_loss is None else compute_loss, compare_standard=compare_standard,
                 show=show, size=size, columns=columns, show_convergence=show_convergence,
                 on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
+                **({"tilt": False} if not tilt else {}),
             )
         if on_initial_fit is not None:
             raise ValueError("on_initial_fit is for standard or broad two-stage fits.")
@@ -2831,9 +2835,10 @@ class DirectPtycho:
 
     @_on_scan_gpu
     def series(self, sources: Sequence = (), fit: SSBResult | None = None, *,
-               refit: Literal["defocus", "full"] = "defocus",
+               refit: Literal["none", "defocus", "full"] = "defocus",
                method: Literal["ssb", "phase", "complex"] | tuple[str, ...] = "ssb",
                upsampling: int | Literal["auto"] = "auto", save_dir: str | Path | None = None,
+               max_frames: int | None = None,
                show: bool = True, verbose: bool = True, **strengths):
         """Reconstruct a series of scans of one area, following defocus, astigmatism and drift from scan to scan.
 
@@ -2845,8 +2850,21 @@ class DirectPtycho:
         ``show``, ``align``, ``reconstruct``). Without ``sources`` the series starts empty and grows scan by scan
         as they arrive: pass ``series.add`` to an ``ArinaListener`` as its ``process``.
 
+        ``refit="none"`` applies the complete initial fit to every scan unchanged, including every
+        aberration, sample tilt and depth. No fitting evaluations run; reconstruction and drift
+        registration still run for each scan. ``save_dir`` is only supported by ``refit="defocus"``.
+
+        ``max_frames=N`` retains the latest N reconstructed frames, sources, fits and report rows,
+        and combines only accepted frames within that window. Drift remains relative to scan zero;
+        ``frame_indices`` gives absolute retained indices and ``total_frames`` includes evicted frames.
+        The default ``None`` preserves complete history. This bounds result history, not input counts,
+        workspaces or the byte size of a canvas spanning the retained drift. Bounded series cannot
+        be aligned again; use saved scans in a new full-history series for post-hoc alignment.
+
         >>> series = ptycho.series(run.datasets)  # doctest: +SKIP
         >>> series = ptycho.series(method="phase")  # doctest: +SKIP
+        >>> series = ptycho.series(fit=fit, refit="none", method="phase")  # doctest: +SKIP
+        >>> series = ptycho.series(fit=fit, refit="none", max_frames=5, show=False)  # doctest: +SKIP
         >>> arina_stream = ArinaListener(config, reference=reference, process=series.add)  # doctest: +SKIP
         """
         from quantem.gpu.direct_ptycho.stream import series
@@ -2854,7 +2872,7 @@ class DirectPtycho:
         if fit is None:
             fit = self.fit_aberrations(show=False, verbose=verbose)
         return series(self, sources, fit, refit=refit, method=method, upsampling=upsampling, save_dir=save_dir,
-                      show=show, verbose=verbose, **strengths)
+                      max_frames=max_frames, show=show, verbose=verbose, **strengths)
 
     @_on_scan_gpu
     def reconstruct(

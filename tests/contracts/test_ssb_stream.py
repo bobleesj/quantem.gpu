@@ -9,6 +9,19 @@ import pytest
 from quantem.gpu.direct_ptycho.stream import _refit
 
 
+@pytest.fixture(scope="module")
+def cuda_runtime():
+    """Skip CUDA registration checks where no CUDA runtime or device is available."""
+    cupy = pytest.importorskip("cupy")
+    try:
+        count = cupy.cuda.runtime.getDeviceCount()
+    except cupy.cuda.runtime.CUDARuntimeError:
+        pytest.skip("CUDA runtime unavailable for Direct Ptycho series tests")
+    if count == 0:
+        pytest.skip("A CUDA device is required for Direct Ptycho series tests")
+    return cupy
+
+
 class PeakedObjective:
     """Model agreement exp(-|z - peak|^2) with its exact gradient: its maximum is known exactly."""
 
@@ -62,6 +75,7 @@ def lattice_image(rows, sampling_A, seed):
     return cupy.asarray(image)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_place_recovers_each_shift_and_sums_the_frames_in_register():
     """Six noisy frames of one specimen, each moved a known sub-pixel amount further: each is
     registered against the frame before it to 0.02 px, and the sum in register is the specimen with
@@ -107,6 +121,7 @@ def test_place_recovers_each_shift_and_sums_the_frames_in_register():
     cupy.testing.assert_array_equal(again.total, canvas.total)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_align_replaces_the_live_shifts_with_the_pairwise_drift():
     """The final pass runs the pairwise drift on the phase stack, takes its displacement (Å) and
     rebuilds the combined image from it."""
@@ -254,6 +269,7 @@ def assert_same_stream(left, right):
         cupy.testing.assert_array_equal(left.combined[key], right.combined[key])
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_stream_resumes_from_saved_records_without_refitting(monkeypatch, tmp_path):
     """A second call with the same fit and sources refits nothing: every frame is reconstructed from
     its saved optics and placed at its saved shift, and the series equals the first call exactly."""
@@ -268,6 +284,7 @@ def test_stream_resumes_from_saved_records_without_refitting(monkeypatch, tmp_pa
     assert_same_stream(first, again)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_an_interrupted_stream_continues_as_if_never_stopped(monkeypatch, tmp_path):
     """Streaming the first three frames, then all five, equals one uninterrupted run: the first three
     come from their records and the fourth refits from the third's saved low-order values."""
@@ -279,6 +296,7 @@ def test_an_interrupted_stream_continues_as_if_never_stopped(monkeypatch, tmp_pa
     assert_same_stream(whole, resumed)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_records_of_another_source_or_fit_are_ignored(monkeypatch, tmp_path):
     """A record keys on the frame's file content and on the reference fit: a rewritten frame and every
     frame after it are fitted again, and a different reference fit refits them all."""
@@ -292,6 +310,7 @@ def test_records_of_another_source_or_fit_are_ignored(monkeypatch, tmp_path):
     assert calls > 0 and not any(record["resumed"] for record in refit.refits)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_a_rewritten_frame_invalidates_every_later_record_even_if_interrupted(monkeypatch, tmp_path):
     """Frame 2 is rewritten and recomputed, then the run stops before frames 3 and 4 are: their old
     records came from the old frame 2, so the next call refits them and equals an uninterrupted run."""
@@ -305,6 +324,7 @@ def test_a_rewritten_frame_invalidates_every_later_record_even_if_interrupted(mo
     assert_same_stream(whole, resumed)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_a_corrupt_record_is_computed_again(monkeypatch, tmp_path):
     """A record cut short is treated as missing: that frame and the ones after it are refit, and the
     records are strict JSON (frame 0's confidence is null, not Infinity)."""
@@ -332,6 +352,7 @@ def placed_by_hand(images, shifts_A, placed, sampling=0.2, cover=False):
     return canvas.cover if cover else _combined(canvas)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypatch, tmp_path):
     """method=("phase", "complex") runs SSB (for registration) and both regularized methods once per
     frame, each at that frame's refit optics with the strengths given; images and combined hold the
@@ -362,6 +383,7 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
     assert {"SSB (s)", "Phase-only (s)", "Amplitude + phase (s)", "Near threshold"} <= set(table.columns)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_a_capped_auto_factor_is_announced_once_per_series(monkeypatch, tmp_path, capsys):
     """At a 1 A step (300 kV, 30 mrad) the scan sampling supports 8x: auto is resolved once to 4x, one line
     says so, and every frame runs at 4x; an explicit 8 runs at 8x without the line."""
@@ -379,6 +401,7 @@ def test_a_capped_auto_factor_is_announced_once_per_series(monkeypatch, tmp_path
         assert {run.factor for run in FakeSession.runs} == {factor}
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_registration_uses_the_ssb_phase_whatever_the_method(monkeypatch, tmp_path):
     """A stream asking for the phase method only still registers each frame on its SSB phase: the
     shifts and confidences equal an SSB stream's exactly, though the regularized images are noise."""
@@ -394,6 +417,7 @@ def test_registration_uses_the_ssb_phase_whatever_the_method(monkeypatch, tmp_pa
     cupy.testing.assert_array_equal(ssb.images["ssb"], ssb.phase)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_reconstruct_rebuilds_a_method_from_the_saved_optics_and_shifts(monkeypatch, tmp_path):
     """After a stream, reconstruct("phase", ...) reloads each frame, runs the phase method once per
     frame at fits[k] with the new strength, and places it at shifts_A; nothing is refit."""
@@ -413,6 +437,7 @@ def test_reconstruct_rebuilds_a_method_from_the_saved_optics_and_shifts(monkeypa
                                     placed_by_hand(series.images["phase"], series.shifts_A, series.placed))
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_resume_with_methods_refits_nothing(monkeypatch, tmp_path):
     """Records hold optics and shifts, not images: a second call asking for other methods resumes
     every frame from its record with no refit and reconstructs the methods it asks for."""
@@ -426,6 +451,7 @@ def test_resume_with_methods_refits_nothing(monkeypatch, tmp_path):
     assert_same_stream(whole, again)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_near_threshold_flags_confidence_just_above_the_cut(monkeypatch, tmp_path):
     """Near threshold marks a frame whose confidence lies in [CONFIDENCE, 1.1 CONFIDENCE): placed,
     but close enough to the cut to deserve a look."""
@@ -437,6 +463,7 @@ def test_near_threshold_flags_confidence_just_above_the_cut(monkeypatch, tmp_pat
     assert series.report()["Near threshold"].tolist() == [False, True, True, False, False]
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_show_draws_each_combined_image_and_the_drift(monkeypatch, tmp_path):
     """Static: one image panel per combined image (phase, complex phase, amplitude) over the drift
     strip, the amplitude on its own limits; interactive: a Show2D of the latest scan, labelled with its fitted
@@ -454,6 +481,7 @@ def test_show_draws_each_combined_image_and_the_drift(monkeypatch, tmp_path):
     assert viewer.labels[0].startswith(f"{series.frames[-1]}: C10 ")
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_every_session_is_closed_before_the_next_frame(monkeypatch, tmp_path):
     """Each frame's session (and reconstruct's) is closed once used, so no frame's GPU state waits for
     the cycle collector; none is left open or alive after the series."""
@@ -467,6 +495,55 @@ def test_every_session_is_closed_before_the_next_frame(monkeypatch, tmp_path):
     assert not [item for item in gc.get_objects() if type(item) is FakeSession and item.data is not None]
 
 
+@pytest.mark.parametrize("stage", ["reconstruction", "registration", "view"])
+@pytest.mark.parametrize("resident", [True, False])
+def test_frame_failure_closes_workspace_and_preserves_borrowed_counts(monkeypatch, tmp_path, stage, resident):
+    """CPU ownership test: a failed frame closes its session, but only its own file input."""
+    from quantem.gpu.direct_ptycho import stream as stream_module
+
+    closed = []
+    data = SimpleNamespace(metadata={"series": "one"}, shape=(2, 2, 2, 2),
+                           close=lambda: closed.append("file input"))
+    fit = SimpleNamespace(optimizer={"coordinates": [0.] * 28, "bounds": [(-1., 1.)] * 28},
+                          aberrations={"C10_nm": 0., "C12_nm": 0., "phi12_deg": 0.},
+                          sample_tilt_mrad=(0., 0.), depth_spread_nm=0.,
+                          scan_detector_rotation_deg=0., scan_detector_rotation_flipped=False,
+                          phase_limits=(-1., 1.))
+    monkeypatch.setattr(stream_module, "cp", SimpleNamespace(cuda=SimpleNamespace(
+        runtime=SimpleNamespace(getDevice=lambda: 0), Device=lambda: SimpleNamespace(synchronize=lambda: None))))
+    monkeypatch.setattr(stream_module.io, "load", lambda *args, **kwargs: data)
+    monkeypatch.setattr(FakeSession, "_resolve_upsampling", lambda self, upsampling: 1)
+    monkeypatch.setattr(stream_module, "_combined", lambda canvas: np.ones((2, 2)))
+    monkeypatch.setattr(stream_module.SSBSeries, "_store",
+                        lambda *args: (np.ones((1, 2, 2)), {"phase": np.ones((1, 2, 2))}))
+
+    def reconstruct(*args):
+        if stage == "reconstruction":
+            raise RuntimeError(stage)
+        return fit, {"ssb": np.ones((2, 2)), "phase": np.ones((2, 2))}, (1., 1.), {"ssb_s": 0., "phase_s": 0.}
+
+    def place(step, *args):
+        if stage == "registration":
+            raise RuntimeError(stage)
+        step.canvases = {key: SimpleNamespace(cover=np.ones((2, 2))) for key in ("ssb", "phase")}
+        return (0., 0.), 1.
+
+    def redraw(self):
+        raise RuntimeError("view")
+
+    monkeypatch.setattr(stream_module._FrameStep, "reconstruct", reconstruct)
+    monkeypatch.setattr(stream_module._FrameStep, "place", place)
+    monkeypatch.setattr(stream_module.SSBSeries, "_redraw", redraw)
+    FakeSession.open = 0
+    source = data if resident else tmp_path / "one_master.h5"
+    with pytest.raises(RuntimeError, match=stage):
+        stream_module.series(FakeSession(), [source], fit, refit="none", method="phase",
+                             upsampling=1, show=False, verbose=False)
+    assert FakeSession.open == 0
+    assert closed == ([] if resident else ["file input"])
+
+
+@pytest.mark.usefixtures("cuda_runtime")
 def test_a_frame_of_another_scan_shape_stops_the_stream(monkeypatch, tmp_path):
     """A frame scanned at another size cannot join the series: the stream stops right after reading
     it, naming both shapes, before any refit or reconstruction of it."""
@@ -489,6 +566,7 @@ def test_a_frame_of_another_scan_shape_stops_the_stream(monkeypatch, tmp_path):
     assert {run.frame for run in FakeSession.runs} == {sources[0].name, sources[1].name}
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_a_frame_below_confidence_stays_out_of_every_combined_image(monkeypatch, tmp_path):
     """A frame registered below CONFIDENCE is kept in the stacks but left out of every combined image,
     which each equal the by-hand sum of the confident frames. CONFIDENCE (0.04) is set from the
@@ -510,6 +588,7 @@ def test_a_frame_below_confidence_stays_out_of_every_combined_image(monkeypatch,
                                                                  series.placed, cover=True))
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_reconstruct_after_align_places_every_frame_at_the_pairwise_shifts(monkeypatch, tmp_path):
     """After align, reconstruct places every frame, including one the live pass left out, at
     align's shifts_A, and report() shows the pairwise σ in place of the live threshold flag."""
@@ -528,6 +607,7 @@ def test_reconstruct_after_align_places_every_frame_at_the_pairwise_shifts(monke
     np.testing.assert_array_equal(table[["σ row (Å)", "σ col (Å)"]].to_numpy(), found.sigma_A)
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_reconstruct_ssb_keeps_phase_the_ssb_stack_and_methods_are_unique(monkeypatch, tmp_path):
     """Asking twice for a method runs it once a frame; reconstructing SSB replaces phase too, so the
     registration stack and images["ssb"] stay one array."""
@@ -538,6 +618,7 @@ def test_reconstruct_ssb_keeps_phase_the_ssb_stack_and_methods_are_unique(monkey
     assert series.phase is series.images["ssb"]
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_flagged_pixel_handling_is_announced_once_for_the_series(monkeypatch, tmp_path, capsys):
     """Each frame's load is quiet, so a long series prints no line per frame; what the loads did with
     the detector's flagged pixels still changes the data, so it is announced once, by outcome."""
@@ -566,6 +647,7 @@ def test_flagged_pixel_handling_is_announced_once_for_the_series(monkeypatch, tm
                      '(hot_pixel_correction="none" keeps the recorded values).']
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_resident_scans_give_the_series_of_their_files_and_stay_the_callers(monkeypatch, tmp_path):
     """A live stream's scans (resident ANS datasets) give the series their recorded files give; the
     series reads no file for them and closes none of them, in the series and in reconstruct, and a
@@ -607,6 +689,7 @@ def test_series_without_a_fit_fits_this_session_once_and_uses_that_fit(monkeypat
     assert len(calls) == 1 and used[-1] is given
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_a_series_built_scan_by_scan_equals_the_series_of_all_scans(monkeypatch, tmp_path):
     """A series started empty and given each scan with add, as a live stream does when every scan completes,
     is the series of all of them at once (optics, refits, shifts, confidence, every stack and combined image),
@@ -630,6 +713,7 @@ def test_a_series_built_scan_by_scan_equals_the_series_of_all_scans(monkeypatch,
     assert FakeSession.open == 0
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_a_live_scan_is_named_by_its_acquisition(monkeypatch, tmp_path):
     """A resident scan carrying its acquisition id (series metadata) is reported under it."""
     from quantem.gpu.direct_ptycho import stream as stream_module
@@ -646,6 +730,7 @@ def test_a_live_scan_is_named_by_its_acquisition(monkeypatch, tmp_path):
     assert series.frames == ("acquisition-000", "acquisition-001")
 
 
+@pytest.mark.usefixtures("cuda_runtime")
 def test_full_refit_fits_every_scan_independently(monkeypatch, tmp_path):
     """refit="full" runs fit_aberrations on each scan's session, rotation kept, and reconstructs at that fit's
     optics; the low-order refit is not run, and saving records (which resume a defocus refit) is refused."""
@@ -672,6 +757,42 @@ def test_full_refit_fits_every_scan_independently(monkeypatch, tmp_path):
         streamed(sources, fit, tmp_path / "records", refit="full")
 
 
+@pytest.mark.usefixtures("cuda_runtime")
+def test_fixed_fit_reconstructs_each_scan_without_changing_any_optics(monkeypatch, tmp_path):
+    """Live additions equal the recorded series while all initial optics stay fixed."""
+    from quantem.gpu.direct_ptycho import stream as stream_module
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    fit.aberrations = {"C10_nm": -12.5, "C12_nm": 1.25, "phi12_deg": 17.0, "C30_nm": 650.0}
+    fit.sample_tilt_mrad, fit.depth_spread_nm = (1.2, -0.7), 3.5
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("fixed optics must not enter either fit")
+
+    monkeypatch.setattr(stream_module, "_objective", unexpected)
+    monkeypatch.setattr(FakeSession, "fit_aberrations", unexpected, raising=False)
+    whole, calls = streamed(sources, fit, None, refit="none", method=("ssb", "phase", "complex"))
+    assert calls == 0
+    for used in whole.fits:
+        assert used.aberrations == fit.aberrations
+        assert used.aberrations is not fit.aberrations
+        assert used.sample_tilt_mrad == fit.sample_tilt_mrad
+        assert used.depth_spread_nm == fit.depth_spread_nm
+        assert used.scan_detector_rotation_deg == fit.scan_detector_rotation_deg
+        assert used.scan_detector_rotation_flipped == fit.scan_detector_rotation_flipped
+    assert all(item["evaluations"] == 0 and item["stop"] == "fixed initial fit" for item in whole.refits)
+    assert all(item["refit_s"] == 0 for item in whole.timings)
+    assert all(run.optics == fit.aberrations for run in FakeSession.runs)
+    growing, _ = streamed([], fit, None, refit="none", method=("ssb", "phase", "complex"))
+    for source in sources:
+        row = growing.add(source)
+        assert row["Refit evaluations"] == 0
+    assert_same_stream(whole, growing)
+    with pytest.raises(ValueError, match="defocus refits"):
+        streamed(sources, fit, tmp_path / "records", refit="none")
+
+
+@pytest.mark.usefixtures("cuda_runtime")
 def test_no_scan_is_added_after_align_or_reconstruct(monkeypatch, tmp_path):
     """align and reconstruct rebuild the stacks and shifts adding a scan would extend: adding then stops clearly."""
     sources, fit = fake_stream(monkeypatch, tmp_path)
@@ -679,3 +800,265 @@ def test_no_scan_is_added_after_align_or_reconstruct(monkeypatch, tmp_path):
     series.reconstruct("ssb")
     with pytest.raises(RuntimeError, match="start a new series"):
         series.add(sources[3])
+
+
+@pytest.fixture
+def rolling_bookkeeping(monkeypatch):
+    """Tiny CPU stand-ins exercise ownership and publication, not reconstruction or registration math."""
+    from contextlib import nullcontext
+
+    from quantem.gpu.direct_ptycho import stream as stream_module
+    from quantem.gpu.direct_ptycho.workflow import DirectPtycho
+
+    class Device(nullcontext):
+        def synchronize(self):
+            pass
+
+    array_names = ("asarray", "empty", "empty_like", "float32", "float64", "full_like", "maximum",
+                   "median", "ones", "pad", "where", "zeros")
+    fake_arrays = SimpleNamespace(**{name: getattr(np, name) for name in array_names},
+        cuda=SimpleNamespace(runtime=SimpleNamespace(getDevice=lambda: 0), Device=Device),
+        get_default_memory_pool=lambda: SimpleNamespace(free_all_blocks=lambda: None))
+    monkeypatch.setattr(stream_module, "cp", fake_arrays)
+    monkeypatch.setattr(stream_module.torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(stream_module, "_lattice", lambda *args: None)
+    monkeypatch.setattr(stream_module, "shifted", lambda image, shift: np.array(image, dtype=np.float64))
+    monkeypatch.setattr(stream_module, "hot_pixel_outcome", lambda record: str(record))
+    monkeypatch.setattr(FakeSession, "_device", None, raising=False)
+    monkeypatch.setattr(FakeSession, "_resolve_upsampling", lambda self, upsampling: 1)
+    fit = SimpleNamespace(optimizer={"coordinates": [0.] * 28, "bounds": [(-1., 1.)] * 28},
+                          aberrations={"C10_nm": 0., "C12_nm": 0., "phi12_deg": 0.},
+                          sample_tilt_mrad=(0., 0.), depth_spread_nm=0.,
+                          scan_detector_rotation_deg=0., scan_detector_rotation_flipped=False,
+                          phase_limits=(-1., 1.), metadata={})
+
+    class Source:
+        shape = (4, 4, 2, 2)
+
+        def __init__(self, index):
+            self.index = index
+            self.metadata = {"series": "repeated label", "hot_pixel_correction": str(index)}
+
+        def close(self):
+            pytest.fail("resident counts belong to the caller")
+
+    def reconstruct(step, session, optics, tilt, depth, *args):
+        image = np.arange(16, dtype=np.float32).reshape(4, 4) + 100 * session.data.index
+        chosen = SimpleNamespace(**vars(fit))
+        chosen.source_index = session.data.index
+        chosen.aberrations, chosen.sample_tilt_mrad, chosen.depth_spread_nm = optics, tilt, depth
+        return chosen, {"ssb": image, "phase": image + 10}, (0.2, 0.2), {
+            "ssb_s": float(session.data.index), "phase_s": 0.}
+
+    anchors = []
+
+    def place(canvas, phase, lattice, sampling, reach, guess, *, accumulate=True):
+        index = int(phase[0, 0] / 100)
+        anchors.append((index, canvas.last.whole))
+        shift, score = (float(index), -float(index)), 0.01 if index in (3, 4, 5) else 0.5
+        if score >= stream_module.CONFIDENCE:
+            if accumulate:
+                stream_module._add(canvas, phase, shift)
+            else:
+                canvas.last = stream_module._positioned(phase, shift)
+        return shift, score
+
+    monkeypatch.setattr(stream_module._FrameStep, "reconstruct", reconstruct)
+    monkeypatch.setattr(stream_module, "_place", place)
+    FakeSession.open = 0
+
+    def begin(max_frames):
+        return DirectPtycho.series(FakeSession(), fit=fit, refit="none", method="phase",
+                                  max_frames=max_frames, show=False, verbose=False)
+
+    return SimpleNamespace(begin=begin, Source=Source, anchors=anchors, module=stream_module)
+
+
+@pytest.mark.parametrize("max_frames", [1, 3])
+def test_rolling_results_keep_absolute_rows_and_release_evicted_owners(rolling_bookkeeping, max_frames):
+    """Repeated scan names stay distinct, rejected windows stay empty, and old owners leave the series."""
+    import gc
+    import weakref
+
+    setup = rolling_bookkeeping
+    result = setup.begin(max_frames)
+    owners = []
+    for index in range(40):
+        scan = setup.Source(index)
+        owners.append(weakref.ref(scan))
+        row = result.add(scan)
+        if index == 0:
+            first_snapshot = result.phase
+        expected = tuple(range(max(0, index + 1 - max_frames), index + 1))
+        assert result.frame_indices == expected and result.total_frames == index + 1
+        assert tuple(result.report().index) == tuple(result.report(to_dict=True)) == expected
+        assert row["Frame"] == "repeated label" and row["Refit evaluations"] == 0
+        assert len(result.sources) == len(result.fits) == len(result.timings) == len(result.frames) == len(expected)
+        assert tuple(item.index for item in result.sources) == tuple(item.source_index for item in result.fits) == expected
+        assert tuple(row["ssb_s"] for row in result.timings) == expected
+        assert len(result._state.flagged) == len(result._state.shifts_px) == len(expected)
+        assert len(result._state.step.placed) <= 2
+        assert result.phase.shape == (len(expected), 4, 4)
+        np.testing.assert_array_equal(result.phase[:, 0, 0], np.array(expected) * 100)
+        np.testing.assert_array_equal(result.shifts_A[:, 0], np.array(expected) * 0.2)
+        if index == 5:
+            assert not any(result.placed) and not result.cover.any()
+            assert result._state.step.anchor.last.whole == (2, -2)
+            images, labels, _, _ = result._view(["phase"])
+            assert all(np.isfinite(image).all() for image in images)
+            assert "rejected, not combined" in labels[0] and "confidence 0.010" in labels[0]
+            assert "no accepted scans" in labels[1]
+    gc.collect()
+    assert all(owner() is None for owner in owners[:-max_frames])
+    assert all(owner() is not None for owner in owners[-max_frames:])
+    assert setup.anchors[5] == (6, (2, -2))  # The confident anchor survived outside the result window.
+    np.testing.assert_array_equal(first_snapshot[0], np.arange(16).reshape(4, 4))
+    assert len(result._state.stacks["ssb"]) == max_frames and FakeSession.open == 0
+    assert result._state.step.canvases["ssb"].total.shape == (max_frames + 3, max_frames + 3)
+    with pytest.raises(RuntimeError, match="max_frames=None"):
+        result.align()
+
+
+def test_failed_window_rebuild_preserves_published_history_and_anchor(rolling_bookkeeping, monkeypatch):
+    """A publication failure closes its workspace without replacing the previous usable window."""
+    setup = rolling_bookkeeping
+    result = setup.begin(2)
+    for index in range(2):
+        result.add(setup.Source(index))
+    phase, step, stacks = result.phase, result._state.step, result._state.stacks
+
+    def failed(*args, **kwargs):
+        raise RuntimeError("combined allocation failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(setup.module, "_window_canvas", failed)
+        with pytest.raises(RuntimeError, match="combined allocation failed"):
+            result.add(setup.Source(2))
+    assert result.phase is phase and result._state.step is step and result._state.stacks is stacks
+    assert result.frame_indices == (0, 1) and result.total_frames == 2 and FakeSession.open == 0
+    result.add(setup.Source(2))
+    assert result.frame_indices == (1, 2) and result._state.step.anchor.last.whole == (2, -2)
+
+
+def test_rolling_report_waits_for_the_completed_frame(rolling_bookkeeping):
+    """Reading a live report during publication waits for its matching absolute frame index."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    setup = rolling_bookkeeping
+    result = setup.begin(2)
+    published, resume, reading, finished = (Event() for _ in range(4))
+
+    class PausedCount(SimpleNamespace):
+        def __setattr__(self, name, value):
+            if name == "count" and value == 1:
+                published.set()
+                if not resume.wait(2):
+                    raise TimeoutError("the report test did not resume frame publication")
+            super().__setattr__(name, value)
+
+    result._state = PausedCount(**vars(result._state))
+
+    def read():
+        reading.set()
+        report, indices = result.report(), result.frame_indices
+        finished.set()
+        return report, indices
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        added = workers.submit(result.add, setup.Source(0))
+        try:
+            assert published.wait(2)
+            observed = workers.submit(read)
+            assert reading.wait(2)
+            assert not finished.wait(0.05)
+        finally:
+            resume.set()
+        assert added.result(timeout=2)["Frame"] == "repeated label"
+        report, indices = observed.result(timeout=2)
+    assert tuple(report.index) == indices == (0,) and result.total_frames == 1
+    assert FakeSession.open == 0
+
+
+def test_registration_without_overlap_explains_recovery_before_computing():
+    """A separated field fails before attempting an FFT on an empty crop."""
+    from quantem.gpu.direct_ptycho.stream import _place
+
+    anchor = SimpleNamespace(last=SimpleNamespace(whole=(0, 0), piece=np.zeros((4, 4))))
+    with pytest.raises(RuntimeError, match="No usable overlap.*reduce the interval"):
+        _place(anchor, np.zeros((4, 4)), None, (0.2, 0.2), 30, (20, 20), accumulate=False)
+
+
+@pytest.mark.usefixtures("cuda_runtime")
+@pytest.mark.parametrize("max_frames", [1, 3])
+def test_rolling_cuda_results_match_full_history_and_exact_window_combination(monkeypatch, tmp_path, max_frames):
+    """Real CUDA registration keeps the same global drift through eviction and a rejected run."""
+    import cupy
+
+    from quantem.gpu.direct_ptycho import stream as stream_module
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    fit.aberrations = {"C10_nm": -12.5, "C12_nm": 1.25, "phi12_deg": 17., "C30_nm": 650.}
+    fit.sample_tilt_mrad, fit.depth_spread_nm = (1.2, -0.7), 3.5
+    options = dict(refit="none", method=("ssb", "phase", "complex"))
+    full, _ = streamed([], fit, None, **options)
+    window, _ = streamed([], fit, None, max_frames=max_frames, **options)
+    for index, source in enumerate(sources * 3):
+        # A deliberate confidence control expires every accepted frame, then permits recovery.
+        monkeypatch.setattr(stream_module, "CONFIDENCE", float("inf") if 3 <= index <= 5 else 0.04)
+        full.add(source)
+        window.add(source)
+        retained = tuple(range(max(0, index + 1 - max_frames), index + 1))
+        assert window.frame_indices == retained
+        assert tuple(window.report().index) == retained and len(window._state.step.placed) <= 2
+        np.testing.assert_array_equal(window.shifts_A, full.shifts_A[list(retained)])
+        assert window.confidence == tuple(full.confidence[i] for i in retained)
+        assert window.placed == tuple(full.placed[i] for i in retained)
+        for key in window.images:
+            cupy.testing.assert_array_equal(window.images[key], full.images[key][list(retained)])
+        cupy.testing.assert_array_equal(window._state.step.anchor.last.piece, full._state.step.canvases["ssb"].last.piece)
+        assert window._state.step.anchor.last.whole == full._state.step.canvases["ssb"].last.whole
+        for key, stack in full.images.items():
+            # Start in scan-zero coordinates, add only retained contributions, then crop empty margins.
+            canvas = stream_module._start(cupy.zeros_like(stack[0]))
+            canvas.cover.fill(0)
+            positions = dict(full._state.step.placed)
+            for frame in retained:
+                if full.placed[frame]:
+                    if frame == 0:
+                        canvas.total += stack[0]
+                        canvas.cover += 1
+                    else:
+                        stream_module._add(canvas, stack[frame], positions[frame])
+            rows = cupy.flatnonzero(canvas.cover.any(axis=1)).get()
+            cols = cupy.flatnonzero(canvas.cover.any(axis=0)).get()
+            if len(rows):
+                region = (slice(int(rows[0]), int(rows[-1]) + 1), slice(int(cols[0]), int(cols[-1]) + 1))
+                expected, cover = stream_module._combined(canvas)[region], canvas.cover[region]
+            else:
+                expected = cupy.zeros_like(stack[0])
+                cover = cupy.zeros_like(stack[0])
+            cupy.testing.assert_array_equal(window.combined[key], expected)
+            cupy.testing.assert_array_equal(window.cover, cover)
+        if index == 5:
+            assert not any(window.placed)
+            images, labels, _, _ = window._view(list(window.images))
+            assert all(np.isfinite(image).all() for image in images)
+            assert "rejected, not combined" in labels[0]
+        assert len(window._state.stacks["ssb"]) <= max_frames and FakeSession.open == 0
+    assert window.total_frames == 15 and all(row["evaluations"] == 0 for row in window.refits)
+
+
+@pytest.mark.usefixtures("cuda_runtime")
+def test_rolling_cuda_resume_keeps_global_record_indices(monkeypatch, tmp_path):
+    """A bounded defocus series resumes its complete disk record chain without retaining old images."""
+    import json
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    first, _ = streamed(sources, fit, tmp_path / "records", max_frames=2)
+    resumed, calls = streamed(sources, fit, tmp_path / "records", max_frames=2)
+    assert calls == 0 and resumed.frame_indices == (3, 4) and resumed.total_frames == 5
+    assert all(row["resumed"] for row in resumed.refits)
+    assert_same_stream(first, resumed)
+    records = [json.loads((tmp_path / "records" / "stream" / f"frame_{index}.json").read_text()) for index in range(5)]
+    assert [record["identity"]["index"] for record in records] == list(range(5))

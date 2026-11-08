@@ -68,6 +68,10 @@ func masks(shape: [Int], valid: [UInt8], steps: Int, inner: Double, outer: Doubl
 }
 
 let arguments = CommandLine.arguments
+if arguments.dropFirst().first == "--columns" {
+  try benchmarkColumns(arguments)
+  exit(0)
+}
 guard arguments.count > 1 else {
   FileHandle.standardError.write(Data("usage: <qem file or folder> [tiles] [steps]\n".utf8))
   exit(2)

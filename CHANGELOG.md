@@ -6,6 +6,17 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+### Native Direct Ptycho
+
+- Add explicit bounded native rotation refinement around a supplied prior, preserving the full initial trial search, fifth-order refinement, cancellation, timing provenance and boundary warnings. The default automatic branch workflow is unchanged.
+
+- Rename the shared native module to `MetalDirectPtychoKernels`, retaining SSB, Phase and Complex reconstruction methods, and explain unsupported coarse fitting bands before preparation.
+- Parallelize independent QEM detector-column chunks and fuse FFT preparation stages without changing counts, precision, fit settings or results. Matched full-size native QEM Fourier preparation is approximately 2.8× faster; this is not a whole-workflow timing claim.
+- Add opt-in original flagged-column reads for exact moment correction, bounded decoder metadata accounting and parity coverage for chunk boundaries and padded scans.
+- Preserve fifth-order consistency checks while skipping zero-weight objective work; update the versioned kernel identities and preparation benchmarks.
+- Use precise Metal math on Apple's paravirtual GPU and identify it in reconstruction provenance; retain the qualified physical-device math path.
+- Run native CI tests with optimization, retain numerical tolerances, and avoid CUDA dependency downloads on CPU-only runners.
+
 ### Added
 
 - `io.load` reads a 4D-STEM dataset QuantEM saved as a zipped Zarr v3 store (`Dataset4dstem` serializer) in place,

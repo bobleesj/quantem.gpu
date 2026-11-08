@@ -84,18 +84,13 @@ class LiveDetectorSession:
             result = self.last_image.copy() if unchanged else np.full(self.scan_shape, np.nan, np.float32)
             flat = result.reshape(-1)
             first = self.last_received if unchanged else 0
-            # An unchanged aperture only needs newly received counts. Decode a
-            # bounded interval if those counts already crossed an ANS boundary.
-            # Keep the full encoded reduction for a changed aperture.
-            if self.encoded and not unchanged:
+            # Newly encoded counts already have exact spatial indexes. Query
+            # that prefix once instead of decoding many dense batches and
+            # synchronizing each result; tail-only updates still reuse it.
+            if self.encoded and (not unchanged or first < self.encoded):
                 flat[:self.encoded] = self._encoded_session().masked_sum(mask).reshape(-1)
                 first = self.encoded
             valid_mask = np.asarray(mask, dtype=bool) & self.acquisition.source.valid_pixels
-            step = max(1, (32 << 20) // (np.prod(self.detector_shape) * self.acquisition.dtype.itemsize))
-            for start in range(first, self.encoded, step):
-                stop = min(start + step, self.encoded)
-                counts = self.source.decode_scan_range_device(start, stop)
-                flat[start:stop] = CudaKernelCompute(counts).masked_sum(valid_mask).reshape(-1)
             if self.tail is not None:
                 start = max(first, self.encoded)
                 if start < self.received:

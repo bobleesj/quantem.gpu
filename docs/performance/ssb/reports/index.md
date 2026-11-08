@@ -1,11 +1,15 @@
 # SSB reports
 
+- [Exact broad-search density batching](2026-11-01-broad-density-batching.md)
+
 Dated records retain their original workload, backend, source revision and
 acceptance limits. They are evidence, not a statement of current release speed.
 A record that describes since-retired behaviour (the phase-variance search,
 Nelder–Mead or finite-difference refinement, the `mean_phase` and
 `complex_wave` estimators) says so in a **Historical** line at its top.
 
+- [Native Direct Ptycho preparation and exact QEM column decoding](2026-11-05-direct-ptycho-preparation.md)
+- [Full-scan native Metal fitting on Apple M5](2026-11-05-mps-full-scan.md)
 - [Exact-derivative SSB fit in Python on CUDA and MPS](2026-10-25-ssb-exact-derivative-fit.md)
 - [Native Metal SSB redraw precision at the lowest scan frequencies](2026-10-25-ssb-redraw-precision.md)
 - [Where the 9 s of regularized preparation goes](2026-10-24-regularized-preparation.md)

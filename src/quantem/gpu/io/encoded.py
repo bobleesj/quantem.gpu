@@ -409,7 +409,7 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
 
 
 def _loaded_report(shape, device_name: str, metadata: dict) -> str:
-    """One terse line per loaded scan: size, device, time, bad-pixel handling.
+    """Loaded scan geometry, device, time, ANS storage and bad-pixel handling.
 
     Report whether flagged values stayed original or were explicitly replaced, and the setting that does the other.
     """
@@ -417,5 +417,7 @@ def _loaded_report(shape, device_name: str, metadata: dict) -> str:
     seconds = metadata["load_timings"]["resident_ready_seconds"]
     return (
         f"Loaded {shape[0]} x {shape[1]} scan, {shape[2]} x {shape[3]} detector, "
-        f"{device_name}, {seconds:.1f} s. {outcome}."
+        f"{device_name}, {seconds:.1f} s. "
+        f"ANS: {metadata['working_logical_tensor_bytes'] / 1e9:.2f} GB uncompressed "
+        f"to {metadata['physical_resident_bytes'] / 1e9:.2f} GB resident on GPU. {outcome}."
     )

@@ -149,8 +149,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var gradRow: f32;
   var gradCol: f32;
   if ((u.flags & 1u) != 0u) {
-    gradRow = u.rot.y * col + u.rot.x * row;
-    gradCol = u.rot.x * col - u.rot.y * row;
+    gradRow = u.rot.x * col - u.rot.y * row;
+    gradCol = u.rot.y * col + u.rot.x * row;
   } else {
     gradRow = u.rot.x * row - u.rot.y * col;
     gradCol = u.rot.y * row + u.rot.x * col;
@@ -184,7 +184,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let k1 = freq(col, u.x);
   let k2 = k0 * k0 + k1 * k1;
   let g = rowFft[i] * k0 + colFft[i] * k1;
-  let scale = 0.25 / k2;
+  let scale = 1.0 / (6.283185307179586 * k2);
   phaseFft[i] = vec2<f32>(g.y * scale, -g.x * scale);
 }`;
 
@@ -196,5 +196,5 @@ export const IDPC_EXTRACT_WGSL = `
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= u.x) { return; }
-  phase[i] = -phaseComplex[i].x;
+  phase[i] = phaseComplex[i].x;
 }`;

@@ -662,3 +662,25 @@ def test_wide_fit_is_checked_on_two_band_halves(monkeypatch, capsys, difference,
         assert check["checked_coordinates"][10] > 2.0
         assert fit.timings["higher_order_fallback_s"] > 0
         assert "Higher orders not trusted" in printed and "1.49 rad" in printed
+
+
+@pytest.mark.parametrize("difference", [0.0, 5.0])
+def test_zero_tilt_fifth_order_stays_fixed_in_refinement_and_band_checks(monkeypatch, difference):
+    """Zero-tilt optics stay fixed even when the objective prefers a tilted specimen."""
+    initial = np.zeros(28)
+    target = initial.copy()
+    target[[0, 3, 4, 5, 6, 10]] = 0.4, 2.0, -1.0, 3.0, 0.8, 1.0
+    other = target.copy()
+    other[10] += difference
+    session = _broad_session(monkeypatch, _RingBumps(target, other), initial)
+    fit = fifth_order_fit.fit_fifth_order(
+        session, search="standard", trials=200, seed=42, save_dir=None,
+        force=False, verbose=False, show=False, tilt=False,
+        primary_options={"check_rotation": False, "refine_rotation": False})
+    assert fit.sample_tilt_mrad is None and fit.depth_spread_nm is None
+    assert fit.optimizer["max_order"] == 5 and fit.num_trials == 200
+    np.testing.assert_array_equal(np.asarray(fit.optimizer["bounds"])[3:6], 0)
+    np.testing.assert_array_equal(np.asarray(fit.optimizer["coordinates"])[3:6], 0)
+    assert abs(fit.optimizer["coordinates"][6]) > 0.1
+    for half in fit.optimizer["higher_order_consistency"]["halves"]:
+        np.testing.assert_array_equal(np.asarray(half["coordinates"])[3:6], 0)

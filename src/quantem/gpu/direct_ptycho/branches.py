@@ -1,21 +1,26 @@
-"""Settle the 180-degree branch of an estimated scan-detector rotation from two independent SSB fits.
+"""Compare conditional phase-polarity evidence for the two scan-detector rotation branches.
 
 The centre-of-mass curl fixes the scan-detector rotation only modulo 180 degrees: the angle and the angle plus 180
-degrees reverse every CoM vector and both leave the field curl-free. SSB fits both angles independently, with the same
-settings, and reconstructs each fit's phase at the native scan sampling. The two phases are close to negatives of each
-other, so one decision chooses the branch:
+degrees reverse every CoM vector and both leave the field curl-free. The comparison evaluates both angles with the
+same settings and reconstructs each fit's phase at the native scan sampling. The two phases are close to negatives
+of each other. The following heuristics suggest a candidate branch; neither is an independent instrument calibration:
 
-1. Atomic columns are located on the dark-field image of the same scan. Dark field is incoherent, so the column
-   positions are the same on both branches. Atoms push the electron phase forward, so on the right branch the phase
-   at the columns is positive. A branch is eligible only when its positive mean column phase is at least
+1. Candidate atomic columns are located on the dark-field image of the same scan. That reference image and its
+   detected positions are identical for both branches. Under the positive-phase-contrast assumption, the correct
+   branch has positive phase at those positions. A branch is eligible only when its positive mean column phase is at least
    ``COLUMN_Z_MIN`` standard errors from zero and at least ``COLUMN_EFFECT_MIN`` of its spread (so many columns cannot
    make a negligible shift decisive); the eligible branch with the more positive columns is kept. Negative
    evidence on one independent fit does not establish positive columns on the other fit.
 2. Otherwise the phase tail decides: the branch with the larger mean-centred third-moment ratio ``phase_skewness``
    (a few bright columns over a flatter background) is kept.
 
-The fits are the session's default tilt-corrected joint fits: correcting the sample tilt and depth spread makes the
-atomic-column contrast clearer, while the two branches still fit equally well.
+Joint fits may construct the opposite branch by the exact parameter symmetry rather than an independent search.
+Defocus alternatives, contrast reversals and model mismatch can invalidate phase-polarity evidence. Independent
+evidence is needed to resolve competing physical interpretations. A calibrated rotation or a known signed focus
+change can supply such evidence, subject to validation of the focus model and sign convention.
+
+The fits use the session's default tilt-corrected joint model. Fitting sample tilt and depth spread can change
+atomic-column contrast while leaving the two symmetry-related branches equally compatible with the data.
 
 Both tests read the native phases. What ``RotationBranches.show`` draws of each branch is its fit reconstructed at
 ``upsampling="auto"`` (``RotationBranches.upsampled_phases``), with the columns at scan pixels times the factor.
@@ -253,6 +258,24 @@ class RotationBranches:
         self._panel_source = weakref.WeakMethod(reconstruct_panels)
 
     @property
+    def status(self) -> str:
+        """Describe the evidence without treating phase polarity as calibration.
+
+        Column support assumes that the fitted phase has positive contrast at
+        the detected columns. Defocus alternatives and contrast reversals can
+        violate that assumption. A phase-tail fallback has no decisive column
+        evidence, even when repeated searches select the same angle.
+
+        Examples
+        --------
+        >>> rotations.status  # doctest: +SKIP
+        'Unresolved: phase-tail suggestion only.'
+        """
+        if self.decided_by == "columns":
+            return "Conditional column support; not an independent rotation calibration."
+        return "Unresolved: phase-tail suggestion only."
+
+    @property
     def summary(self) -> str:
         """One line: the branch kept and the test that decided it."""
         chosen, other = self.branches[self.chosen], self.branches[1 - self.chosen]
@@ -270,8 +293,8 @@ class RotationBranches:
             choice = (f"{chosen.scan_detector_rotation_deg:.1f}° by the phase tail "
                       f"(S {_signed(chosen.phase_skewness, 2)} over {_signed(other.phase_skewness, 2)}); {reason}")
         if self.kept == self.chosen:
-            return f"kept {choice}."
-        return f"kept the given {self.kept_rotation_deg:.1f}°; the evidence selects {choice}."
+            return f"kept {choice}. {self.status}"
+        return f"kept the given {self.kept_rotation_deg:.1f}°; the evidence selects {choice}. {self.status}"
 
     def __repr__(self) -> str:
         return f"RotationBranches({self.summary})"
@@ -298,13 +321,14 @@ class RotationBranches:
                 else 100.0 * branch.column_positive_fraction,
                 "phase tail S": branch.phase_skewness,
                 "kept": "yes" if index == self.kept else "",
+                "status": self.status,
             })
             rows.append(row)
         index = pd.Index([f"{branch.scan_detector_rotation_deg:.2f}°" for branch in self.branches],
                          name=f"Rotation (decided by {'atomic columns' if self.decided_by == 'columns' else 'phase tail'}"
                               f"{f', {self.num_columns} columns' if self.num_columns else ''})")
         table = pd.DataFrame(rows, index=index)
-        return table.round({name: 3 for name in table.columns if name not in ("loss", "kept")}).round({"loss": 7})
+        return table.round({name: 3 for name in table.columns if name not in ("loss", "kept", "status")}).round({"loss": 7})
 
     def show(self, *, upsampling: int | Literal["auto"] = "auto", panels: bool = True,
              size: str | int | None = None, zoom: float = 1,

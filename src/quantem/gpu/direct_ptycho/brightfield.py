@@ -154,7 +154,9 @@ def crop_bright_field(
             # encoded source untouched and the fitted/full-scan masks equal.
             valid = getattr(loaded.data, "valid_pixels", None)
             if valid is not None:
-                counts = cp.where(cp.asarray(valid[row0:row1, col0:col1]), counts, 0)
+                # read() owns this decoded output; masking it cannot alter the encoded source.
+                # Avoid a second crop-sized array and a stranded Torch allocation.
+                cp.copyto(counts, 0, where=~cp.asarray(valid[row0:row1, col0:col1]))
     else:
         valid = getattr(loaded.data, "valid_pixels", None)
         if valid is not None:

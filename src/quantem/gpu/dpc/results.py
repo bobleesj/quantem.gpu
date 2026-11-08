@@ -8,6 +8,10 @@ import numpy as np
 class DPCResult:
     """Float32 DPC products in public ``(row, col)`` order.
 
+    ``phase`` is the zero-mean gradient integral in detector-pixel times
+    scan-pixel units for uncalibrated CoM inputs. It is not automatically
+    calibrated phase in radians; no implicit display negation is applied.
+
     Exactly one rotation is set. ``scan_detector_rotation_mod180_deg`` is the
     curl fit, which fixes the scan-to-detector rotation only modulo 180
     degrees (the fit grid runs from 0 to 180 and includes its end point). It

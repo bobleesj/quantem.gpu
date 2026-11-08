@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-swift build -c release --disable-sandbox --product metal-image-runtime-benchmark
+if [[ "${1:-}" == "--skip-build" ]]; then
+  shift
+else
+  swift build -c release --disable-sandbox --product metal-image-runtime-benchmark
+fi
 build_dir=$(swift build -c release --show-bin-path)
 swiftc -O -I "$build_dir/Modules" \
   tests/metal/shared_display_check.swift \
