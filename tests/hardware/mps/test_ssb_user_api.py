@@ -1,4 +1,4 @@
-"""The beginner SSB path: SSB(data) finds the rotation, reconstruct() fits once, show() names its package."""
+"""The beginner SSB path: DirectPtycho(data) finds the rotation, reconstruct() fits once, show() names its package."""
 
 import math
 import sys
@@ -32,11 +32,11 @@ def _options():
 
 def test_omitted_rotation_is_estimated_like_dpc_and_labelled(capsys):
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB, dpc
+    from quantem.gpu import DirectPtycho, dpc
 
     counts = _rotated_gradient_scan(35.0)
     expected = dpc.run(counts).scan_detector_rotation_mod180_deg % 180.0
-    with SSB(counts, **_options()) as ssb:
+    with DirectPtycho(counts, **_options()) as ssb:
         assert ssb.scan_detector_rotation_deg == pytest.approx(expected, abs=1e-6)
         # the angle rotates the measured field back onto the scan axes, so it undoes the simulated 35 degrees
         assert ssb.scan_detector_rotation_deg == pytest.approx((-35.0) % 180.0, abs=1.0)
@@ -50,9 +50,9 @@ def test_omitted_rotation_is_estimated_like_dpc_and_labelled(capsys):
 
 def test_a_given_rotation_is_used_as_given_without_an_estimate(capsys):
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    with SSB(_rotated_gradient_scan(35.0), scan_detector_rotation_deg=200.0, **_options()) as ssb:
+    with DirectPtycho(_rotated_gradient_scan(35.0), scan_detector_rotation_deg=200.0, **_options()) as ssb:
         assert ssb.scan_detector_rotation_deg == 200.0
         assert ssb.scan_detector_rotation_flipped is False
         assert ssb.calibration().loc["Scan-detector rotation", "Source"] == "Explicit override"
@@ -61,12 +61,12 @@ def test_a_given_rotation_is_used_as_given_without_an_estimate(capsys):
 
 def test_a_recorded_rotation_wins_over_the_estimate():
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB, io
+    from quantem.gpu import DirectPtycho, io
 
     metadata = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.3, 0.3),
                 "scan_detector_rotation_deg": 12.0, "scan_detector_rotation_flipped": True}
     data = io.Dataset4dstemGPU(_rotated_gradient_scan(35.0), metadata)
-    with SSB(data, backend="mps") as ssb:
+    with DirectPtycho(data, backend="mps") as ssb:
         assert (ssb.scan_detector_rotation_deg, ssb.scan_detector_rotation_flipped) == (12.0, True)
         assert ssb.scan_detector_rotation_source == "metadata"
         # the launch table states the recorded flip; it read "Not recorded" before 2026-10-20
@@ -77,27 +77,27 @@ def test_a_recorded_rotation_wins_over_the_estimate():
 
 def test_reconstruct_fits_once_when_no_aberrations_are_known(capsys):
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    with SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
+    with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
         fits = []
-        find = ssb.find_aberrations
-        ssb.find_aberrations = lambda **options: fits.append(options) or find(num_trials=20, **options)
+        fit = ssb.fit_aberrations
+        ssb.fit_aberrations = lambda **options: fits.append(options) or fit(trials=20, **options)
         first = ssb.reconstruct()
         second = ssb.reconstruct()
         given = ssb.reconstruct(aberrations={"C10_nm": 1.0})
     assert len(fits) == 1
     assert first.aberrations == second.aberrations
     assert given.aberrations["C10_nm"] == 1.0
-    assert capsys.readouterr().out.count("fitting them with find_aberrations(search='standard') first") == 1
+    assert capsys.readouterr().out.count("fitting with search='standard' first") == 1
 
 
 def test_show_names_the_package_it_needs(monkeypatch):
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     monkeypatch.setitem(sys.modules, "quantem.widget", None)
-    with SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
+    with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
         with pytest.raises(ImportError, match="pip install quantem.widget"):
             ssb.show()
 
@@ -105,10 +105,10 @@ def test_show_names_the_package_it_needs(monkeypatch):
 def test_reconstruct_replays_trials_by_trial_ids():
     """reconstruct(trial_ids=[...]) replays recorded attempts as a phase stack; trials= is no keyword any more."""
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    with SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
-        fitted = ssb.find_aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
+    with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
+        fitted = ssb.fit_aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
         replay = ssb.reconstruct(fitted, trial_ids=[2, 0])
         assert replay.phase.shape == (2, *fitted.phase.shape)
         assert replay.metadata["trial_ids"] == [2, 0]
@@ -123,23 +123,23 @@ def test_assigned_aberrations_are_known_and_reconstruct_does_not_refit(capsys):
     replaced a restored calibration with a new fit.
     """
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     known = {"C10_nm": 1.5, "C12_nm": 0.4, "phi12_deg": 12.0}
-    with SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
-        ssb.find_aberrations = lambda **options: pytest.fail("reconstruct() refitted known aberrations")
+    with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
+        ssb.fit_aberrations = lambda **options: pytest.fail("reconstruct() refitted known aberrations")
         ssb.aberrations = known
         result = ssb.reconstruct()
         assert result.aberrations == known
-        given = SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options())
+        given = DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options())
         with given:
             np.testing.assert_array_equal(result.phase, given.reconstruct().phase)
         with pytest.raises(ValueError, match="C10_nm"):
             ssb.aberrations = {"C10": 1.0}
         assert ssb.aberrations == known
-    assert "fitting them with find_aberrations(search='standard') first" not in capsys.readouterr().out
-    with SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options()) as ssb:
+    assert "fitting with search='standard' first" not in capsys.readouterr().out
+    with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options()) as ssb:
         ssb.aberrations = None  # forget them: the next reconstruct() fits
         fits = []
-        ssb.find_aberrations = lambda **options: fits.append(options) or pytest.skip("fit requested, as intended")
+        ssb.fit_aberrations = lambda **options: fits.append(options) or pytest.skip("fit requested, as intended")
         ssb.reconstruct()

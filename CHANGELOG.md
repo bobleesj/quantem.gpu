@@ -19,6 +19,16 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- The direct ptychography result is `DirectPtychoResult`; `SSBResult` is retired, because one
+  object now holds SSB, phase and complex reconstructions. The neural phase model is trained
+  through `DirectPtycho.train_neural_phase(optics)` and loaded through
+  `DirectPtycho.load_neural_phase(path)`; `reconstruct` and `series` take it as `neural_model`.
+  `NeuralPhaseModel` is not exported from `quantem.gpu`.
+
+- Direct ptychography series can reuse a phase model trained on measured counts. A completed
+  scan exposes its direct and neural phase, fitted optics and native annular detector image.
+  Request the same collection angles without a model to compare against ordinary direct phase.
+
 - `io.load` reads a 4D-STEM dataset QuantEM saved as a zipped Zarr v3 store (`Dataset4dstem` serializer) in place,
   without quantem core: chunks decode on parallel threads straight into one array, bit for bit in the stored dtype,
   and the saved sampling, units and origin become `scan_sampling_A`, the detector sampling and `origin`. On a saved

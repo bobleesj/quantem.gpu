@@ -6,13 +6,13 @@ A full fifth-order fit takes seconds to minutes; between frames of a time series
 the objective lens drift, but coma, trefoil, spherical aberration and the sample tilt change far less.
 ``series`` therefore keeps the reference fit's coordinates and refines only C10 and the two C12 components
 on each new frame, starting from the previous frame, with the same model-agreement objective and exact-gradient
-trust-region refinement as the full fit. On the measured series (frames 151-191) this is about 0.05 s of fitting per frame, so the
+trust-region refinement as the full fit. On the measured series this is about 0.05 s of fitting per frame, so the
 per-frame time is dominated by reading the compressed acquisition, far inside the 13 s scan.
 
 Each new phase is also placed live: registered against the frame placed before it by the lattice-safe band
 registration of quantem.gpu.drift, with Bragg-spot bands from the first frame, and added in register to a
 combined image that grows with the drift. On the measured series this adds 0.013 s a frame (median) and
-agrees with the full pairwise drift to 0.09 Å over 107 Å of drift; ``SSBSeries.align`` then re-places every frame by that pairwise drift.
+agrees with the full pairwise drift to 0.09 Å over 107 Å of drift; ``DirectPtychoSeries.align`` then re-places every frame by that pairwise drift.
 
 With ``save_dir`` each frame's optics and shift are written as it finishes, so a restarted kernel
 reconstructs the finished frames from them, with no refit and no registration, and continues.
@@ -41,15 +41,17 @@ from quantem.gpu import io
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.drift import bands, peaks, prepared, register_spectra, shifted, spots
 from quantem.gpu.resident.hot_pixels import hot_pixel_outcome
+from quantem.gpu.direct_ptycho._annular_detector import annular_counts, annular_limits
+from quantem.gpu.direct_ptycho.direct_workflow import settings as direct_settings
 from quantem.gpu.direct_ptycho.fifth_order_fit import _objective, _refine_with_gradients
 from quantem.gpu.direct_ptycho.fifth_order_parameters import public_params
 from quantem.gpu.direct_ptycho.persistence import _write_atomically, acquisition_identity, json_value, software_signature
-from quantem.gpu.direct_ptycho.results import SSBResult, host_array
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
 
 # Coordinates 0..2 of the fifth-order vector: C10 and the two C12 components.
 VARIED = slice(0, 3)
 EVALUATION_CAP = 300
-# Pair confidence below which a frame is not added to the combined image. On the measured series (frames 151-191) every pair
+# Pair confidence below which a frame is not added to the combined image. On the measured series every pair
 # drift rejected as a wrong region or lattice image scored at most 0.034 and every neighbour pair at
 # least 0.050; the live check is a neighbour pair (each frame against the one placed before it), whose
 # lowest live score there is 0.043.
@@ -60,6 +62,21 @@ REACH_A = 30.0
 # 3: the shared settings name the output factor upsampling (upsampling_factor in 2).
 # 4: each frame's C10/C12 refit is the exact-gradient trust region, held coordinates fixed (main's /3).
 RECORD_SCHEMA = "quantem.ssb-stream-frame/4"
+
+
+def _regularization(key, strengths):
+    """Resolve the same damping strengths that produced this image."""
+    if key == "ssb":
+        return {}
+    method = "complex" if key in ("complex", "amplitude") else "phase"
+    policy = direct_settings(method, strengths.get("phase_damping"),
+                             strengths.get("amplitude_damping") if method == "complex" else None,
+                             None, None)
+    return {name: policy[name] for name in ("phase_damping", "amplitude_damping") if name in policy}
+
+
+def _damping_caption(policy):
+    return " · ".join(f"{key.replace('_', ' ')} {value:g}" for key, value in policy.items())
 
 
 def _locked(method):
@@ -82,11 +99,13 @@ class _FrameStep:
     and a recorded frame are processed by the same code.
     """
 
-    def __init__(self, ptycho, fit: SSBResult, methods, *, bounded=False):
+    def __init__(self, ptycho, fit: DirectPtychoResult, methods, *, bounded=False, neural_model=None, annulus_mrad=None):
         self.fit = fit
         self.methods = methods
+        self.neural_model = neural_model
+        self.annulus_mrad = annulus_mrad
         # SSB first: its phase is what each frame is registered on.
-        self.runs = ("ssb", *(name for name in methods if name != "ssb"))
+        self.runs = ("ssb", *(name for name in methods if name not in ("ssb", "neural")))
         self.reference = np.array(fit.optimizer["coordinates"])
         self.bounds = np.array(fit.optimizer["bounds"])[VARIED]
         self.start = self.reference[VARIED].copy()
@@ -120,11 +139,28 @@ class _FrameStep:
         optics, tilt, depth = public_params(objective, coordinates, 5)
         return objective, coordinates, evaluations, stop, optics, tilt, depth
 
-    def reconstruct(self, session, optics, tilt, depth, upsampling, strengths):
+    def reconstruct(self, session, optics, tilt, depth, upsampling, strengths, scan):
         """Every requested method at the frame's optics; returns the fit copy that carries them."""
         chosen = copy.copy(self.fit)
         chosen.aberrations, chosen.sample_tilt_mrad, chosen.depth_spread_nm = optics, tilt, depth
-        reconstructed, sampling, seconds = _reconstruct(session, chosen, self.runs, upsampling, strengths)
+        reconstructed, sampling, seconds = _reconstruct(session, chosen, self.runs, upsampling, strengths,
+                                                       neural=self.neural_model is not None)
+        if self.neural_model is not None:
+            began = time.perf_counter()
+            guide = annular_counts(session, scan, self.neural_model.annulus_mrad)
+            self.neural_model._check(session, upsampling)
+            prepared = session._prepared_direct[1]["phase"]
+            neural = self.neural_model._apply(prepared, reconstructed["phase"], sampling, guide)
+            reconstructed["neural"] = cp.from_dlpack(neural)
+            cp.cuda.get_current_stream().synchronize()
+            seconds["neural_s"] = time.perf_counter() - began
+            if self.annulus_mrad == self.neural_model.annulus_mrad:
+                reconstructed["annular_counts"] = cp.from_dlpack(guide)
+        if self.annulus_mrad is not None and "annular_counts" not in reconstructed:
+            began = time.perf_counter()
+            counts = annular_counts(session, scan, self.annulus_mrad)
+            reconstructed["annular_counts"] = cp.from_dlpack(counts)
+            seconds["annular_s"] = time.perf_counter() - began
         return chosen, reconstructed, sampling, seconds
 
     def place(self, index, reconstructed, sampling, saved=None):
@@ -169,8 +205,8 @@ class _FrameStep:
         self.start = coordinates[VARIED].copy()
 
 
-def series(ptycho, sources, fit: SSBResult, *, refit="defocus", method="ssb", upsampling="auto", save_dir=None,
-           max_frames: int | None = None, show: bool = True, verbose: bool = True, **strengths) -> "SSBSeries":
+def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method="ssb", upsampling="auto", save_dir=None,
+           max_frames: int | None = None, neural_model=None, annulus_mrad=None, show: bool = True, verbose: bool = True, **strengths) -> "DirectPtychoSeries":
     """Refit C10, C12 and phi12 on each source with ``fit``'s higher orders, tilt and depth held.
 
     Each source, a recorded file or a scan already resident as an ANS dataset (``ArinaListener.datasets``), is
@@ -198,7 +234,7 @@ def series(ptycho, sources, fit: SSBResult, *, refit="defocus", method="ssb", up
     recorded one, so the series equals one uninterrupted run (``_recorded`` says what must match). The
     records hold no images, so a resumed call may ask for other methods or strengths.
 
-    The frames are added one at a time (``SSBSeries.add``), so a series given no sources is the same
+    The frames are added one at a time (``DirectPtychoSeries.add``), so a series given no sources is the same
     series built while scans arrive: each ``add`` is one more frame of this loop.
     ``max_frames=N`` retains the latest N results and combines only accepted frames within that
     window. Absolute frame indices and drift against the first scan are preserved. The default
@@ -207,8 +243,9 @@ def series(ptycho, sources, fit: SSBResult, *, refit="defocus", method="ssb", up
     # Files are read one at a time and freed after their frame; scans already resident (a live stream's
     # encoded datasets) are used in place and stay the caller's.
     sources = [Path(source) if isinstance(source, (str, Path)) else source for source in sources]
-    result = SSBSeries._begin(ptycho, fit, refit=refit, method=method, upsampling=upsampling, save_dir=save_dir,
-                              show=show, strengths=strengths, frames=len(sources), max_frames=max_frames)
+    result = DirectPtychoSeries._begin(ptycho, fit, refit=refit, method=method, upsampling=upsampling, save_dir=save_dir,
+                              show=show, strengths=strengths, frames=len(sources), max_frames=max_frames, neural_model=neural_model,
+                              annulus_mrad=annulus_mrad)
     iterator = sources
     if verbose:
         from tqdm.auto import tqdm
@@ -226,8 +263,80 @@ def series(ptycho, sources, fit: SSBResult, *, refit="defocus", method="ssb", up
     return result
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class PtychoFrame:
+    """Reconstruction and registration for one completed scan.
+
+    ``phase`` is the phase-only direct solution. ``neural_phase`` is the full
+    phase after the frozen neural phase model of this scan. Both are in radians
+    and share the series' GPU storage. Images are None for methods that were
+    not run. ``displacement_A`` is the measured (row, column) displacement
+    relative to frame zero. ``placed``
+    records whether registration accepted the frame for the combined image.
+    ``aberrations`` contains the coefficients used on this scan. ``annular_counts`` is the
+    measured sum on the native scan grid over ``annulus_mrad`` (inner inclusive,
+    outer exclusive). Both annular fields are None when no band was requested
+    and no model supplied. The series keeps only the latest annular image;
+    holding this result keeps its arrays alive as the rolling window advances.
+    """
+
+    index: int
+    name: str
+    ssb_phase: "cp.ndarray" = field(repr=False)
+    phase: "cp.ndarray | None" = field(repr=False)
+    neural_phase: "cp.ndarray | None" = field(repr=False)
+    complex_phase: "cp.ndarray | None" = field(repr=False)
+    amplitude: "cp.ndarray | None" = field(repr=False)
+    displacement_A: tuple[float, float]
+    placed: bool
+    aberrations: dict[str, float] = field(default_factory=dict, repr=False)
+    annular_counts: "cp.ndarray | None" = field(default=None, repr=False)
+    annulus_mrad: tuple[float, float] | None = None
+    object_sampling_A: tuple[float, float] | None = None
+    phase_damping: float | None = None
+    amplitude_damping: float | None = None
+
+    def show(self, *, size="medium", cmap: str = "gray"):
+        """Show this scan's phase and, when available, its measured annular image.
+
+        The phase is neural when fitted, otherwise direct phase, complex-fit
+        phase or SSB in that order. Images have independent contrast and
+        calibrated scale bars. Returns a Matplotlib figure.
+        """
+        import matplotlib.pyplot as plt
+
+        from quantem.gpu.display._layout import panel_figure, panel_inches
+
+        for key, values in (("neural", self.neural_phase), ("phase", self.phase),
+                            ("complex", self.complex_phase), ("ssb", self.ssb_phase)):
+            if values is not None:
+                break
+        image = host_array(values)
+        sampling = self.object_sampling_A
+        if sampling is None:
+            raise ValueError("Display a reconstruction with calibrated object_sampling_A in Å per pixel.")
+        title = f"{_NAMES[key]} (rad)"
+        if self.phase_damping is not None:
+            title += f"\nphase damping {self.phase_damping:g}"
+            if key == "complex" and self.amplitude_damping is not None:
+                title += f" · amplitude damping {self.amplitude_damping:g}"
+        panels = [(image, title, sampling)]
+        if self.annular_counts is not None:
+            counts = host_array(self.annular_counts)
+            native_sampling = tuple(pixel * n / m for pixel, n, m in zip(sampling, image.shape, counts.shape))
+            inner, outer = self.annulus_mrad
+            panels.append((counts, f"Measured annular counts\n{inner:g}–{outer:g} mrad", native_sampling))
+        width = panel_inches(size)
+        figure, axes = panel_figure(1, len(panels), width, width, title_lines=2)
+        for axis, (values, label, pitch) in zip(axes.flat, panels, strict=True):
+            _panel(figure, axis, values, label, np.percentile(values, (1, 99)), pitch, width, cmap)
+            axis.set_aspect(pitch[0] / pitch[1])
+        plt.close(figure)
+        return figure
+
+
 @dataclass
-class SSBSeries:
+class DirectPtychoSeries:
     """A recorded series: per frame the low-order optics (``aberrations``, higher orders, tilt and depth
     are ``reference``'s), the exact parameters each reconstruction received (``fits``), the refit's
     bookkeeping (``refits``: evaluations, stop, resumed from a record), the SSB phase every frame is
@@ -247,9 +356,9 @@ class SSBSeries:
     methods: tuple[str, ...]
     aberrations: tuple[dict, ...]
     refits: tuple[dict, ...] = field(repr=False)
-    fits: tuple[SSBResult, ...] = field(repr=False)
+    fits: tuple[DirectPtychoResult, ...] = field(repr=False)
     timings: tuple[dict, ...] = field(repr=False)
-    reference: SSBResult = field(repr=False)
+    reference: DirectPtychoResult = field(repr=False)
     object_sampling_A: tuple[float, float]
     shifts_A: np.ndarray = field(repr=False)
     confidence: tuple[float, ...] = field(repr=False)
@@ -262,10 +371,12 @@ class SSBSeries:
     sigma_A: np.ndarray | None = field(default=None, repr=False)
     # What adding the next frame needs: the frame step, the record chain and the growing image stacks.
     _state: SimpleNamespace | None = field(default=None, repr=False)
+    _latest_annular_counts: object = field(default=None, init=False, repr=False)
     _lock: object = field(default_factory=threading.RLock, init=False, repr=False, compare=False)
 
     @classmethod
-    def _begin(cls, ptycho, fit, *, refit, method, upsampling, save_dir, show, strengths, frames=0, max_frames=None):
+    def _begin(cls, ptycho, fit, *, refit, method, upsampling, save_dir, show, strengths,
+               frames=0, max_frames=None, neural_model=None, annulus_mrad=None):
         """An empty series on ``ptycho``'s calibration; ``frames`` sizes the image stacks when known."""
         if refit not in ("none", "defocus", "full"):
             raise ValueError(f'refit={refit!r}: use "defocus" (C10, C12, phi12 from the frame before) or "full" '
@@ -276,27 +387,50 @@ class SSBSeries:
         if records is not None and refit != "defocus":
             raise ValueError(f'save_dir resumes defocus refits; refit="{refit}" keeps no frame records.')
         methods = (method,) if isinstance(method, str) else tuple(dict.fromkeys(method))
-        step = _FrameStep(ptycho, fit, methods, bounded=max_frames is not None)
+        if neural_model is not None:
+            if ptycho.backend != "cuda":
+                raise ValueError("A series with a frozen neural phase model requires a CUDA reference session.")
+            # Keep the current phase and its neural companion available together.
+            methods = tuple(dict.fromkeys(("neural", "phase", *methods)))
+            _check_neural_strengths(strengths)
+        elif "neural" in methods:
+            raise ValueError("Pass neural_model=DirectPtycho.load_neural_phase(checkpoint) for a neural phase image.")
+        if annulus_mrad is not None:
+            annulus_mrad = annular_limits(annulus_mrad)
+        elif neural_model is not None:
+            annulus_mrad = neural_model.annulus_mrad
+        step = _FrameStep(ptycho, fit, methods, bounded=max_frames is not None,
+                          neural_model=neural_model, annulus_mrad=annulus_mrad)
         device = f"cuda:{cp.cuda.runtime.getDevice()}"
         # Every frame has the reference calibration, so "auto" is resolved (and a capped factor announced) once.
         factor = ptycho._resolve_upsampling(upsampling)
+        if neural_model is not None:
+            neural_model._check(ptycho, factor)
         # What every frame's record shares: the reference fit it refits from and the code that ran it.
         shared = None if records is None else {
             "reference": {"coordinates": fit.optimizer["coordinates"], "bounds": fit.optimizer["bounds"],
                           "signature": fit.metadata.get("signature")},
             "settings": {**step.settings, "upsampling": upsampling}, "software": software_signature(),
         }
+        regularization = {key: _regularization(key, strengths) for key in _keys(methods)}
         state = SimpleNamespace(
             step=step, refit=refit, strengths=strengths, factor=factor, records=records, shared=shared,
-            resuming=records is not None, previous=None, panel=_LivePanel(fit.phase_limits, methods[0], enabled=show),
+            resuming=records is not None, previous=None, panel=_LivePanel(fit.phase_limits, methods[0],
+                damping=_damping_caption(regularization[methods[0]]), enabled=show),
             # What each load did with the detector's flagged pixels, announced once for the series.
             flagged={} if max_frames is None else deque(maxlen=max_frames),
             capacity=frames, stacks=None, scan=None, views=[], frozen=False, count=0, shifts_px=(),
         )
+        session = {"kind": type(ptycho), "settings": step.settings, "upsampling": factor, "device": device,
+                   "regularization": regularization}
+        if annulus_mrad is not None:
+            session["annulus_mrad"] = annulus_mrad
+        if neural_model is not None:
+            session["phase_checkpoint_sha256"] = neural_model.checkpoint_sha256
         return cls(frames=(), phase=None, images={}, methods=methods, aberrations=(), refits=(), fits=(), timings=(),
                    reference=fit, object_sampling_A=None, shifts_A=np.zeros((0, 2)), confidence=(), placed=(),
                    combined={}, cover=None, sources=(),
-                   session={"kind": type(ptycho), "settings": step.settings, "upsampling": factor, "device": device},
+                   session=session,
                    max_frames=max_frames, _state=state)
 
     @property
@@ -310,6 +444,40 @@ class SSBSeries:
     def frame_indices(self) -> tuple[int, ...]:
         """Absolute zero-based indices of the retained frames, in chronological order."""
         return tuple(range(self.total_frames - len(self.frames), self.total_frames))
+
+    @property
+    @_locked
+    def latest(self) -> PtychoFrame | None:
+        """Reconstruction of the most recent completed scan, or None before the first scan.
+
+        Read once to get matching images and displacement even if another scan
+        arrives. The zero-based index includes frames evicted from a rolling
+        window. Images are GPU views; copy an image before editing it.
+
+        Examples
+        --------
+        >>> series.add(scan)  # doctest: +SKIP
+        >>> reconstruction = series.latest
+        >>> phase = reconstruction.phase
+        >>> neural_phase = reconstruction.neural_phase
+        """
+        if not self.frames:
+            return None
+        slot = len(self.frames) - 1
+        images = {name: stack[slot] for name, stack in self.images.items()}
+        row, col = self.shifts_A[slot]
+        display_key = next((key for key in ("neural", "phase", "complex") if key in images), "ssb")
+        damping = self.session.get("regularization", {}).get(display_key, {})
+        return PtychoFrame(
+            index=self.total_frames - 1, name=self.frames[slot], ssb_phase=self.phase[slot],
+            phase=images.get("phase"), neural_phase=images.get("neural"),
+            complex_phase=images.get("complex"), amplitude=images.get("amplitude"),
+            displacement_A=(float(row), float(col)), placed=bool(self.placed[slot]),
+            aberrations=dict(self.aberrations[slot]) if self.aberrations else {},
+            annular_counts=self._latest_annular_counts, annulus_mrad=self.session.get("annulus_mrad"),
+            object_sampling_A=self.object_sampling_A,
+            phase_damping=damping.get("phase_damping"), amplitude_damping=damping.get("amplitude_damping"),
+        )
 
     @_locked
     def add(self, scan) -> dict:
@@ -340,6 +508,10 @@ class SSBSeries:
             step.placed = deque(step.placed, maxlen=2)
             step.anchor = None if step.anchor is None else copy.copy(step.anchor)
         resident = not isinstance(source, Path)
+        if (resident and step.neural_model is not None and hasattr(source, "device")
+                and str(source.device) != self.session["device"]):
+            raise ValueError(f"Scan belongs to {source.device}, series belongs to {self.session['device']}. "
+                             "Use a series on the scan's owning device.")
         if resident and state.records is not None:
             raise ValueError("save_dir resumes a series of recorded files; resident scans have no file to identify "
                              "them by. Leave save_dir unset, or save the scans first and pass their paths.")
@@ -397,7 +569,7 @@ class SSBSeries:
             else:
                 objective, coordinates, evaluations, stop, optics, tilt, depth = step.refit(session, clock, began)
             chosen, reconstructed, sampling, seconds = step.reconstruct(session, optics, tilt, depth, state.factor,
-                                                                        state.strengths)
+                                                                        state.strengths, data)
             clock.update(seconds)
             began = time.perf_counter()
             phase, images = self._store(index, reconstructed)
@@ -424,6 +596,7 @@ class SSBSeries:
                 (*self.aberrations, dict(optics))[window],
                 (*self.refits, {"evaluations": evaluations, "stop": stop, "resumed": saved is not None})[window],
                 (*self.fits, chosen)[window], (*self.timings, clock)[window])
+            self._latest_annular_counts = reconstructed.get("annular_counts")
             state.count = index + 1
             if self.max_frames is not None:
                 state.step, state.stacks, state.shifts_px = step, stacks, shifts_px
@@ -529,6 +702,11 @@ class SSBSeries:
         ``images`` and ``combined`` for the method (and ``"amplitude"`` for ``"complex"``) and returns
         those combined images by name."""
         session = self.session
+        model = self._state.step.neural_model if self._state is not None else None
+        if method == "neural" and model is None:
+            raise ValueError("Start a series with neural_model=DirectPtycho.load_neural_phase(checkpoint) to reconstruct neural phase.")
+        if method == "neural":
+            _check_neural_strengths(strengths)
         self._freeze()
         stacks = {}
         with cp.cuda.Device(int(session["device"].split(":")[1])):
@@ -536,14 +714,22 @@ class SSBSeries:
                 resident = not isinstance(source, Path)
                 data = source if resident else io.load(source, device=session["device"], verbose=False)
                 frame = session["kind"](data, **session["settings"])
-                reconstructed, _, _ = _reconstruct(frame, chosen, (method,), session["upsampling"], strengths)
-                for key, image in reconstructed.items():
-                    if index == 0:
-                        stacks[key] = cp.empty((len(self.frames), *image.shape), dtype=cp.float32)
-                    stacks[key][index] = image
-                frame.close()
-                if not resident:
-                    data.close()
+                try:
+                    method_name = "phase" if method == "neural" else method
+                    reconstructed, sampling, _ = _reconstruct(frame, chosen, (method_name,), session["upsampling"], strengths)
+                    if method == "neural":
+                        guide = annular_counts(frame, data, model.annulus_mrad)
+                        prepared = frame._prepared_direct[1]["phase"]
+                        image = model._apply(prepared, reconstructed["phase"], sampling, guide)
+                        reconstructed["neural"] = cp.from_dlpack(image)
+                    for key, image in reconstructed.items():
+                        if index == 0:
+                            stacks[key] = cp.empty((len(self.frames), *image.shape), dtype=cp.float32)
+                        stacks[key][index] = image
+                finally:
+                    frame.close()
+                    if not resident:
+                        data.close()
                 del data, frame, reconstructed
                 cp.get_default_memory_pool().free_all_blocks()
             self.images.update(stacks)
@@ -553,6 +739,7 @@ class SSBSeries:
                 self.methods = (*self.methods, method)
             for key in stacks:
                 self.combined[key], self.cover = self._combine(key)
+                session.setdefault("regularization", {})[key] = _regularization(key, strengths)
         return {key: self.combined[key] for key in stacks}
 
     @_locked
@@ -571,10 +758,14 @@ class SSBSeries:
         shift = self.shifts_A[-1]
         confidence = "reference" if self.frame_indices[-1] == 0 else f"confidence {self.confidence[-1]:.3f}"
         placement = "accepted, combined" if self.placed[-1] else "rejected, not combined"
+        policies = self.session.get("regularization", {})
+        latest_damping = _damping_caption(policies.get(keys[0], {}))
         labels = [f"{latest}: C10 {optics['C10_nm']:.2f} nm, C12 {optics['C12_nm']:.2f} nm, "
                   f"phi12 {optics['phi12_deg']:.1f} deg\n"
-                  f"shift row {shift[0]:.2f}, col {shift[1]:.2f} Å from scan 0; {placement}; {confidence}",
-                  *(f"{_NAMES[key]}, {'combined' if has_coverage else 'no accepted scans'}" for key in keys)]
+                  f"shift row {shift[0]:.2f}, col {shift[1]:.2f} Å from scan 0; {placement}; {confidence}"
+                  + (f"\n{latest_damping}" if latest_damping else ""),
+                  *(f"{_NAMES[key]}, {'combined' if has_coverage else 'no accepted scans'}"
+                    + ("\n" + _damping_caption(policies[key]) if policies.get(key) else "") for key in keys)]
         title = f"{len(self.frames)} scans, {sum(self.placed)} combined"
         if self.max_frames is not None:
             title = f"scans {self.frame_indices[0]}–{self.frame_indices[-1]} of {self.total_frames}; " + title
@@ -631,7 +822,8 @@ class SSBSeries:
                 "Refit evaluations": refit["evaluations"], "Resumed": refit["resumed"],
                 "Shift row (Å)": shift[0], "Shift col (Å)": shift[1], "Live confidence": score, **placement,
                 "Load (s)": clock["load_s"], "Setup (s)": clock["setup_s"], "Refit (s)": clock["refit_s"],
-                **methods, "Align (s)": clock["align_s"], "Display (s)": clock["display_s"], "Total (s)": clock["total_s"],
+                **methods, **({"Annular detector (s)": clock["annular_s"]} if "annular_s" in clock else {}),
+                "Align (s)": clock["align_s"], "Display (s)": clock["display_s"], "Total (s)": clock["total_s"],
             }
         return rows if to_dict else pd.DataFrame.from_dict(rows, orient="index").rename_axis(
             "Frame" if self.max_frames is None else "Frame index")
@@ -643,13 +835,16 @@ class SSBSeries:
         Phase images share the reference phase contrast; the amplitude gets its own, the 1st and 99th
         percentiles of its covered pixels. Pixels no frame reaches are no data: masked in a neutral
         blue-gray in the static figure; Show2D takes finite pixels only, so there they hold the
-        median of the covered pixels, a flat field. Static: the images side by side with scale bars and
+        median of the covered pixels, a flat field. Static: images wrap after two columns, with scale bars and
         colour bars over a strip of the displacement against frame 0 (row, column, Å) with C10 and
         C12 (nm) on a second axis. Interactive returns a Show2D of the latest scan (labelled with its
         acquisition and fitted C10, C12, phi12) and the combined images at full resolution, redrawn with
         every scan ``add`` brings; ``size`` is a preset name or a panel width in pixels for either.
         """
         keys = list(self.combined) if method is None else [method, *(["amplitude"] if method == "complex" else [])]
+        if method is None and "phase" in keys and "neural" in keys:
+            keys.remove("neural")
+            keys.insert(keys.index("phase") + 1, "neural")
         if interactive:
             from quantem.widget import Show2D
 
@@ -657,7 +852,7 @@ class SSBSeries:
             width = {"size": size} if isinstance(size, str) else {"panel_width_px": size}
             view = Show2D(images, labels=labels, title=title, cmap=cmap, sampling=self.object_sampling_A[1], units="Å",
                           vmin=[low for low, _ in limits], vmax=[high for _, high in limits], link_contrast=False,
-                          display_bin=1, verbose=False, **width)
+                          columns=min(2, len(images)), display_bin=1, verbose=False, **width)
             if self._state is not None:
                 # A series still growing redraws this view with every added scan.
                 self._state.views.append((view, keys))
@@ -667,18 +862,33 @@ class SSBSeries:
                   for key in keys]
         import matplotlib.pyplot as plt
 
-        from quantem.gpu.display._layout import panel_figure, panel_inches
+        from quantem.gpu.display._layout import panel_figure, panel_inches, resolve_columns
 
         width = panel_inches(size)
         # The drift strip sits under the image panels, with room for both y axes and the x label.
+        has_series = len(self.frames) > 1
         strip = .6 * width
-        figure, axes = panel_figure(1, len(keys), width, width, title_lines=2, bottom_in=strip + 1.4)
+        columns = resolve_columns(len(keys))
+        rows = (len(keys) + columns - 1) // columns
+        figure, axes = panel_figure(rows, columns, width, width, title_lines=3,
+                                    bottom_in=strip + 1.4 if has_series else .2)
         figure_width, figure_height = figure.get_size_inches()
         uncovered = host_array(~covered)
-        for axis, key, (low, high) in zip(axes[0], keys, limits):
-            _panel(figure, axis, host_array(self.combined[key]), f"{_NAMES[key]}\ncombined, {sum(self.placed)} frames"
-                   f"{'' if key == 'amplitude' else ', rad'}", (low, high), self.object_sampling_A, width, cmap,
+        accepted = sum(self.placed)
+        description = f"combined, {accepted} frames" if has_series else ("single scan" if accepted else "no accepted scans")
+        for unused in axes.flat[len(keys):]:
+            figure.delaxes(unused)
+        policies = self.session.get("regularization", {})
+        for axis, key, (low, high) in zip(axes.flat, keys, limits):
+            caption = _damping_caption(policies.get(key, {}))
+            title = f"{_NAMES[key]}\n{description}{'' if key == 'amplitude' else ', rad'}"
+            if caption:
+                title += f"\n{caption}"
+            _panel(figure, axis, host_array(self.combined[key]), title, (low, high), self.object_sampling_A, width, cmap,
                    uncovered=uncovered)
+        if not has_series:
+            plt.close(figure)
+            return figure
         drift = figure.add_axes((.9 / figure_width, .6 / figure_height,
                                  1 - 1.9 / figure_width, strip / figure_height))
         index = self.frame_indices
@@ -698,11 +908,17 @@ class SSBSeries:
 
 
 # Each method and image as a microscopist names it: report columns, figure titles, viewer labels.
-_METHODS = {"ssb": "SSB", "phase": "Phase-only", "complex": "Amplitude + phase"}
-_NAMES = {"ssb": "SSB", "phase": "Phase-only (phase)", "complex": "Amplitude + phase (phase)",
-          "amplitude": "Amplitude + phase (amplitude)"}
+_METHODS = {"neural": "Frozen neural phase", "ssb": "SSB", "phase": "Phase-only", "complex": "Amplitude + phase"}
+_NAMES = {"neural": "Neural phase", "ssb": "SSB", "phase": "Direct phase", "complex": "Complex-fit phase",
+          "amplitude": "Relative amplitude"}
 # Pixels no frame reaches: a colour no gray value takes.
 _UNCOVERED = "#b9c7d6"
+
+
+def _check_neural_strengths(strengths):
+    for key, default in (("phase_damping", 0.03), ("smoothness_inv_A", 1.0), ("detector_weighting", "uniform")):
+        if strengths.get(key) not in (None, default):
+            raise ValueError(f"The frozen neural phase model requires {key}={default!r} for its trained diffraction model.")
 
 
 def _keys(methods):
@@ -710,15 +926,18 @@ def _keys(methods):
     return [key for name in methods for key in ((name, "amplitude") if name == "complex" else (name,))]
 
 
-def _reconstruct(session, chosen, methods, upsampling, strengths):
+def _reconstruct(session, chosen, methods, upsampling, strengths, *, neural=False):
     """Run each method once on one frame at ``chosen``: the images by name (phase in rad, and the
     complex method's amplitude), the object sampling (Å per pixel) and seconds per method. SSB takes
     no strengths; force rebuilds a regularized method's prepared equations for this frame's counts."""
     images, seconds, sampling = {}, {}, None
     for name in methods:
         began = time.perf_counter()
+        options = {} if name == "ssb" else strengths
+        if neural and name == "phase" and "complex" in methods:
+            options = {key: value for key, value in options.items() if key != "amplitude_damping"}
         result = session.reconstruct(chosen, method=name, upsampling=upsampling, compute_loss=False,
-                             force=True, verbose=False, **({} if name == "ssb" else strengths))
+                                     force=True, verbose=False, **options)
         images[name] = cp.asarray(result.phase, dtype=cp.float32)
         if name == "complex":
             images["amplitude"] = cp.asarray(result.amplitude, dtype=cp.float32)
@@ -742,7 +961,8 @@ class _LivePanel:
     the first requested method and the drift so far in one figure, redrawn at most twice a second (as
     FitDisplay.progress) so drawing stays a small part of each frame's time."""
 
-    def __init__(self, phase_limits, method, *, enabled):
+    def __init__(self, phase_limits, method, *, enabled, damping=""):
+        self.damping = damping
         self.phase_limits, self.method, self.display, self.handle, self.last_update = phase_limits, method, None, None, 0.0
         if not enabled:
             return
@@ -762,7 +982,7 @@ class _LivePanel:
         from IPython.display import Image
 
         figure = _live_figure(frame, self.method, phase, canvas, shifts_A, sampling_A, placed, self.phase_limits,
-                              frame_indices=frame_indices)
+                              frame_indices=frame_indices, damping=self.damping)
         # One PNG render: the inline backend's tight bounding box draws the figure twice.
         buffer = io.BytesIO()
         figure.savefig(buffer, format="png")
@@ -775,14 +995,17 @@ class _LivePanel:
 
 
 def _live_figure(frame, method, phase, canvas, shifts_A, sampling_A, placed, phase_limits, size="medium",
-                 *, frame_indices=None):
+                 *, frame_indices=None, damping=""):
     """The latest frame and the combined image of the placed frames under the reference contrast, with
     scale bars, beside each frame's displacement against frame 0 (row and column, Å)."""
     from quantem.gpu.display._layout import panel_figure, panel_inches
 
     width = panel_inches(size)
-    figure, axes = panel_figure(1, 3, width, width, title_lines=2, bottom_in=.6)
+    strip = .5 * width
+    figure, axes = panel_figure(1, 2, width, width, title_lines=3, bottom_in=strip + 1.25)
     titles = [f"{_NAMES[method]}\n{frame}, rad", f"{_NAMES[method]}\ncombined, {placed} of {len(shifts_A)} frames, rad"]
+    if damping:
+        titles = [f"{title}\n{damping}" for title in titles]
     if canvas is None:
         # A live run's first frame, shown while its rows arrive: nothing is combined yet.
         _panel(figure, axes[0, 0], host_array(phase), titles[0], phase_limits, sampling_A, width, "gray")
@@ -792,13 +1015,12 @@ def _live_figure(frame, method, phase, canvas, shifts_A, sampling_A, placed, pha
         images, uncovered = (host_array(phase), host_array(_combined(canvas))), (None, host_array(canvas.cover == 0))
         for axis, image, title, empty in zip(axes[0, :2], images, titles, uncovered):
             _panel(figure, axis, image, title, phase_limits, sampling_A, width, "gray", uncovered=empty)
-    trace = axes[0, 2]
+    fw, fh = figure.get_size_inches()
+    trace = figure.add_axes((.8 / fw, .5 / fh, 1 - 1.6 / fw, strip / fh))
     indices = np.arange(len(shifts_A)) if frame_indices is None else frame_indices
     trace.plot(indices, shifts_A[:, 0], "o-", ms=3, label="row")
     trace.plot(indices, shifts_A[:, 1], "s-", ms=3, label="column")
     trace.set(xlabel="Frame index", title="Displacement against\nframe 0 (Å)")
-    # Ticks on the right, clear of the combined image's colorbar in the gap before it.
-    trace.yaxis.tick_right()
     trace.legend(fontsize=8, frameon=False)
     return figure
 

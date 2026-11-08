@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.units import validate_aberrations
 
 # drag-window tiles kept per control: a drag back and forth across one tile edge needs two
@@ -76,6 +76,17 @@ def settings(
         smoothness_inv_A=smoothness,
         detector_weighting=weighting,
     )
+
+
+def _scan_basis(value, backend):
+    """Validate the physical (row, col) basis once at the public boundary."""
+    basis = np.asarray(value, dtype=float)
+    if (basis.shape != (2, 2) or not np.isfinite(basis).all()
+            or np.linalg.det(basis) <= 0):
+        raise ValueError("scan_basis must be a finite 2 by 2, orientation-preserving matrix.")
+    if backend != "cuda":
+        raise NotImplementedError("Calibrated scan_basis currently requires CUDA.")
+    return tuple(tuple(float(v) for v in row) for row in basis)
 
 
 def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=False):
@@ -286,6 +297,7 @@ def _inputs(session, coefs, tilt, depth, factor, policy):
         "aberrations": coefs,
         "sample_tilt_mrad": tilt or (0.0, 0.0),
         "depth_spread_nm": depth or 0.0,
+        "scan_basis": policy.get("scan_basis"),
     }
     key = (
         id(engine),
@@ -297,6 +309,7 @@ def _inputs(session, coefs, tilt, depth, factor, policy):
         factor,
         policy.get("smoothness_inv_A"),
         policy.get("detector_weighting"),
+        policy.get("scan_basis"),
     )
     return engine, optics, key
 
@@ -306,6 +319,7 @@ def run(
     parameters,
     *,
     aberrations,
+    neural_model,
     factor,
     policy,
     compute_loss,
@@ -314,7 +328,7 @@ def run(
     verbose,
 ):
     """Apply one regularized method with explicit provenance and saved reuse."""
-    if parameters is not None and not isinstance(parameters, SSBResult):
+    if parameters is not None and not isinstance(parameters, DirectPtychoResult):
         raise TypeError(
             "Pass the result of fit_aberrations(), or coefficients through aberrations={...}."
         )
@@ -344,6 +358,12 @@ def run(
         upsampling=factor,
         compute_loss=bool(compute_loss),
     )
+    if neural_model is not None:
+        neural_model._check(session, factor)
+        neural_model._check_policy(policy)
+        if session._input_dataset is None or session.scan_region is not None:
+            raise ValueError("Load a full counting acquisition with io.load and pass it to DirectPtycho.")
+        options["neural_phase_model"] = neural_model._signature()
     paths = signature = None
     if save_dir is not None:
         signature = session._result_signature("direct", options)
@@ -372,7 +392,7 @@ def run(
     )
     if session.backend == "cuda":
         cp.cuda.get_current_stream().synchronize()
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=wave,
         backend=session.backend,
         aberrations=coefs,
@@ -394,6 +414,30 @@ def run(
         fit_scan_region=correction.fit_scan_region if correction is not None else None,
         **session._fit_evidence(correction, coefs, tilt, depth),
     )
+    result.timings["direct_s"] = result.elapsed_s
+    if neural_model is not None:
+        from quantem.gpu.direct_ptycho._annular_detector import annular_counts
+
+        began = time.perf_counter()
+        guide = annular_counts(session, session._input_dataset, neural_model.annulus_mrad)
+        cp.cuda.get_current_stream().synchronize()
+        result.timings["annular_s"] = time.perf_counter() - began
+        began = time.perf_counter()
+        input_wave = wave
+        if policy["phase_damping"] != neural_model.input_phase_damping:
+            input_wave, _ = solve(
+                session, coefs, tilt, depth, factor,
+                {**policy, "phase_damping": neural_model.input_phase_damping},
+                compute_loss=False,
+            )
+        prepared = session._prepared_direct[1]["phase"]
+        neural = neural_model._apply(prepared, _phase(session, input_wave), result.object_sampling_A, guide)
+        result.neural_phase = cp.from_dlpack(neural)
+        result.annular_counts = cp.asarray(guide)
+        cp.cuda.get_current_stream().synchronize()
+        result.timings["neural_s"] = time.perf_counter() - began
+        result.reconstruction_options["neural_phase_model"] = neural_model._signature()
+        result.elapsed_s = time.perf_counter() - started
     # The relative prediction error is not the conventional phase-variance loss.
     result = session._accept_result(result)
     if paths is not None:

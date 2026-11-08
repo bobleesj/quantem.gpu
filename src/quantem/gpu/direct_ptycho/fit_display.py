@@ -6,7 +6,7 @@ import time
 class FitDisplay:
     """Render only in a live notebook; command-line fitting stays display-free."""
 
-    def __init__(self, ssb, *, enabled: bool, size: str | int = "medium", columns: int = 3,
+    def __init__(self, ssb, *, enabled: bool, size: str | int = "medium", columns: int = 2,
                  show_convergence: bool = False,
                  scan_region: tuple[int, int, int, int] | None = None):
         from quantem.gpu.display._layout import panel_inches, resolve_columns
@@ -117,7 +117,7 @@ class FitDisplay:
 
 
 def _show_fit_region(image, scan_region, scan_shape, *, width: float, final: bool,
-                     compare=(), columns: int = 3):
+                     compare=(), columns: int = 2):
     """Show full fields above matching fit-region zooms under one contrast scale."""
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle

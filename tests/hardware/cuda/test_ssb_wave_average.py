@@ -189,7 +189,7 @@ def test_higher_order_coefficients_are_independent_between_streams():
 
 def test_native_512_joint_optics_keep_phase_with_bounded_workspace():
     """Changing defocus keeps full fifth-order phase independent of workspace size."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     from tests.hardware.test_ssb_coherent_higher_order import ANGLES, COEFS, NAMES
 
@@ -197,7 +197,7 @@ def test_native_512_joint_optics_keep_phase_with_bounded_workspace():
     counts = rng.integers(10, 80, size=(512, 512, 16, 16), dtype=np.uint16)
     row, col = np.meshgrid(np.arange(16) - 7.5, np.arange(16) - 7.5, indexing="ij")
     counts[:, :, np.hypot(row, col) < 6] += 100
-    with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=30,
+    with DirectPtycho(counts, backend="cuda", voltage_kV=300, semiangle_mrad=30,
              scan_sampling_A=(0.3, 0.3), detector_sampling_mrad=(5.0, 5.0),
              scan_detector_rotation_deg=17) as ssb:
         options = {

@@ -52,12 +52,12 @@ def acquisition(tmp_path):
 
 def test_a_region_session_holds_the_region_of_the_whole_scans_bright_field(acquisition):
     """scan_region decodes those positions only, with the disk of the whole scan: the same pixels, centre and radius."""
-    from quantem.gpu import SSB, detector
+    from quantem.gpu import DirectPtycho, detector
 
-    with SSB(acquisition, **SETTINGS) as whole:
+    with DirectPtycho(acquisition, **SETTINGS) as whole:
         crop, center, radius = cp.asnumpy(whole._data), whole.bright_field_center_px, whole.bright_field_radius_px
     mean = detector.mean(acquisition)
-    with SSB(acquisition, scan_region=(16, 80, 32, 96), mean_pattern=mean, **SETTINGS) as region:
+    with DirectPtycho(acquisition, scan_region=(16, 80, 32, 96), mean_pattern=mean, **SETTINGS) as region:
         np.testing.assert_array_equal(cp.asnumpy(region._data), crop[16:80, 32:96])
         assert region.bright_field_center_px == center and region.bright_field_radius_px == radius
         assert region.scan_region == (16, 80, 32, 96)
@@ -66,27 +66,27 @@ def test_a_region_session_holds_the_region_of_the_whole_scans_bright_field(acqui
 
 def test_a_saved_tilt_fit_of_resident_data_is_found_by_the_data(acquisition, tmp_path):
     """A second session on the same resident acquisition reuses the saved fit; a region of it is other data."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     settings = dict(tilt=True, num_trials=8, compare_standard=False, check_rotation=False,
                     save_dir=tmp_path / "fit", verbose=False)
-    with SSB(acquisition, **SETTINGS) as first:
+    with DirectPtycho(acquisition, **SETTINGS) as first:
         fitted = first.fit_aberrations(search="primary", **settings)
         assert first.source_kind == "resident"
-    with SSB(acquisition, **SETTINGS) as second:
+    with DirectPtycho(acquisition, **SETTINGS) as second:
         again = second.fit_aberrations(search="primary", **settings)
     assert not fitted.reused and again.reused
     assert again.aberrations == fitted.aberrations and again.sample_tilt_mrad == fitted.sample_tilt_mrad
     assert fitted.tilt_fit_gain is None and fitted.refinement == "newton"
-    with SSB(acquisition, scan_region=(0, 64, 0, 64), **SETTINGS) as region:
+    with DirectPtycho(acquisition, scan_region=(0, 64, 0, 64), **SETTINGS) as region:
         assert not region.fit_aberrations(search="primary", **settings).reused      # a region is other data
 
 
 def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu(acquisition):
     """num_trials=0 starts from the session's fit and searches nothing; output='native' is the CuPy phase of the preview."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    with SSB(acquisition, **SETTINGS) as ssb:
+    with DirectPtycho(acquisition, **SETTINGS) as ssb:
         fitted = ssb.fit_aberrations(search="primary", tilt=True, num_trials=8, compare_standard=False,
                                       check_rotation=False, verbose=False)
         again = ssb.fit_aberrations(search="primary", tilt=True, num_trials=0, compare_standard=False,
@@ -99,7 +99,7 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
         host, _ = ssb.preview(dict(again.aberrations), **options)
         assert isinstance(native, cp.ndarray)
         np.testing.assert_array_equal(cp.asnumpy(native).astype(np.float32), host)
-    with SSB(acquisition, **SETTINGS) as standard:
+    with DirectPtycho(acquisition, **SETTINGS) as standard:
         # the standard fit (tilt=False) polishes the agreement with the same resident Newton as on MPS
         fit = standard.fit_aberrations(search="primary", tilt=False, check_rotation=False, verbose=False)
         assert fit.refinement == "newton" and fit.sample_agreement > 0 and fit.sample_tilt_mrad is None
@@ -113,22 +113,22 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
 def test_native_previews_are_their_own_arrays_and_a_region_refit_starts_from_assigned_optics(acquisition, monkeypatch):
     """Each native preview survives the next one, and a region refit with no trials starts from the aberrations a
     caller assigned to the session, not from zero."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    with SSB(acquisition, **SETTINGS) as ssb:
+    with DirectPtycho(acquisition, **SETTINGS) as ssb:
         options = dict(compute_loss=False)
         first, _ = ssb.preview({"C10_nm": 1.0, "C12_nm": 0.0, "phi12_deg": 0.0}, output="native", **options)
         kept = cp.asnumpy(first)
         ssb.preview({"C10_nm": 30.0, "C12_nm": 0.0, "phi12_deg": 0.0}, output="native", **options)
         np.testing.assert_array_equal(cp.asnumpy(first), kept)
     starts = []
-    fit_tilt = SSB._fit_tilt
+    fit_tilt = DirectPtycho._fit_tilt
 
     def recorded(self, *args, **kwargs):
         starts.append(dict(self.aberrations))
         return fit_tilt(self, *args, **kwargs)
-    monkeypatch.setattr(SSB, "_fit_tilt", recorded)
-    with SSB(acquisition, **SETTINGS) as ssb:
+    monkeypatch.setattr(DirectPtycho, "_fit_tilt", recorded)
+    with DirectPtycho(acquisition, **SETTINGS) as ssb:
         ssb.aberrations = {"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}
         ssb.sample_tilt_mrad, ssb.depth_spread_nm = (1.0, -2.0), 30.0
         ssb.fit_aberrations(search="primary", tilt=True, num_trials=0, compare_standard=False, check_rotation=False,
@@ -148,19 +148,19 @@ def _note_open(event, arguments):
 def test_calibration_from_a_resident_acquisition_opens_no_file(tmp_path, monkeypatch):
     """One read: with a real acquisition resident on the GPU, the mean pattern, virtual images, DPC, the disk fit, the SSB
     session, the saved tilt fit, the phase image and the column sign open nothing in the acquisition's folder, through
-    Python or through h5py. The session decodes the same bright-field crop as SSB.open(path)."""
+    Python or through h5py. The session decodes the same bright-field crop as DirectPtycho.open(path)."""
     source = Path(os.environ.get("QUANTEM_SSB_ARINA_MASTER", ""))
     if not source.is_file():
         pytest.skip("set QUANTEM_SSB_ARINA_MASTER to a real Arina master file")
     _require_cuda()
     import h5py
 
-    from quantem.gpu import SSB, detector, dpc
+    from quantem.gpu import DirectPtycho, detector, dpc
     from quantem.gpu.io import load
     from quantem.gpu.direct_ptycho.results import column_sign
 
     settings = dict(SETTINGS, scan_sampling_A=(0.264, 0.264), detector_sampling_mrad=(0.5554, 0.5554), scan_detector_rotation_deg=158.9)
-    by_path = SSB.open(str(source), **settings)
+    by_path = DirectPtycho.open(str(source), **settings)
     crop, center = cp.asnumpy(by_path._data), by_path.bright_field_center_px
     by_path.close()
     del by_path
@@ -182,14 +182,14 @@ def test_calibration_from_a_resident_acquisition_opens_no_file(tmp_path, monkeyp
             detector.adf(data)
             dpc.run(data)
             detector.fit_probe(mean)
-            session = SSB(data, **settings)
+            session = DirectPtycho(data, **settings)
             fitted = session.fit_aberrations(search="primary", **fit)
-            with SSB(data, **settings) as second:      # a new session on the same data finds the saved fit by the data's identity
+            with DirectPtycho(data, **settings) as second:      # a new session on the same data finds the saved fit by the data's identity
                 again = second.fit_aberrations(search="primary", **fit)
             phase, _ = session.preview(dict(fitted.aberrations), sample_tilt_mrad=fitted.sample_tilt_mrad,
                                        depth_spread_nm=fitted.depth_spread_nm, compute_loss=False)
             column_sign(phase)
-            with SSB(data, scan_region=(64, 256, 128, 320), mean_pattern=mean, **settings) as region:      # its own positions only
+            with DirectPtycho(data, scan_region=(64, 256, 128, 320), mean_pattern=mean, **settings) as region:      # its own positions only
                 region_counts, region_center = cp.asnumpy(region._data), region.bright_field_center_px
         finally:
             _WATCH["folder"] = None

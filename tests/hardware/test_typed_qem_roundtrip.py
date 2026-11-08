@@ -263,7 +263,7 @@ def test_float64_display_rounds_without_changing_storage(tmp_path, backend):
 
 @pytest.mark.parametrize("kind", ["uint32", "uint64", "int32", "float64"])
 def test_fixed_ssb_survives_typed_save_reopen(tmp_path, backend, kind):
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     rows, cols = np.indices((16, 16))
     disk = (rows - 7.5) ** 2 + (cols - 7.5) ** 2 <= 5**2
@@ -284,7 +284,7 @@ def test_fixed_ssb_survives_typed_save_reopen(tmp_path, backend, kind):
     )
 
     def phases(data):
-        with SSB(data, **settings) as session:
+        with DirectPtycho(data, **settings) as session:
             result = []
             for tilt in (None, (1.0, -2.0)):
                 session.sample_tilt_mrad = tilt

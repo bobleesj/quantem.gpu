@@ -61,10 +61,10 @@ def _astigmatism_error_nm(fit, C12_nm, phi12_deg):
 @pytest.mark.parametrize("C10_nm,C12_nm", [(-8.0, 2.5), (5.0, 0.0), (-20.0, 5.0)])
 def test_standard_fit_recovers_known_aberrations(C10_nm, C12_nm):
     """The agreement fit lands on the true aberrations with the Newton on the exact derivatives."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     frames, detector_sampling_mrad = _astigmatic_crystal(C10_A=10 * C10_nm, C12_A=10 * C12_nm, phi12_deg=20.0)
-    with SSB(frames, **_settings(detector_sampling_mrad)) as session:
+    with DirectPtycho(frames, **_settings(detector_sampling_mrad)) as session:
         fit = session.fit_aberrations(search="primary", tilt=False, check_rotation=False, verbose=False)
         _, loss = session.preview(fit.aberrations)
     assert fit.refinement == "newton"
@@ -79,10 +79,10 @@ def test_standard_fit_recovers_known_aberrations(C10_nm, C12_nm):
 
 def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
     """fixed_aberrations holds C12 at 0 in every trial and through the refinement; C10 is still fitted."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     frames, detector_sampling_mrad = _astigmatic_crystal(C12_A=0.0)  # truth C10 -8 nm, no astigmatism
-    with SSB(frames, **_settings(detector_sampling_mrad)) as session:
+    with DirectPtycho(frames, **_settings(detector_sampling_mrad)) as session:
         fit = session.fit_aberrations(search="primary", tilt=False, fixed_aberrations={"C12_nm": 0.0}, num_trials=60,
                                        check_rotation=False, verbose=False)
         assert fit.refinement == "bfgs"  # a locked coefficient: the exact-gradient refinement in (C10, C12, phi12)
@@ -98,10 +98,10 @@ def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
 
 def test_phi12_range_bounds_the_standard_fit():
     """A phi12 range bounds the search and the refinement (the exact-gradient refinement in (C10, C12, phi12), as the Newton cannot bound phi12)."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     frames, detector_sampling_mrad = _astigmatic_crystal()  # phi12 20 degrees
-    with SSB(frames, **_settings(detector_sampling_mrad)) as session:
+    with DirectPtycho(frames, **_settings(detector_sampling_mrad)) as session:
         inside = session.fit_aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (0.0, 45.0)}, num_trials=60,
                                           check_rotation=False, verbose=False)
         outside = session.fit_aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (40.0, 80.0)}, num_trials=60,
@@ -113,10 +113,10 @@ def test_phi12_range_bounds_the_standard_fit():
 def test_depth_zero_objective_matches_torch_reference():
     """The fused agreement kernel at depth spread 0 equals tests/parity/torch_ssb.py fit_power, and ignores the tilt
     exactly: at depth 0 both depth weights are 1, so the model is ordinary SSB."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     frames, detector_sampling_mrad = _astigmatic_crystal()
-    with SSB(frames, **_settings(detector_sampling_mrad)) as session:
+    with DirectPtycho(frames, **_settings(detector_sampling_mrad)) as session:
         session.preview({"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0}, compute_loss=False)
         pytest.importorskip("torch")
         from tests.parity.torch_ssb import TorchSSB

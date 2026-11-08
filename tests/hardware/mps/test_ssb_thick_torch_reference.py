@@ -91,7 +91,7 @@ PHASE_ROWS = (0, 4, 7)
 @pytest.fixture(scope="module")
 def gold():
     _require_mps()
-    from quantem.gpu import SSB, io
+    from quantem.gpu import DirectPtycho, io
     from tests.parity.torch_ssb import TorchSSB
 
     harness = _gold_harness()
@@ -100,7 +100,7 @@ def gold():
         pytest.skip("the gold scan is not in the Hugging Face cache (tests/benchmarks/mps_ssb.py run --download fetches it)")
     data = io.load(str(master), hot_pixel_correction=harness.HOT_PIXELS, verbose=False)
     harness.calibrate(data)
-    ssb = SSB(data)
+    ssb = DirectPtycho(data)
     assert ssb.backend == "mps"
     fit = ssb.reconstruct()
     assert fit.sample_tilt_mrad is not None and fit.depth_spread_nm, "the default fit is tilt-corrected"

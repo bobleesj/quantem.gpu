@@ -8,7 +8,7 @@ The strict gate compares two implementations at identical inputs:
 Identical inputs are guaranteed by exporting one authoritative artifact per
 case: the production exact BF-column companion (``(BF, scan)`` exact integer
 counts plus its ``snapshots/cal.json`` declaration). The Python MPS path loads
-it through ``SSB.open(..., backend="mps")``. Nothing is binned, cropped,
+it through ``DirectPtycho.open(..., backend="mps")``. Nothing is binned, cropped,
 scaled, or approximated in any measured path. (The retired native non-model
 engine's harness read the same ``.u16`` payload.)
 

@@ -11,7 +11,7 @@ import os
 import numpy as np
 import pytest
 
-from quantem.gpu import SSB, DirectPtycho
+from quantem.gpu import DirectPtycho, DirectPtycho
 
 pytestmark = pytest.mark.slow
 
@@ -46,7 +46,7 @@ def test_compare_methods_and_change_only_regularization(acquisition):
             old = ptycho.reconstruct(
                 optics, upsampling="auto", compute_loss=False
             )
-        assert SSB is DirectPtycho
+        assert DirectPtycho is DirectPtycho
         cp.testing.assert_array_equal(ssb.object_wave, old.object_wave)
         phase = ptycho.reconstruct(optics, method="phase", upsampling="auto")
         original = phase.object_wave.copy()

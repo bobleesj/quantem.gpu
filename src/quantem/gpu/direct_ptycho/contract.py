@@ -8,7 +8,7 @@ from typing import Literal, Protocol
 import numpy as np
 
 from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 # The local refinement a low-order fit applied: the trust-region Newton on the exact derivatives ("newton"), or the
 # exact-gradient quasi-Newton in (C10, C12, phi12) for a standard fit that locks a coefficient, bounds phi12 or holds a
@@ -57,7 +57,7 @@ def auto_refinement(refinement) -> str | None:
 
 
 @dataclass(frozen=True)
-class SSBPrecision:
+class BackendPrecision:
     """Numeric storage required from every SSB backend."""
 
     real_dtype: Literal["float32"] = "float32"
@@ -65,7 +65,7 @@ class SSBPrecision:
 
 
 @dataclass(frozen=True)
-class SSBExportState:
+class ExportState:
     """Exact compact state consumed by widget and browser integrations."""
 
     backend: Literal["cuda", "mps"]
@@ -84,7 +84,7 @@ class SSBExportState:
     angular_sampling_rad: tuple[float, float]
     sampling_A: tuple[float, float]
     dc_value: complex
-    precision: SSBPrecision = SSBPrecision()
+    precision: BackendPrecision = BackendPrecision()
     bf_source_path: pathlib.Path | None = None
     bf_source_dtype: np.dtype | None = None
     bf_source_max_value: int | None = None
@@ -98,7 +98,7 @@ class SSBExportState:
         return self.brightfield.size
 
 
-class SSBProtocol(Protocol):
+class DirectPtychoProtocol(Protocol):
     """Backend contract implemented by CUDA and MPS: every call ``SSB`` makes.
 
     CUDA and MPS implement this protocol in Python. Browser WebGPU mirrors the
@@ -110,7 +110,7 @@ class SSBProtocol(Protocol):
     """
 
     backend: Literal["cuda", "mps"]
-    precision: SSBPrecision
+    precision: BackendPrecision
 
     @property
     def scan_shape(self) -> tuple[int, int]: ...
@@ -132,7 +132,7 @@ class SSBProtocol(Protocol):
         seed: int,
         verbose: bool,
         compute_loss: bool = True,
-    ) -> SSBResult: ...
+    ) -> DirectPtychoResult: ...
 
     def cache_rotation(self, scan_detector_rotation_rad: float) -> None: ...
 
@@ -156,7 +156,7 @@ class SSBProtocol(Protocol):
 
     def preview_context(self, num_bright_field_pixels: int) -> AbstractContextManager | None: ...
 
-    def browser_state(self) -> SSBExportState: ...
+    def browser_state(self) -> ExportState: ...
 
     def export_brightfield(
         self,
@@ -168,6 +168,6 @@ class SSBProtocol(Protocol):
 
 
 __all__ = [
-    "SSBPrecision",
-    "SSBProtocol",
+    "BackendPrecision",
+    "DirectPtychoProtocol",
 ]

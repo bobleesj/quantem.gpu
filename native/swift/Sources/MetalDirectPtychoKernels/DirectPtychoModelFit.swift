@@ -11,7 +11,7 @@ public enum DirectPtychoObjective: String, Codable, Sendable {
   case phaseVariance = "phase_variance"
 }
 
-/// The settings of `DirectPtychoModelFit.findAberrations`, Python `SSB.find_aberrations` in one vocabulary:
+/// The settings of `DirectPtychoModelFit.findAberrations`, Python `DirectPtycho.fit_aberrations` in one vocabulary:
 ///
 /// | Options | Method |
 /// |---|---|
@@ -274,7 +274,7 @@ public struct DirectPtychoBranchedFit: Codable, Sendable {
   public var comparedBranches: Bool { fits.count == 2 }
 }
 
-/// Python `SSB.find_aberrations` on a prepared native session: the default fit, optionally on both
+/// Python `DirectPtycho.fit_aberrations` on a prepared native session: the default fit, optionally on both
 /// 180-degree branches of an estimated rotation with the branch test.
 public enum DirectPtychoModelFit {
   public typealias Progress = (_ stage: String, _ completed: Int, _ total: Int) -> Void

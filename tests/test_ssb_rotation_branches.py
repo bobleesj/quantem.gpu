@@ -251,17 +251,17 @@ def test_display_helpers_default_to_the_auto_factor():
     """show_trials and branch panels resolve "auto" as reconstruct does: 2x at 0.264 Å, 3x at 0.373 Å, 4x at 0.5 Å."""
     import inspect
 
-    from quantem.gpu.direct_ptycho.workflow import SSB
+    from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
-    assert inspect.signature(SSB.show_trials).parameters["upsampling"].default == "auto"
+    assert inspect.signature(DirectPtycho.show_trials).parameters["upsampling"].default == "auto"
     assert inspect.signature(RotationBranches.show).parameters["upsampling"].default == "auto"
-    assert inspect.signature(SSB.reconstruct).parameters["upsampling"].default == 1   # the fit grid
+    assert inspect.signature(DirectPtycho.reconstruct).parameters["upsampling"].default == 1   # the fit grid
     for step, factor in ((0.264, 2), (0.373, 3), (0.5, 4)):
         calibration = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(step, step))
-        assert SSB._resolve_upsampling(calibration, "auto") == factor
-    assert SSB._resolve_upsampling(calibration, 2) == 2
+        assert DirectPtycho._resolve_upsampling(calibration, "auto") == factor
+    assert DirectPtycho._resolve_upsampling(calibration, 2) == 2
     coarse = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(2.0, 2.0))
-    assert SSB._resolve_upsampling(coarse, "auto") == 4   # capped; the notice is tested in test_ssb_auto_sampling
+    assert DirectPtycho._resolve_upsampling(coarse, "auto") == 4   # capped; the notice is tested in test_ssb_auto_sampling
 
 
 def test_a_native_phase_view_names_the_auto_factor(capsys):
@@ -270,16 +270,16 @@ def test_a_native_phase_view_names_the_auto_factor(capsys):
 
     matplotlib.use("Agg")
     pytest.importorskip("quantem.core")
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
     wave = np.exp(1j * _lattice(n=32))
-    native = SSBResult(object_wave=wave, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
+    native = DirectPtychoResult(object_wave=wave, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
                        object_sampling_A=(0.5, 0.5))
     native.show(axsize=(2, 2))
     assert capsys.readouterr().out.strip() == (
         "SSB: showing this phase at 1x, the grid it was reconstructed on; "
         "ssb.reconstruct(result, upsampling='auto') shows it at 4x.")
-    auto = SSBResult(object_wave=np.exp(1j * _lattice(n=128)), backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
+    auto = DirectPtychoResult(object_wave=np.exp(1j * _lattice(n=128)), backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
                      object_sampling_A=(0.125, 0.125), upsampling=4)
     auto.show(axsize=(2, 2))
     assert capsys.readouterr().out == ""

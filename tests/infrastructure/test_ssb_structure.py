@@ -9,7 +9,7 @@ from pathlib import Path
 def test_public_ssb_api_has_one_workflow() -> None:
     """C1: scientist API, expect one session with explicit operations."""
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     for name in (
         "open",
@@ -20,24 +20,24 @@ def test_public_ssb_api_has_one_workflow() -> None:
         "preview",
         "close",
     ):
-        assert hasattr(SSB, name)
+        assert hasattr(DirectPtycho, name)
 
 
 def test_ssb_open_keeps_detector_storage_dtype_explicit() -> None:
     """C1b: raw HDF5 loading defaults native and permits an explicit dtype."""
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    signature = inspect.signature(SSB.open)
+    signature = inspect.signature(DirectPtycho.open)
     assert signature.parameters["dtype"].default is None
 
 
 def test_ssb_operations_share_saved_result_controls() -> None:
     """C1b2: fit and fixed-probe reconstruction share persistence vocabulary."""
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    for operation in (SSB.fit_aberrations, SSB.reconstruct):
+    for operation in (DirectPtycho.fit_aberrations, DirectPtycho.reconstruct):
         signature = inspect.signature(operation)
         assert signature.parameters["save_dir"].default is None
         assert signature.parameters["force"].default is False
@@ -45,9 +45,9 @@ def test_ssb_operations_share_saved_result_controls() -> None:
 
 def test_ssb_series_uses_inclusive_human_frame_bounds() -> None:
     """Series selection should not expose Python's half-open range contract."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    parameters = inspect.signature(SSB.reconstruct_series).parameters
+    parameters = inspect.signature(DirectPtycho.reconstruct_series).parameters
 
     assert "first_frame" in parameters
     assert "last_frame" in parameters
@@ -60,9 +60,9 @@ def test_ssb_series_uses_inclusive_human_frame_bounds() -> None:
 def test_every_public_ssb_entry_point_defaults_to_full_bright_field() -> None:
     """C1c: all scientist entry points use the complete automatic BF disk."""
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    for entry_point in (SSB, SSB.open):
+    for entry_point in (DirectPtycho, DirectPtycho.open):
         signature = inspect.signature(entry_point)
         assert signature.parameters["bright_field_intensity_threshold"].default == 0.0
 
@@ -92,7 +92,7 @@ def test_reconstruct_series_reuses_only_exact_results(
 
     import numpy as np
 
-    from quantem.gpu import SSB, SSBResult
+    from quantem.gpu import DirectPtycho, DirectPtychoResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
@@ -135,7 +135,7 @@ def test_reconstruct_series_reuses_only_exact_results(
             return None
 
         def _result(self, phase):
-            return SSBResult(
+            return DirectPtychoResult(
                 object_wave=np.exp(
                     1j * np.full((8, 9), phase, dtype=np.float32)
                 ).astype(np.complex64),
@@ -157,19 +157,19 @@ def test_reconstruct_series_reuses_only_exact_results(
             return self._result(0.3 + 0.1 * self.index)
 
     monkeypatch.setattr(
-        SSB,
+        DirectPtycho,
         "open",
         classmethod(lambda cls, source, **kwargs: FakeSession(source)),
     )
 
-    independent = SSB.reconstruct_series(
+    independent = DirectPtycho.reconstruct_series(
         raw,
         first_frame=151,
         last_frame=153,
         trials=200,
         progress=False,
     )
-    fixed_probe_result = SSB.reconstruct_series(
+    fixed_probe_result = DirectPtycho.reconstruct_series(
         raw,
         first_frame=151,
         last_frame=153,
@@ -227,14 +227,14 @@ def test_reconstruct_series_reuses_only_exact_results(
 
 
 def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation(tmp_path, monkeypatch) -> None:
-    """``save_dir`` names the results folder; the flip, the fitted (unrounded) radius and a missing rotation reach SSB.open.
+    """``save_dir`` names the results folder; the flip, the fitted (unrounded) radius and a missing rotation reach DirectPtycho.open.
 
     The series always read and created ``<source>/live/screen`` (missing a Live output elsewhere), never forwarded a
     flip, rounded a saved 53.4 px radius to 53, and refused an acquisition without a recorded rotation.
     """
     import numpy as np
 
-    from quantem.gpu import SSB, SSBResult, screening
+    from quantem.gpu import DirectPtycho, DirectPtychoResult, screening
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
@@ -263,7 +263,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
 
         def fit_aberrations(self, **kwargs):
             rotation = self.kwargs["scan_detector_rotation_deg"]
-            return SSBResult(object_wave=np.ones((4, 4), np.complex64), backend="mps",
+            return DirectPtychoResult(object_wave=np.ones((4, 4), np.complex64), backend="mps",
                              aberrations={"C10_nm": 15.8, "C12_nm": 6.7, "phi12_deg": 17.5},
                              scan_detector_rotation_deg=158.9 if rotation is None else rotation,
                              scan_detector_rotation_flipped=False if rotation is None else self.kwargs["scan_detector_rotation_flipped"],
@@ -274,13 +274,13 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
         return FakeSession(kwargs)
 
     prepared = []
-    monkeypatch.setattr(SSB, "open", classmethod(fake_open))
+    monkeypatch.setattr(DirectPtycho, "open", classmethod(fake_open))
     monkeypatch.setattr(screening, "prepare", lambda source, **kwargs: prepared.append(kwargs) or type("P", (), {
         name: np.zeros((4, 4), np.float32) for name in ("mean_diffraction_pattern", "bright_field", "dark_field",
                                                        "com_row", "com_col", "dpc_phase")})())
     (raw / "dataset.yaml").write_text("schema: quantem.dataset/2\nmicroscope: {voltage_kV: 300, semiangle_mrad: 30}\n"
                                       "calibrations: {default: {scan_sampling_A: [0.264, 0.264]}}\n")
-    result = SSB.reconstruct_series(raw, first_frame=1, last_frame=2, save_dir=out, progress=False)
+    result = DirectPtycho.reconstruct_series(raw, first_frame=1, last_frame=2, save_dir=out, progress=False)
 
     assert result.results_directory == out.resolve() and not (raw / "live").exists()
     first, second = (kwargs for _, kwargs in opened)
@@ -294,7 +294,7 @@ def test_reconstruct_series_rejects_reversed_frame_bounds(tmp_path) -> None:
     """Inclusive frame bounds should fail clearly when reversed."""
     import pytest
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     raw = tmp_path / "raw"
     screen = raw / "live" / "screen"
@@ -302,7 +302,7 @@ def test_reconstruct_series_rejects_reversed_frame_bounds(tmp_path) -> None:
     screen.mkdir(parents=True)
 
     with pytest.raises(ValueError, match="first_frame must be at most last_frame"):
-        SSB.reconstruct_series(
+        DirectPtycho.reconstruct_series(
             raw,
             first_frame=3,
             last_frame=1,
@@ -336,7 +336,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
     """Non-consecutive endpoint IDs should include intervening acquisitions."""
     import numpy as np
 
-    from quantem.gpu import SSB, SSBResult
+    from quantem.gpu import DirectPtycho, DirectPtychoResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
@@ -387,7 +387,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
             return None
 
         def fit_aberrations(self, **kwargs):
-            return SSBResult(
+            return DirectPtychoResult(
                 object_wave=np.exp(
                     1j * np.full((2, 3), 0.1 * self.index, dtype=np.float32)
                 ).astype(np.complex64),
@@ -398,12 +398,12 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
             )
 
     monkeypatch.setattr(
-        SSB,
+        DirectPtycho,
         "open",
         classmethod(lambda cls, source, **kwargs: FakeSession(source)),
     )
 
-    result = SSB.reconstruct_series(
+    result = DirectPtycho.reconstruct_series(
         raw,
         first_frame=100,
         last_frame=900,
@@ -418,10 +418,10 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     tmp_path,
     monkeypatch,
 ) -> None:
-    """A probe reference whose stored fit lacks the current schema is fitted, never trusted (fit mocked at SSB.open)."""
+    """A probe reference whose stored fit lacks the current schema is fitted, never trusted (fit mocked at DirectPtycho.open)."""
     import numpy as np
 
-    from quantem.gpu import SSB, SSBResult
+    from quantem.gpu import DirectPtycho, DirectPtychoResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
@@ -460,7 +460,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
             return None
 
         def _result(self, aberrations):
-            return SSBResult(object_wave=np.ones((2, 3), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+            return DirectPtychoResult(object_wave=np.ones((2, 3), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                              scan_detector_rotation_deg=12.0, loss=0.25)
 
         def fit_aberrations(self, **kwargs):
@@ -475,9 +475,9 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
         opened.append(kwargs)
         return FakeSession(source)
 
-    monkeypatch.setattr(SSB, "open", classmethod(open_session))
+    monkeypatch.setattr(DirectPtycho, "open", classmethod(open_session))
 
-    result = SSB.reconstruct_series(raw, first_frame=1, last_frame=2, probe_reference_frame=1, progress=False)
+    result = DirectPtycho.reconstruct_series(raw, first_frame=1, last_frame=2, probe_reference_frame=1, progress=False)
 
     assert fits == ["scan_1_master.h5"]
     assert reconstructions == [("scan_1_master.h5", fitted), ("scan_2_master.h5", fitted)]
@@ -496,7 +496,7 @@ def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
     """Without dataset.yaml or keyword settings an unmarked block supplies nothing, and the error names what is missing."""
     import pytest
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     raw = tmp_path / "raw"
     folder = raw / "live" / "screen" / "scan_1"
@@ -506,9 +506,9 @@ def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
         "aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "aberration_unit": "nm", "rotation_angle_deg": 0.0,
         "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5)}}}))
     before = (folder / "config.json").read_bytes()
-    # the rotation is not missing: an acquisition without one has it estimated by SSB.open
+    # the rotation is not missing: an acquisition without one has it estimated by DirectPtycho.open
     with pytest.raises(ValueError, match="missing voltage_kV, semiangle_mrad, scan_sampling_A\\. Run"):
-        SSB.reconstruct_series(raw, first_frame=1, last_frame=1, progress=False)
+        DirectPtycho.reconstruct_series(raw, first_frame=1, last_frame=1, progress=False)
     assert (folder / "config.json").read_bytes() == before
 
 
@@ -609,7 +609,7 @@ def test_reconstruct_series_initializes_missing_live_results(
 
     import numpy as np
 
-    from quantem.gpu import SSB, SSBResult
+    from quantem.gpu import DirectPtycho, DirectPtychoResult
     from quantem.gpu import screening
 
     raw = tmp_path / "raw"
@@ -639,7 +639,7 @@ files:
             return None
 
         def fit_aberrations(self, **kwargs):
-            return SSBResult(
+            return DirectPtychoResult(
                 object_wave=np.full((3, 4), 1 + 1j, dtype=np.complex64),
                 backend="cuda",
                 aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)},
@@ -649,7 +649,7 @@ files:
             )
 
     monkeypatch.setattr(
-        SSB,
+        DirectPtycho,
         "open",
         classmethod(lambda cls, source, **kwargs: FakeSession()),
     )
@@ -667,7 +667,7 @@ files:
         ),
     )
 
-    result = SSB.reconstruct_series(
+    result = DirectPtycho.reconstruct_series(
         raw,
         first_frame=1,
         last_frame=1,
@@ -735,7 +735,7 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
     """
     import pytest
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
     from quantem.gpu.direct_ptycho.series import open_screen_record, screen_record_settings
 
@@ -750,7 +750,7 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
     (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "source_master": str(source),
                                                      "computed": {"ssb": fit}}))
     opened = []
-    monkeypatch.setattr(SSB, "open", classmethod(lambda cls, path, **kwargs: opened.append((path, kwargs)) or "session"))
+    monkeypatch.setattr(DirectPtycho, "open", classmethod(lambda cls, path, **kwargs: opened.append((path, kwargs)) or "session"))
 
     assert open_screen_record(record) == "session"
     path, kwargs = opened[0]
@@ -773,7 +773,7 @@ def test_open_screen_record_opens_at_the_tilt_corrected_fit(tmp_path, monkeypatc
     """
     from types import SimpleNamespace
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
     from quantem.gpu.direct_ptycho.series import open_screen_record, screen_record_sample, screen_record_settings
 
@@ -789,7 +789,7 @@ def test_open_screen_record_opens_at_the_tilt_corrected_fit(tmp_path, monkeypatc
              "scan_detector_rotation_deg": 339.78, "scan_detector_rotation_flipped": False,
              "sample_tilt_mrad": [-0.1, -5.07], "depth_spread_nm": 10.7}
     sessions = []
-    monkeypatch.setattr(SSB, "open", classmethod(
+    monkeypatch.setattr(DirectPtycho, "open", classmethod(
         lambda cls, path, **kwargs: sessions.append(SimpleNamespace(kwargs=kwargs, sample_tilt_mrad=None,
                                                                     depth_spread_nm=None)) or sessions[-1]))
     for computed, optics, sample in (

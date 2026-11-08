@@ -57,7 +57,7 @@ def test_alias_aperture_bounds_preserve_soft_edges(angular_sampling):
 
 
 def _disk_session(n=128, source_path=None, detector_sampling=(10.0, 10.0)):
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     rng = np.random.default_rng(9)
     counts = rng.poisson(30.0, size=(n, n, 16, 16)).astype(np.uint16)
@@ -65,7 +65,7 @@ def _disk_session(n=128, source_path=None, detector_sampling=(10.0, 10.0)):
     counts[:, :, np.hypot(rr, cc) < 3] += 150
     if source_path is not None:
         np.save(source_path, counts)
-    return SSB(
+    return DirectPtycho(
         counts,
         backend="mps",
         voltage_kV=300,

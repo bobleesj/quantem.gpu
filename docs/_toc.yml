@@ -26,8 +26,14 @@ parts:
       title: Direct ptychography and aberrations
       sections:
       - file: api/direct-ptycho
+      - file: api/neural-phase
+        title: Neural phase for a scan series
       - file: api/ssb-phase-artifact
         title: Portable SSB results
+      - file: examples/train-phase-on-one-scan
+        title: Train a phase model on one scan
+      - file: examples/reuse-phase-across-scans
+        title: Reuse a phase model across scans
     - file: api/drift
       title: Drift across a time series
     - file: api/movie

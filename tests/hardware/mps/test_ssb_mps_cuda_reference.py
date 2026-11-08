@@ -165,7 +165,7 @@ def test_ssb_open_does_not_swallow_declared_companion_error(
     )
 
     with pytest.raises(ValueError, match="declared companion is invalid"):
-        workflow.SSB.open(
+        workflow.DirectPtycho.open(
             str(tmp_path / "source_master.h5"),
             backend="mps",
             voltage_kV=300.0,
@@ -256,14 +256,14 @@ def test_mps_numpy_session_exports_exact_columns_and_keeps_its_reconstruction(tm
     BF pixel and zero where nothing was exported.
     """
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB, detector
+    from quantem.gpu import DirectPtycho, detector
 
     rng = np.random.default_rng(5)
     counts = rng.poisson(3, (16, 16, 12, 12)).astype(np.uint16)
     rows, cols = np.mgrid[:12, :12]
     counts[:, :, (rows - 5.5) ** 2 + (cols - 5.5) ** 2 <= 16] += 300   # counts above 255 keep the uint16 file
     aberrations = {"C10_nm": 5.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)}
-    with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5),
+    with DirectPtycho(counts, backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5),
              scan_detector_rotation_deg=0.0) as session:
         before, before_loss = session.preview(aberrations)
         path, _seconds = session.export_brightfield(tmp_path / "bf")
@@ -1484,11 +1484,11 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
 
     pytest.importorskip("mlx.core")
     pytest.importorskip("optuna")
-    from quantem.gpu import SSB, SSBResult
+    from quantem.gpu import DirectPtycho, DirectPtychoResult
 
     rng = np.random.default_rng(7)
     data = rng.poisson(4, size=(8, 8, 12, 12)).astype(np.uint16)
-    workflow = SSB(
+    workflow = DirectPtycho(
         data,
         backend="mps",
         voltage_kV=300,
@@ -1498,15 +1498,15 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
         bright_field_radius_px=3,
     )
 
-    optimized = workflow.find_aberrations(search="primary", tilt=False,
+    optimized = workflow.fit_aberrations(search="primary", tilt=False,
         num_trials=0,
         refinement=None,
         verbose=False,
     )
     result = workflow.reconstruct()
 
-    assert type(optimized) is SSBResult
-    assert type(result) is SSBResult
+    assert type(optimized) is DirectPtychoResult
+    assert type(result) is DirectPtychoResult
     assert optimized is result
     assert optimized.backend == result.backend == "mps"
     assert workflow._compute._prepared is not None
@@ -1607,7 +1607,7 @@ def test_mps_sparse_row_packs_preserve_reduction_boundaries() -> None:
 def test_ssb_open_says_when_it_reads_binned_bright_field_columns(tmp_path, capsys, detector_bin) -> None:
     """An export binned on the detector replaces the native counts only with one printed line (no silent reduction)."""
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     source = tmp_path / "source"
     source.mkdir()
@@ -1619,7 +1619,7 @@ def test_ssb_open_says_when_it_reads_binned_bright_field_columns(tmp_path, capsy
         "bf_column_companion_path": "source/bf_columns.u8", "bf_column_encoding": "uint8", "dc_value": [1.0, 0.0],
         "detector_sampling_mrad": [0.7, 0.8], "detector_bin": detector_bin,
     }))
-    with SSB.open(str(tmp_path), backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=1.0,
+    with DirectPtycho.open(str(tmp_path), backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=1.0,
                   scan_detector_rotation_deg=0.0) as session:
         assert session.source_detector_bin == detector_bin
     out = capsys.readouterr().out

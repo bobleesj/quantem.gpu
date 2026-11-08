@@ -29,9 +29,9 @@ def _require_mps():
 
 
 def _session(data, det_mrad, scan_A=0.25):
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    return SSB(data, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(scan_A, scan_A), detector_sampling_mrad=(det_mrad, det_mrad),
+    return DirectPtycho(data, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(scan_A, scan_A), detector_sampling_mrad=(det_mrad, det_mrad),
                           scan_detector_rotation_deg=0.0)
 
 
@@ -53,7 +53,7 @@ def test_fit_tilt_recovers_known_tilt(name, sample_tilt_mrad):
     data, det_mrad = _simulated_crystal(name)
     ssb = _session(data, det_mrad)
     assert ssb.supports_tilt
-    result = ssb.find_aberrations(search="primary", tilt=True, verbose=False)
+    result = ssb.fit_aberrations(search="primary", tilt=True, verbose=False)
     # 1 mrad is the scan/detector sampling limit of this simulation (same bound as the CUDA test)
     assert abs(result.sample_tilt_mrad[0] - sample_tilt_mrad[0]) < 1.0
     assert abs(result.sample_tilt_mrad[1] - sample_tilt_mrad[1]) < 1.0
@@ -81,7 +81,7 @@ def test_joint_fit_rejects_scan_with_no_fitting_frequencies():
         _session(counts, det_mrad=3.0, scan_A=5.0) as ssb,
         pytest.raises(ValueError, match="acquire a finer scan"),
     ):
-        ssb.find_aberrations(search="primary", tilt=True, num_trials=8, verbose=False)
+        ssb.fit_aberrations(search="primary", tilt=True, num_trials=8, verbose=False)
 
 
 def test_batch_fit_matches_reference_fit(monkeypatch):

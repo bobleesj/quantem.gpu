@@ -149,7 +149,7 @@ store_real(out0,b,Real(100)-sum);
 
 def test_model_scores_and_public_joint_fit_remain_on_device(device, monkeypatch):
     """Use the complete synthetic scan/BF: model scores on the device and the public joint fit."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho._resident_search import _trial
 
     rng = np.random.default_rng(7)
@@ -159,7 +159,7 @@ def test_model_scores_and_public_joint_fit_remain_on_device(device, monkeypatch)
     rows = rng.uniform(
         [-300, 0, -1.5, -25, -25, 20], [300, 200, 1.5, 25, 25, 600], (84, 6)
     )
-    with SSB(
+    with DirectPtycho(
         counts,
         backend=device.backend,
         voltage_kV=300.0,
@@ -213,7 +213,7 @@ def test_resident_region_matches_reopened_counts_and_keeps_parent(
     device, tmp_path, transposed
 ):
     """A moved rectangle reuses counts and retains the full detector calibration."""
-    from quantem.gpu import SSB, io
+    from quantem.gpu import DirectPtycho, io
 
     rng = np.random.default_rng(19)
     counts = rng.poisson(5.0, (128, 128, 24, 24)).astype(np.uint16)
@@ -231,7 +231,7 @@ def test_resident_region_matches_reopened_counts_and_keeps_parent(
         "scan_detector_rotation_deg": 17.0,
         "aberrations": {"C10_nm": 8.0, "C12_nm": 3.0, "phi12_deg": 20.0},
     }
-    with SSB.open(str(source), **geometry) as parent:
+    with DirectPtycho.open(str(source), **geometry) as parent:
         reference = dict(parent.aberrations)
         resident = parent._data
         for bounds in ((9, 105, 13, 111), (12, 124, 2, 114)):
@@ -256,7 +256,7 @@ def test_resident_region_matches_reopened_counts_and_keeps_parent(
                     io.load(
                         str(source), backend=device.backend, verbose=False
                     ) as acquisition,
-                    SSB(
+                    DirectPtycho(
                         acquisition,
                         scan_region=bounds,
                         source_path=str(source),
@@ -279,7 +279,7 @@ def test_loaded_metadata_and_explicit_ssb_overrides_keep_counts(device, tmp_path
     """Load, inspect, then reconstruct with metadata or explicit calibration."""
     import copy
 
-    from quantem.gpu import SSB, io
+    from quantem.gpu import DirectPtycho, io
 
     counts = np.random.default_rng(17).poisson(4, (128, 128, 24, 24)).astype(np.uint16)
     source = tmp_path / "scan.npy"
@@ -300,7 +300,7 @@ def test_loaded_metadata_and_explicit_ssb_overrides_keep_counts(device, tmp_path
             "scan_detector_rotation_deg": 17.0,
         }
         optics = {"C10_nm": 8.0, "C12_nm": 0.0, "phi12_deg": 0.0}
-        with SSB(data, voltage_kV=300.0, **geometry) as ssb:
+        with DirectPtycho(data, voltage_kV=300.0, **geometry) as ssb:
             assert ssb.voltage_kV == 300.0
             assert ssb.scan_sampling_A == (0.3, 0.3)
             assert ssb.detector_sampling_mrad == (3.0, 3.0)
@@ -314,7 +314,7 @@ def test_loaded_metadata_and_explicit_ssb_overrides_keep_counts(device, tmp_path
             assert table.loc["Scan-detector rotation", "File value"] == "Not recorded"
             assert table.loc["Scan-detector rotation", "Source"] == "Explicit override"
             actual, _ = ssb.preview(optics, compute_loss=False)
-            with SSB.open(
+            with DirectPtycho.open(
                 str(source),
                 voltage_kV=300.0,
                 semiangle_mrad=25.0,
@@ -332,7 +332,7 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
     """Inspect file values and launch choices without changing recorded calibration."""
     import copy
 
-    from quantem.gpu import SSB, io
+    from quantem.gpu import DirectPtycho, io
     from quantem.gpu.formats.qem.metadata import (
         acquisition_metadata,
         effective_metadata,
@@ -354,7 +354,7 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
     data = io.Dataset4dstemGPU(counts, metadata)
     geometry = {"backend": device.backend, "bright_field_center_px": (12., 12.),
                 "bright_field_radius_px": 6.5}
-    with SSB(data, **geometry) as ssb:
+    with DirectPtycho(data, **geometry) as ssb:
         table = ssb.calibration()
         assert table.loc["Accelerating voltage", "File value"] == 300.0
         assert table.loc["Accelerating voltage", "Source"] == "Overridden"
@@ -376,7 +376,7 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
         assert all(value > 0 for value in table.loc["Detector step (row, col)", "Value used"])
         ssb.set_rotation(9.0)
         assert ssb.calibration().loc["Scan-detector rotation", "Source"] == "Modified in session"
-    with SSB(data, voltage_kV=300.0, scan_detector_rotation_deg=0.0, **geometry) as ssb:
+    with DirectPtycho(data, voltage_kV=300.0, scan_detector_rotation_deg=0.0, **geometry) as ssb:
         table = ssb.calibration()
         assert table.loc["Accelerating voltage", "Source"] == "Explicit override"
         assert table.loc["Scan-detector rotation", "Source"] == "Explicit override"

@@ -8,15 +8,14 @@ from quantem.gpu.device import cuda_runtime
 # before anything imports CuPy's FFT/BLAS: see device.cuda_runtime (torch's CUDA 13 cuFFT otherwise shadows CuPy's CUDA 12 one)
 cuda_runtime.preload_libraries()
 
-from quantem.gpu.direct_ptycho import DirectPtycho, SSB, SSBResult
+from quantem.gpu.direct_ptycho import DirectPtycho, DirectPtychoResult
 
 __version__ = version("quantem.gpu")
 
 
 __all__ = [
     "DirectPtycho",
-    "SSB",
-    "SSBResult",
+    "DirectPtychoResult",
     "__version__",
     "detector",
     "device",
@@ -31,7 +30,7 @@ __all__ = [
 
 
 # every public name but the SSB entry points is a subpackage, loaded on first use (movie needs the movie extra)
-_NAMESPACES = set(__all__) - {"DirectPtycho", "SSB", "SSBResult", "__version__"}
+_NAMESPACES = set(__all__) - {"DirectPtycho", "DirectPtychoResult", "__version__"}
 
 
 def __getattr__(name: str):

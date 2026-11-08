@@ -10,14 +10,14 @@ matplotlib.use("Agg")
 
 from quantem.gpu import DirectPtycho
 from quantem.gpu.direct_ptycho.branches import compare_branches
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.rotation_defocus import RotationDefocusComparison
 
 
 def _review():
     rows, cols = np.mgrid[:48, :48]
     phase = .12 * np.cos(rows / 2) * np.cos(cols / 3)
-    fits = tuple(SSBResult(
+    fits = tuple(DirectPtychoResult(
         object_wave=np.exp(1j * sign * phase), backend="cuda",
         aberrations={"C10_nm": sign * 8.0}, scan_detector_rotation_deg=angle,
         object_sampling_A=(.5, .5), loss=.2,

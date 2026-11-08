@@ -12,7 +12,7 @@ from quantem.gpu.direct_ptycho.thick_sample_fit import DEPTH_SPREAD_RANGE_A
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 
 def measure_slices(
@@ -75,7 +75,7 @@ def measure_slices(
 
 
 def plot_parameters(
-    result: "SSBResult",
+    result: "DirectPtychoResult",
     *,
     view: str = "parameters",
     include_phase: bool = False,

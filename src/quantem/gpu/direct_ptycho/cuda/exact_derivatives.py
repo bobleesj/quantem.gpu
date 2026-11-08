@@ -341,7 +341,7 @@ class FifthOrderGradients(_BatchObjective):
         if self._last is None:
             raise RuntimeError("Evaluate the values before their gradients.")
         last_z, last_stride, last_band, numerators, denominators, weight, trial, coefficients = self._last
-        if (z is not None and not np.array_equal(np.atleast_2d(z), last_z)) or stride != last_stride \
+        if (z is not None and not np.array_equal(np.atleast_2d(z), last_z)) or stride != last_stride\
                 or band != last_band:
             raise RuntimeError("The gradient pass needs the value pass of the same points, stride and band.")
         e = self.e

@@ -11,7 +11,7 @@ from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
 
 def _fit(**changes):
-    """A stored fit block of the current schema, as SSB.reconstruct_series writes it."""
+    """A stored fit block of the current schema, as DirectPtycho.reconstruct_series writes it."""
     return {"schema": FIT_SCHEMA, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": [.25, .25],
             "detector_sampling_mrad": [0.55, 0.56], "bright_field_center_px": [3, 4], "bright_field_radius_px": 5,
             "scan_detector_rotation_deg": 192.0, "scan_detector_rotation_flipped": False,

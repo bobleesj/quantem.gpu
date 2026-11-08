@@ -58,7 +58,7 @@ so R is the radius where the disk falls to half its plateau.
 is the radius of a disk with the area of the pixels brighter than half the plateau (the median of the pixels above
 mean + std), computed on the host from the full-detector mean pattern, and `det_sampling = semiangle_mrad / R`.
 Loaded datasets and `SSB.open` calibrate on the full detector before cropping the disk; the regional fit uses the
-session's calibration. `BrightfieldDisk.detected_radius_px` (and `SSBResult.detected_bf_radius`) is the radius the
+session's calibration. `BrightfieldDisk.detected_radius_px` (and `DirectPtychoResult.detected_bf_radius`) is the radius the
 calibration uses, `semiangle / det_sampling` on both backends.
 
 **Oracle 1: abTEM with a known detector sampling.** One BaTiO3 cell, 300 kV, 30 mrad, 100 A defocus, 64 x 64 scan at

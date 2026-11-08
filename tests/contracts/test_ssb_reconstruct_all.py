@@ -6,7 +6,7 @@ import pytest
 
 from quantem.gpu import DirectPtycho
 from quantem.gpu.direct_ptycho import direct_workflow
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 
 def test_all_reuses_one_fit_and_matches_separate_calls(monkeypatch):
@@ -70,7 +70,7 @@ def test_named_method_comparison_displays_each_result_once():
     import matplotlib
     matplotlib.use("Agg")
     wave = np.exp(1j * np.arange(64).reshape(8, 8) / 100)
-    images = {name: SSBResult(object_wave=wave.copy(), backend="cuda", object_sampling_A=(.5, .5),
+    images = {name: DirectPtychoResult(object_wave=wave.copy(), backend="cuda", object_sampling_A=(.5, .5),
                              reconstruction_method=name)
               for name in ("ssb", "phase", "complex")}
     figure = images["ssb"].show(compare=images, columns=3, size="small")

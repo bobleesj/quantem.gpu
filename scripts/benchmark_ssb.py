@@ -63,7 +63,7 @@ def run(arguments, stages) -> None:
     import numpy as np
     import torch
 
-    from quantem.gpu import SSB, dpc, io, parallax
+    from quantem.gpu import DirectPtycho, dpc, io, parallax
     from quantem.gpu.device import release_cached_memory
 
     if not Path(quantem.gpu.__file__).resolve().is_relative_to(ROOT / "src"):
@@ -105,7 +105,7 @@ def run(arguments, stages) -> None:
               f"   (n={len(times)})   {outputs}", flush=True)
 
     def session(data):
-        return SSB(data, voltage_kV=arguments.voltage_kV, semiangle_mrad=arguments.semiangle_mrad,
+        return DirectPtycho(data, voltage_kV=arguments.voltage_kV, semiangle_mrad=arguments.semiangle_mrad,
                    scan_sampling_A=(arguments.scan_sampling_A, arguments.scan_sampling_A))
 
     def prepared(data):

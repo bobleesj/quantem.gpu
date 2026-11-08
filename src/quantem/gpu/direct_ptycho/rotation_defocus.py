@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from quantem.gpu.direct_ptycho.contract import RefineMethod
-from quantem.gpu.direct_ptycho.results import SSBResult, host_array
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -21,9 +21,9 @@ class RotationDefocusComparison:
 
     Attributes
     ----------
-    fits : tuple of SSBResult
+    fits : tuple of DirectPtychoResult
         Native-grid fits ordered by rotation, then negative/positive C10 range.
-    reconstructions : tuple of SSBResult
+    reconstructions : tuple of DirectPtychoResult
         Each fit reconstructed with Auto sampling.
     focus_ranges : tuple of tuple of float
         Negative and positive C10 intervals, in nm, both including zero.
@@ -37,8 +37,8 @@ class RotationDefocusComparison:
     >>> comparison.show()  # doctest: +SKIP
     """
 
-    fits: tuple[SSBResult, ...]
-    reconstructions: tuple[SSBResult, ...]
+    fits: tuple[DirectPtychoResult, ...]
+    reconstructions: tuple[DirectPtychoResult, ...]
     focus_ranges: tuple[tuple[float, float], tuple[float, float]]
     region: tuple[int, int, int, int] | None = None
 

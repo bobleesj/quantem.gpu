@@ -213,7 +213,7 @@ def fifth_order_bounds(higher_order_limit, *, tilt=True) -> np.ndarray:
 def fit_fifth_order(
     ssb, *, search, trials, seed, save_dir, force, verbose,
     primary_options, compute_loss=False, compare_standard=True,
-    show=True, on_initial_fit=None, size="medium", columns=3, show_convergence=False,
+    show=True, on_initial_fit=None, size="medium", columns=2, show_convergence=False,
     higher_order_limit=DEFAULT_HIGHER_ORDER_LIMIT, tilt=True,
 ):
     """Fit the fifth-order model; standard skips additional higher-order TPE.

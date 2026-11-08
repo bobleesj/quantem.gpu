@@ -75,7 +75,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, depth, mo
         for factor in (4, 3, 2, 1):
             saved = ssb.reconstruct(correction, upsampling=factor, save_dir=tmp_path / f'x{factor}')
             # A source path cannot identify the direct array's crop or edits.
-            # The saved image is refreshed; immutable SSB.open sources have
+            # The saved image is refreshed; immutable DirectPtycho.open sources have
             # separate cache-reuse checks in test_ssb_persistence.
             assert not saved.reused
             np.testing.assert_array_equal(cp.asnumpy(saved.phase), results[factor])

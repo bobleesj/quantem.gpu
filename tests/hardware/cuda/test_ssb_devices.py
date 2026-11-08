@@ -35,7 +35,7 @@ def test_fft_kernel_sets_are_built_for_the_current_gpu(monkeypatch):
 def test_a_fit_on_the_second_gpu_equals_the_fit_on_the_first():
     """The same counts on cuda:0 and cuda:1 give the same aberrations and loss, whichever GPU is current."""
     _require_cuda(2)
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     rng = np.random.default_rng(7)
     counts = rng.poisson(40.0, size=(128, 128, 32, 32)).astype(np.uint16)
@@ -46,7 +46,7 @@ def test_a_fit_on_the_second_gpu_equals_the_fit_on_the_first():
     for device in (0, 1):
         with cp.cuda.Device(device):
             data = cp.asarray(counts)
-        with SSB(data, **settings) as ssb:
+        with DirectPtycho(data, **settings) as ssb:
             fits.append(ssb.fit_aberrations(search="primary", tilt=False, num_trials=8, check_rotation=False, verbose=False))
 
     assert dict(fits[1].aberrations) == dict(fits[0].aberrations)

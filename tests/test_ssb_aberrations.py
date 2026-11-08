@@ -83,7 +83,7 @@ def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monk
     monkeypatch.setattr(workflow, "cp", SimpleNamespace(asnumpy=np.asarray, cuda=SimpleNamespace(alloc_pinned_memory=bytearray)))
 
     def session(name):
-        ssb = workflow.SSB(np.zeros((2, 2, 3, 3), np.uint16), voltage_kV=300.0, semiangle_mrad=30.0,
+        ssb = workflow.DirectPtycho(np.zeros((2, 2, 3, 3), np.uint16), voltage_kV=300.0, semiangle_mrad=30.0,
                            scan_sampling_A=(0.2, 0.2), detector_sampling_mrad=(1.0, 1.0))
         ssb.backend = name          # the branch preview takes; the arrays recorded below are the backend boundary
         monkeypatch.setattr(ssb, "_backend", lambda recorder=Recorder(name): recorder)

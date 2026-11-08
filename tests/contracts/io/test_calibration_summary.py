@@ -72,7 +72,7 @@ def test_calibration_fields_are_named_and_a_scalar_sets_both_axes():
 
 
 def test_every_calibration_table_uses_one_label_set():
-    """data.calibration.table(), data.metadata_table() and SSB.calibration() name rows and units alike."""
+    """data.calibration.table(), data.metadata_table() and DirectPtycho.calibration() name rows and units alike."""
     from quantem.gpu.io import metadata_display as labels
 
     data = Dataset4dstemGPU(np.zeros((2, 3, 4, 5), np.uint16), {
@@ -89,7 +89,7 @@ def test_every_calibration_table_uses_one_label_set():
 
 
 def test_ssb_calibration_dict_holds_the_table_rows():
-    """SSB.calibration() is the DataFrame and calibration(to_dict=True) the same rows as a plain dict."""
+    """DirectPtycho.calibration() is the DataFrame and calibration(to_dict=True) the same rows as a plain dict."""
     import inspect
     from types import SimpleNamespace
 

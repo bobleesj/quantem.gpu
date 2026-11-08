@@ -436,12 +436,12 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
     once any fit had switched the objective over.
     """
     cp = _cupy()
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho.units import aberrations_to_engine
 
     counts = np.random.RandomState(3).poisson(5, (256, 256, 16, 16)).astype(np.uint16)
     aberrations = {"C10_nm": -8.0, "C12_nm": 3.0, "phi12_deg": math.degrees(0.4)}
-    with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5),
+    with DirectPtycho(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5),
              detector_sampling_mrad=(2.0, 2.0), bright_field_center_px=(7.5, 7.5), bright_field_radius_px=5) as session:
         before = session.reconstruct(aberrations=aberrations).loss
         session.fit_aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
@@ -458,12 +458,12 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
 def test_cuda_512_chunked_calibration_matches_unfused_gpu_reference() -> None:
     """Full-BF phase and loss retain scan order across a partial final chunk."""
     cp = _cupy()
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     # Measured intensities are real and nonnegative. Give every BF pixel its
     # own position; duplicated coordinates invalidate the conjugate-pair path.
     counts = cp.random.RandomState(7).poisson(5, (512, 512, 16, 16)).astype(cp.uint16)
-    with SSB(
+    with DirectPtycho(
         counts, backend="cuda", voltage_kV=300, semiangle_mrad=5,
         scan_sampling_A=(0.5, 0.5), detector_sampling_mrad=(1, 1),
         bright_field_center_px=(7.5, 7.5), bright_field_radius_px=5,

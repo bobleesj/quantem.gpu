@@ -40,10 +40,10 @@ def _simulate(defocus_A: float) -> tuple[np.ndarray, tuple[float, float]]:
 
 @pytest.mark.parametrize("defocus_A", [100.0, -150.0])
 def test_fitted_c10_is_nm(defocus_A):
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     counts, detector_sampling_mrad = _simulate(defocus_A)
-    ssb = SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0,
+    ssb = DirectPtycho(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0,
               scan_sampling_A=(0.25, 0.25), detector_sampling_mrad=detector_sampling_mrad, scan_detector_rotation_deg=0.0)
     ssb.fit_aberrations(search="primary", tilt=False, num_trials=200, verbose=False)
     expected_nm = -defocus_A / 10.0          # abTEM C10 = -defocus, Angstrom -> nm
@@ -58,10 +58,10 @@ def test_automatic_detector_sampling_matches_the_simulation_and_recovers_the_def
     the fit then finds C10 = -9.67 nm for the -10 nm truth. Before 2026-10-05 the automatic sampling was twice the
     semiangle over the integer half-maximum radius, 1.0909 mrad per pixel (+99.5 %), and the fit found -4.36 nm.
     """
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     counts, detector_sampling_mrad = _simulate(100.0)
-    with SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
+    with DirectPtycho(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
              scan_detector_rotation_deg=0.0) as ssb:
         result = ssb.fit_aberrations(search="primary", tilt=False, num_trials=200, verbose=False)
         automatic_sampling = ssb._backend().angular_sampling[0]

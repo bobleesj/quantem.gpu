@@ -90,15 +90,15 @@ def test_a_capped_auto_factor_is_announced_once_per_session(capsys):
     """Sampling that wants 8x gives 4x and one line, once; 2x and 3x print nothing; an explicit 8 gives 8."""
     from types import SimpleNamespace
 
-    from quantem.gpu.direct_ptycho.workflow import SSB
+    from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
     coarse = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(1.0, 1.0))
-    assert SSB._resolve_upsampling(coarse, "auto") == 4
+    assert DirectPtycho._resolve_upsampling(coarse, "auto") == 4
     assert capsys.readouterr().out == NOTICE
-    assert SSB._resolve_upsampling(coarse, "auto") == 4
-    assert SSB._resolve_upsampling(coarse, 8) == 8
+    assert DirectPtycho._resolve_upsampling(coarse, "auto") == 4
+    assert DirectPtycho._resolve_upsampling(coarse, 8) == 8
     assert capsys.readouterr().out == ""
     for step, factor in ((0.264, 2), (0.373, 3)):
         session = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(step, step))
-        assert SSB._resolve_upsampling(session, "auto") == factor
+        assert DirectPtycho._resolve_upsampling(session, "auto") == factor
     assert capsys.readouterr().out == ""

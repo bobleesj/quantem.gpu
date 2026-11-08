@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from quantem.gpu import SSB, detector, io
+from quantem.gpu import DirectPtycho, detector, io
 from quantem.gpu.formats.float8 import FLOAT8_DTYPES
 from quantem.gpu.formats.qem.reference import load_array
 from quantem.gpu.formats.qem.validation import validate_qem
@@ -264,7 +264,7 @@ def test_float8_ssb_matches_float32_and_survives_reopen(tmp_path, backend, kind)
     }
 
     def phases(data):
-        with SSB(data, **settings) as session:
+        with DirectPtycho(data, **settings) as session:
             result = []
             for tilt in (None, (1.0, -2.0)):
                 session.sample_tilt_mrad = tilt

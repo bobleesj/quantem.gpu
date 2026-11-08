@@ -56,7 +56,7 @@ def retired_estimator_note(phase_estimator: object, record: str) -> str | None:
 
 
 @dataclass
-class SSBResult(Mapping[str, float]):
+class DirectPtychoResult(Mapping[str, float]):
     """Result from SSB ptychographic reconstruction.
 
     The primary output is ``object_wave``, the complex transmission function.
@@ -72,7 +72,13 @@ class SSBResult(Mapping[str, float]):
     Attributes
     ----------
     object_wave : cp.ndarray
-        Complex transmission function (scan_row, scan_col).
+        Complex transmission function (scan_row, scan_col). The neural phase model
+        never overwrites this direct solution or its ``phase`` property.
+    neural_phase : array or None
+        Refined phase in radians on the same grid, when requested. The frozen
+        architecture and weights identity are in reconstruction_options.
+    annular_counts : array or None
+        Measured guide on the native scan grid, when a neural phase model is used.
     sample_tilt_mrad : tuple[float, float] | None
         Sample tilt (row, col) in mrad, scan frame, from ``fit_aberrations(tilt=True)``; None for standard SSB.
     depth_spread_nm : float | None
@@ -202,6 +208,8 @@ class SSBResult(Mapping[str, float]):
     rotation_refined: bool = False
     rotation_estimate_deg: float | None = None
     rotation_refinement: dict[str, object] | None = None
+    neural_phase: object | None = field(default=None, repr=False)
+    annular_counts: object | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         # one representation of the physical angle, whatever turn count a caller or an engine gives
@@ -568,19 +576,25 @@ class SSBResult(Mapping[str, float]):
 
         return save_calibration(self, path)
 
-    def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt", "convergence"] = "phase", *,
+    def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt", "convergence", "damping", "probe_phase"] = "phase", *,
              axsize: tuple[float, float] | None = None,
              compare: Self | Sequence[Self] | Mapping[object, Self] | None = None,
              x: Literal["auto", "time", "evaluations"] = "auto",
              show_parameters: bool = True,
              interactive: bool = False, show_fft: bool = False,
+             fft_limit_inv_A: float | None = None,
              size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
              rows: int | None = None, columns: int | None = None,
              region: Literal["center", "top-left", "top-right", "bottom-left", "bottom-right"] | None = None,
              cmap: str = "inferno", save: str | Path | None = None):
         """Show phase, probes or fit diagnostics at a named panel size.
 
-        Phase views reuse symmetric linear limits from their fitted result.
+        A neural result displays direct and neural phase side by side, with
+        matched zooms and optional FFTs. All images remain visible; no selector
+        is required. Default comparisons wrap after two columns.
+
+        Neural comparisons use pooled 0.5–99.5 percentile phase contrast unless
+        phase_clim was set explicitly. Other phase views retain fitted limits.
         Probe intensities use their full linear range. Plotting does not change the
         reconstructed wave or model probe.
 
@@ -602,13 +616,17 @@ class SSBResult(Mapping[str, float]):
             ``convergence`` plots recorded search and refinement evaluations.
             Different objectives and rotation searches remain separate. A missing
             refinement trace is stated explicitly; no evaluations are rerun.
+            ``probe_phase`` shows the wrapped optical phase across the model
+            aperture, masking unilluminated pixels.
+            ``damping`` shows recorded detector-held-out scores from
+            ``ptycho.validate_damping()``; it does not run a new selection.
         axsize : tuple[float, float] or None, optional
             Advanced explicit panel dimensions in inches, instead of size.
         x : {"auto", "time", "evaluations"}, optional
             Convergence axis. Auto uses recorded elapsed time when every fit
             has it, otherwise evaluations. Time starts before the primary fit;
             loading and plotting are excluded. Missing times are not estimated.
-        compare : SSBResult, sequence of SSBResult, or mapping, optional
+        compare : DirectPtychoResult, sequence of DirectPtychoResult, or mapping, optional
             For convergence, a fit or labeled mapping of fits from the same
             data, calibration, region and objective. The current fit is included
             once. Different refinement methods are supported.
@@ -616,7 +634,9 @@ class SSBResult(Mapping[str, float]):
             all full images above matching zooms, with rectangles marking
             their locations. Each zoom spans one quarter of each dimension,
             selected on this result's grid using ``region``. All panels
-            share this result's phase_limits; no alignment is performed.
+            share phase contrast. Neural comparisons use pooled percentile limits
+            unless phase_clim is explicit; other views use phase_limits. No
+            alignment is performed.
         show_parameters : bool, optional
             Include saved objective slices beside a single phase image by
             default. This only displays recorded values; it runs no fitting
@@ -624,14 +644,20 @@ class SSBResult(Mapping[str, float]):
             Measure them first with ``ssb.measure_parameters(result)``.
         interactive : bool, optional
             Inspect saved phase images with QuantEM Show2D instead of Matplotlib.
-            Comparisons retain full fields, marked zooms and optional crop FFTs.
+            Comparisons retain full fields, marked zooms and optional FFTs.
             Pan, zoom and contrast controls do not rerun reconstruction. Use
             ``ptycho.show()`` for the live ShowPtycho aberration editor.
         show_fft : bool, optional
-            Add the Fourier magnitude of each displayed zoom (or full image
-            without a zoom). Mean subtraction and a Hann window reduce edge
-            leakage. Magnitudes share one scale in dB relative to their common
-            maximum and one physical frequency field; they are not FRC curves.
+            Add full-field log-amplitude FFTs for neural comparisons. Other
+            comparisons retain zoom FFTs in dB (full field without a zoom).
+            Mean subtraction and a Hann window reduce edge leakage. Both
+            methods share contrast and physical frequency support. These are
+            magnitude displays, not independent-resolution FRC curves.
+        fft_limit_inv_A : float or None, optional
+            Display only the common Fourier band within this frequency on each
+            axis. Neural comparisons use full-field log10 amplitude with shared
+            1–99.8 percentile limits and magma colors. Only displayed frequency
+            support is restricted; stored reconstruction arrays are unchanged.
         size : {"small", "medium", "large", "xlarge"}, int or None, optional
             Per-panel width: small 3, medium 4.5, large 6 or xlarge 9 inches
             at the static 100-DPI reference, or a positive integer pixel width
@@ -683,6 +709,8 @@ class SSBResult(Mapping[str, float]):
         """
         import matplotlib.pyplot as plt
 
+        if fft_limit_inv_A is not None and (not show_fft or not np.isfinite(fft_limit_inv_A) or fft_limit_inv_A <= 0):
+            raise ValueError("Use show_fft=True and a positive finite fft_limit_inv_A.")
         if (region is not None or interactive or show_fft) and view != "phase":
             raise ValueError("interactive, show_fft and region apply to phase images; use show(view='phase', ...).")
         if interactive and (save is not None or axsize is not None):
@@ -709,19 +737,49 @@ class SSBResult(Mapping[str, float]):
             else:
                 panel_size = (12, 12)
             axsize = (width, width * panel_size[1] / panel_size[0])
-        if view == "phase" and (compare is not None or region is not None or show_fft or interactive):
-            others = [] if compare is None else ([compare] if isinstance(compare, SSBResult) else compare)
+        if view == "phase" and (
+            self.neural_phase is not None or compare is not None or region is not None or show_fft or interactive
+        ):
+            others = [] if compare is None else ([compare] if isinstance(compare, DirectPtychoResult) else compare)
             if isinstance(others, Mapping):
                 others = [result for result in others.values() if result is not self]
             if (not isinstance(others, Sequence) or (compare is not None and not others and not isinstance(compare, Mapping))
-                    or not all(isinstance(result, SSBResult) for result in others)):
+                    or not all(isinstance(result, DirectPtychoResult) for result in others)):
                 raise ValueError("Compare phase images with show(compare=other) or show(compare=[second, third]).")
-            figure = _phase_comparison(self, *others, axsize=axsize, cmap=cmap,
-                                       region=("center" if compare is not None else None) if region is None else region,
+            if region is None and (compare is not None or self.neural_phase is not None):
+                region = "center"
+            figure = _phase_comparison(self, *others, axsize=axsize, cmap=cmap, region=region,
                                        show_fft=show_fft, interactive=interactive, size=size or "medium",
-                                       columns=columns, rows=rows)
+                                       columns=columns, rows=rows, fft_limit_inv_A=fft_limit_inv_A)
             if save is not None:
                 figure.savefig(save, dpi="figure", bbox_inches="tight")
+            return figure
+        if view == "damping":
+            from quantem.gpu.direct_ptycho.damping import plot
+
+            figure = plot(self, axsize=axsize)
+            if save is not None:
+                figure.savefig(save, dpi="figure", bbox_inches="tight")
+            return figure
+        if view == "probe_phase":
+            probe = host_array(self.probe(space="fourier"))
+            amplitude = abs(probe)
+            phase = np.ma.masked_where(amplitude <= amplitude.max() * 1e-6, np.angle(probe))
+            sampling = self.probe_sampling_mrad
+            nr, nc = phase.shape
+            extent = ((-(nc // 2) - 0.5) * sampling[1],
+                      (nc - nc // 2 - 0.5) * sampling[1],
+                      (nr - nr // 2 - 0.5) * sampling[0],
+                      (-(nr // 2) - 0.5) * sampling[0])
+            figure, axis = plt.subplots(figsize=axsize, layout="constrained")
+            image = axis.imshow(phase, cmap="twilight_shifted", vmin=-np.pi, vmax=np.pi,
+                                extent=extent, interpolation="nearest")
+            axis.set(xlabel="Aperture column (mrad)", ylabel="Aperture row (mrad)",
+                     title="Model probe phase · wrapped radians\nUnilluminated pixels masked")
+            figure.colorbar(image, ax=axis, label="Phase (rad)", ticks=[-np.pi, 0, np.pi])
+            if save is not None:
+                figure.savefig(save, dpi="figure", bbox_inches="tight")
+            plt.close(figure)
             return figure
         if view == "rotation":
             if self.rotation_branches is None:
@@ -790,7 +848,7 @@ class SSBResult(Mapping[str, float]):
 
 
 @dataclass
-class SSBSeriesResult:
+class DirectPtychoSeriesResult:
     """One independent or fixed-probe SSB reconstruction series."""
 
     phase: np.ndarray
@@ -865,7 +923,7 @@ def column_sign(phase: object) -> float:
 def phase_skewness(phase: object) -> float:
     """Mean-centred third-moment ratio of the phase, ``mean(p**3) / mean(p**2)**1.5`` with ``p = phase - mean(phase)``.
 
-    The phase-tail test of the 180-degree branch choice (``SSB.scan_rotations``): positive when a few bright
+    The phase-tail test of the 180-degree branch choice (``DirectPtycho.scan_rotations``): positive when a few bright
     atomic columns sit over a flatter background. Unlike ``column_sign`` it centres on the mean, not the median.
 
     Examples
@@ -941,7 +999,7 @@ def _is_cupy_array(value: object) -> bool:
     return cp is not None and isinstance(value, cp.ndarray)
 
 
-def _announce_below_auto(result: SSBResult) -> None:
+def _announce_below_auto(result: DirectPtychoResult) -> None:
     """Say in one line when a shown phase is coarser than ``upsampling="auto"`` and how to get the auto one."""
     from quantem.gpu.optics.physics import ssb_upsampling_factor
 
@@ -1001,7 +1059,7 @@ def _format_aberrations(aberrations: dict) -> str:
     return "\n".join(lines)
 
 
-def _phase_title(result: SSBResult, area: str = "Full field") -> str:
+def _phase_title(result: DirectPtychoResult, area: str = "Full field", *, neural: bool = False) -> str:
     """Name the measured channel, reconstruction method and recorded strengths."""
     method = result.reconstruction_method
     options = result.reconstruction_options
@@ -1017,18 +1075,25 @@ def _phase_title(result: SSBResult, area: str = "Full field") -> str:
             strength = options.get("amplitude_damping")
             amplitude = "not recorded" if strength is None else f"{strength:g}"
             detail = f"Damping: phase {phase}, amplitude {amplitude}"
+    if neural:
+        heading = "Neural phase: U-Net + ADF + bounded correction"
+        strength = options["neural_phase_model"]["input_phase_damping"]
+        detail = f"Input phase damping {strength:g}"
     return f"{heading}\n{detail}\n{area} · {result.upsampling}× upsampling · phase (rad)"
 
 
 def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "inferno",
                       region: str | None = "center", show_fft: bool = False,
                       interactive: bool = False, size: str | int = "medium",
-                      columns: int | None = None, rows: int | None = None):
+                      columns: int | None = None, rows: int | None = None,
+                      fft_limit_inv_A: float | None = None):
     """Show calibrated full fields, matching crops and optionally their spectra."""
-    results = (first, *others)
+    entries = [(result, neural) for result in (first, *others)
+               for neural in ((False, True) if result.neural_phase is not None else (False,))]
+    results = [result for result, _ in entries]
     count = len(results)
-    columns = resolve_columns(count, columns=columns, rows=rows, default=count)
-    phases = [host_array(result.phase) for result in results]
+    columns = resolve_columns(count, columns=columns, rows=rows, default=min(count, 2))
+    phases = [host_array(result.neural_phase if neural else result.phase) for result, neural in entries]
     if any(phase.ndim != 2 for phase in phases):
         raise ValueError("Compare individual reconstructions, not trial stacks.")
     sampling = [np.asarray(result.object_sampling_A, dtype=float) for result in results]
@@ -1061,32 +1126,52 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
         crops = [phase[begin[0]:end[0], begin[1]:end[1]]
                  for phase, (begin, end) in zip(phases, all_bounds, strict=True)]
 
-    titles = [_phase_title(result) for result in results]
+    neural_comparison = any(neural for _, neural in entries)
+    phase_limits = first.phase_limits
+    if neural_comparison and first.phase_clim is None:
+        phase_limits = tuple(np.percentile(np.concatenate([p.ravel() for p in phases]), [.5, 99.5]))
+        if phase_limits[0] == phase_limits[1]:
+            phase_limits = (phase_limits[0] - .5, phase_limits[1] + .5)
+    titles = [_phase_title(result, neural=neural) for result, neural in entries]
     bars = [scalebar(step[1], "Å", phase.shape[0], axsize[0]) for step, phase in zip(sampling, phases, strict=True)]
     groups = [phases]
     group_titles = [titles]
     group_bars = [bars]
-    limits = [first.phase_limits]
+    limits = [phase_limits]
+    cmaps = [cmap]
     if region is not None:
         groups.append(crops)
-        group_titles.append([_phase_title(result, area=f"{region.capitalize()} zoom") for result in results])
+        group_titles.append([
+            _phase_title(result, area=f"{region.capitalize()} zoom", neural=neural)
+            for result, neural in entries
+        ])
         group_bars.append([scalebar(step[1], "Å", crop.shape[0], axsize[0])
                            for step, crop in zip(sampling, crops, strict=True)])
-        limits.append(first.phase_limits)
+        limits.append(phase_limits)
+        cmaps.append(cmap)
     if len({result.sample_tilt_mrad is None for result in results}) > 1:
         for labels in group_titles:
             for index, result in enumerate(results):
                 labels[index] += "\nTilt fixed at zero" if result.sample_tilt_mrad is None else "\nTilt-corrected"
     if show_fft:
-        spectra, frequency_sampling = _phase_spectra(crops, sampling)
+        spectra, frequency_sampling = _phase_spectra(
+            phases if neural_comparison else crops, sampling,
+            log_amplitude=neural_comparison, limit_inv_A=fft_limit_inv_A,
+        )
         groups.append(spectra)
-        area = "Crop" if region is not None else "Full-field"
+        area = "Full-field" if neural_comparison or region is None else "Crop"
+        fft_units = "log10 amplitude (rad)" if neural_comparison else "magnitude (dB)"
         group_titles.append([
-            "\n".join(_phase_title(result).splitlines()[:2])
-            + f"\n{area} FFT · shared magnitude (dB)" for result in results
+            "\n".join(_phase_title(result, neural=neural).splitlines()[:2])
+            + f"\n{area} FFT · shared {fft_units}" for result, neural in entries
         ])
         group_bars.append([scalebar(frequency_sampling[1], "1/Å", spectrum.shape[0], axsize[0]) for spectrum in spectra])
-        limits.append((-60., 0.))
+        fft_limits = (tuple(np.percentile(np.concatenate([p.ravel() for p in spectra]), [1, 99.8]))
+                      if neural_comparison else (-60., 0.))
+        if fft_limits[0] == fft_limits[1]:
+            fft_limits = (fft_limits[0] - .5, fft_limits[1] + .5)
+        limits.append(fft_limits)
+        cmaps.append("magma" if neural_comparison else cmap)
     # Same method and strength read identically; name where each set of optics was fitted.
     if len({result.fit_scan_region for result in results}) > 1:
         for labels in group_titles:
@@ -1111,11 +1196,11 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
                 frames, labels=labels, sampling=tuple(step), units=bar[0]["units"],
                 columns=columns, size=size if isinstance(size, str) else "medium",
                 panel_width_px=round(panel_inches(size) * 100),
-                cmap=cmap, vmin=clim[0], vmax=clim[1],
+                cmap=cmaps[group], vmin=clim[0], vmax=clim[1],
                 auto_contrast=False, link_contrast=True, link_zoom=True, link_pan=True,
                 panel_overlays=overlays, show_panel_titles=True, show_scale_bar=True,
                 controls_collapsed=True, display_bin=1, verbose=False,
-                title="Saved crop FFT · mean removed · Hann window · shared 60 dB range"
+                title=f"{area} FFT · mean removed · Hann window · shared {fft_units}"
                 if show_fft and group == len(groups) - 1 else "Phase comparison · shared contrast (rad)",
             ))
         return viewers[0] if len(viewers) == 1 else VBox(viewers)
@@ -1128,8 +1213,10 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
     blocks = (count + columns - 1) // columns
     total_rows = blocks * len(groups)
     heading = "Phase comparison · shared contrast (rad)"
+    if any(result.reconstruction_options.get("scan_basis") is not None for result in results):
+        heading += "\nScale bars: nominal acquisition grid; affine basis applied in the transfer model"
     if show_fft:
-        heading += "\nFFT: mean removed · Hann window · shared 60 dB magnitude range"
+        heading += f"\n{area} FFT: mean removed · Hann window · shared {fft_units}"
     heading = "\n".join(fill(line, width=max(20, int(columns * axsize[0] * 7)))
                         for line in heading.splitlines())
     title_lines = max(label.count("\n") + 1 for labels in group_titles for label in labels)
@@ -1143,7 +1230,7 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
             show_2d(
                 frames[offset:stop], title=labels[offset:stop], figax=(figure, row_axes[:stop - offset]),
                 norm={"interval_type": "manual", "vmin": clim[0], "vmax": clim[1]},
-                cmap=cmap, cbar=True, scalebar=bar[offset:stop],
+                cmap=cmaps[group], cbar=True, scalebar=bar[offset:stop],
                 title_fontsize=min(14, max(8, axsize[0] * 2.2)), tight_layout=False,
             )
             for axis in row_axes[stop - offset:]:
@@ -1158,7 +1245,8 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
     return figure
 
 
-def _phase_spectra(phases: list[np.ndarray], sampling: list[np.ndarray]):
+def _phase_spectra(phases: list[np.ndarray], sampling: list[np.ndarray], *,
+                   log_amplitude: bool = False, limit_inv_A: float | None = None):
     """Compare window-normalized FFT magnitudes on the common physical band."""
     common_shape = np.min([phase.shape for phase in phases], axis=0)
     spectra = []
@@ -1172,6 +1260,13 @@ def _phase_spectra(phases: list[np.ndarray], sampling: list[np.ndarray]):
         start = np.asarray(phase.shape) // 2 - common_shape // 2
         stop = start + common_shape
         spectra.append(spectrum[start[0]:stop[0], start[1]:stop[1]])
+    frequency_sampling = 1 / (np.asarray(phases[0].shape) * sampling[0])
+    if limit_inv_A is not None:
+        bands = [np.abs((np.arange(n) - n // 2) * dq) <= limit_inv_A
+                 for n, dq in zip(common_shape, frequency_sampling, strict=True)]
+        spectra = [spectrum[np.ix_(*bands)] for spectrum in spectra]
+    if log_amplitude:
+        return [np.log10(np.maximum(spectrum, 1e-12)) for spectrum in spectra], frequency_sampling
     peak = max(float(spectrum.max()) for spectrum in spectra)
     peak = peak if peak > 0 else 1.
     spectra = [20 * np.log10(np.maximum(spectrum / peak, 1e-3)) for spectrum in spectra]

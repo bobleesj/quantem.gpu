@@ -1385,12 +1385,12 @@ measured `30.35 s` wall, `25.615 s` fit, `20.556 s` Optuna, `3.823 s`
 refinement, and `2.116 s` source load. It returned all 231 records, 30 physical
 refinement calls, the canonical aberrations, and loss
 `0.04469207674264908` exactly. This is private backend lifecycle state: the
-public `SSBResult` and backend-neutral API remain unchanged, while the first
+public `DirectPtychoResult` and backend-neutral API remain unchanged, while the first
 widget reconstruction no longer pays a second `0.786 s` preparation pass.
 
 The same private completion handoff now retains the optimizer's exact final
 float32 phase and loss for the initial widget preview. It does not derive phase
-from `SSBResult.object_wave`, add a result type, or reuse the value after an
+from `DirectPtychoResult.object_wave`, add a result type, or reuse the value after an
 aberration or rotation change. The canonical 20-trial gate fell to `7.84 s`
 wall with all 21 records bit-for-bit identical. A clean committed 200-trial
 plus Nelder-Mead signoff then measured `30.13 s` wall, `25.663 s` fit,

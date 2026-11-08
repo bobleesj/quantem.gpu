@@ -175,7 +175,7 @@ class RotationBranch:
 class RotationBranches:
     """Both 180-degree branches of an estimated rotation, fitted independently, and the branch kept.
 
-    Returned by ``SSB.scan_rotations`` and recorded on the fit as ``result.rotation_branches``.
+    Returned by ``DirectPtycho.scan_rotations`` and recorded on the fit as ``result.rotation_branches``.
 
     Attributes
     ----------

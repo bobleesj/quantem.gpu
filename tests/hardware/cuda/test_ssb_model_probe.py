@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 cp = pytest.importorskip("cupy")
 
@@ -14,7 +14,7 @@ def test_probe_matches_quantem_optics_and_centered_fourier_pair():
     from quantem.diffractive_imaging.complex_probe import evaluate_probe, polar_spatial_frequencies
     from quantem.gpu.optics.physics import wavelength_A_from_kV
 
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=cp.ones((128, 128), dtype=cp.complex64), backend="cuda",
         voltage_kV=300, semiangle_mrad=30, aberrations={"C10_nm": -3.2, "C12_nm": 1.4, "phi12_deg": math.degrees(-0.6)},
     )
@@ -66,7 +66,7 @@ def test_reconstruction_keeps_model_probe_and_saves_calibration(tmp_path):
 
 
 def test_defocused_model_fits_inside_the_automatic_field():
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=cp.ones((128, 128), dtype=cp.complex64), backend="cuda",
         voltage_kV=300, semiangle_mrad=30, aberrations={"C10_nm": 100, "C12_nm": 5, "phi12_deg": math.degrees(0.3)},
     )
@@ -79,7 +79,7 @@ def test_phase_and_probe_views_keep_data_and_calibration():
     import matplotlib.pyplot as plt
     from matplotlib.text import Text
 
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=cp.exp(1j * cp.arange(64 * 64, dtype=cp.float32).reshape(64, 64) / 4096),
         backend="cuda", voltage_kV=300, semiangle_mrad=30,
         object_sampling_A=(0.4, 0.5), aberrations={"C10_nm": 10, "C12_nm": 2, "phi12_deg": math.degrees(0.2)},

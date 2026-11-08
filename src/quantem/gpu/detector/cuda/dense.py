@@ -41,6 +41,80 @@ _NAMES = tuple(
 )
 
 
+class DetectorMasks:
+    """Reuse binary detector masks across incoming native-count batches.
+
+    Parameters
+    ----------
+    masks : numpy.ndarray
+        Boolean masks with shape ``(channels, detector_rows, detector_cols)``.
+        Pixel selections are uploaded once to the current CUDA device.
+
+    Examples
+    --------
+    >>> detectors = DetectorMasks(np.stack([bf_mask, adf_mask]))
+    >>> images = detectors.integrate(patterns)
+    """
+
+    def __init__(self, masks: np.ndarray) -> None:
+        masks = np.asarray(masks)
+        if masks.ndim != 3 or masks.dtype != np.bool_ or min(masks.shape) < 1:
+            raise ValueError("Provide boolean masks shaped (channels, detector_rows, detector_cols).")
+        self.detector_shape = masks.shape[1:]
+        self.device = cp.cuda.Device().id
+        self.indices = tuple(
+            cp.asarray(np.flatnonzero(mask).astype(np.int32)) for mask in masks
+        )
+        self._kernels = cuda_module(_SOURCE, _NAMES, ("--std=c++11",))
+        # Masks are fixed. Finish their one-time upload before runtime streams use them.
+        cp.cuda.get_current_stream().synchronize()
+
+    def integrate(self, patterns: "cp.ndarray") -> "cp.ndarray":
+        """Sum native counts exactly and round each output once to float32.
+
+        Parameters
+        ----------
+        patterns : cupy.ndarray
+            Contiguous uint8, uint16 or uint32 counts shaped
+            ``(patterns, detector_rows, detector_cols)`` on the masks' device.
+            The input is read without modification or a float32 copy.
+
+        Returns
+        -------
+        cupy.ndarray
+            ``(patterns, channels)`` float32 sums. Work is queued on the
+            caller's current stream. Keep this object and the input alive
+            until that stream completes, or join it before reusing input.
+
+        Examples
+        --------
+        >>> values = detectors.integrate(patterns)
+        """
+        if (
+            not isinstance(patterns, cp.ndarray)
+            or patterns.ndim != 3
+            or patterns.shape[1:] != self.detector_shape
+            or patterns.device.id != self.device
+            or not patterns.flags.c_contiguous
+            or patterns.dtype not in _KERNEL_SUFFIX
+        ):
+            raise ValueError(
+                "Provide contiguous native counts matching the masks' shape and CUDA device."
+            )
+        with patterns.device:
+            count = len(patterns)
+            values = cp.empty((len(self.indices), count), cp.float32)
+            if count:
+                name = f"selected_sum_f32_{_KERNEL_SUFFIX[patterns.dtype]}_16f"
+                kernel = self._kernels[name]
+                for indices, output in zip(self.indices, values):
+                    kernel(((count + 15) // 16, 1, 1), (32, 16, 1), (
+                        patterns, indices, output, np.int32(indices.size),
+                        np.int32(math.prod(self.detector_shape)), np.int32(count),
+                    ))
+            return values.T
+
+
 def _on_data_gpu(method):
     """Allocate and launch beside the resident counts, restoring the caller's device afterward."""
     @wraps(method)

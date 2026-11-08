@@ -36,7 +36,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
             pytest.skip("Requires a CUDA runtime")
     import matplotlib.pyplot as plt
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
     from quantem.gpu.direct_ptycho.results import host_array
 
@@ -45,7 +45,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
     counts[:, :, np.hypot(rows, columns) < 10] += 200
     source = tmp_path / "counts.npy"
     np.save(source, counts)
-    with SSB(
+    with DirectPtycho(
         counts,
         backend=backend,
         voltage_kV=300,
@@ -130,12 +130,12 @@ def test_show_selected_region_preserves_full_field_joint_fit(monkeypatch):
     """Inspect a region with shared rotation without replacing the full-field solution."""
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         pytest.skip("Requires an Apple silicon GPU")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     counts = np.random.default_rng(7).poisson(40, size=(128, 128, 32, 32)).astype(np.uint16)
     rows, columns = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rows, columns) < 10] += 200
-    with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=30,
+    with DirectPtycho(counts, backend="mps", voltage_kV=300, semiangle_mrad=30,
              scan_sampling_A=0.3, detector_sampling_mrad=3.0, scan_detector_rotation_deg=17.0) as ssb:
         fit = ssb.fit_aberrations(search="primary", compare_standard=False, compute_loss=False, verbose=False)
         phase = fit.phase.copy()
@@ -169,12 +169,12 @@ def test_focus_grid_stack_and_static_preserve_images(monkeypatch):
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         pytest.skip("Requires an Apple silicon GPU")
     qw = pytest.importorskip("quantem.widget")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     counts = np.random.default_rng(7).poisson(40, size=(128, 128, 32, 32)).astype(np.uint16)
     rows, columns = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rows, columns) < 10] += 200
-    with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=30,
+    with DirectPtycho(counts, backend="mps", voltage_kV=300, semiangle_mrad=30,
              scan_sampling_A=0.3, detector_sampling_mrad=3.0) as ssb:
         fit = ssb.fit_aberrations(search="primary", num_trials=8, refinement=None, check_rotation=False,
                                    compare_standard=False, compute_loss=False, verbose=False)

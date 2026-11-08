@@ -223,7 +223,7 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     QuantEM's ``fit_aberrations_from_shifts`` does. The half turn ``(R, P) ->
     (-R, -P)`` fits equally well; the rotation is kept within 90 degrees of
     zero and the aberrations take its sign, the 180-degree ambiguity that
-    ``SSB.fit_aberrations(check_rotation=True)`` settles.
+    ``DirectPtycho.fit_aberrations(check_rotation=True)`` settles.
 
     Parameters
     ----------
