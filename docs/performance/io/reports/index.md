@@ -3,6 +3,9 @@
 Dated records retain their original workload, backend, source revision and
 acceptance limits. They are evidence, not a statement of current release speed.
 
+- [CUDA HDF5 saving, 2026-11-07](2026-11-07-hdf5-save.md)
+- [CUDA streaming index, 2026-11-07](2026-11-07-stream-index.md)
+
 - [QEM conversion and complete lossless verification, 2026-10-23](2026-10-23-qem-verification.md)
 - [QEM index size and CUDA loading, 2026-10-23](2026-10-23-qem-layout-cuda-profile.md)
 - [QEM compression compared with HDF5, 2026-10-23](2026-10-23-qem-compression.md)

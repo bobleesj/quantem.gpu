@@ -201,6 +201,54 @@ def test_cuda_save_uint8_display_export(tmp_path):
         )
 
 
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_cuda_encoded_counts_save_on_current_stream(tmp_path, monkeypatch, dtype):
+    """Encoded scans preserve every count across decode batches and HDF5 shards."""
+    cp = pytest.importorskip("cupy")
+    from quantem.gpu import io
+    from quantem.gpu.io.save import _CountBlocks
+
+    values = np.random.default_rng(7).integers(
+        0, np.iinfo(dtype).max, (47, 47, 8, 12), dtype=dtype,
+    )
+    original = tmp_path / "scan.npy"
+    np.save(original, values)
+    path = tmp_path / "copy_master.h5"
+    with io.load(original, device="cuda:0", hot_pixel_correction="none", verbose=False) as scan:
+        decoded = []
+        decode = type(scan.data).decode_scan_range_device
+
+        def bounded_decode(source, first, stop, **kwargs):
+            decoded.append((stop - first) * int(np.prod(source.shape[2:])) * source.dtype.itemsize)
+            return decode(source, first, stop, **kwargs)
+
+        monkeypatch.setattr(type(scan.data), "decode_scan_range_device", bounded_decode)
+        with cp.cuda.Stream(non_blocking=True):
+            io.save(path, scan, frames_per_file=1031)
+        assert len(decoded) > 1 and max(decoded) <= 128 << 20
+        assert _CountBlocks(scan, 3).batch_size == 3
+        with h5py.File(path, "r") as handle:
+            restored = np.concatenate([part[:] for part in handle["entry/data"].values()])
+        np.testing.assert_array_equal(restored.reshape(values.shape), values)
+
+
+@pytest.mark.parametrize("dtype", ["uint32", "float32"])
+def test_cuda_four_byte_hdf5_chunks_on_current_stream(tmp_path, dtype):
+    """Four-byte algorithm outputs remain exact through the same chunk packer."""
+    cp = pytest.importorskip("cupy")
+    from quantem.gpu import io
+
+    values = np.arange(5 * 7 * 8 * 12, dtype=dtype).reshape(5, 7, 8, 12)
+    if dtype == "float32":
+        values = values / 7 - 100
+    path = tmp_path / "result_master.h5"
+    with cp.cuda.Stream(non_blocking=True):
+        io.save(path, cp.asarray(values), batch_size=9, frames_per_file=17)
+    with h5py.File(path, "r") as handle:
+        restored = np.concatenate([part[:] for part in handle["entry/data"].values()])
+    np.testing.assert_array_equal(restored.reshape(values.shape), values)
+
+
 @pytest.mark.parametrize("backend", ["cpu", "cuda", "mps"])
 def test_narrower_integer_save_is_exact_or_refused(tmp_path, backend):
     """uint16 counts saved as uint8 are written unchanged when they fit and refused when one does not.

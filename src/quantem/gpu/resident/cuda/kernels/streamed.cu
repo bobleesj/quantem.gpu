@@ -284,24 +284,23 @@ extern "C" __global__ void sc_total(
 }
 
 // The spatial index of one scan: the sum of every 8x8 detector tile (the leaves), then of every
-// 32x32 tile (the roots). One warp sums one leaf from the counts.
+// 32x32 tile (the roots). One thread sums one leaf, keeping adjacent leaves together
+// without a warp reduction or a separate warp for each small tile.
 extern "C" __global__ void sc_fields(
     const void* raw, int itemsize, const u8* valid, u32* fields,
     u32 scans, u32 rows, u32 cols, u32 field_count
 ) {
-    u64 item=(u64(blockIdx.x)*blockDim.x+threadIdx.x)/32;
-    u32 lane=threadIdx.x&31;
+    u64 item=u64(blockIdx.x)*blockDim.x+threadIdx.x;
     u32 leaf_cols=(cols+7)/8, leaves=((rows+7)/8)*leaf_cols;
     if (item>=u64(scans)*leaves) return;
     u32 scan=item/leaves, leaf=item%leaves;
     u32 row0=(leaf/leaf_cols)*8, col0=(leaf%leaf_cols)*8, sum=0;
-    for (u32 offset=lane;offset<64;offset+=32) {
+    for (u32 offset=0;offset<64;++offset) {
         u32 row=row0+offset/8,col=col0+offset%8;
         if (row<rows && col<cols && valid[row*cols+col])
             sum+=sc_raw(raw,(u64(scan)*rows+row)*cols+col,itemsize);
     }
-    sum=__reduce_add_sync(0xffffffffu,sum);
-    if (!lane) fields[u64(scan)*field_count+leaf]=sum;
+    fields[u64(scan)*field_count+leaf]=sum;
 }
 
 // A root is the sum of its sixteen leaves, which sc_fields has written: summing its 1024 counts

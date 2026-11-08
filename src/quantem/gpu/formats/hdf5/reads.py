@@ -19,6 +19,20 @@ from typing import Self
 
 import numpy as np
 
+_SEEK_LOCK = Lock()
+
+
+def _pread_into(fd: int, view: memoryview, offset: int) -> int:
+    """Read into `view` from byte `offset` of `fd`; returns the bytes read. os.preadv on Linux and macOS; on
+    Windows (no preadv) a seek and a read under one lock, since the threads share each descriptor."""
+    if hasattr(os, "preadv"):
+        return os.preadv(fd, [view], offset)
+    with _SEEK_LOCK:
+        os.lseek(fd, offset, os.SEEK_SET)
+        data = os.read(fd, len(view))
+    view[:len(data)] = data
+    return len(data)
+
 from quantem.gpu.device.cuda_runtime import _alloc_pinned_fast, _get_libc, _release_pinned
 from quantem.gpu.formats.hdf5.frames import (
     BLOCK_SIZE,
@@ -208,9 +222,9 @@ class FrameReader:
             remaining = int(nbytes)
             view_offset = 0
             while remaining > 0:
-                bytes_read = os.preadv(
+                bytes_read = _pread_into(
                     fd,
-                    [destination_view[view_offset:view_offset + remaining]],
+                    destination_view[view_offset:view_offset + remaining],
                     int(file_offset + view_offset),
                 )
                 if bytes_read == 0:

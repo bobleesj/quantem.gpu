@@ -133,7 +133,10 @@ def _pack_chunks(compressed, block_sizes, n_frames, n_8kb, frame_bytes, max_out)
     chunk_starts_device = cp.empty(n_frames + 1, dtype=cp.uint64)
     chunk_starts_device[0] = 0
     chunk_starts_device[1:] = cp.cumsum(chunk_sizes_device)
-    packed_bytes = int(chunk_starts_device[-1].get())
+    # One small transfer supplies the allocation size and the writer's chunk
+    # table. Reading starts and sizes separately adds two device waits per batch.
+    chunk_offsets = chunk_starts_device.get().astype(np.int64, copy=False)
+    packed_bytes = int(chunk_offsets[-1])
     packed_device = cp.empty(packed_bytes, dtype=cp.uint8)
     kernel("pack_h5_chunks_kernel")(
         (n_frames,), (256,),
@@ -149,7 +152,6 @@ def _pack_chunks(compressed, block_sizes, n_frames, n_8kb, frame_bytes, max_out)
             np.uint32(BLOCK_SIZE),
         ),
     )
-    cp.cuda.Stream.null.synchronize()
     # A new host array per batch is the compressed size in fresh pages on every save, which
     # stalls on a host short of free memory, so staging buffers are reused. The batches of one
     # save differ by a few percent: sizes go up to a coarse grid so they share buffers.
@@ -157,6 +159,6 @@ def _pack_chunks(compressed, block_sizes, n_frames, n_8kb, frame_bytes, max_out)
     packed = _alloc_pinned_fast(-(-packed_bytes // step) * step)[:packed_bytes]
     packed_device.get(out=packed)
     # int64, the same chunk table the Metal compressor hands the writer.
-    chunk_starts = chunk_starts_device[:-1].get().astype(np.int64, copy=False)
-    chunk_sizes = chunk_sizes_device.get().astype(np.int64, copy=False)
+    chunk_starts = chunk_offsets[:-1]
+    chunk_sizes = np.diff(chunk_offsets)
     return packed, chunk_starts, chunk_sizes

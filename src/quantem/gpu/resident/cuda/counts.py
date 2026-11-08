@@ -246,7 +246,7 @@ class StreamedCounts:
                 values = cp.empty((scans, fields), cp.uint32)
                 geometry = (u32(scans), u32(self.shape[2]), u32(self.shape[3]), u32(fields))
                 self.kernels["fields"](
-                    ((scans * leaves + 3) // 4,),
+                    ((scans * leaves + 127) // 128,),
                     (128,),
                     (raw, np.int32(raw.dtype.itemsize), self.valid, values, *geometry),
                 )

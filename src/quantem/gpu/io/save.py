@@ -403,7 +403,7 @@ def save(
 
 
 class _CountBlocks:
-    """Decode complete CUDA integer residents within a 32 MiB frame buffer."""
+    """Decode complete CUDA integer residents within a 128 MiB frame buffer."""
 
     def __init__(self, dataset, batch_size):
         self.source = dataset.data
@@ -420,12 +420,12 @@ class _CountBlocks:
             raise ValueError("Cannot preserve this detector correction record; reopen the original acquisition.")
         self.save_metadata[HOT_PIXEL_CORRECTION_ATTRIBUTE] = correction
         frame_bytes = math.prod(self.shape[2:]) * self.dtype.itemsize
-        count = 512 if batch_size is None else int(batch_size)
+        count = 2048 if batch_size is None else int(batch_size)
         if count <= 0:
             raise ValueError("batch_size must be positive.")
-        if frame_bytes > 32 << 20:
-            raise MemoryError("One detector frame exceeds the 32 MiB save decode limit.")
-        self.batch_size = min(count, (32 << 20) // frame_bytes)
+        if frame_bytes > 128 << 20:
+            raise MemoryError("One detector frame exceeds the 128 MiB save decode limit.")
+        self.batch_size = min(count, (128 << 20) // frame_bytes)
 
     def blocks(self):
         with cp.cuda.Device(self.source.device):
@@ -464,7 +464,8 @@ def _save_blocks(filepath, data, backend, dtype, metadata, scan_shape,
                     metadata=output_metadata, dtype=storage_dtype,
                     source_master=source_master, frames_per_file=frames_per_file,
                 )
-            count = 512 if batch_size is None else int(batch_size)
+            default_count = data.batch_size if isinstance(data, _CountBlocks) else 512
+            count = default_count if batch_size is None else int(batch_size)
             if count <= 0:
                 raise ValueError("batch_size must be positive.")
             for start in range(0, len(block), count):

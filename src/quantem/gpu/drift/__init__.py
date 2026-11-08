@@ -10,7 +10,29 @@ series moved back into register.
 Translation only: the frames are compared on their own pixel grids, displacement_A[f] where frame f sees the specimen
 against frame 0, I_f(r) = I_0(r - d_f)."""
 
-from quantem.gpu.drift.registration import bands, peaks, prepared, register, register_spectra, spots
+from quantem.gpu.drift.registration import (
+    bands,
+    peaks,
+    prepared,
+    register,
+    register_spectra,
+    spots,
+)
 from quantem.gpu.drift.series import Drift, drift, footprint, running, shifted
+from quantem.gpu.drift.simulation import simulate_drift, simulate_feedback
 
-__all__ = ["Drift", "bands", "drift", "footprint", "peaks", "prepared", "register", "register_spectra", "running", "shifted", "spots"]
+__all__ = [
+    "Drift",
+    "bands",
+    "drift",
+    "footprint",
+    "peaks",
+    "prepared",
+    "register",
+    "register_spectra",
+    "running",
+    "shifted",
+    "simulate_drift",
+    "simulate_feedback",
+    "spots",
+]

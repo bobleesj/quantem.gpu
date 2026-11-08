@@ -10,6 +10,7 @@ import numbers
 from typing import TYPE_CHECKING
 
 from quantem.gpu.formats.qem.metadata import (
+    ACQUISITION_SYSTEM,
     BRIGHT_FIELD_DISK_FIT,
     BRIGHT_FIELD_DISK_KEY,
     DETECTOR_PIXEL_SIZE,
@@ -49,6 +50,7 @@ OVERRIDDEN = "Overridden"  # set on data.calibration and saved beside the file's
 PARTLY_OVERRIDDEN = "Recorded + overridden"
 NOT_RECORDED = "Not recorded"
 FITTED_BRIGHT_FIELD_DISK = "Fitted (bright-field disk)"  # data.calibration.fit_detector_sampling()
+FROM_SYSTEM = "Microscope (recorded at Go)"  # the acquisition system's own reading, kept with the scan
 # and the states only a session's launch table states, for the value it uses:
 EXPLICIT_OVERRIDE = "Explicit override"  # a keyword given to DirectPtycho(...) or DirectPtycho.open(...)
 ESTIMATED = "Estimated"
@@ -96,6 +98,9 @@ def calibration_rows(metadata: dict) -> dict:
         if paths and all(isinstance(overrides.get(path), dict)
                          and overrides[path].get("provenance") == BRIGHT_FIELD_DISK_FIT for path in paths):
             origin = FITTED_BRIGHT_FIELD_DISK
+        if paths and all(isinstance(overrides.get(path), dict)
+                         and overrides[path].get("provenance") == ACQUISITION_SYSTEM for path in paths):
+            origin = FROM_SYSTEM
         return {"Value": value, "Unit": unit, "Metadata": origin}
 
     detector_key = (

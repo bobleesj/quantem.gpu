@@ -63,7 +63,8 @@ HOT_PIXEL_SCHEMA = "quantem.hot-pixel-correction/3"
 # ``data.calibration.fit_detector_sampling()`` fitted on the bright-field disk.
 USER_OVERRIDE = "user_override"
 BRIGHT_FIELD_DISK_FIT = "bright_field_disk_fit"
-OVERRIDE_PROVENANCES = (USER_OVERRIDE, BRIGHT_FIELD_DISK_FIT)
+ACQUISITION_SYSTEM = "acquisition_system"   # read from the microscope at acquisition (e.g. AutoScript at Go)
+OVERRIDE_PROVENANCES = (USER_OVERRIDE, BRIGHT_FIELD_DISK_FIT, ACQUISITION_SYSTEM)
 # The retained record of that fit's bright-field disk: centre (row, col) and edge radius in detector
 # pixels. A record with another schema, or none, is the same as no record.
 BRIGHT_FIELD_DISK_KEY = "bright_field_disk"

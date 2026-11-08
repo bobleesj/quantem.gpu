@@ -182,4 +182,4 @@ def test_ssb_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, capsy
         assert (correction["method"], correction["pixel_count"], correction["applied"]) == ("median", 4, True)
     out = capsys.readouterr().out
     assert "SSB: 4 flagged detector pixels replaced by their 3 x 3 neighbor median" in out
-    assert 'io.load(path, hot_pixel_correction="none") and use SSB(data)' in out
+    assert 'io.load(path, hot_pixel_correction="none") and use DirectPtycho(data)' in out

@@ -50,6 +50,34 @@ Evidence: [method comparison](../performance/ssb/reports/2026-10-24-drift-method
 
 ## Advanced
 
+### Simulated drift and feedback
+
+```python
+import numpy as np
+from quantem.gpu.drift import simulate_drift, simulate_feedback
+
+images, displacement_nm = simulate_drift(
+    reference, sampling_A=(0.2, 0.2), num_scans=11, step_nm=(0.02, -0.015),
+)
+observed, feedback = simulate_feedback(
+    images, sampling_A=(0.2, 0.2), image_from_piezo=np.eye(2),
+)
+feedback  # measured residuals, accepted matches and commands for the next scan
+```
+
+`reference` is a CuPy phase image; `images` and `observed` stay on the GPU.
+The matrix maps piezo-axis displacement in nm into image `(row, col)` displacement
+in nm; identity here is an example, not a measured calibration. Feedback uses the
+current and last accepted image, with a one-scan delay, bounded steps and rejection
+of weak or ambiguous matches. `gain` defaults to 0.8 and `max_step_nm` to 0.2.
+Both peak separation and band correlation must pass; neither proves physical accuracy.
+
+These functions shift reconstructed images with periodic boundaries. They do not
+simulate scattering, new field of view, actuator travel or settling, and do not
+control hardware. Use the common image interior for comparisons.
+
+### Registration parameters
+
 `drift(..., frames=None, neighbours=3, band_A=(50.0, 0.67), reach_A=30.0, outlier_A=0.5)`: the frame labels (a
 stream's names, else 0, 1, 2, ...), how many frames apart pairs are registered, the band of periods compared (Å), how
 far a pair's search reaches (Å), and how far a pair may disagree with the confident chain before it is rejected (Å).

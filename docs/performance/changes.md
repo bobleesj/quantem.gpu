@@ -1,5 +1,12 @@
 # Revision and change ledger
 
+## 2026-11-07: bounded CUDA HDF5 saving
+
+Integer ANS exports use a 128 MiB decode limit and one host chunk-table transfer.
+The [saving record](io/reports/2026-11-07-hdf5-save.md) separates conversion,
+durable storage, exact-count validation and contention. No compression kernel,
+precision or durability check was removed.
+
 ## 2026-10-25: joint ANS detector launches and validation
 
 Residual queries group up to sixteen scan blocks per CUDA block; stored counts

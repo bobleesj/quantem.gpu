@@ -163,6 +163,30 @@ def test_many_field_detector_masks_keep_exact_sums(dtype, interval):
         source.release()
 
 
+@pytest.mark.parametrize("shape", [(7, 11), (96, 96), (192, 192)])
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+def test_spatial_index_preserves_tiles_and_masked_edges(shape, dtype):
+    """Queries after partial arrivals retain exact tile sums and edge pixels."""
+    from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
+
+    rows, cols = np.indices(shape)
+    valid = (rows + cols) % 7 != 0
+    raw = (cp.arange(53 * np.prod(shape), dtype=cp.uint32) * 15427)
+    raw = raw.astype(dtype).reshape(53, *shape)
+    source = StreamedCounts((1, 53, *shape), dtype, valid)
+    try:
+        for first, stop in ((0, 13), (13, 53)):
+            source.append(raw[first:stop])
+        query = StreamedSeriesCompute([source])
+        for mask in (rows < 8, cols >= shape[1] - 9, (rows < 32) & (cols < 32)):
+            expected = raw[:, cp.asarray(mask & valid)].sum(axis=1, dtype=cp.uint64)
+            actual = query.masked_sum_exact_native(mask).reshape(-1)
+            assert bool(cp.array_equal(actual, expected))
+        assert bool(cp.array_equal(source.decode_scan_range_device(0, 53), raw))
+    finally:
+        source.release()
+
+
 def _alternative_stream(mode):
     """One selected sparse, constant or zero stream, with neighboring payloads."""
     raw = cp.zeros((16, 8, 8), cp.uint16)

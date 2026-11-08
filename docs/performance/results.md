@@ -9,6 +9,13 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
+## CUDA streaming index, 2026-11-07
+
+The [streaming index record](io/reports/2026-11-07-stream-index.md) measures
+13.0% more completed-pattern throughput with identical counts and encoded bytes.
+The smaller tile mapping reaches 91% of available DRAM throughput in its kernel
+profile; the complete streaming pipeline remains below its unestablished limit.
+
 ## Joint ANS detector queries, 2026-10-25
 
 The [seven-acquisition CUDA record](virtual-detectors/reports/2026-10-25-seven-ans-acquisitions.md)
@@ -35,6 +42,13 @@ experiments, an isolated WebGPU transfer improvement and actual notebook
 paints. The 2× notebook measurement does not improve on its baseline; 4×
 measurements vary. The 60 fps target remains unmet. Raw source identities and
 images remain in the private evidence archive.
+
+## CUDA HDF5 saving, 2026-11-07
+
+The [saving record](io/reports/2026-11-07-hdf5-save.md) measures seven complete
+ANS-resident acquisitions: 48.26 s before and 25.91 s after bounded batching
+and fewer host transfers, including flush and publication. Counts and
+calibration match exactly; shared GPU/storage timings are not hardware limits.
 
 ## HDF5 and QEM Disk–GPU loading, 2026-10-23
 

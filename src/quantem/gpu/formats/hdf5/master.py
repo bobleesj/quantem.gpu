@@ -138,6 +138,10 @@ def get_metadata(filepath: str) -> dict:
         data_group = handle.get("entry/data")
         if data_group is not None:
             copy_attributes(data_group.attrs)
+        # values the writer stored as JSON (quantem.gpu.io.hdf5.write): structured again, exactly
+        for key in json.loads(metadata.pop("json_attributes", None) or "[]"):
+            if isinstance(metadata.get(key), str):
+                metadata[key] = json.loads(metadata[key])
 
         detector_dataset = handle.get("entry/data/data")
         if detector_dataset is None and data_group is not None:

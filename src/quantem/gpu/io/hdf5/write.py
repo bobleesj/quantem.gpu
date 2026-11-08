@@ -548,11 +548,15 @@ def _metadata_attrs(handle, metadata):
     """Write metadata as HDF5 attributes, storing unsupported values as text."""
     if metadata is None:
         return
+    as_json = []                     # structured values (dicts, lists of dicts): JSON, named in json_attributes
     for key, value in metadata.items():
         if value is None:
             continue
         if key == HOT_PIXEL_CORRECTION_ATTRIBUTE and not isinstance(value, str):
             value = json.dumps(value, default=json_metadata)
+        elif key != "pixel_mask" and _structured(value):
+            value = json.dumps(value, default=json_metadata)
+            as_json.append(key)
         if key == "pixel_mask" and HOT_PIXEL_CORRECTION_ATTRIBUTE in metadata:
             name = "entry/instrument/detector/detectorSpecific/pixel_mask"
             if name in handle:
@@ -563,6 +567,18 @@ def _metadata_attrs(handle, metadata):
             handle.attrs[key] = value
         except (TypeError, ValueError):
             handle.attrs[key] = str(value)
+    if as_json:
+        handle.attrs[JSON_ATTRIBUTES] = json.dumps(as_json)
+
+
+JSON_ATTRIBUTES = "json_attributes"
+
+
+def _structured(value) -> bool:
+    """A dict, or a list/tuple holding dicts or lists: HDF5 attributes cannot hold these as they are."""
+    if isinstance(value, dict):
+        return True
+    return isinstance(value, (list, tuple)) and any(isinstance(item, (dict, list, tuple)) for item in value)
 
 
 def _master_prefix(master_path):
