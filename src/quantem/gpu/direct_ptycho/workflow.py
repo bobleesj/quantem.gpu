@@ -54,7 +54,7 @@ from quantem.gpu.direct_ptycho.persistence import (
     source_identity,
 )
 from quantem.gpu.direct_ptycho.neural_phase import NeuralPhaseModel
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult, check_phase_estimator, host_array
+from quantem.gpu.direct_ptycho.results import STORAGE_METHOD, DirectPtychoResult, check_phase_estimator, host_array
 from quantem.gpu.direct_ptycho.trials import (
     choose_trials,
     label_trials,
@@ -359,7 +359,7 @@ def _streams_scan(data: Dataset4dstemGPU, backend: str) -> bool:
 class DirectPtycho:
     """Direct ptychography with SSB optical fitting on CUDA or MPS.
 
-    ``run(method="ssb")`` preserves conventional SSB. Experimental CUDA methods
+    ``run(method="phase_of_mean")`` preserves conventional SSB. Experimental CUDA methods
     ``"phase"`` and ``"complex"`` solve regularized linear weak-object models.
 
     SSB recovers the object phase from the bright-field disk: each bright-field detector pixel sees the sample through
@@ -2806,7 +2806,8 @@ class DirectPtycho:
                   f"depth spread {depth or 0.0:.3f} nm; loss at native 1x")
         cached = self._reconstruction
         if (not force and save_dir is None and parameters is None and aberrations is None
-                and cached is not None and cached.reconstruction_method == "ssb" and cached.upsampling == upsampling
+                and cached is not None and cached.reconstruction_method in ("ssb", "phase_of_mean")
+                and cached.upsampling == upsampling
                 and cached.phase_estimator == "phase_of_mean"
                 and cached.scan_detector_rotation_deg == self.scan_detector_rotation_deg
                 and cached.aberrations == coefs
@@ -2847,7 +2848,7 @@ class DirectPtycho:
     @_on_scan_gpu
     def series(self, sources: Sequence = (), fit: DirectPtychoResult | None = None, *,
                refit: Literal["none", "defocus", "full"] = "defocus",
-               method: Literal["ssb", "phase", "complex"] | tuple[str, ...] = "ssb",
+               method: Literal["phase_of_mean", "phase", "complex"] | tuple[str, ...] = "phase_of_mean",
                upsampling: int | Literal["auto"] = "auto", save_dir: str | Path | None = None,
                max_frames: int | None = None, neural_model: "NeuralPhaseModel | None" = None,
                annulus_mrad: tuple[float, float] | None = None,
@@ -2891,6 +2892,12 @@ class DirectPtycho:
         """
         from quantem.gpu.direct_ptycho.stream import series
 
+        names = (method,) if isinstance(method, str) else method
+        for name in names:
+            if name not in ("phase_of_mean", "phase", "complex"):
+                raise ValueError(f'method={name!r} is retired; use "phase_of_mean", "phase" or "complex".')
+        method = (STORAGE_METHOD[method] if isinstance(method, str)
+                  else tuple(STORAGE_METHOD[name] for name in method))
         if fit is None:
             fit = self.fit_aberrations(show=False, verbose=verbose)
         return series(self, sources, fit, refit=refit, method=method, upsampling=upsampling, save_dir=save_dir,
@@ -2939,7 +2946,7 @@ class DirectPtycho:
 
     def reconstruct(
         self, parameters: DirectPtychoResult | None = None, *,
-        method: Literal["ssb", "phase", "complex", "all"] = "ssb",
+        method: Literal["phase_of_mean", "phase", "complex", "all"] = "phase_of_mean",
         neural_model: NeuralPhaseModel | None = None,
         scan_basis: tuple[tuple[float, float], tuple[float, float]] | None = None,
         phase_damping: float | None = None,
@@ -3041,15 +3048,20 @@ class DirectPtycho:
         from quantem.gpu.direct_ptycho import direct_workflow
 
         check_phase_estimator(phase_estimator)
+        if isinstance(method, str) and method not in ("phase_of_mean", "phase", "complex", "all"):
+            raise ValueError(
+                f'method={method!r} is retired; use method="phase_of_mean", "phase", "complex" or "all".'
+            )
+        method = STORAGE_METHOD.get(method, method)
         if neural_model is not None and method != "phase":
             raise ValueError('Use method="phase" with neural_model; the model corrects phase only.')
         if scan_basis is not None and method not in ("phase", "complex"):
             raise ValueError('Use method="phase" or "complex" with a calibrated scan_basis.')
         if method == "all":
             if self.backend != "cuda":
-                raise NotImplementedError("method='all' requires CUDA; use method='ssb' on other backends.")
+                raise NotImplementedError("method='all' requires CUDA; use method='phase_of_mean' on other backends.")
             if trial_ids is not None or phase_estimator is not None:
-                raise ValueError("trial_ids and phase_estimator require method='ssb'; omit them for method='all'.")
+                raise ValueError("trial_ids and phase_estimator require method='phase_of_mean'; omit them for method='all'.")
             # Validate the direct-model settings before fitting or reconstructing.
             direct_workflow.settings("complex", phase_damping, amplitude_damping,
                                      smoothness_inv_A, detector_weighting)
@@ -3060,12 +3072,12 @@ class DirectPtycho:
                     parameters, method=name, aberrations=aberrations,
                     upsampling=upsampling, compute_loss=compute_loss,
                     save_dir=save_dir, force=force, verbose=verbose,
-                    phase_damping=phase_damping if name != "ssb" else None,
+                    phase_damping=phase_damping if name != "phase_of_mean" else None,
                     amplitude_damping=amplitude_damping if name == "complex" else None,
-                    smoothness_inv_A=smoothness_inv_A if name != "ssb" else None,
-                    detector_weighting=detector_weighting if name != "ssb" else None,
+                    smoothness_inv_A=smoothness_inv_A if name != "phase_of_mean" else None,
+                    detector_weighting=detector_weighting if name != "phase_of_mean" else None,
                 )
-                for name in ("ssb", "phase", "complex")
+                for name in ("phase_of_mean", "phase", "complex")
             }
 
         policy = direct_workflow.settings(method, phase_damping, amplitude_damping,
@@ -3075,7 +3087,7 @@ class DirectPtycho:
                                  upsampling=upsampling,
                                  compute_loss=compute_loss, save_dir=save_dir, force=force, verbose=verbose)
         if trial_ids is not None or phase_estimator is not None:
-            raise ValueError("trial_ids and phase_estimator apply only to method='ssb'; omit them for direct inversion.")
+            raise ValueError("trial_ids and phase_estimator apply only to method='phase_of_mean'; omit them for direct inversion.")
         if scan_basis is not None:
             policy["scan_basis"] = direct_workflow._scan_basis(scan_basis, self.backend)
         return direct_workflow.run(
@@ -3163,7 +3175,7 @@ class DirectPtycho:
         phase_estimator: Literal["phase_of_mean"] | None = None,
         output: Literal["numpy", "native"] = "numpy",
         cancel: Callable[[], bool] | None = None,
-        method: Literal["ssb", "phase", "complex"] = "ssb",
+        method: Literal["phase_of_mean", "phase", "complex"] = "phase_of_mean",
         phase_damping: float | None = None,
         amplitude_damping: float | None = None,
         smoothness_inv_A: float | None = None,
@@ -3228,6 +3240,7 @@ class DirectPtycho:
             raise NotImplementedError("Native SSB preview output requires backend='cuda'; use output='numpy' on this backend.")
         from quantem.gpu.direct_ptycho import direct_workflow
 
+        method = STORAGE_METHOD.get(method, method)   # public name -> storage key
         policy = direct_workflow.settings(method, phase_damping, amplitude_damping,
                                           smoothness_inv_A, detector_weighting)
         if method != "ssb":

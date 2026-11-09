@@ -31,10 +31,10 @@ For a quick CUDA comparison, reconstruct all three methods with one call:
 
 ```python
 images = ptycho.reconstruct(optics, method="all", upsampling="auto", compute_loss=False)
-images["ssb"].show(compare=images, region="center", show_fft=True, columns=2, cmap="gray")
+images["phase_of_mean"].show(compare=images, region="center", show_fft=True, columns=2, cmap="gray")
 ```
 
-The dictionary keys are `"ssb"`, `"phase"`, and `"complex"`. All three reuse the
+The dictionary keys are `"phase_of_mean"`, `"phase"`, and `"complex"`. All three reuse the
 same fitted optics and sampling; no new aberration search is performed when
 `optics` is supplied. Their numerical solves still differ. Each regularized method prepares its own direct equations once; repeated
 compatible reconstructions reuse those preparations. Rendering and FFT display take additional time. No method is automatically
@@ -137,7 +137,7 @@ is not evidence of measured spatial resolution.
 
 | Method | Unknowns | Reconstruction |
 |---|---|---|
-| `"ssb"` | Conventional corrected SSB phase | Existing sideband reconstruction |
+| `"phase_of_mean"` | Conventional corrected SSB phase | Existing sideband reconstruction |
 | `"phase"` | Phase, with amplitude fixed to one | Regularized weak-phase linear solve |
 | `"complex"` | Relative log-amplitude and phase | Coupled regularized weak-object linear solve |
 
@@ -322,7 +322,7 @@ Insufficient overlap with the last confident scan stops registration with a
 recovery message instead of resetting global drift or clipping a scan.
 
 Every frame is reconstructed by SSB, and by each method in `method`
-(`"ssb"`, `"phase"`, `"complex"` or a tuple) at that frame's optics, with
+(`"phase_of_mean"`, `"phase"`, `"complex"` or a tuple) at that frame's optics, with
 `reconstruct`'s strengths (`phase_damping=...`). Each frame is registered on its
 SSB phase against the last confidently placed frame (lattice-safe band
 registration from `quantem.gpu.drift`, Bragg spots from the first frame) and
@@ -440,4 +440,4 @@ probe or establish specimen depth resolution. Reset All restores launch settings
 
 The Python workflow is `DirectPtycho`; the former `SSB` class alias has been
 removed. Use `fit_aberrations()` for optical fitting. The scientific algorithm
-name `method="ssb"` remains available alongside `"phase"` and `"complex"`.
+name `method="phase_of_mean"` remains available alongside `"phase"` and `"complex"`.

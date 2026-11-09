@@ -19,6 +19,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- The conventional reconstruction is requested as `method="phase_of_mean"`; the `"ssb"`
+  value is retired and raises with the replacement named. Saved results and screening
+  records keep the historical storage key, so existing files stay readable.
+
 - The direct ptychography result is `DirectPtychoResult`; `SSBResult` is retired, because one
   object now holds SSB, phase and complex reconstructions. The neural phase model is trained
   through `DirectPtycho.train_neural_phase(optics)` and loaded through

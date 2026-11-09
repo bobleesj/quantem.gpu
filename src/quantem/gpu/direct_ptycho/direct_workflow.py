@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import STORAGE_METHOD, DirectPtychoResult
 from quantem.gpu.direct_ptycho.units import validate_aberrations
 
 # drag-window tiles kept per control: a drag back and forth across one tile edge needs two
@@ -26,8 +26,11 @@ def settings(
     detector_weighting,
 ):
     """Resolve only the controls that belong to the selected reconstruction."""
+    method = STORAGE_METHOD.get(method, method)   # public name -> storage key
     if method not in ("ssb", "phase", "complex"):
-        raise ValueError(f"method must be 'ssb', 'phase' or 'complex'; got {method!r}.")
+        raise ValueError(
+            f'method must be "phase_of_mean", "phase" or "complex"; got {method!r}.'
+        )
     if method == "ssb":
         if any(
             value is not None
@@ -405,9 +408,9 @@ def run(
         semiangle_mrad=session.semiangle_mrad,
         object_sampling_A=session._output_sampling(factor),
         upsampling=factor,
-        phase_estimator=policy["method"],
+        phase_estimator=PUBLIC_METHOD.get(policy["method"], policy["method"]),
         amplitude_estimated=policy["method"] == "complex",
-        reconstruction_method=policy["method"],
+        reconstruction_method=PUBLIC_METHOD.get(policy["method"], policy["method"]),
         reconstruction_options=dict(policy),
         reconstruction_diagnostics=diagnostics,
         phase_clim=correction.phase_limits if correction is not None else None,

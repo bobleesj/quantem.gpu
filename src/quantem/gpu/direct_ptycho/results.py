@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from quantem.gpu.direct_ptycho.branches import RotationBranches
 
-# SSB reconstructs the phase of the bright-field mean wave, ``phase_of_mean`` (``method="ssb"``). The older estimators
+# SSB reconstructs the phase of the bright-field mean wave, ``phase_of_mean`` (``method="phase_of_mean"``). The older estimators
 # were retired on 2026-10-25, each in favour of the regularized method named here. Saved results and records that name
 # one still load as they were saved; asking for one raises an error naming its replacement.
 RETIRED_PHASE_ESTIMATORS = {"mean_phase": "phase", "complex_wave": "complex"}
@@ -30,7 +30,7 @@ def check_phase_estimator(phase_estimator: str | None) -> None:
 
     Examples
     --------
-    >>> check_phase_estimator("phase_of_mean")  # what method="ssb" computes
+    >>> check_phase_estimator("phase_of_mean")  # what method="phase_of_mean" computes
     """
     if phase_estimator in (None, "phase_of_mean"):
         return
@@ -53,6 +53,12 @@ def retired_estimator_note(phase_estimator: object, record: str) -> str | None:
     return (f"SSB: {record} was saved with the retired {phase_estimator} estimator and loads as saved; "
             f"reconstruct(method='ssb') reconstructs the phase of the mean wave, reconstruct(method='{method}') replaces "
             f"{phase_estimator}.")
+
+
+# The public method name for the conventional path. Storage keeps ``ssb`` because saved
+# screening configs, canvas keys and result file names already use it.
+PUBLIC_METHOD = {"ssb": "phase_of_mean", "phase": "phase", "complex": "complex"}
+STORAGE_METHOD = {public: stored for stored, public in PUBLIC_METHOD.items()}
 
 
 @dataclass
@@ -178,7 +184,7 @@ class DirectPtychoResult(Mapping[str, float]):
     semiangle_mrad: float | None = None
     object_sampling_A: tuple[float, float] | None = None
     upsampling: int = 1
-    reconstruction_method: str = "ssb"
+    reconstruction_method: str = "phase_of_mean"
     reconstruction_options: dict[str, object] = field(default_factory=dict)
     reconstruction_diagnostics: dict[str, object] = field(default_factory=dict)
     phase_estimator: str | None = None
@@ -234,7 +240,8 @@ class DirectPtychoResult(Mapping[str, float]):
         return len(self.aberrations)
 
     def __repr__(self) -> str:
-        lines = ["SSB Result" if self.reconstruction_method == "ssb" else f"Direct {self.reconstruction_method} result"]
+        method = self.reconstruction_method
+        lines = ["SSB Result" if method in ("ssb", "phase_of_mean") else f"Direct {method} result"]
         lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsampling}x output")
         if self.phase_estimator is not None:
             lines.append(f"  Estimator      {self.phase_estimator}")
@@ -1063,7 +1070,7 @@ def _phase_title(result: DirectPtychoResult, area: str = "Full field", *, neural
     """Name the measured channel, reconstruction method and recorded strengths."""
     method = result.reconstruction_method
     options = result.reconstruction_options
-    if method == "ssb":
+    if method in ("ssb", "phase_of_mean"):
         heading = "Conventional SSB"
         detail = "No damping"
     else:

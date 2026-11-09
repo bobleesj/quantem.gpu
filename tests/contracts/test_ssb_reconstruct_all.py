@@ -33,14 +33,14 @@ def test_all_reuses_one_fit_and_matches_separate_calls(monkeypatch):
     images = session.reconstruct(method="all", upsampling="auto", compute_loss=False,
                                  phase_damping=.05, amplitude_damping=.1)
     session.fit_aberrations.assert_called_once_with(compute_loss=False, verbose=False)
-    assert list(images) == ["ssb", "phase", "complex"]
+    assert list(images) == ["phase_of_mean", "phase", "complex"]
     assert all(parameters is fit for _, parameters, _ in calls)
     assert calls[1][2]["policy"]["phase_damping"] == .05
     assert "amplitude_damping" not in calls[1][2]["policy"]
     assert calls[2][2]["policy"]["amplitude_damping"] == .1
     assert all(not options["compute_loss"] for _, _, options in calls)
     for method in images:
-        options = {} if method == "ssb" else {"phase_damping": .05}
+        options = {} if method == "phase_of_mean" else {"phase_damping": .05}
         if method == "complex":
             options["amplitude_damping"] = .1
         assert session.reconstruct(fit, method=method, **options) == images[method]
@@ -72,8 +72,8 @@ def test_named_method_comparison_displays_each_result_once():
     wave = np.exp(1j * np.arange(64).reshape(8, 8) / 100)
     images = {name: DirectPtychoResult(object_wave=wave.copy(), backend="cuda", object_sampling_A=(.5, .5),
                              reconstruction_method=name)
-              for name in ("ssb", "phase", "complex")}
-    figure = images["ssb"].show(compare=images, columns=3, size="small")
+              for name in ("phase_of_mean", "phase", "complex")}
+    figure = images["phase_of_mean"].show(compare=images, columns=3, size="small")
     image_axes = [axis for axis in figure.axes if axis.images]
     assert len(image_axes) == 6  # Full field and matched zoom, once per method.
     assert [axis.get_title().splitlines()[0] for axis in image_axes[:3]] == [
