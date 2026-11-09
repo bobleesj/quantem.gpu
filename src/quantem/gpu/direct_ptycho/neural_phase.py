@@ -33,7 +33,7 @@ class NeuralPhaseModel:
     --------
     >>> fit = ptycho.fit_aberrations(tilt=True)
     >>> model = NeuralPhaseModel.fit(ptycho, fit)
-    >>> reconstruction = ptycho.reconstruct(fit, method="phase", refinement=model,
+    >>> reconstruction = ptycho.reconstruct(fit, method="phase", neural_model=model,
     ...                                    upsampling="auto")
     >>> neural_phase = reconstruction.neural_phase
     """
@@ -264,7 +264,7 @@ class NeuralPhaseModel:
         >>> optics = ptycho.fit_aberrations(tilt=True)
         >>> model = NeuralPhaseModel.fit(ptycho, optics)
         >>> reconstruction = ptycho.reconstruct(optics, method="phase",
-        ...                                    refinement=model, upsampling="auto")
+        ...                                    neural_model=model, upsampling="auto")
         """
         if recipe == "staged":
             from quantem.gpu.direct_ptycho._phase_staged_training import train
