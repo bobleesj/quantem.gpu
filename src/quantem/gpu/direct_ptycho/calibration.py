@@ -73,7 +73,7 @@ def save_calibration(result, path):
         raise ValueError("This fit describes a subregion of its session. Select that region with session.select_region(...), "
                          "fit it, and save its calibration to preserve the region's acquisition identity.")
     method = result.reconstruction_method
-    if method not in ("ssb", "phase", "complex"):
+    if method not in ("phase_of_mean", "phase_of_mean", "phase", "complex"):
         raise ValueError(f"Unsupported direct reconstruction method {method!r}; save an SSB, phase or complex result.")
     context = deepcopy(result.calibration_context)
     identity = context["session_identity"]
@@ -95,7 +95,7 @@ def save_calibration(result, path):
         raise ValueError("Sample tilt and positive depth spread must describe one complete model.")
     factor = (ssb_upsampling_factor(scan_sampling_A=geometry["scan_sampling_A"],
                                    semiangle_mrad=geometry["semiangle_mrad"], voltage_kV=geometry["voltage_kV"])
-              if method == "ssb" else result.upsampling)
+              if method in ("phase_of_mean", "phase_of_mean") else result.upsampling)
     record = {
         "schema": CALIBRATION_SCHEMA, "id": uuid4().hex[:12], "generated_at_utc": datetime.now(UTC).isoformat(),
         "notes": "", "aberrations": dict(result.aberrations),
@@ -115,7 +115,7 @@ def save_calibration(result, path):
         "reconstruction_method": method,
         "reconstruction_options": deepcopy(result.reconstruction_options),
         "reconstruction_diagnostics": deepcopy(result.reconstruction_diagnostics),
-        "upsampling": factor, "upsampling_mode": "auto" if method == "ssb" else "explicit",
+        "upsampling": factor, "upsampling_mode": "auto" if method in ("phase_of_mean", "phase_of_mean") else "explicit",
         "display_negate_phase": False,
         "display": {"tilt_correction": sample is not None, "max_columns": 3},
         "session_identity": identity, "local_tilt": None,

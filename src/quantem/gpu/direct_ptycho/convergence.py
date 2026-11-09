@@ -95,10 +95,10 @@ def _broad_history(result):
 def _comparison_fits(result, compare):
     """Require comparable scientific contexts and keep each fit once."""
     from collections.abc import Mapping
-    from quantem.gpu.direct_ptycho.results import SSBResult
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
     entries = [(f"{result.num_trials} trials", result)]
-    if isinstance(compare, SSBResult):
+    if isinstance(compare, DirectPtychoResult):
         entries.append((f"{compare.num_trials} trials", compare))
     elif isinstance(compare, Mapping):
         entries = [(f"{key} trials" if isinstance(key, int) else str(key), fit)
@@ -113,7 +113,7 @@ def _comparison_fits(result, compare):
               "voltage_kV", "semiangle_mrad", "object_sampling_A", "scan_detector_rotation_deg",
               "scan_detector_rotation_flipped")
     for label, fit in entries:
-        if not isinstance(fit, SSBResult):
+        if not isinstance(fit, DirectPtychoResult):
             raise ValueError(f"Comparison {label!r} is not an SSB fit. Supply fitted results.")
         if id(fit) in seen:
             continue

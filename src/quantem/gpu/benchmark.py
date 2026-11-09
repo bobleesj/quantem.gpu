@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
 
 def _synchronize(backend: str) -> None:
@@ -152,7 +152,7 @@ def _regions(shape: tuple[int, int], sizes: tuple[int, ...]) -> list[tuple[str, 
 
 
 def run_ssb_preview(
-    ssb: SSB,
+    ssb: DirectPtycho,
     *,
     upsampling: tuple[int, ...] = (1, 2, 3, 4, 8),
     runs: int = 6,

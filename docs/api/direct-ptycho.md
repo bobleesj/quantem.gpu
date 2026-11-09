@@ -31,10 +31,10 @@ For a quick CUDA comparison, reconstruct all three methods with one call:
 
 ```python
 images = ptycho.reconstruct(optics, method="all", upsampling="auto", compute_loss=False)
-images["ssb"].show(compare=images, region="center", show_fft=True, columns=3, cmap="gray")
+images["phase_of_mean"].show(compare=images, region="center", show_fft=True, columns=2, cmap="gray")
 ```
 
-The dictionary keys are `"ssb"`, `"phase"`, and `"complex"`. All three reuse the
+The dictionary keys are `"phase_of_mean"`, `"phase"`, and `"complex"`. All three reuse the
 same fitted optics and sampling; no new aberration search is performed when
 `optics` is supplied. Their numerical solves still differ. Each regularized method prepares its own direct equations once; repeated
 compatible reconstructions reuse those preparations. Rendering and FFT display take additional time. No method is automatically
@@ -62,8 +62,8 @@ fit = ptycho.fit_aberrations(
 
 `size` controls the phase preview and chart size, not the acquisition or fit.
 `columns` controls the final comparison layout: `columns=1` stacks the three
-methods vertically, `columns=2` wraps them, and `columns=3` (the default) keeps
-them side by side. `size` accepts a positive integer width in pixels per
+methods vertically; the default `columns=2` wraps them into two columns.
+Set `columns=3` explicitly for a single comparison row. `size` accepts a positive integer width in pixels per
 panel, such as `size=750`, or `"small"`, `"medium"`, `"large"`, `"xlarge"`
 (300, 450, 600, 900 pixels). `size=900` matches `"xlarge"`; static plots use
 a 100-DPI reference. Browser fitting and HiDPI display can scale the rendered
@@ -89,8 +89,8 @@ For a primary-only fit, inspect `fit.show("convergence")` after fitting.
 
 In a notebook, standard/broad fitting first shows a lightweight conventional
 SSB preview. When fitting finishes on resident CUDA data, that same output
-becomes three columns: **conventional SSB**, **regularized phase-only**, and
-**amplitude + phase**. Every column shows phase in radians using the same fitted
+shows three panels in two columns: **conventional SSB**, **regularized phase-only**,
+and **amplitude + phase**. Every panel shows phase in radians using the same fitted
 optics, Auto sampling and shared contrast. The regularized previews use the
 `reconstruct` defaults: phase strength 0.03, amplitude strength 0.03 when applicable,
 smoothness crossover 1 Å⁻¹, and uniform weighting. They are comparison choices,
@@ -137,7 +137,7 @@ is not evidence of measured spatial resolution.
 
 | Method | Unknowns | Reconstruction |
 |---|---|---|
-| `"ssb"` | Conventional corrected SSB phase | Existing sideband reconstruction |
+| `"phase_of_mean"` | Conventional corrected SSB phase | Existing sideband reconstruction |
 | `"phase"` | Phase, with amplitude fixed to one | Regularized weak-phase linear solve |
 | `"complex"` | Relative log-amplitude and phase | Coupled regularized weak-object linear solve |
 
@@ -194,7 +194,7 @@ Pass several results to compare damping strengths in the same figure:
 ```python
 phase_001.show(
     compare=[phase_003, phase_005], region="bottom-left", cmap="gray",
-    interactive=True, show_fft=True, columns=3, size="large",
+    interactive=True, show_fft=True, columns=2, size="large",
 )
 ```
 
@@ -322,7 +322,7 @@ Insufficient overlap with the last confident scan stops registration with a
 recovery message instead of resetting global drift or clipping a scan.
 
 Every frame is reconstructed by SSB, and by each method in `method`
-(`"ssb"`, `"phase"`, `"complex"` or a tuple) at that frame's optics, with
+(`"phase_of_mean"`, `"phase"`, `"complex"` or a tuple) at that frame's optics, with
 `reconstruct`'s strengths (`phase_damping=...`). Each frame is registered on its
 SSB phase against the last confidently placed frame (lattice-safe band
 registration from `quantem.gpu.drift`, Bragg spots from the first frame) and
@@ -367,6 +367,13 @@ a window is ready, and outside its range, frames are exact. A window frame
 agrees with the exact image to about 1e-6 of its largest phase. `run`,
 `preview` and saved results never come from a window.
 
+## Reuse a frozen phase model as scans arrive
+
+[Neural phase for a scan series](neural-phase.md) shows how to train once,
+reuse a checkpoint with per-scan optical refitting, compare the native annular
+image with and without the model, and score predictions on unused counts.
+Read `series.latest` for the current scan; `series.show()` displays the registered series.
+
 ## Migration
 
 Use `from quantem.gpu import DirectPtycho` and `ptycho.reconstruct(...)` in new code.
@@ -378,7 +385,7 @@ schemas and their reading paths remain unchanged. The series entry point is
 The package is `quantem.gpu.direct_ptycho` (for example
 `from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA`); there is no
 `quantem.gpu.ssb` alias.
-The established `SSBResult` type holds all three direct methods. The older SSB
+The established `DirectPtychoResult` type holds all three direct methods. The older SSB
 phase estimators are retired: `phase_estimator="mean_phase"` raises naming
 `method="phase"`, and `"complex_wave"` naming `method="complex"`. Results saved
 with them still load as saved, with a one-line notice.
@@ -387,3 +394,50 @@ Iterative object/probe refinement is the separate `myptycho.IterativePtycho`
 workflow, also using `.run(...)`. Slices belong to its object model. Optical
 fitting and iterative refinement are different operations even though their
 scientific models are related.
+
+
+### Inspect a damping choice
+
+```python
+selection = ptycho.validate_damping(optics, upsampling="auto")
+selection.show("damping")
+```
+
+This CUDA diagnostic reconstructs from alternating detector blocks and predicts
+the other blocks, in both directions. It returns the full-data phase at the best
+tested damping, with both score curves and timing saved in
+`selection.reconstruction_diagnostics["damping_validation"]`.
+An optional `phase_dampings=[...]` fixes the evaluated candidate list.
+
+The score is non-DC squared prediction error divided by held-out signal power;
+zero phase scores one. It uses the linear weak-phase transfer, not multislice
+diffraction. Optics, scan geometry and the incident intensity estimate remain
+shared and fixed. This conditional validation can select damping but is not an
+independent final test, a confidence interval or a resolution estimate.
+
+Neural phase comparisons use shared 0.5–99.5 percentile phase contrast and
+full-field log-amplitude FFTs with shared limits and magma colors. Set
+`phase_clim` explicitly to retain a chosen physical phase range. Use
+`show(show_fft=True, fft_limit_inv_A=1.6)` to inspect a specified common Fourier
+band. Display clipping never changes stored reconstruction arrays.
+
+## Explore the optical phase plate
+
+```python
+ptycho.show("regularization", phase_damping=0.03, show_fft=True, show_probe=True)
+```
+
+The live reconstruction and FFT appear above a two-column view of probe phase
+and illuminated aperture. The probe uses all fitted aberrations through fifth
+order, in the same row/column and sign convention as reconstruction. The phase
+scale is fixed at −π to π radians; angular scale bars use mrad. Outside-aperture
+phase is displayed as zero, so consult the aperture panel for its support.
+
+Defocus and astigmatism change the optical wavefront and reconstruction together.
+Damping changes the object solution without changing the probe. These controls
+explore a model at its fitted reference plane; they do not measure a separate
+probe or establish specimen depth resolution. Reset All restores launch settings.
+
+The Python workflow is `DirectPtycho`; the former `SSB` class alias has been
+removed. Use `fit_aberrations()` for optical fitting. The scientific algorithm
+name `method="phase_of_mean"` remains available alongside `"phase"` and `"complex"`.

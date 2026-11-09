@@ -7,7 +7,7 @@ import sys
 import numpy as np
 import pytest
 
-from quantem.gpu import SSB
+from quantem.gpu import DirectPtycho
 from quantem.gpu.benchmark import run_ssb_preview
 
 
@@ -32,7 +32,7 @@ def test_changed_defocus_benchmark_preserves_calibration(sample):
         "phi21_deg": 23.0,
         "C50_nm": 500000.0,
     }
-    with SSB(
+    with DirectPtycho(
         counts,
         backend=backend,
         voltage_kV=300,

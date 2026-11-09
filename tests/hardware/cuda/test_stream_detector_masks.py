@@ -1,10 +1,20 @@
 """Fixed detectors follow consecutive batches without expanding their counts."""
 
-import cupy as cp
 import numpy as np
 import pytest
 
+cp = pytest.importorskip("cupy")
 from quantem.gpu.detector.cuda.dense import DetectorMasks
+
+
+@pytest.fixture(scope="module", autouse=True)
+def require_device():
+    try:
+        count = cp.cuda.runtime.getDeviceCount()
+    except cp.cuda.runtime.CUDARuntimeError:
+        count = 0
+    if not count:
+        pytest.skip("A CUDA device is required for native streaming detector masks.")
 
 
 @pytest.mark.parametrize("shape", [(96, 96), (192, 192)])

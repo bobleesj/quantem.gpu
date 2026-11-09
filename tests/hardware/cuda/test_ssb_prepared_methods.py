@@ -251,3 +251,60 @@ def reference_prepare(engine, optics, factor, *, complex_object, smoothness_inv_
             ]
             groups.append(_Group(*arrays))
     return _Reference(groups, complex_object, scale, power, factor, (out_row, out_col), float(dose))
+
+
+def test_detector_holdout_matches_explicit_forward_error(ptycho):
+    """Cached held-out error must equal error from the explicit transfer."""
+    from quantem.gpu.direct_ptycho.cuda.direct import _layout
+
+    engine = ptycho._backend()._get_accelerator()
+    partition = (cp.asarray(engine.bf_inds_row) // 4 + cp.asarray(engine.bf_inds_col) // 4) % 2
+    options = dict(complex_object=False, smoothness_inv_A=1., detector_weighting="uniform")
+    train = PreparedDirect.prepare(engine, OPTICS, 3, detector_mask=partition == 0, **options)
+    held = PreparedDirect.prepare(engine, OPTICS, 3, detector_mask=partition == 1, **options)
+    wave, _ = train.solve(.03, None, compute_loss=False)
+    phi = cp.angle(wave)
+    coefficients = cp.fft.fft2(phi) / 9
+    layout = _layout(engine, 3, 1., "uniform")
+    magnitudes, angles = higher_order_arrays(OPTICS["aberrations"])
+    measurements = engine.G_qk.reshape(len(partition), -1)
+    numerator = cp.zeros((), cp.float64)
+    denominator = cp.zeros((), cp.float64)
+    for group in layout.groups:
+        for start in range(0, len(group.columns), 128):
+            block = slice(start, start + 128)
+            columns = group.columns[block]
+            measured = measurements[:, columns].T / layout.dose
+            predicted = cp.zeros_like(measured)
+            if group.count:
+                qr = group.qr.reshape(-1, group.count)[block].ravel()
+                qc = group.qc.reshape(-1, group.count)[block].ravel()
+                _, transfer = transfer_frequencies(engine, qr, qc, magnitudes * 10, angles,
+                                                  OPTICS["sample_tilt_mrad"], OPTICS["depth_spread_nm"] * 10)
+                transfer = transfer.reshape(len(columns), group.count, -1)
+                values = coefficients[group.rows[block], group.cols[block]]
+                predicted = (transfer * values[..., None]).sum(axis=1)
+            numerator += (abs((predicted - measured)[:, partition == 1]).astype(cp.float64)**2).sum()
+            denominator += (abs(measured[:, partition == 1]).astype(cp.float64)**2).sum()
+    assert held.phase_error(phi) == pytest.approx(float(numerator / denominator), abs=1e-6)
+    assert held.phase_error(cp.zeros_like(phi)) == pytest.approx(1.)
+    with pytest.raises(ValueError, match="boolean"):
+        PreparedDirect.prepare(engine, OPTICS, 3, detector_mask=partition, **options)
+    with pytest.raises(ValueError, match="illuminated"):
+        PreparedDirect.prepare(engine, OPTICS, 3, detector_mask=partition < 0, **options)
+
+
+def test_damping_selection_returns_full_data_phase(ptycho):
+    """A scientist can inspect both validation directions and reproduce the selected solve."""
+    result = ptycho.validate_damping(phase_dampings=[.01, .03, .1], upsampling=3)
+    evidence = result.reconstruction_diagnostics["damping_validation"]
+    assert len(evidence["records"]) == 3
+    assert sum(evidence["detector_pixels"]) == ptycho.num_bright_field_pixels
+    best = min(evidence["records"], key=lambda row: row["mean"])
+    assert evidence["selected_phase_damping"] == best["phase_damping"]
+    for row in evidence["records"]:
+        assert row["mean"] == pytest.approx((row["a_to_b"] + row["b_to_a"]) / 2)
+    expected = ptycho.reconstruct(method="phase", phase_damping=best["phase_damping"],
+                                  upsampling=3, compute_loss=False)
+    cp.testing.assert_array_equal(result.phase, expected.phase)
+    assert len(result.show("damping").axes) == 2

@@ -8,7 +8,7 @@ import pytest
 cp = pytest.importorskip("cupy")
 pytestmark = pytest.mark.slow
 
-from quantem.gpu import SSB
+from quantem.gpu import DirectPtycho
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.direct_ptycho.cuda.streamed import StreamedSSB
@@ -83,7 +83,7 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
             detector_sampling_mrad=SETTINGS["detector_sampling_mrad"], scan_detector_rotation_flipped=transposed,
         )
         values[..., 2, 3] = 0  # independent dense reference's scientific validity mask
-        with SSB(values, **SETTINGS, scan_detector_rotation_flipped=transposed) as dense:
+        with DirectPtycho(values, **SETTINGS, scan_detector_rotation_flipped=transposed) as dense:
             expected, _ = dense.preview(ABERRATIONS, compute_loss=False,
                 upsampling=factor, sample_tilt_mrad=(1., -2.), depth_spread_nm=depth, output="native")
             phase, loss = streamed.phase(aberrations_to_engine(ABERRATIONS), voltage_kV=300., semiangle_mrad=30.,
@@ -99,7 +99,7 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
 def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
     values = _counts((1024, 1024, 8, 8))
     with _encoded(values, chunk_scans=65536) as data:
-        with SSB(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True) as session:
+        with DirectPtycho(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True) as session:
             assert session._data is data and session._compute is None
             region = (173, 301, 251, 379)
             fitted = session.fit_aberrations(search="primary", tilt=False, scan_region=region, num_trials=0,
@@ -107,7 +107,7 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
             assert fitted.phase.shape == (128, 128)
             assert fitted.fit_scan_region == region
             assert fitted.bright_field_center_px == SETTINGS["bright_field_center_px"]
-            with SSB(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True,
+            with DirectPtycho(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True,
                      scan_region=region) as explicit:
                 expected_fit = explicit.fit_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
                     check_rotation=False, verbose=False)
@@ -138,7 +138,7 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
             assert phase.shape == (1024, 1024) and np.isfinite(phase).all() and np.isfinite(loss)
             # Dense reference is limited to 1024; the public large path matches it.
             values[..., 2, 3] = 0
-            with SSB(values, **SETTINGS, scan_detector_rotation_flipped=True) as dense:
+            with DirectPtycho(values, **SETTINGS, scan_detector_rotation_flipped=True) as dense:
                 expected = dense.reconstruct(fitted, compute_loss=False)
                 cp.testing.assert_allclose(result.phase, expected.phase, atol=1e-6, rtol=1e-5)
         assert not data.data.is_released
@@ -158,10 +158,10 @@ def test_global_large_scan_matches_periodic_native_reference(scan_shape):
         source.append(cp.tile(tile, (1, scan_shape[1] // 128, 1, 1)).reshape(-1, 8, 8))
     with Dataset4dstemGPU(source, resident_metadata(shape, np.uint16, source.nbytes, backend="cuda")) as data:
         tile[..., 2, 3] = 0
-        with SSB(tile, **SETTINGS) as reference:
+        with DirectPtycho(tile, **SETTINGS) as reference:
             expected, _ = reference.preview(ABERRATIONS, compute_loss=False, output="native",
                                              depth_spread_nm=14., sample_tilt_mrad=(1., -2.))
-        with SSB(data, **SETTINGS) as session:
+        with DirectPtycho(data, **SETTINGS) as session:
             actual, loss = session.preview(ABERRATIONS, compute_loss=False, output="native",
                                             depth_spread_nm=14., sample_tilt_mrad=(1., -2.))
             assert actual.shape == scan_shape and loss is None
@@ -176,7 +176,7 @@ def test_open_large_file_keeps_encoded_source_and_closes_only_its_owner(tmp_path
     with _encoded(values, 65536) as original:
         path = tmp_path / "scan.qem"
         io.save(path, original)
-        with SSB.open(str(path), **SETTINGS) as session:
+        with DirectPtycho.open(str(path), **SETTINGS) as session:
             owner = session._owned_dataset
             assert owner is session._data and not owner.data.is_released
             first = session.reconstruct(aberrations=ABERRATIONS, compute_loss=False,

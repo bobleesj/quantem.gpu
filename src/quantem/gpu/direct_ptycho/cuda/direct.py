@@ -6,7 +6,7 @@ Regularization acts on the solution, never on a rendered image.
 """
 
 import weakref
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cupy as cp
 import numpy as np
@@ -385,7 +385,7 @@ class _Layout:
     groups: list[_AliasGroup]
 
 
-def _layout(engine, factor: int, smoothness_inv_A: float, detector_weighting: str):
+def _layout(engine, factor: int, smoothness_inv_A: float, detector_weighting: str, support_margin: float = 1.0):
     """The optics-free part of a preparation, computed once per data and sampling.
 
     The dose, detector weights and their scale, the supported aliases of every
@@ -394,7 +394,7 @@ def _layout(engine, factor: int, smoothness_inv_A: float, detector_weighting: st
     afford, so the engine keeps the last one (a few MB).
     """
     # a weak reference, so a replaced G_qk neither matches nor stays alive
-    key = (factor, smoothness_inv_A, detector_weighting)
+    key = (factor, smoothness_inv_A, detector_weighting, support_margin)
     cached = getattr(engine, "_direct_layout", None)
     if cached is not None and cached[0]() is engine.G_qk and cached[1] == key:
         return cached[2]
@@ -443,7 +443,7 @@ def _layout(engine, factor: int, smoothness_inv_A: float, detector_weighting: st
         * cache["qy_1d"][1]
     )
     cutoff = (2 * cache["semiangle_rad"] + max(cache["ang_y_rad"], cache["ang_x_rad"])) / engine.wavelength
-    active = qr * qr + qc * qc < cutoff**2
+    active = qr * qr + qc * qc < (support_margin * cutoff)**2
     counts = active.sum(axis=1)
     columns = rows * np.int32(engine.G_qk.shape[2]) + cols
     groups = []
@@ -521,6 +521,7 @@ class PreparedDirect:
         smoothness_inv_A: float,
         detector_weighting: str,
         eigenbasis: bool = True,
+        detector_mask=None,
     ):
         """Build normal equations once; strengths are applied at evaluation.
 
@@ -534,7 +535,22 @@ class PreparedDirect:
         phase one batched eigendecomposition (skipped with ``eigenbasis=False``
         by a `DragWindow` node, which solves by Cholesky instead).
         """
-        layout = _layout(engine, factor, smoothness_inv_A, detector_weighting)
+        basis = optics.get("scan_basis")
+        transform = None if basis is None else np.linalg.inv(np.asarray(basis)).T
+        # Keep a fixed union of aliases for small calibrated scan distortions.
+        # The bound also covers larger stretches; the transfer remains exact.
+        margin = (1.0 if transform is None else
+                  max(1.05, 1 / np.linalg.svd(transform, compute_uv=False).min()))
+        layout = _layout(engine, factor, smoothness_inv_A, detector_weighting, margin)
+        if detector_mask is not None:
+            mask = cp.asarray(detector_mask)
+            if mask.dtype != cp.bool_ or mask.shape != layout.weights.shape:
+                raise ValueError("detector_mask must be boolean with one entry per bright-field pixel.")
+            weights = layout.weights * mask
+            scale = cp.sum(weights * engine._cache["aperture_k_1d"] ** 4, dtype=cp.float64)
+            if float(scale) <= 0:
+                raise ValueError("Select at least one illuminated bright-field pixel.")
+            layout = replace(layout, weights=weights, scale=scale, scale_value=float(scale))
         cache = engine._cache
         higher = higher_order_arrays(optics["aberrations"])
         if higher is None:
@@ -574,10 +590,16 @@ class PreparedDirect:
             dim = 2 * count if complex_object else count
             augmented = cp.empty((size, dim + 1, dim + 1), cp.complex128)
             normal_equations, parts = _normal_equations(count, complex_object)
+            qr, qc = group.qr, group.qc
+            if transform is not None:
+                qr, qc = (
+                    cp.ascontiguousarray(np.float32(transform[0, 0]) * qr + np.float32(transform[0, 1]) * qc),
+                    cp.ascontiguousarray(np.float32(transform[1, 0]) * qr + np.float32(transform[1, 1]) * qc),
+                )
             normal_equations(
                 (-(-size // _WARPS), parts),
                 (32 * _WARPS,),
-                (spectrum, np.int32(spectrum.shape[1]), group.columns, np.int32(size), group.qr, group.qc,
+                (spectrum, np.int32(spectrum.shape[1]), group.columns, np.int32(size), qr, qc,
                  pixel, np.int32(nbf), *optics_scalars, coefficients, augmented),
             )
             # G enters unscaled so V stays float32; the dose divides afterwards.
@@ -601,6 +623,27 @@ class PreparedDirect:
                 )
             groups.append(_Group(group.rows, group.cols, gram, rhs, prior, basis, eigen))
         return cls(layout.shape, factor, groups, complex_object, layout.scale, power, layout.dose)
+
+    def phase_error(self, phase) -> float:
+        """Score a phase against these cached measurements, excluding DC.
+
+        This is relative squared error in the linear weak-phase model, not
+        a Poisson likelihood or a nonlinear exit-wave diffraction calculation.
+        A no-modulation (zero-phase) prediction scores one.
+        """
+        phase = cp.asarray(phase)
+        if self.complex_object or phase.shape != self.shape or not cp.isrealobj(phase):
+            raise ValueError("Use a real phase on the prepared phase-only output grid.")
+        if not bool(cp.isfinite(phase).all()) or float(self.signal_power) <= 0:
+            raise ValueError("Use finite phase and nonzero measured non-DC signal.")
+        spectrum = cp.fft.fft2(phase) / self.factor**2
+        residual = self.signal_power.copy()
+        for group in self.groups:
+            coefficients = spectrum[group.rows, group.cols].astype(cp.complex128)
+            prediction = (group.gram @ coefficients[..., None])[..., 0]
+            residual += cp.sum((coefficients.conj() * prediction).real
+                               - 2 * (coefficients.conj() * group.rhs).real)
+        return float(cp.maximum(residual, 0) / self.signal_power)
 
     def solve(
         self,

@@ -170,13 +170,13 @@ def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(
 
 
 def test_ssb_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, capsys):
-    """SSB.open takes io.load's default median fill and prints one line naming how to keep raw values."""
-    from quantem.gpu import SSB
+    """DirectPtycho.open takes io.load's default median fill and prints one line naming how to keep raw values."""
+    from quantem.gpu import DirectPtycho
 
     backend = _backend()
     counts, pixel_mask = _flagged_counts(1024, (48, 48))
     master = _write_master(tmp_path, counts, pixel_mask)
-    with SSB.open(master, backend=backend, scan_shape=(32, 32), voltage_kV=300, semiangle_mrad=30,
+    with DirectPtycho.open(master, backend=backend, scan_shape=(32, 32), voltage_kV=300, semiangle_mrad=30,
                   scan_sampling_A=0.5, scan_detector_rotation_deg=0.0) as session:
         correction = session.source_provenance["hot_pixel_correction"]
         assert (correction["method"], correction["pixel_count"], correction["applied"]) == ("median", 4, True)

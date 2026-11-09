@@ -69,7 +69,7 @@ class DetectorMasks:
         # Masks are fixed. Finish their one-time upload before runtime streams use them.
         cp.cuda.get_current_stream().synchronize()
 
-    def integrate(self, patterns: cp.ndarray) -> cp.ndarray:
+    def integrate(self, patterns: "cp.ndarray") -> "cp.ndarray":
         """Sum native counts exactly and round each output once to float32.
 
         Parameters

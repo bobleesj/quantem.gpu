@@ -76,9 +76,9 @@ def simulate(aberrations, tile: int = 1):
 
 
 def session(data, detector_mrad, backend, **options):
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    return SSB(data, backend=backend, voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=STEP_A,
+    return DirectPtycho(data, backend=backend, voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=STEP_A,
                detector_sampling_mrad=detector_mrad, scan_detector_rotation_deg=0.0,
                bright_field_center_px=(SIDE / 2, SIDE / 2), bright_field_radius_px=30.0 / detector_mrad, **options)
 

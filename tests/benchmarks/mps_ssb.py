@@ -24,7 +24,7 @@ warm-up calls first (except the single-shot stages) and reports the p50 and
 p90 of its repeats. The metrics, all in milliseconds:
 
 - ``io_load``: ``io.load(master)`` into the encoded Metal resident;
-- ``ssb_session``: ``SSB(data)``, which estimates the scan-detector rotation;
+- ``ssb_session``: ``DirectPtycho(data)``, which estimates the scan-detector rotation;
 - ``ssb_prepare``: the first preview, which reads and transforms the
   bright-field evidence (single shot);
 - ``preview_native`` / ``preview_2x``: ``ssb.preview`` without the loss, as a
@@ -33,7 +33,7 @@ p90 of its repeats. The metrics, all in milliseconds:
 - ``search_candidate``: one candidate of the aberration search, timed as a
   batch of eight agreement trials at depth spread 0 (the standard fit's
   objective, ``thick_fit_batch``) and divided by eight;
-- ``find_aberrations``: the default fit, single shot. The rotation is
+- ``find_aberrations``: the historical key for ``fit_aberrations()``, single shot. The rotation is
   estimated, so it runs the tilt-corrected joint fit on both 180-degree
   branches and keeps one;
 - ``find_aberrations_standard``: one standard
@@ -54,7 +54,7 @@ Memory is measured beside the time, in GiB of Metal driver memory above the
 encoded acquisition (``torch.mps.driver_allocated_memory``, which counts Torch's
 and MLX's buffers, sampled every few milliseconds for the peaks):
 
-- ``session_steady``: after ``SSB(data)``, which on MPS keeps the crop encoded;
+- ``session_steady``: after ``DirectPtycho(data)``, which on MPS keeps the crop encoded;
 - ``prepare_peak`` / ``prepared_steady``: during and after the first preview,
   which builds G(q, k);
 - ``loss_preview_steady``: after the loss previews (MLX keeps their row IFFT
@@ -91,7 +91,7 @@ REVISION = "5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20"
 MASTER = "4dstem/gold_512/gold_004_master.h5"
 # The gold tutorial's recorded beam: io.load reads the energy; these three are set on data.calibration.
 CALIBRATION = {"semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "detector_sampling_mrad": 0.46}
-# As SSB.open and the widget load: the four pixels the masters flag are replaced by a local median.
+# As DirectPtycho.open and the widget load: the four pixels the masters flag are replaced by a local median.
 HOT_PIXELS = "median"
 BASELINES = Path(__file__).resolve().parent / "baselines"
 DEFAULT_TOLERANCE = 0.20
@@ -306,7 +306,7 @@ def alternating(session, first, second):
 
 def measure(master, reps=20, load_reps=3, log=print):
     """One report of every stage on ``master`` (the gold scan)."""
-    from quantem.gpu import SSB, detector, io
+    from quantem.gpu import DirectPtycho, detector, io
     from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
 
     report = {"schema": "quantem.gpu.mps-benchmark/1", "dataset": {"id": DATASET, "revision": REVISION,
@@ -339,7 +339,7 @@ def measure(master, reps=20, load_reps=3, log=print):
     for index in range(3):
         synchronize()
         started = time.perf_counter()
-        ssb = SSB(data)
+        ssb = DirectPtycho(data)
         synchronize()
         sessions.append(1e3 * (time.perf_counter() - started))
         if index < 2:
@@ -397,7 +397,7 @@ def measure(master, reps=20, load_reps=3, log=print):
     synchronize()
     with PeakMemory() as fit_memory:
         started = time.perf_counter()
-        fit = ssb.find_aberrations(search="standard", verbose=False)
+        fit = ssb.fit_aberrations(search="standard", verbose=False)
         synchronize()
         metrics["find_aberrations"] = summary([1e3 * (time.perf_counter() - started)])
     memory["fit_peak"] = round(fit_memory.peak - encoded, 2)
@@ -409,7 +409,7 @@ def measure(master, reps=20, load_reps=3, log=print):
     ssb.close()
 
     # One standard (tilt=False) 200-trial search: a given rotation is fitted once, on one branch.
-    ssb = SSB(data, scan_detector_rotation_deg=rotation)
+    ssb = DirectPtycho(data, scan_detector_rotation_deg=rotation)
     ssb.preview(base, compute_loss=False)
     synchronize()
     started = time.perf_counter()

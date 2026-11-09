@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from quantem.gpu import SSB
+from quantem.gpu import DirectPtycho
 
 
 @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="Requires Apple MPS")
@@ -26,9 +26,9 @@ def test_rectangular_scan_matches_explicit_mean_padding(shape, dtype):
                    scan_sampling_A=(.3, .3), detector_sampling_mrad=(5, 5),
                    bright_field_center_px=(5.5, 5.5), bright_field_radius_px=4,
                    scan_detector_rotation_deg=0.0, aberrations=optics)
-    with SSB(torch.as_tensor(counts, device="mps"), **options) as regional:
+    with DirectPtycho(torch.as_tensor(counts, device="mps"), **options) as regional:
         phase, _ = regional.preview(optics, compute_loss=False)
         assert regional.scan_shape == (size, size)
-    with SSB(expected, **options) as reference:
+    with DirectPtycho(expected, **options) as reference:
         baseline, _ = reference.preview(optics, compute_loss=False)
     np.testing.assert_array_equal(phase, baseline)

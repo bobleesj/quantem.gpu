@@ -17,8 +17,8 @@ from quantem.gpu.direct_ptycho import _exact_newton, fifth_order_fit, fifth_orde
 from quantem.gpu.direct_ptycho._gradient_refinement import Settings, bounded_step, projected_gradient, refine
 from quantem.gpu.direct_ptycho.fifth_order_parameters import Coordinates, aperture_phase, aperture_rms, packed_coefficients
 from quantem.gpu.direct_ptycho.higher_order import ORDERS
-from quantem.gpu.direct_ptycho.results import SSBResult
-from quantem.gpu.direct_ptycho.workflow import SSB
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
 FIFTH_BOUNDS = np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-2, 2)] * 22, dtype=float)
 
@@ -313,7 +313,7 @@ def test_other_basins_keep_the_first_polish_unless_clearly_higher():
 
 
 def test_mapped_branch_is_the_exact_180_degree_image():
-    first = SSBResult(
+    first = DirectPtychoResult(
         object_wave=np.ones((4, 4), np.complex64), backend="cuda",
         aberrations={"C10_nm": 6.25, "C12_nm": 1.59, "phi12_deg": -84.9}, sample_tilt_mrad=(-0.07, -3.28),
         depth_spread_nm=14.4, scan_detector_rotation_deg=345.8, sample_agreement=3.5e14,
@@ -325,7 +325,7 @@ def test_mapped_branch_is_the_exact_180_degree_image():
         _backend=lambda: SimpleNamespace(sample_agreement=agreement, band_power=lambda band: 5e14), _phase=phase,
         _unit_wave=lambda image: np.exp(1j * image), scan_detector_rotation_deg=165.8,
     )
-    mapped = SSB._mapped_branch(session, first, compute_loss=False)
+    mapped = DirectPtycho._mapped_branch(session, first, compute_loss=False)
     assert mapped.aberrations == {"C10_nm": -6.25, "C12_nm": 1.59, "phi12_deg": pytest.approx(5.1)}
     assert mapped.sample_tilt_mrad == (0.07, 3.28)
     assert mapped.depth_spread_nm == 14.4
@@ -445,7 +445,7 @@ def test_higher_order_limit_is_recorded_and_checked_before_computation(monkeypat
             SimpleNamespace(backend="cuda", _find_aberrations=Mock()), search="standard", trials=200, seed=42,
             save_dir=None, force=False, verbose=False, show=False,
             primary_options={"check_rotation": False, "refine_rotation": False}, higher_order_limit=5)
-    call = inspect.unwrap(SSB.fit_aberrations)
+    call = inspect.unwrap(DirectPtycho.fit_aberrations)
     with pytest.raises(ValueError, match="search='primary'"):
         call(SimpleNamespace(), search="primary", higher_order_limit=20)
     with pytest.raises(ValueError, match="search='primary'"):

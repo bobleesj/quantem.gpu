@@ -34,7 +34,7 @@ from quantem.gpu.direct_ptycho.branches import DARK_FIELD_INNER_RADIUS, Rotation
 from quantem.gpu.direct_ptycho.brightfield import bright_field_crop_region, crop_bright_field
 from quantem.gpu.direct_ptycho.contract import (
     RefineMethod,
-    SSBProtocol,
+    DirectPtychoProtocol,
     agreement_objective,
     auto_refinement,
     retired_higher_order,
@@ -53,7 +53,8 @@ from quantem.gpu.direct_ptycho.persistence import (
     software_signature,
     source_identity,
 )
-from quantem.gpu.direct_ptycho.results import SSBResult, check_phase_estimator, host_array
+from quantem.gpu.direct_ptycho.neural_phase import NeuralPhaseModel
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, check_phase_estimator, host_array
 from quantem.gpu.direct_ptycho.trials import (
     choose_trials,
     label_trials,
@@ -280,7 +281,7 @@ def _recorded_detector_sampling_mrad(metadata: dict[str, object], voltage_kV: fl
     return (1e3 * wavelength_A * row, 1e3 * wavelength_A * col)
 
 
-def _announce_rotation_branches(result: SSBResult) -> None:
+def _announce_rotation_branches(result: DirectPtychoResult) -> None:
     """The one line a fit prints when it compared both 180-degree branches of an estimated rotation."""
     if result.rotation_branches is not None:
         print(f"SSB: {result.rotation_branches.summary}")
@@ -358,7 +359,7 @@ def _streams_scan(data: Dataset4dstemGPU, backend: str) -> bool:
 class DirectPtycho:
     """Direct ptychography with SSB optical fitting on CUDA or MPS.
 
-    ``run(method="ssb")`` preserves conventional SSB. Experimental CUDA methods
+    ``run(method="phase_of_mean")`` preserves conventional SSB. Experimental CUDA methods
     ``"phase"`` and ``"complex"`` solve regularized linear weak-object models.
 
     SSB recovers the object phase from the bright-field disk: each bright-field detector pixel sees the sample through
@@ -618,11 +619,11 @@ class DirectPtycho:
             self.source_bytes = source_dataset.logical_bytes
             correction = source_dataset.metadata.get("hot_pixel_correction")
             self.source_provenance = None if correction is None else {"hot_pixel_correction": correction}
-        self._compute: SSBProtocol | None = None
-        self._reconstruction: SSBResult | None = None
+        self._compute: DirectPtychoProtocol | None = None
+        self._reconstruction: DirectPtychoResult | None = None
         self.best_loss = float("inf")
         self.trial_history: list[dict[str, object]] = []
-        self._aberration_search: SSBResult | None = None
+        self._aberration_search: DirectPtychoResult | None = None
         self._calibration_file = calibration_rows(metadata)
         self._calibration_supplied = {name for name, value in supplied.items() if value is not None}
         self._calibration_initial = {name: getattr(self, name) for name in supplied}
@@ -1163,7 +1164,7 @@ class DirectPtycho:
                     "scan_sampling_A": self.scan_sampling_A,
                     "detector_sampling_mrad": self.detector_sampling_mrad,
                 },
-                "ssb": {
+                "phase_of_mean": {
                     "backend": self.backend,
                     "scan_detector_rotation_deg": self.scan_detector_rotation_deg,
                     "scan_detector_rotation_flipped": self.scan_detector_rotation_flipped,
@@ -1177,11 +1178,11 @@ class DirectPtycho:
 
     def _save_result(
         self,
-        result: SSBResult,
+        result: DirectPtychoResult,
         *,
         paths: tuple[Path, Path],
         signature: dict[str, object],
-    ) -> SSBResult:
+    ) -> DirectPtychoResult:
         """Persist one result and attach its complete provenance."""
 
         # a results folder is shared or moved whole: files are named relative to it, never by absolute path
@@ -1204,7 +1205,7 @@ class DirectPtycho:
             },
         )
 
-    def _accept_result(self, result: SSBResult) -> SSBResult:
+    def _accept_result(self, result: DirectPtychoResult) -> DirectPtychoResult:
         """Update session state from a computed or reused result."""
 
         result.source_path = self.source_path
@@ -1261,7 +1262,7 @@ class DirectPtycho:
             self._dark_field = image
         return self._dark_field
 
-    def _finish_fit(self, result: SSBResult) -> SSBResult:
+    def _finish_fit(self, result: DirectPtychoResult) -> DirectPtychoResult:
         """Reconstruct a fit's SSB phase (the phase of the mean wave) at the native scan sampling and keep it on the result."""
         if result.phase_estimator == "phase_of_mean" and result.upsampling == 1:
             result.phase_clim = result.phase_limits
@@ -1275,9 +1276,9 @@ class DirectPtycho:
         result.amplitude_estimated = False
         return self._accept_result(result)
 
-    def _fit_both_branches(self, fit: Callable[[], SSBResult], *, keep_first: bool,
+    def _fit_both_branches(self, fit: Callable[[], DirectPtychoResult], *, keep_first: bool,
                            measure_gain: bool = False,
-                           mapped: Callable[[SSBResult], SSBResult] | None = None) -> SSBResult:
+                           mapped: Callable[[DirectPtychoResult], DirectPtychoResult] | None = None) -> DirectPtychoResult:
         """Fit the session's rotation and that rotation plus 180 degrees, then keep one branch.
 
         Each branch runs ``fit`` from the same start (the session's aberrations, tilt and depth spread before the
@@ -1312,7 +1313,7 @@ class DirectPtycho:
             self._measure_tilt_fit_gain(kept)
         return self._accept_result(kept)
 
-    def _mapped_branch(self, first: SSBResult, *, compute_loss: bool) -> SSBResult:
+    def _mapped_branch(self, first: DirectPtychoResult, *, compute_loss: bool) -> DirectPtychoResult:
         """The opposite 180-degree branch's fit as the exact image of the joint agreement fit ``first``.
 
         Rotating the bright-field coordinates by 180 degrees maps every point of the joint agreement to an
@@ -1345,7 +1346,7 @@ class DirectPtycho:
                        "mapped_from_rotation_deg": float(first.scan_detector_rotation_deg)},
         )
 
-    def _measure_tilt_fit_gain(self, result: SSBResult) -> None:
+    def _measure_tilt_fit_gain(self, result: DirectPtychoResult) -> None:
         """Set a joint fit's ``tilt_fit_gain``: its agreement over the best standard-SSB agreement.
 
         The standard comparison (200 trials at depth spread 0) depends only on the rotation, the seed and the
@@ -1362,8 +1363,8 @@ class DirectPtycho:
                                 else float("nan"))
         result.timings["standard_comparison_s"] = time.perf_counter() - started
 
-    def _refine_rotation(self, kept: SSBResult, fit: Callable[[int], SSBResult], *, keep: bool, measure_gain: bool,
-                         verbose: bool) -> SSBResult:
+    def _refine_rotation(self, kept: DirectPtychoResult, fit: Callable[[int], DirectPtychoResult], *, keep: bool, measure_gain: bool,
+                         verbose: bool) -> DirectPtychoResult:
         """``fit_aberrations(refine_rotation=True)``: refine an estimated rotation around ``kept`` (rotation_refinement.py).
 
         Each angle is one polish, ``fit(0)`` from the nearest angle's fit, after ``set_rotation`` (G(q, k) is not
@@ -1379,7 +1380,7 @@ class DirectPtycho:
                 print(f"SSB: rotation {kept.scan_detector_rotation_deg:.2f}° is {why}; refine_rotation leaves it as it is.")
             return kept
 
-        def polish(rotation_deg: float, start: SSBResult) -> SSBResult:
+        def polish(rotation_deg: float, start: DirectPtychoResult) -> DirectPtychoResult:
             self.aberrations = dict(start.aberrations)
             self.sample_tilt_mrad, self.depth_spread_nm = start.sample_tilt_mrad, start.depth_spread_nm
             self.set_rotation(rotation_deg)
@@ -1436,7 +1437,7 @@ class DirectPtycho:
         sampling = self.detector_sampling_mrad
         return sampling[::-1] if sampling is not None and self.scan_detector_rotation_flipped else sampling
 
-    def _in_detector_frame(self, result: SSBResult) -> SSBResult:
+    def _in_detector_frame(self, result: DirectPtychoResult) -> DirectPtychoResult:
         """Move a result's bright-field centre from the array the session holds to full-detector pixels, in place.
 
         Backends index the array they were given. Without the shift a session built from an encoded acquisition
@@ -1450,7 +1451,7 @@ class DirectPtycho:
         result.scan_detector_rotation_flipped = self.scan_detector_rotation_flipped
         return result
 
-    def _backend(self) -> SSBProtocol:
+    def _backend(self) -> DirectPtychoProtocol:
         """The session's CUDA or MPS implementation, built on first use.
 
         Building it reads the bright-field evidence and transforms it (seconds and gigabytes on a full scan), so a
@@ -1559,7 +1560,7 @@ class DirectPtycho:
             )
             waves.append(self._unit_wave(phase))
         self.set_rotation(saved_rotation)
-        return SSBResult(
+        return DirectPtychoResult(
             object_wave=(cp if self.backend == "cuda" else np).stack(waves), backend=self.backend, trial_records=records,
             scan_detector_rotation_flipped=self.scan_detector_rotation_flipped,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
@@ -1573,7 +1574,7 @@ class DirectPtycho:
              rows: int | None = None, columns: int | None = None,
              cmap: str | None = None, save: str | Path | None = None,
              region: tuple[int, int, int, int] | None = None,
-             mode: Literal["interactive", "static"] | None = None, **options):
+             mode: Literal["interactive", "static"] | None = None, show_probe: bool = False, **options):
         """Open ShowPtycho on this session: the live phase and its FFT, aberration sliders, Save.
 
         ``show("regularization")`` opens the same widget with the experimental
@@ -1628,8 +1629,12 @@ class DirectPtycho:
             For ``view="focus"``, an interactive Show2D/Show3D widget, or a
             static ``show_2d`` figure containing every frame. Both interactive
             layouts use the same static comparison. Landscape views remain static.
+        show_probe : bool, optional
+            Add a live two-column probe-phase and aperture view below the
+            interactive reconstruction. All fitted orders through fifth order
+            are included. Damping changes the object, not the probe.
         **options
-            ShowPtycho options for the interactive view, or SSBResult.show
+            ShowPtycho options for the interactive view, or DirectPtychoResult.show
             options such as ``size="large"`` for a static diagnostic.
             Focus images accept ``focus_offsets_nm=(-5, 0, 5)`` relative to
             fitted C10 and ``depth_spread_nm`` as an absolute scalar or sequence.
@@ -1643,7 +1648,7 @@ class DirectPtycho:
 
         Returns
         -------
-        quantem.widget.ShowPtycho, Show2D, Show3D or matplotlib.figure.Figure
+        quantem.widget.ShowPtycho, Show2D, Show3D, ipywidgets.VBox or matplotlib.figure.Figure
             A live widget, or a closed figure that renders once in a notebook.
             ``save="focus.png"`` retains static focus images' native pixel
             density, independent of the chosen display size.
@@ -1660,6 +1665,8 @@ class DirectPtycho:
         >>> ptycho.show("focus", columns=2, size="medium")  # doctest: +SKIP
         >>> ptycho.show("focus", mode="static", depth_spread_nm=15)  # doctest: +SKIP
         """
+        if show_probe and view not in ("interactive", "regularization"):
+            raise ValueError("Use show_probe=True with the interactive or regularization view.")
         if view == "regularization":
             options.setdefault("method", "phase")
             view = "interactive"
@@ -1726,6 +1733,10 @@ class DirectPtycho:
             from quantem.widget import ShowPtycho
         except ImportError as exc:
             raise ImportError("ssb.show() opens ShowPtycho from quantem.widget: pip install quantem.widget") from exc
+        if show_probe:
+            from quantem.gpu.direct_ptycho.probe_explorer import ProbeExplorer
+
+            return ProbeExplorer(self, **options)
         return ShowPtycho(self, **options)
 
     def show_trials(self, *, best: int | None = None, last: int | None = None,
@@ -1811,11 +1822,11 @@ class DirectPtycho:
         higher_order: Sequence[str] | None = None,
         show: bool = True,
         size: Literal["small", "medium", "large", "xlarge"] | int = "medium",
-        columns: int = 3,
+        columns: int = 2,
         show_convergence: bool = False,
-        on_initial_fit: Callable[[SSBResult], None] | None = None,
+        on_initial_fit: Callable[[DirectPtychoResult], None] | None = None,
         higher_order_limit: float | None = None,
-    ) -> SSBResult | dict[int, SSBResult]:
+    ) -> DirectPtychoResult | dict[int, DirectPtychoResult]:
         """Fit aberrations, sample tilt and depth with one search interface.
 
         ``search="standard"`` (default) uses 200 TPE trials for the initial
@@ -1854,7 +1865,7 @@ class DirectPtycho:
         replace that preview with three methods: conventional SSB, regularized
         phase-only, and amplitude + phase. All show phase under the same optics,
         Auto sampling and contrast limits. Regularized previews use the ``run``
-        defaults (0.03 for each applicable damping strength); these are
+        defaults (0.3 for each applicable damping strength); these are
         inspection alternatives, not an automatic quality ranking. MPS and
         streamed sessions retain the conventional SSB preview.
         Preparing the two regularized models adds reconstruction time only
@@ -2324,7 +2335,7 @@ class DirectPtycho:
         fixed_aberrations: dict[str, float] | None = None,
         refine_rotation: bool = False,
         compute_loss: bool = True,
-    ) -> SSBResult:
+    ) -> DirectPtychoResult:
         """``fit_aberrations`` with the 180-degree branch handling explicit.
 
         ``branches``: ``"auto"`` compares both branches when the session estimated its rotation and applies the
@@ -2512,7 +2523,7 @@ class DirectPtycho:
                   and fixed_aberrations is None and int(num_trials) > 0
                   and (c10_range is None or c10_range[0] == -c10_range[1]) else None)
 
-        def fit(trials: int = int(num_trials)) -> SSBResult:
+        def fit(trials: int = int(num_trials)) -> DirectPtychoResult:
             """One fit at the session's rotation, from the session's aberrations (searched when none are known)."""
             if tilt:
                 result = self._fit_tilt(
@@ -2566,7 +2577,7 @@ class DirectPtycho:
         return result
 
     @_on_scan_gpu
-    def measure_parameters(self, parameters: SSBResult | None = None) -> dict[str, object]:
+    def measure_parameters(self, parameters: DirectPtychoResult | None = None) -> dict[str, object]:
         """Measure focus-depth and tilt objective slices without refitting.
 
         The same prepared evidence and joint objective evaluate up to 201
@@ -2575,7 +2586,7 @@ class DirectPtycho:
 
         Parameters
         ----------
-        parameters : SSBResult or None, optional
+        parameters : DirectPtychoResult or None, optional
             A joint fit from this session. None uses its latest fit. Measure
             regional fits in the same regional session used for fitting.
 
@@ -2622,8 +2633,8 @@ class DirectPtycho:
                 raise ValueError(mismatch)
             # The fit can select the opposite rotation branch; evaluation below
             # uses its recorded angle. Every other preparation setting must match.
-            saved_preparation = dict(signature.get("ssb", {}))
-            current_preparation = dict(current["ssb"])
+            saved_preparation = dict(signature.get("phase_of_mean", {}))
+            current_preparation = dict(current["phase_of_mean"])
             saved_preparation.pop("scan_detector_rotation_deg", None)
             current_preparation.pop("scan_detector_rotation_deg")
             if saved_preparation != current_preparation:
@@ -2660,7 +2671,7 @@ class DirectPtycho:
     @_on_scan_gpu
     def _run_ssb(
         self,
-        parameters: SSBResult | None = None,
+        parameters: DirectPtychoResult | None = None,
         *,
         aberrations: dict[str, float] | None = None,
         trial_ids: object = None,
@@ -2669,7 +2680,7 @@ class DirectPtycho:
         save_dir: str | Path | None = None,
         force: bool = False,
         verbose: bool = False,
-    ) -> SSBResult:
+    ) -> DirectPtychoResult:
         """Reconstruct the phase with the session's aberrations, fitting them first when none are known.
 
         A new session with no aberrations given runs ``fit_aberrations()`` once
@@ -2735,7 +2746,7 @@ class DirectPtycho:
 
         Returns
         -------
-        SSBResult
+        DirectPtychoResult
             Calibrated reconstruction: the phase of the bright-field mean wave
             (``phase_of_mean``) at every output factor, with or without tilt
             and higher orders. SSB recovers phase only: the object wave has unit
@@ -2748,7 +2759,7 @@ class DirectPtycho:
         >>> result = ptycho.reconstruct(aberrations, upsampling=4, save_dir="results/4x")
         """
         upsampling = self._resolve_upsampling(upsampling)
-        if parameters is not None and not isinstance(parameters, SSBResult):
+        if parameters is not None and not isinstance(parameters, DirectPtychoResult):
             raise TypeError("Pass the result of fit_aberrations(), or supply coefficients with aberrations={...}.")
         if trial_ids is not None:
             if aberrations is not None or save_dir is not None:
@@ -2795,7 +2806,8 @@ class DirectPtycho:
                   f"depth spread {depth or 0.0:.3f} nm; loss at native 1x")
         cached = self._reconstruction
         if (not force and save_dir is None and parameters is None and aberrations is None
-                and cached is not None and cached.reconstruction_method == "ssb" and cached.upsampling == upsampling
+                and cached is not None and cached.reconstruction_method in ("phase_of_mean", "phase_of_mean")
+                and cached.upsampling == upsampling
                 and cached.phase_estimator == "phase_of_mean"
                 and cached.scan_detector_rotation_deg == self.scan_detector_rotation_deg
                 and cached.aberrations == coefs
@@ -2814,7 +2826,7 @@ class DirectPtycho:
             # slider previews reuse their chunk buffers through MLX's cache (the loss's row IFFT is 8.6 GB at 4096
             # bright-field pixels); a finished reconstruction keeps only G(q, k)
             self._compute.release_cache()
-        result = SSBResult(
+        result = DirectPtychoResult(
             object_wave=self._unit_wave(phase), backend=self.backend, aberrations=dict(coefs),
             sample_tilt_mrad=tilt, depth_spread_nm=depth,
             scan_detector_rotation_deg=self.scan_detector_rotation_deg,
@@ -2834,11 +2846,12 @@ class DirectPtycho:
         return result
 
     @_on_scan_gpu
-    def series(self, sources: Sequence = (), fit: SSBResult | None = None, *,
+    def series(self, sources: Sequence = (), fit: DirectPtychoResult | None = None, *,
                refit: Literal["none", "defocus", "full"] = "defocus",
-               method: Literal["ssb", "phase", "complex"] | tuple[str, ...] = "ssb",
+               method: Literal["phase_of_mean", "phase", "complex"] | tuple[str, ...] = "phase_of_mean",
                upsampling: int | Literal["auto"] = "auto", save_dir: str | Path | None = None,
-               max_frames: int | None = None,
+               max_frames: int | None = None, neural_model: "NeuralPhaseModel | None" = None,
+               annulus_mrad: tuple[float, float] | None = None,
                show: bool = True, verbose: bool = True, **strengths):
         """Reconstruct a series of scans of one area, following defocus, astigmatism and drift from scan to scan.
 
@@ -2846,7 +2859,7 @@ class DirectPtycho:
         ``datasets``). The optics are fitted once on this session's scan (``fit_aberrations()``) unless ``fit``
         is given; every scan then refines only defocus and astigmatism from the scan before (``refit="full"``:
         fits every scan independently instead), is reconstructed with ``method`` (and the damping keywords in
-        ``strengths``), and is registered onto one combined image. Returns an ``SSBSeries`` (``add``, ``report``,
+        ``strengths``), and is registered onto one combined image. Returns a ``DirectPtychoSeries`` (``add``, ``report``,
         ``show``, ``align``, ``reconstruct``). Without ``sources`` the series starts empty and grows scan by scan
         as they arrive: pass ``series.add`` to an ``ArinaListener`` as its ``process``.
 
@@ -2861,6 +2874,16 @@ class DirectPtycho:
         workspaces or the byte size of a canvas spanning the retained drift. Bounded series cannot
         be aligned again; use saved scans in a new full-history series for post-hoc alignment.
 
+        With a trained ``neural_model``, the same frozen weights process each scan on CUDA.
+        Read ``series.latest`` for the current reconstruction's ``phase``, ``neural_phase``
+        and (row, column) ``displacement_A`` relative to frame zero.
+        The existing SSB drift estimate places their combined views; earlier images never
+        enter the current neural model. The latest result also exposes measured
+        ``annular_counts`` on the native scan grid. With a model, the default
+        collection angles are its trained guide. Set ``annulus_mrad=(inner, outer)``
+        to inspect another band, or to measure a band without a model. Display
+        angles never change the checkpoint or neural phase.
+
         >>> series = ptycho.series(run.datasets)  # doctest: +SKIP
         >>> series = ptycho.series(method="phase")  # doctest: +SKIP
         >>> series = ptycho.series(fit=fit, refit="none", method="phase")  # doctest: +SKIP
@@ -2869,15 +2892,61 @@ class DirectPtycho:
         """
         from quantem.gpu.direct_ptycho.stream import series
 
+        names = (method,) if isinstance(method, str) else method
+        for name in names:
+            if name not in ("phase_of_mean", "phase", "complex"):
+                raise ValueError(f'method={name!r} is retired; use "phase_of_mean", "phase" or "complex".')
         if fit is None:
             fit = self.fit_aberrations(show=False, verbose=verbose)
         return series(self, sources, fit, refit=refit, method=method, upsampling=upsampling, save_dir=save_dir,
-                      max_frames=max_frames, show=show, verbose=verbose, **strengths)
+                      max_frames=max_frames, neural_model=neural_model, annulus_mrad=annulus_mrad,
+                      show=show, verbose=verbose, **strengths)
 
     @_on_scan_gpu
+    def train_neural_phase(self, optics: DirectPtychoResult, **options) -> NeuralPhaseModel:
+        """Fit the frozen neural phase model from this acquisition.
+
+        The returned model carries the trained phase damping, annulus and
+        sampling it was fitted with. Pass it to ``reconstruct`` or ``series``
+        through their ``neural_model`` argument.
+
+        Parameters
+        ----------
+        optics : DirectPtychoResult
+            Calibrated optical fit of this session, as ``fit_aberrations`` returns.
+        **options
+            Forwarded to :meth:`NeuralPhaseModel.fit`: ``checkpoint``, ``recipe``,
+            ``steps``, ``direction_steps``, ``patch_size``, ``seed``,
+            ``upsampling``, ``annulus_mrad`` and ``scan_basis``.
+
+        Returns
+        -------
+        NeuralPhaseModel
+            Selected model in memory, usable on this and later acquisitions.
+        """
+        return NeuralPhaseModel.fit(self, optics, **options)
+
+    @classmethod
+    def load_neural_phase(cls, path: str | Path) -> NeuralPhaseModel:
+        """Load frozen neural phase weights without an acquisition session.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Checkpoint written by ``NeuralPhaseModel.save``.
+
+        Returns
+        -------
+        NeuralPhaseModel
+            Model recorded in the checkpoint.
+        """
+        return NeuralPhaseModel.load(path)
+
     def reconstruct(
-        self, parameters: SSBResult | None = None, *,
-        method: Literal["ssb", "phase", "complex", "all"] = "ssb",
+        self, parameters: DirectPtychoResult | None = None, *,
+        method: Literal["phase_of_mean", "phase", "complex", "all"] = "phase_of_mean",
+        neural_model: NeuralPhaseModel | None = None,
+        scan_basis: tuple[tuple[float, float], tuple[float, float]] | None = None,
         phase_damping: float | None = None,
         amplitude_damping: float | None = None,
         smoothness_inv_A: float | None = None,
@@ -2887,7 +2956,7 @@ class DirectPtycho:
         phase_estimator: Literal["phase_of_mean"] | None = None,
         compute_loss: bool = True, save_dir: str | Path | None = None,
         force: bool = False, verbose: bool = False,
-    ) -> SSBResult | dict[str, SSBResult]:
+    ) -> DirectPtychoResult | dict[str, DirectPtychoResult]:
         """Reconstruct with fitted optics using SSB or a regularized direct model.
 
         Parameters
@@ -2897,16 +2966,31 @@ class DirectPtycho:
             once and reused. Coefficients, tilt and effective depth are shared
             by all three methods. Effective depth is not measured thickness.
         method
-            ``"ssb"`` retains conventional SSB on CUDA and MPS. Experimental
+            ``"phase_of_mean"`` retains conventional SSB on CUDA and MPS. Experimental
             ``"phase"`` solves the linear weak-phase model; ``"complex"``
             solves relative log-amplitude and phase together, on CUDA and MPS.
             They are direct linear solves, not iterative multislice
             reconstruction. ``"all"`` returns a dictionary
-            keyed by ``"ssb"``, ``"phase"``, and ``"complex"``, sharing one fit.
+            keyed by ``"phase_of_mean"``, ``"phase"``, and ``"complex"``, sharing one fit.
             This comparison requires CUDA; it does not select a best method.
+        neural_model : NeuralPhaseModel, optional
+            Frozen residual U-Net, measured annular readout and bounded spectral
+            correction for ``method="phase"`` on CUDA. The result retains both
+            ``phase`` and ``neural_phase``. No training or series is started.
+            The neural input always uses its trained phase damping 0.03,
+            unit smoothness and uniform detector weighting. ``phase_damping``
+            controls the retained direct baseline independently; both solves
+            reuse the same measured equations. Counts must remain available in
+            the input dataset.
+        scan_basis : pair of pairs of float, optional
+            Dimensionless affine basis B: physical positions = B @ nominal
+            positions in (row, col) order. Direct CUDA models evaluate transfer
+            at B**(-T) @ nominal frequency, without resampling measured counts.
+            Images and scale bars remain on the nominal acquisition grid.
+            Supply an independently calibrated basis; this call does not fit it.
         phase_damping, amplitude_damping
             Positive dimensionless Tikhonov damping strengths (a damped
-            least-squares solve), 0.03 when omitted for applicable methods.
+            least-squares solve), 0.3 when omitted for applicable methods.
             Amplitude damping applies only to ``"complex"``.
             Larger strengths suppress poorly measured components more strongly.
             They do not refit aberrations or filter an already rendered image.
@@ -2924,7 +3008,7 @@ class DirectPtycho:
             support up to 4× (one line names a larger factor the scan sampling
             supports); it does not establish resolution.
         phase_estimator
-            Compatibility keyword: only ``"phase_of_mean"``, what ``"ssb"``
+            Compatibility keyword: only ``"phase_of_mean"``, what ``"phase_of_mean"``
             computes, is accepted. The retired ``"mean_phase"`` and
             ``"complex_wave"`` raise an error naming ``method="phase"`` and
             ``method="complex"``.
@@ -2942,7 +3026,7 @@ class DirectPtycho:
 
         Returns
         -------
-        SSBResult or dict[str, SSBResult]
+        DirectPtychoResult or dict[str, DirectPtychoResult]
             Calibrated wave, phase, amplitude and complete method provenance.
             The established result type also holds the direct methods.
 
@@ -2952,17 +3036,29 @@ class DirectPtycho:
         >>> conventional = ptycho.reconstruct(optics, upsampling="auto")
         >>> phase = ptycho.reconstruct(optics, method="phase", phase_damping=0.03,
         ...                    upsampling="auto")
+        >>> model = NeuralPhaseModel.load("neural-phase.pt")
+        >>> reconstruction = ptycho.reconstruct(optics, method="phase",
+        ...                                    neural_model=model, upsampling="auto")
+        >>> reconstruction.neural_phase
         >>> both = ptycho.reconstruct(optics, method="complex", phase_damping=0.03,
         ...                   amplitude_damping=0.1, upsampling="auto")
         """
         from quantem.gpu.direct_ptycho import direct_workflow
 
         check_phase_estimator(phase_estimator)
+        if isinstance(method, str) and method not in ("phase_of_mean", "phase", "complex", "all"):
+            raise ValueError(
+                f'method={method!r} is retired; use method="phase_of_mean", "phase", "complex" or "all".'
+            )
+        if neural_model is not None and method != "phase":
+            raise ValueError('Use method="phase" with neural_model; the model corrects phase only.')
+        if scan_basis is not None and method not in ("phase", "complex"):
+            raise ValueError('Use method="phase" or "complex" with a calibrated scan_basis.')
         if method == "all":
             if self.backend != "cuda":
-                raise NotImplementedError("method='all' requires CUDA; use method='ssb' on other backends.")
+                raise NotImplementedError("method='all' requires CUDA; use method='phase_of_mean' on other backends.")
             if trial_ids is not None or phase_estimator is not None:
-                raise ValueError("trial_ids and phase_estimator require method='ssb'; omit them for method='all'.")
+                raise ValueError("trial_ids and phase_estimator require method='phase_of_mean'; omit them for method='all'.")
             # Validate the direct-model settings before fitting or reconstructing.
             direct_workflow.settings("complex", phase_damping, amplitude_damping,
                                      smoothness_inv_A, detector_weighting)
@@ -2973,29 +3069,79 @@ class DirectPtycho:
                     parameters, method=name, aberrations=aberrations,
                     upsampling=upsampling, compute_loss=compute_loss,
                     save_dir=save_dir, force=force, verbose=verbose,
-                    phase_damping=phase_damping if name != "ssb" else None,
+                    phase_damping=phase_damping if name != "phase_of_mean" else None,
                     amplitude_damping=amplitude_damping if name == "complex" else None,
-                    smoothness_inv_A=smoothness_inv_A if name != "ssb" else None,
-                    detector_weighting=detector_weighting if name != "ssb" else None,
+                    smoothness_inv_A=smoothness_inv_A if name != "phase_of_mean" else None,
+                    detector_weighting=detector_weighting if name != "phase_of_mean" else None,
                 )
-                for name in ("ssb", "phase", "complex")
+                for name in ("phase_of_mean", "phase", "complex")
             }
 
         policy = direct_workflow.settings(method, phase_damping, amplitude_damping,
                                           smoothness_inv_A, detector_weighting)
-        if method == "ssb":
+        if method == "phase_of_mean":
             return self._run_ssb(parameters, aberrations=aberrations, trial_ids=trial_ids,
                                  upsampling=upsampling,
                                  compute_loss=compute_loss, save_dir=save_dir, force=force, verbose=verbose)
         if trial_ids is not None or phase_estimator is not None:
-            raise ValueError("trial_ids and phase_estimator apply only to method='ssb'; omit them for direct inversion.")
+            raise ValueError("trial_ids and phase_estimator apply only to method='phase_of_mean'; omit them for direct inversion.")
+        if scan_basis is not None:
+            policy["scan_basis"] = direct_workflow._scan_basis(scan_basis, self.backend)
         return direct_workflow.run(
-            self, parameters, aberrations=aberrations,
+            self, parameters, aberrations=aberrations, neural_model=neural_model,
             factor=self._resolve_upsampling(upsampling), policy=policy,
             compute_loss=compute_loss, save_dir=save_dir, force=force, verbose=verbose,
         )
 
-    def _fit_evidence(self, correction: SSBResult | None, coefs: dict[str, float], tilt, depth) -> dict[str, object]:
+    @_on_scan_gpu
+    def validate_damping(
+        self, parameters: DirectPtychoResult | None = None, *,
+        phase_dampings: Sequence[float] | None = None,
+        scan_basis: tuple[tuple[float, float], tuple[float, float]] | None = None,
+        upsampling: int | Literal["auto"] = "auto", block_size: int = 4,
+    ) -> DirectPtychoResult:
+        """Choose phase damping by complementary detector holdout on CUDA.
+
+        Parameters
+        ----------
+        parameters : DirectPtychoResult or None, optional
+            Fixed calibrated optics, as for ``reconstruct``. Calibration is
+            reused or fitted once; it is not independently refitted per split.
+        phase_dampings : sequence of float or None, optional
+            Positive candidate strengths. Default: a logarithmic grid from
+            1e-5 to 3 plus 0.03. The minimum is over evaluated candidates only.
+        scan_basis : pair of pairs of float or None, optional
+            Fixed physical scan basis, as for ``reconstruct``.
+        upsampling : int or "auto", optional
+            Output sampling, shared by both detector partitions.
+        block_size : int, optional
+            Side of each checkerboard block in computed detector pixels,
+            default 4. Adjacent detector pixels can remain correlated.
+
+        Returns
+        -------
+        DirectPtychoResult
+            Full-data phase at the selected damping. Both prediction directions,
+            mean scores, partition sizes and timing are recorded in
+            ``reconstruction_diagnostics["damping_validation"]``.
+            ``show("damping")`` plots them without rerunning GPU work.
+
+        Notes
+        -----
+        Uses the same linear weak-phase model, unit smoothness and uniform
+        weighting as the default direct phase. Each detector subset reconstructs
+        the object and predicts the other subset's non-DC scan-Fourier signal.
+        Scores are squared prediction error divided by measured signal power;
+        zero phase scores one. The full bright-field incident intensity estimate
+        and calibration are shared. This is conditional model selection, not an
+        independent final test, an uncertainty estimate or proof of resolution.
+        """
+        from quantem.gpu.direct_ptycho.damping import validate
+
+        return validate(self, parameters, phase_dampings, scan_basis=scan_basis,
+                        upsampling=upsampling, block_size=block_size)
+
+    def _fit_evidence(self, correction: DirectPtychoResult | None, coefs: dict[str, float], tilt, depth) -> dict[str, object]:
         """The objective and the 180-degree branch comparison of the fit a reconstruction applies, for its result.
 
         The fit is ``correction``, else the session's latest ``fit_aberrations``. Both describe its own
@@ -3026,7 +3172,7 @@ class DirectPtycho:
         phase_estimator: Literal["phase_of_mean"] | None = None,
         output: Literal["numpy", "native"] = "numpy",
         cancel: Callable[[], bool] | None = None,
-        method: Literal["ssb", "phase", "complex"] = "ssb",
+        method: Literal["phase_of_mean", "phase", "complex"] = "phase_of_mean",
         phase_damping: float | None = None,
         amplitude_damping: float | None = None,
         smoothness_inv_A: float | None = None,
@@ -3093,7 +3239,7 @@ class DirectPtycho:
 
         policy = direct_workflow.settings(method, phase_damping, amplitude_damping,
                                           smoothness_inv_A, detector_weighting)
-        if method != "ssb":
+        if method != "phase_of_mean":
             if context is not None or phase_estimator is not None:
                 raise ValueError("Regularized preview uses the full selected bright-field data; omit context and phase_estimator.")
             from concurrent.futures import CancelledError
@@ -3191,8 +3337,8 @@ class DirectPtycho:
     def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool,
                   *, fixed_aberrations: dict[str, float] | None = None,
                   bounds: dict[str, object] | None = None,
-                  compute_loss: bool = True) -> SSBResult:
-        """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm SSBResult at the fitted parameters."""
+                  compute_loss: bool = True) -> DirectPtychoResult:
+        """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm DirectPtychoResult at the fitted parameters."""
         preparation_started = time.perf_counter()
         backend = self._backend()
         backend_preparation_s = time.perf_counter() - preparation_started
@@ -3235,7 +3381,7 @@ class DirectPtycho:
                 "sample_tilt_mrad": [values["tilt_row_mrad"], values["tilt_col_mrad"]],
                 "depth_spread_nm": values["depth_spread_A"] / ENGINE_PER_NM,
             })
-        return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
+        return DirectPtychoResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
                          timings=timings, optimizer=dict(fit.get("optimizer", {})), depth_spread_nm=depth_spread_nm, sample_agreement=float(fit["fit"]) / backend.band_power(tuple(fit["band_inv_A"])), tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
                          amplitude_estimated=False, phase_estimator="phase_of_mean",
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
@@ -3359,7 +3505,7 @@ class DirectPtycho:
 
         The session owns only what it made: the bright-field crop decoded from a
         loaded dataset, backends' Fourier data, and the encoded acquisition
-        retained by an ``DirectPtycho.open`` session that reads it encoded (a large CUDA
+        retained by a ``DirectPtycho.open`` session that reads it encoded (a large CUDA
         scan, or integer counts on MPS). A borrowed array or dataset is never
         released here.
         """
@@ -3388,8 +3534,4 @@ class DirectPtycho:
 
         self.close()
 
-
-# Existing imports and serialized sessions continue to resolve the same class.
-SSB = DirectPtycho
-
-__all__ = ["DirectPtycho", "SSB"]
+__all__ = ["DirectPtycho"]

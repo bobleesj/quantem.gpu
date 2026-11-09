@@ -34,10 +34,10 @@ def _astigmatism_error_nm(fit, C12_nm, phi12_deg):
 @pytest.mark.parametrize("C10_nm,C12_nm", [(-8.0, 2.5), (5.0, 0.0), (-20.0, 5.0)])
 def test_standard_fit_recovers_known_aberrations(C10_nm, C12_nm):
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     frames, detector_mrad = _astigmatic_crystal(C10_A=10 * C10_nm, C12_A=10 * C12_nm, phi12_deg=20.0)
-    with SSB(frames, **_settings(detector_mrad)) as session:
+    with DirectPtycho(frames, **_settings(detector_mrad)) as session:
         fit = session.fit_aberrations(search="primary", tilt=False, check_rotation=False, verbose=False)
         _, loss = session.preview(fit.aberrations)
     assert fit.refinement == "newton"
@@ -53,20 +53,20 @@ def test_standard_fit_recovers_known_aberrations(C10_nm, C12_nm):
 def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
     """fixed_aberrations holds C12 at 0 in every trial and through the refinement; C10 is still fitted."""
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     frames, detector_mrad = _astigmatic_crystal(C12_A=0.0)  # truth C10 -8 nm, no astigmatism
-    with SSB(frames, **_settings(detector_mrad)) as session:
-        fit = session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C12_nm": 0.0}, num_trials=60,
+    with DirectPtycho(frames, **_settings(detector_mrad)) as session:
+        fit = session.fit_aberrations(search="primary", tilt=False, fixed_aberrations={"C12_nm": 0.0}, num_trials=60,
                                        check_rotation=False, verbose=False)
         assert fit.refinement == "bfgs"  # a locked coefficient: the exact-gradient refinement in (C10, C12, phi12)
         assert fit.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.1)
         assert fit.aberrations["C12_nm"] == 0.0 and fit.aberrations["phi12_deg"] == 0.0
-        held = session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0}, num_trials=40,
+        held = session.fit_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0}, num_trials=40,
                                         check_rotation=False, verbose=False)
         assert held.aberrations["C10_nm"] == -7.0
         with pytest.raises(ValueError, match="nothing to fit"):
-            session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0, "C12_nm": 0.0, "phi12_deg": 0.0},
+            session.fit_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0, "C12_nm": 0.0, "phi12_deg": 0.0},
                                      check_rotation=False, verbose=False)
         locked = session.fit_aberrations(search="primary", tilt=False, refine_lock=["C10_nm"], num_trials=40,
                                           check_rotation=False, verbose=False)
@@ -75,13 +75,13 @@ def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
 
 def test_phi12_range_bounds_the_standard_fit():
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     frames, detector_mrad = _astigmatic_crystal()  # phi12 20 degrees
-    with SSB(frames, **_settings(detector_mrad)) as session:
-        inside = session.find_aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (0.0, 45.0)}, num_trials=60,
+    with DirectPtycho(frames, **_settings(detector_mrad)) as session:
+        inside = session.fit_aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (0.0, 45.0)}, num_trials=60,
                                           check_rotation=False, verbose=False)
-        outside = session.find_aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (40.0, 80.0)}, num_trials=60,
+        outside = session.fit_aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (40.0, 80.0)}, num_trials=60,
                                            check_rotation=False, verbose=False)
     assert inside.refinement == "bfgs" and inside.aberrations["phi12_deg"] == pytest.approx(20.0, abs=0.5)
     assert 40.0 <= outside.aberrations["phi12_deg"] <= 80.0
@@ -93,12 +93,12 @@ def test_depth_zero_objective_matches_torch_reference():
     torch = pytest.importorskip("torch")
     if not torch.backends.mps.is_available():
         pytest.skip("needs the Apple GPU (MPS)")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
     from tests.parity.torch_ssb import TorchSSB
 
     frames, detector_mrad = _astigmatic_crystal()
-    with SSB(frames, **_settings(detector_mrad)) as session:
+    with DirectPtycho(frames, **_settings(detector_mrad)) as session:
         session.preview({"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0}, compute_loss=False)
         prepared = session._backend()._prepared
         reference = TorchSSB.from_mps(prepared, device="mps")

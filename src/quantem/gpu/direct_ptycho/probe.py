@@ -3,17 +3,19 @@
 import math
 
 from quantem.gpu.optics.physics import wavelength_A_from_kV
+from quantem.gpu.direct_ptycho.higher_order import ORDERS
 
 
 def probe_grid(result):
     """Resolve the aperture and leave room around its defocused footprint."""
     if result.voltage_kV is None or result.semiangle_mrad is None:
-        raise ValueError("Probe calibration is missing. Run ssb.reconstruct() with voltage and convergence semiangle.")
+        raise ValueError("Probe calibration is missing. Run ptycho.reconstruct() with voltage and convergence semiangle.")
     wavelength = wavelength_A_from_kV(result.voltage_kV)
     semiangle = result.semiangle_mrad * 1e-3
     sampling = wavelength / (4 * semiangle)
     # Four times the largest geometric radius plus a margin for diffraction tails.
-    radius = semiangle * 10 * (abs(result.aberrations.get("C10_nm", 0)) + abs(result.aberrations.get("C12_nm", 0)))
+    radius = sum(10 * abs(result.aberrations.get(f"C{n}{m}_nm", 0))
+                 * semiangle ** n * (1 + m / (n + 1)) for n, m in ORDERS)
     field = 4 * radius + 16 * wavelength / semiangle
     size = 2 ** math.ceil(math.log2(max(256, field / sampling)))
     angular_step = wavelength / (size * sampling) * 1000
@@ -48,11 +50,17 @@ def model_probe(result, *, space: str):
         phi = xp.arctan2(angle_column, angle_row)
         edge_width = xp.sqrt((xp.cos(phi) * step_row) ** 2 + (xp.sin(phi) * step_column) ** 2)
         aperture = xp.clip((result.semiangle_mrad * 1e-3 - xp.sqrt(alpha_squared)) / edge_width + 0.5, 0, 1)
-        # Public C10/C12 are nm; the wavelength and engine coefficient lengths are Å.
-        defocus = 10 * result.aberrations.get("C10_nm", 0.0)
-        astigmatism = 10 * result.aberrations.get("C12_nm", 0.0)
-        azimuth = math.radians(result.aberrations.get("phi12_deg", 0.0))
-        chi = (math.pi / wavelength) * alpha_squared * (defocus + astigmatism * xp.cos(2 * (phi - azimuth)))
+        # The same 14 Krivanek terms as the reconstruction's Cartesian shader.
+        # Public lengths are nm; wavelength and engine coefficients are Å.
+        chi = xp.zeros_like(alpha_squared)
+        for n, m in ORDERS:
+            magnitude = 10 * result.aberrations.get(f"C{n}{m}_nm", 0.0)
+            if magnitude == 0:
+                continue
+            azimuth = math.radians(result.aberrations.get(f"phi{n}{m}_deg", 0.0))
+            chi = chi + (2 * math.pi / wavelength) * magnitude / (n + 1) * (
+                alpha_squared ** ((n + 1) / 2) * xp.cos(m * (phi - azimuth))
+            )
         wave = aperture * xp.exp(-1j * chi)
         wave = wave / xp.sqrt(xp.sum(xp.abs(wave) ** 2))
         if space == "real":

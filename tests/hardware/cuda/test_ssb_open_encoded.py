@@ -1,4 +1,4 @@
-"""SSB.open keeps the acquisition ANS encoded and decodes only the bright-field crop.
+"""DirectPtycho.open keeps the acquisition ANS encoded and decodes only the bright-field crop.
 
 The crop must select exactly the bright-field pixels, centre and radius of a session built from the fully decoded cube,
 so the reconstruction is the same to float32 rounding. Real Arina acquisition (512 x 512 scan, 192 x 192 detector); skips
@@ -29,12 +29,12 @@ def test_open_bright_field_crop_matches_full_detector(detector_sampling_mrad):
             pytest.skip("No CUDA device")
     except cp.cuda.runtime.CUDARuntimeError:
         pytest.skip("No CUDA runtime")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.io import load
 
     aberrations = {"C10_nm": 16.2, "C12_nm": 4.15, "phi12_deg": math.degrees(0.33)}
     settings = {**SETTINGS, "detector_sampling_mrad": detector_sampling_mrad}
-    cropped = SSB.open(str(SOURCE), **settings)
+    cropped = DirectPtycho.open(str(SOURCE), **settings)
     assert cropped._data.shape[-2:] != (192, 192)          # only the bright-field region was decoded
     factors = [1, 2, 3, 4] if detector_sampling_mrad is None else [1]
     crop_results = {
@@ -45,7 +45,7 @@ def test_open_bright_field_crop_matches_full_detector(detector_sampling_mrad):
     cropped.close()
     del cropped
     cp.get_default_memory_pool().free_all_blocks()
-    full = SSB(cp.from_dlpack(load(str(SOURCE), verbose=False).read()), **settings)
+    full = DirectPtycho(cp.from_dlpack(load(str(SOURCE), verbose=False).read()), **settings)
     assert crop_bf == full.num_bright_field_pixels
     for factor in factors:
         full_phase, full_loss = full.preview(aberrations, upsampling=factor)
@@ -67,7 +67,7 @@ def test_open_flattened_rectangular_scan_uses_explicit_shape(tmp_path):
     import h5py
     import hdf5plugin
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     values = np.zeros((3, 4, 8, 8), dtype=np.uint16)
     values[:, :, 3:6, 3:6] = np.arange(1, 13).reshape(3, 4, 1, 1)
@@ -77,7 +77,7 @@ def test_open_flattened_rectangular_scan_uses_explicit_shape(tmp_path):
             "entry/data/data", data=values.reshape(12, 8, 8),
             chunks=(1, 8, 8), **hdf5plugin.Bitshuffle(cname="lz4"),
         )
-    with SSB.open(
+    with DirectPtycho.open(
         str(source), backend="cuda", scan_shape=(3, 4),
         voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
         detector_sampling_mrad=(1.0, 1.0),
@@ -102,10 +102,10 @@ def test_preview_is_in_the_same_scan_order_as_the_result():
             pytest.skip("No CUDA device")
     except cp.cuda.runtime.CUDARuntimeError:
         pytest.skip("No CUDA runtime")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     aberrations = {"C10_nm": 16.2, "C12_nm": 4.15, "phi12_deg": math.degrees(0.33)}
-    session = SSB.open(str(SOURCE), **SETTINGS)
+    session = DirectPtycho.open(str(SOURCE), **SETTINGS)
     result = cp.asnumpy(session.reconstruct(aberrations=aberrations).phase).astype(np.float64)
     previews = {
         "chunked with loss": session.preview(aberrations)[0],

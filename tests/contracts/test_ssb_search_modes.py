@@ -6,11 +6,11 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from quantem.gpu.direct_ptycho.workflow import SSB
+from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
 
 def call(session, **options):
-    return inspect.unwrap(SSB.fit_aberrations)(session, **options)
+    return inspect.unwrap(DirectPtycho.fit_aberrations)(session, **options)
 
 
 def test_primary_preserves_budget_seed_and_options():

@@ -137,6 +137,9 @@ repetitions and outliers.
 - Use `(row, col)` in public APIs, metadata, plots, and error messages.
 - Include corrective next steps in user-facing errors.
 - Include a scientist-facing `Examples` section for public Python APIs.
+- When a workflow needs the latest completed acquisition, expose a named frame
+  with its images and measurements. Use it in examples so callers can read
+  matching values without knowing how the series stores its history.
 - Keep generated `docs/_build/` output out of commits.
 - Put public workflow guidance in `docs/`, contributor policy here, and
   implementation evidence in the owning backend's maintainer documentation.

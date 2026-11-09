@@ -17,11 +17,11 @@ class _Backend:
         self.reconstruct_calls = 0
 
     def fit(self, **settings):
-        from quantem.gpu import SSBResult
+        from quantem.gpu import DirectPtychoResult
 
         self.fit_calls += 1
         trials = int(settings["trials"])
-        return SSBResult(
+        return DirectPtychoResult(
             object_wave=np.full((2, 2), 1 + 2j, dtype=np.complex64),
             backend=self.backend,
             aberrations={"C10": -101.0, "C12": 4.0, "phi12": 0.25},
@@ -73,8 +73,8 @@ def _session(monkeypatch, source, backend, device="mps"):
     from quantem.gpu.direct_ptycho import workflow
 
     monkeypatch.setattr(workflow, "resolve", lambda _backend: device)
-    monkeypatch.setattr(workflow.SSB, "_backend", lambda _self: backend)
-    session = workflow.SSB(
+    monkeypatch.setattr(workflow.DirectPtycho, "_backend", lambda _self: backend)
+    session = workflow.DirectPtycho(
         np.zeros((2, 2, 3, 3), dtype=np.uint16),
         backend=device,
         voltage_kV=300.0,
@@ -85,7 +85,7 @@ def _session(monkeypatch, source, backend, device="mps"):
         # a given rotation is fitted once; an estimated one would fit both 180-degree branches
         scan_detector_rotation_deg=3.0,
     )
-    # This double represents the immutable source opened by SSB.open. Direct
+    # This double represents the immutable source opened by DirectPtycho.open. Direct
     # arrays have a separate no-reuse contract below.
     session.source_kind = "detector"
     return session
@@ -264,8 +264,8 @@ def test_saved_result_requires_source_identity(tmp_path, monkeypatch) -> None:
 
     backend = _Backend()
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
-    monkeypatch.setattr(workflow.SSB, "_backend", lambda _self: backend)
-    session = workflow.SSB(
+    monkeypatch.setattr(workflow.DirectPtycho, "_backend", lambda _self: backend)
+    session = workflow.DirectPtycho(
         np.zeros((2, 2, 3, 3), dtype=np.uint16),
         backend="mps",
         voltage_kV=300.0,
@@ -346,10 +346,10 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
     block = {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0, "scan_detector_rotation_flipped": False}
     config = tmp_path / "config.json"
     for marker in ({}, {"schema": f"quantem.ssb-fit/{SCHEMA - 1}"}, {"schema": SCHEMA}):
-        config.write_text(json.dumps({"computed": {"ssb": {**block, **marker}}}))
+        config.write_text(json.dumps({"computed": {"phase_of_mean": {**block, **marker}}}))
         assert stored_fit(json.loads(config.read_text())) == {}
         assert saved_fit(tmp_path) is None
-    config.write_text(json.dumps({"computed": {"ssb": {**block, "schema": FIT_SCHEMA}}}))
+    config.write_text(json.dumps({"computed": {"phase_of_mean": {**block, "schema": FIT_SCHEMA}}}))
     assert saved_fit(tmp_path) == {**block, "schema": FIT_SCHEMA}
     config.unlink()
     record = tmp_path / "ssb-fit" / "ssb-find_aberrations.json"
@@ -365,7 +365,7 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
 
 def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     """write_fit_metadata marks its block and saved_fit returns the exact values; no field of an unmarked block survives."""
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
     from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
@@ -374,9 +374,9 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
                "aberration_unit": "nm", "picked_c10_nm": 4.0, "optuna_trials": [{"loss": 0.02}]}
     # a current screening record that still holds a fit block of an earlier fit schema
     config.write_text(json.dumps({"schema": SCREEN_ACQUISITION_SCHEMA, "human": {"notes": "kept"},
-                                  "computed": {"bright_field_radius_px": 55.0, "ssb": earlier}}))
+                                  "computed": {"bright_field_radius_px": 55.0, "phase_of_mean": earlier}}))
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": math.degrees(-0.5)}
-    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+    result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_radius_px=48.0)
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5), "scan_detector_rotation_deg": 200.0, "bright_field_radius_px": None}
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
@@ -385,25 +385,25 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
              "scan_detector_rotation_deg": 200.0, "scan_detector_rotation_flipped": False, "loss": 0.125, "bright_field_radius_px": 48.0,
              "bright_field_center_px": None, "detector_sampling_mrad": [0.55, 0.56]}
     assert written == {"schema": SCREEN_ACQUISITION_SCHEMA, "human": {"notes": "kept"},
-                       "computed": {"bright_field_radius_px": 55.0, "ssb": block}}
+                       "computed": {"bright_field_radius_px": 55.0, "phase_of_mean": block}}
     assert saved_fit(tmp_path) == block
     # a field the dashboard adds to a current block stays through the next fit
-    written["computed"]["ssb"]["ran_at"] = "2026-10-11T12:00:00"
+    written["computed"]["phase_of_mean"]["ran_at"] = "2026-10-11T12:00:00"
     config.write_text(json.dumps(written))
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
-    assert json.loads(config.read_text())["computed"]["ssb"] == {**block, "ran_at": "2026-10-11T12:00:00"}
+    assert json.loads(config.read_text())["computed"]["phase_of_mean"] == {**block, "ran_at": "2026-10-11T12:00:00"}
     # quantem.live's 180-degree decision on the earlier fit does not survive a new one: beside a new rotation it said
     # this fit had been moved to the other branch
     written = json.loads(config.read_text())
-    written["computed"]["ssb"].update(column_sign=-0.4, session_moved_180=True, rotation_disagrees=False,
+    written["computed"]["phase_of_mean"].update(column_sign=-0.4, session_moved_180=True, rotation_disagrees=False,
                                       session_rotation={"scan_detector_rotation_deg": 20.0})
     config.write_text(json.dumps(written))
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
-    assert json.loads(config.read_text())["computed"]["ssb"] == {**block, "ran_at": "2026-10-11T12:00:00"}
+    assert json.loads(config.read_text())["computed"]["phase_of_mean"] == {**block, "ran_at": "2026-10-11T12:00:00"}
 
 
 def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_block_needs(tmp_path, monkeypatch):
-    """SSB.open on exact bright-field columns holds the detector sampling its backend uses, and the fit block exports.
+    """DirectPtycho.open on exact bright-field columns holds the detector sampling its backend uses, and the fit block exports.
 
     The session kept None there and the backend derived the sampling on its own, so reconstruct_series stored a fit
     with no detector sampling and export_result failed on it with a TypeError. The Apple backend needs MLX, so a
@@ -411,7 +411,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     """
     import h5py
 
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
     from quantem.gpu.formats.ssb_phase import export_result, read_result
     from quantem.gpu.direct_ptycho import workflow
     from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
@@ -438,7 +438,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
         frames = MpsBfColumnFrames(columns, selection=selection, scan_shape=(2, 2), dtype="uint16", dc_value=1.0,
                                    detector_sampling_mrad=exported)
         monkeypatch.setattr(workflow, "find_bf_columns", lambda *_args, frames=frames, **_kwargs: frames)
-        session = workflow.SSB.open(str(tmp_path / "scan_master.h5"), backend="mps", **settings)
+        session = workflow.DirectPtycho.open(str(tmp_path / "scan_master.h5"), backend="mps", **settings)
         assert session.detector_sampling_mrad == expected
         session._backend()
         assert received[-1] == expected
@@ -449,7 +449,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     with h5py.File(master, "w") as handle:
         handle["entry/data/data_000001"] = h5py.ExternalLink("scan_data.h5", "/data")
     np.save(tmp_path / "ssb_phase.npy", np.zeros((2, 2), np.float32))
-    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps", scan_detector_rotation_deg=192.0,
+    result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps", scan_detector_rotation_deg=192.0,
                        aberrations={"C10_nm": 7.0, "C12_nm": 2.0, "phi12_deg": 5.0}, bright_field_center_px=(1.0, 1.5))
     write_fit_metadata(tmp_path, {**settings, "scan_detector_rotation_deg": 192.0}, result, session.detector_sampling_mrad)
     record, _ = read_result(export_result(tmp_path, master, tmp_path / "out.json"))
@@ -465,13 +465,13 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     """
     import pytest
 
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
     from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
     assert SCREEN_ACQUISITION_SCHEMA == "quantem.screen-acquisition/2"
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": -0.5}
-    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+    result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_center_px=(31.5, 32.5))
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5), "scan_detector_rotation_deg": 200.0}
     # created: the record carries the schema first, and the fit reads back
@@ -479,7 +479,7 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     write_fit_metadata(created, settings, result, (0.6, 0.6))
     record = json.loads((created / "config.json").read_text())
     assert list(record) == ["schema", "computed"] and record["schema"] == SCREEN_ACQUISITION_SCHEMA
-    assert saved_fit(created)["aberrations"] == aberrations and record["computed"]["ssb"]["schema"] == FIT_SCHEMA
+    assert saved_fit(created)["aberrations"] == aberrations and record["computed"]["phase_of_mean"]["schema"] == FIT_SCHEMA
     # existing and current: every other key stays byte for byte, in its place
     current = tmp_path / "current"
     current.mkdir()
@@ -491,7 +491,7 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     (current / "config.json").write_text(json.dumps(existing, indent=2), encoding="utf-8")
     write_fit_metadata(current, settings, result, (0.6, 0.6))
     expected = json.loads(json.dumps(existing))
-    expected["computed"]["ssb"] = json.loads((created / "config.json").read_text())["computed"]["ssb"]
+    expected["computed"]["phase_of_mean"] = json.loads((created / "config.json").read_text())["computed"]["phase_of_mean"]
     assert (current / "config.json").read_text(encoding="utf-8") == json.dumps(expected, indent=2)
     # existing with another schema, or none: refused before anything is written
     for number, earlier in enumerate(({"computed": {"bf_radius": 55.0}}, {"schema_version": 1, "computed": {}},
@@ -507,12 +507,12 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
 
 
 def _saved_joint_fit(tmp_path, monkeypatch):
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
 
     source = tmp_path / "scan.bin"
     source.write_bytes(b"detector counts")
     session = _session(monkeypatch, source, _Backend())
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps",
         aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": 3.0},
         sample_tilt_mrad=(1.0, 2.0), depth_spread_nm=10.0,
@@ -561,7 +561,7 @@ def test_parameter_slices_require_live_ownership_for_saved_array_fit(tmp_path, m
 
 
 def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path, monkeypatch):
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
     from quantem.gpu.direct_ptycho import parameters
     from quantem.gpu.direct_ptycho.persistence import load_result
 
@@ -582,12 +582,12 @@ def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path
     assert metadata["parameter_slices"] == measured
     assert "parameter_slices" not in metadata["result"]
     # The existing scientific payload needs no new constructor keyword.
-    assert SSBResult(object_wave=result.object_wave, **metadata["result"]).parameter_slices is None
+    assert DirectPtychoResult(object_wave=result.object_wave, **metadata["result"]).parameter_slices is None
     restored = load_result(paths=paths, signature=signature, backend="mps")
     assert restored.parameter_slices == measured
     assert session.measure_parameters(restored) == measured
 
-    unsaved = SSBResult(
+    unsaved = DirectPtychoResult(
         object_wave=result.object_wave, backend="mps", aberrations=result.aberrations,
         sample_tilt_mrad=result.sample_tilt_mrad, depth_spread_nm=result.depth_spread_nm,
         scan_detector_rotation_deg=result.scan_detector_rotation_deg,

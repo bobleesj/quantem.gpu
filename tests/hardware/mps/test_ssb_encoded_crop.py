@@ -116,8 +116,8 @@ def test_encoded_crop_prepares_the_decoded_crop_bit_for_bit(flipped, scan_region
 
 
 def test_resident_session_keeps_the_crop_encoded_and_its_identity():
-    """SSB(data) on an encoded MPS acquisition holds no decoded crop and records the decoded crop's identity sums."""
-    from quantem.gpu import SSB
+    """DirectPtycho(data) on an encoded MPS acquisition holds no decoded crop and records the decoded crop's identity sums."""
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho.brightfield import crop_bright_field
     from quantem.gpu.direct_ptycho.mps.frames import EncodedBrightFieldCrop
 
@@ -127,7 +127,7 @@ def test_resident_session_keeps_the_crop_encoded_and_its_identity():
         settings = dict(backend="mps", voltage_kV=300, semiangle_mrad=24, scan_sampling_A=0.5,
                         detector_sampling_mrad=4.0, scan_detector_rotation_deg=17.0,
                         aberrations={"C10_nm": -4.0, "C12_nm": 1.2, "phi12_deg": 23.0})
-        ssb = SSB(loaded, **settings)
+        ssb = DirectPtycho(loaded, **settings)
         assert isinstance(ssb._data, EncodedBrightFieldCrop)
         dense, *_ = crop_bright_field(loaded, "mps", 0.0, ssb.bright_field_radius_px,
                                       bright_field_center_px=ssb.bright_field_center_px)
@@ -155,7 +155,7 @@ def test_resident_session_keeps_the_crop_encoded_and_its_identity():
 def test_tiled_512_loss_route_matches_the_whole_chunk(monkeypatch):
     """LOSS_ROW_IFFT_TILE_BF sends a 512 x 512 loss chunk through the tiled route (the default), None keeps the whole
     chunk: the same loss and phase bits."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho.mps import reconstruct
 
     rng = np.random.default_rng(3)
@@ -164,7 +164,7 @@ def test_tiled_512_loss_route_matches_the_whole_chunk(monkeypatch):
     counts = (rng.integers(0, 4, (512, 512, 16, 16)) + disk * rng.integers(100, 400, (512, 512, 16, 16))).astype(np.uint16)
     loaded = _resident(counts, np.ones((16, 16), bool))
     try:
-        ssb = SSB(loaded, backend="mps", voltage_kV=300, semiangle_mrad=24, scan_sampling_A=0.5,
+        ssb = DirectPtycho(loaded, backend="mps", voltage_kV=300, semiangle_mrad=24, scan_sampling_A=0.5,
                   detector_sampling_mrad=4.0, scan_detector_rotation_deg=17.0)
         aberrations = {"C10_nm": -4.0, "C12_nm": 1.2, "phi12_deg": 23.0}
         tilted = dict(sample_tilt_mrad=(0.4, -1.1), depth_spread_nm=6.0)
@@ -182,7 +182,7 @@ def test_tiled_512_loss_route_matches_the_whole_chunk(monkeypatch):
 def test_region_session_frees_and_rebuilds_the_full_field_bit_for_bit(monkeypatch):
     """A region session frees the full field's G(q, k); the next full-field preview rebuilds the same bits, also after
     a rotation change retargeted the geometry."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
     mx = require_mlx()
@@ -194,7 +194,7 @@ def test_region_session_frees_and_rebuilds_the_full_field_bit_for_bit(monkeypatc
     counts, valid = _counts()
     loaded = _resident(counts, valid)
     try:
-        ssb = SSB(loaded, backend="mps", voltage_kV=300, semiangle_mrad=24, scan_sampling_A=0.5,
+        ssb = DirectPtycho(loaded, backend="mps", voltage_kV=300, semiangle_mrad=24, scan_sampling_A=0.5,
                   detector_sampling_mrad=4.0, scan_detector_rotation_deg=17.0)
         aberrations = {"C10_nm": -4.0, "C12_nm": 1.2, "phi12_deg": 23.0}
         ssb.preview(aberrations, compute_loss=False)

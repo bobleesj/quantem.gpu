@@ -10,7 +10,7 @@ import numpy as np
 
 from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import wavelength_A_from_kV
-from quantem.gpu.direct_ptycho.contract import SSBExportState, SSBPrecision
+from quantem.gpu.direct_ptycho.contract import ExportState, BackendPrecision
 from quantem.gpu.direct_ptycho.mps.frames import (
     MpsBfColumnFrames,
     MpsTensorFrames,
@@ -39,7 +39,7 @@ from quantem.gpu.direct_ptycho.mps.upsampling import _reconstruct_upsampled, pha
 
 
 class MpsSSBBackend:
-    """MLX/Metal implementation of ``quantem.gpu.direct_ptycho.contract.SSBProtocol``.
+    """MLX/Metal implementation of ``quantem.gpu.direct_ptycho.contract.DirectPtychoProtocol``.
 
     The prepared state (``prepared.py``) owns MPS preparation and device state. UI and export consumers
     use only the public reconstruction methods and :meth:`browser_state`.
@@ -49,7 +49,7 @@ class MpsSSBBackend:
     """
 
     backend = "mps"
-    precision = SSBPrecision()
+    precision = BackendPrecision()
 
     def __init__(
         self,
@@ -255,7 +255,7 @@ class MpsSSBBackend:
         result = fit_sample(self._prepared, **options)
         result.setdefault("timings", {})["fft_preparation_s"] = preparation_s
         # Reuse allocator buffers for the following phase diagnostic and for
-        # repeated fits (both 180-degree branches); SSB.find_aberrations calls
+        # repeated fits (both 180-degree branches); DirectPtycho.fit_aberrations calls
         # release_cache() when the fit is done, and close() clears it too.
         return result
 
@@ -577,7 +577,7 @@ class MpsSSBBackend:
         self._fit_preview_aberrations = None
         return path.resolve(), time.perf_counter() - started
 
-    def browser_state(self) -> SSBExportState:
+    def browser_state(self) -> ExportState:
         """Return backend-neutral host metadata for a WebGPU consumer."""
 
         # Browser WebGPU constructs its own exact Fourier evidence from the
@@ -633,7 +633,7 @@ class MpsSSBBackend:
                 "MPS WebGPU export requires detector-sum or BF-column DC "
                 "metadata from the source loader."
             )
-        return SSBExportState(
+        return ExportState(
             backend="mps",
             scan_shape=self.scan_shape,
             brightfield=self._selection,

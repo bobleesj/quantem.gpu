@@ -7,7 +7,7 @@ import pytest
 
 
 def _session(constant=True, source_path=None):
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     backend = "mps" if platform.system() == "Darwin" else "cuda"
     if backend == "mps":
@@ -23,7 +23,7 @@ def _session(constant=True, source_path=None):
         counts += np.random.default_rng(9).poisson(10, counts.shape).astype(np.uint16)
     if source_path is not None:
         np.save(source_path, counts)
-    return SSB(
+    return DirectPtycho(
         counts, backend=backend, voltage_kV=300, semiangle_mrad=30, source_path=source_path,
         scan_sampling_A=(.5, .5), detector_sampling_mrad=(10., 10.),
     )

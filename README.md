@@ -439,6 +439,12 @@ kept. See the evidence in a separate cell:
 aberrations.show("rotation")  # both branches at the auto factor, then their phase tails and column phases
 ```
 
+For repeated counted scans on CUDA, [train a phase model on one scan](docs/examples/train-phase-on-one-scan.ipynb)
+and [reuse its frozen weights across a series](docs/examples/reuse-phase-across-scans.ipynb).
+`series.latest.show()` pairs the current neural phase with the measured detector counts.
+The [direct ptychography API](docs/api/direct-ptycho.md#reuse-a-frozen-phase-model-as-scans-arrive)
+describes how to compare the same detector band without a model.
+
 For a native/upsampled comparison, use `result.show(compare=result_4x,
 axsize=(7, 7))`. The library marks matching central crops on the full images.
 The [SSB API](docs/api/ssb.md#settle-the-180-branch) explains the branch test.

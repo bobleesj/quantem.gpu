@@ -1,7 +1,7 @@
 """Encoded native datasets feed SSB without transferring source ownership.
 
-``SSB(data)`` borrows the caller's dataset or array and never releases it;
-``SSB.open`` owns the acquisition it loads and releases it once the
+``DirectPtycho(data)`` borrows the caller's dataset or array and never releases it;
+``DirectPtycho.open`` owns the acquisition it loads and releases it once the
 bright-field crop is read, and the crop when the session closes.
 """
 
@@ -14,7 +14,7 @@ import hdf5plugin
 import numpy as np
 import pytest
 
-from quantem.gpu import SSB, io
+from quantem.gpu import DirectPtycho, io
 
 ABERRATIONS = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": math.degrees(-0.57)}
 
@@ -29,7 +29,7 @@ def backend() -> str:
 
 @pytest.fixture
 def opened(monkeypatch) -> list:
-    """Every dataset io.load returns during the test, so the test can check what SSB.open released."""
+    """Every dataset io.load returns during the test, so the test can check what DirectPtycho.open released."""
     loaded = []
     load = io.load
 
@@ -72,7 +72,7 @@ def test_native_encoded_ssb_matches_dense_and_keeps_acquisition_open(tmp_path, b
         bright_field_radius_px=4.0, bright_field_center_px=(11.5, 11.5),
     )
     with io.load(path, backend=backend, verbose=False) as data:
-        with SSB(data, **settings) as native, SSB(counts, **settings) as dense:
+        with DirectPtycho(data, **settings) as native, DirectPtycho(counts, **settings) as dense:
             actual, actual_loss = native.preview(ABERRATIONS)
             expected, expected_loss = dense.preview(ABERRATIONS)
             np.testing.assert_allclose(actual, expected, atol=1e-6, rtol=1e-5)
@@ -94,7 +94,7 @@ def test_detector_sampling_defaults_to_the_semiangle_over_the_disk_edge_radius(t
     The bright-field disk is the image of the aperture, so its edge sits at the convergence semiangle. Before 2026-10-05
     CUDA used twice the semiangle over an integer half-maximum radius, and MPS twice the semiangle over the equal-area
     radius, or over the half-maximum radius of the bright-field crop for a loaded dataset: about two times too coarse,
-    and different per backend and input. An array, a loaded dataset and ``SSB.open`` now reconstruct exactly as a
+    and different per backend and input. An array, a loaded dataset and ``DirectPtycho.open`` now reconstruct exactly as a
     session given ``detector_sampling_mrad = semiangle / radius``.
     """
     counts = _counts(5)
@@ -105,10 +105,10 @@ def test_detector_sampling_defaults_to_the_semiangle_over_the_disk_edge_radius(t
     master = _arina_master(tmp_path / "scan_master.h5", counts)
     with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as loaded:
         pairs = [
-            (SSB(counts, **settings), SSB(counts, detector_sampling_mrad=(30 / radius, 30 / radius), **settings)),
-            (SSB(loaded, **settings), SSB(loaded, detector_sampling_mrad=(30 / radius, 30 / radius), **settings)),
-            (SSB.open(master, scan_shape=(128, 128), **settings),
-             SSB.open(master, scan_shape=(128, 128), detector_sampling_mrad=(30 / radius, 30 / radius), **settings)),
+            (DirectPtycho(counts, **settings), DirectPtycho(counts, detector_sampling_mrad=(30 / radius, 30 / radius), **settings)),
+            (DirectPtycho(loaded, **settings), DirectPtycho(loaded, detector_sampling_mrad=(30 / radius, 30 / radius), **settings)),
+            (DirectPtycho.open(master, scan_shape=(128, 128), **settings),
+             DirectPtycho.open(master, scan_shape=(128, 128), detector_sampling_mrad=(30 / radius, 30 / radius), **settings)),
         ]
         for automatic, calibrated in pairs:
             with automatic, calibrated:
@@ -121,15 +121,15 @@ def test_detector_sampling_defaults_to_the_semiangle_over_the_disk_edge_radius(t
 
 
 def test_encoded_storage_is_refused_and_the_callers_acquisition_survives_close(tmp_path, backend):
-    """``SSB(data.data)`` fails at construction; closing ``SSB(data)``, before or after computing, leaves it readable."""
+    """``DirectPtycho(data.data)`` fails at construction; closing ``DirectPtycho(data)``, before or after computing, leaves it readable."""
     counts = _counts(3)
     master = _arina_master(tmp_path / "scan_master.h5", counts)
     settings = {"backend": backend, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": (0.99, 0.99), "detector_sampling_mrad": (6.0, 6.0)}
     with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as data:
         with pytest.raises(TypeError, match="not its encoded storage data.data"):
-            SSB(data.data, **settings)
-        SSB(data, **settings).close()
-        with SSB(data, **settings) as session:
+            DirectPtycho(data.data, **settings)
+        DirectPtycho(data, **settings).close()
+        with DirectPtycho(data, **settings) as session:
             session.preview(ABERRATIONS)
         assert not data.data.is_released
         np.testing.assert_array_equal(data[3, 5].cpu().numpy(), counts[3, 5])
@@ -137,7 +137,7 @@ def test_encoded_storage_is_refused_and_the_callers_acquisition_survives_close(t
 
 def test_open_releases_the_acquisition_it_loads_and_its_crop_on_close(tmp_path, backend, opened):
     master = _arina_master(tmp_path / "scan_master.h5", _counts(4))
-    with SSB.open(master, backend=backend, scan_shape=(128, 128), voltage_kV=300, semiangle_mrad=30,
+    with DirectPtycho.open(master, backend=backend, scan_shape=(128, 128), voltage_kV=300, semiangle_mrad=30,
                   scan_sampling_A=(0.99, 0.99), detector_sampling_mrad=(6.0, 6.0), bright_field_radius_px=4) as session:
         assert opened[0].data.is_released
         session.preview(ABERRATIONS)
@@ -148,7 +148,7 @@ def test_open_releases_the_acquisition_it_loads_and_its_crop_on_close(tmp_path, 
 def test_open_releases_the_acquisition_when_no_bright_field_disk_is_found(tmp_path, backend, opened):
     master = _arina_master(tmp_path / "dark_master.h5", np.zeros((128, 128, 12, 12), dtype=np.uint16))
     with pytest.raises(ValueError, match="No bright-field disk"):
-        SSB.open(master, backend=backend, scan_shape=(128, 128), voltage_kV=300, semiangle_mrad=30,
+        DirectPtycho.open(master, backend=backend, scan_shape=(128, 128), voltage_kV=300, semiangle_mrad=30,
                  scan_sampling_A=(0.99, 0.99), detector_sampling_mrad=(6.0, 6.0))
     assert opened[0].data.is_released
 
@@ -181,10 +181,10 @@ def test_open_retains_detector_correction_and_matches_saved_counts(tmp_path, bac
     ) as corrected:
         saved = tmp_path / "corrected.qem"
         io.save(saved, corrected)
-        with SSB(corrected, **settings) as expected:
+        with DirectPtycho(corrected, **settings) as expected:
             expected_phase, expected_loss = expected.preview(ABERRATIONS, **preview)
     for source in (master, str(saved)):
-        with SSB.open(source, scan_shape=(128, 128), **settings) as actual:
+        with DirectPtycho.open(source, scan_shape=(128, 128), **settings) as actual:
             phase, loss = actual.preview(ABERRATIONS, **preview)
             np.testing.assert_array_equal(phase, expected_phase)
             assert loss == expected_loss
@@ -194,7 +194,7 @@ def test_open_retains_detector_correction_and_matches_saved_counts(tmp_path, bac
 
 
 def test_one_number_is_the_scan_step_on_both_axes_at_every_entry_point(tmp_path, backend):
-    """SSB(data), a loaded dataset and SSB.open take scan_sampling_A=0.99 as (0.99, 0.99) and report the pair."""
+    """DirectPtycho(data), a loaded dataset and DirectPtycho.open take scan_sampling_A=0.99 as (0.99, 0.99) and report the pair."""
     counts = _counts(3)
     master = _arina_master(tmp_path / "scan_master.h5", counts)
     scalar = {"backend": backend, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": 0.99,
@@ -202,9 +202,9 @@ def test_one_number_is_the_scan_step_on_both_axes_at_every_entry_point(tmp_path,
     paired = {**scalar, "scan_sampling_A": (0.99, 0.99), "detector_sampling_mrad": (0.6, 0.6)}
     with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as loaded:
         pairs = [
-            (SSB(counts, **scalar), SSB(counts, **paired)),
-            (SSB(loaded, **scalar), SSB(loaded, **paired)),
-            (SSB.open(master, scan_shape=(128, 128), **scalar), SSB.open(master, scan_shape=(128, 128), **paired)),
+            (DirectPtycho(counts, **scalar), DirectPtycho(counts, **paired)),
+            (DirectPtycho(loaded, **scalar), DirectPtycho(loaded, **paired)),
+            (DirectPtycho.open(master, scan_shape=(128, 128), **scalar), DirectPtycho.open(master, scan_shape=(128, 128), **paired)),
         ]
         for one, two in pairs:
             with one, two:
@@ -213,7 +213,7 @@ def test_one_number_is_the_scan_step_on_both_axes_at_every_entry_point(tmp_path,
                 assert one.calibration().loc["Scan step (row, col)", "Value used"] == (0.99, 0.99)
                 np.testing.assert_array_equal(one.preview(ABERRATIONS)[0], two.preview(ABERRATIONS)[0])
     with pytest.raises(ValueError, match="one number for both axes or a \\(row, col\\) pair"):
-        SSB(counts, **{**scalar, "scan_sampling_A": (0.99, 0.99, 0.99)})
+        DirectPtycho(counts, **{**scalar, "scan_sampling_A": (0.99, 0.99, 0.99)})
 
 
 def test_a_recorded_inverse_angstrom_detector_sampling_is_used(tmp_path, backend):
@@ -230,7 +230,7 @@ def test_a_recorded_inverse_angstrom_detector_sampling_is_used(tmp_path, backend
                 "scan_detector_rotation_deg": 0.0}
     with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as loaded:
         loaded.calibration.detector_sampling_inv_A = 0.028
-        with SSB(loaded, **settings) as recorded, SSB(loaded, **settings, detector_sampling_mrad=expected) as given:
+        with DirectPtycho(loaded, **settings) as recorded, DirectPtycho(loaded, **settings, detector_sampling_mrad=expected) as given:
             assert recorded.detector_sampling_mrad == pytest.approx((expected, expected), rel=1e-12)
             row = recorded.calibration().loc["Detector step (row, col)"]
             assert (row["File unit"], row["Unit used"], row["Source"]) == ("1/angstrom per pixel", "mrad per pixel", "Overridden")
@@ -254,7 +254,7 @@ def test_ssb_reads_the_recorded_bright_field_fit_and_announces_an_estimate(tmp_p
         loaded.calibration.semiangle_mrad = 30
         loaded.calibration.scan_sampling_A = 0.99
         capsys.readouterr()
-        with SSB(loaded, **settings) as estimated:
+        with DirectPtycho(loaded, **settings) as estimated:
             announced = capsys.readouterr().out
             assert "estimated from the bright-field disk edge" in announced
             assert "data.calibration.fit_detector_sampling()" in announced
@@ -263,7 +263,7 @@ def test_ssb_reads_the_recorded_bright_field_fit_and_announces_an_estimate(tmp_p
             estimated_phase = estimated.preview(ABERRATIONS)[0]
         fit = loaded.calibration.fit_detector_sampling()
         assert fit.detector_sampling_mrad == detector.detector_sampling_mrad(detector.mean(loaded), 30)
-        with SSB(loaded, **settings) as recorded:
+        with DirectPtycho(loaded, **settings) as recorded:
             assert "bright-field disk edge" not in capsys.readouterr().out
             assert (recorded.detector_sampling_mrad, recorded.bright_field_center_px,
                     recorded.bright_field_radius_px) == estimated_state

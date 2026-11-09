@@ -17,7 +17,7 @@ import numpy as np
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.inspect import inspect as inspect_source
 from quantem.gpu.direct_ptycho.branches import RotationBranches
-from quantem.gpu.direct_ptycho.results import SSBResult, host_array, retired_estimator_note
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array, retired_estimator_note
 
 # One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
 # Bump it when fitted values acquire a different physical meaning or record layout: the automatic
@@ -37,7 +37,7 @@ SCHEMA = 7
 FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 # The top-level "schema" of the screening record that holds the fit block (live/screen/<dataset>/config.json). The
 # record belongs to quantem.live: this is the schema of the record its reader accepts, and it takes no other. It
-# is written here only when SSB.reconstruct_series creates the record, and required of a record that exists.
+# is written here only when DirectPtycho.reconstruct_series creates the record, and required of a record that exists.
 SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 # The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
@@ -58,16 +58,16 @@ RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"
 # Not saved in "result": arrays and branches have their own entries, and the session's paths (saved_path, source_path)
 # are its own, not the result's; a reused result takes them from the session that reads it.
 _ARTIFACT_FIELDS = {"object_wave", "rotation_branches", "reused", "saved_path", "source_path", "metadata",
-                    "parameter_slices", "calibration_context", "_calibration_source"}
+                    "parameter_slices", "calibration_context", "_calibration_source", "neural_phase", "annular_counts"}
 
 
 def save_result(
-    result: SSBResult,
+    result: DirectPtychoResult,
     *,
     paths: tuple[Path, Path],
     signature: dict[str, object],
     input_metadata: dict[str, object],
-) -> SSBResult:
+) -> DirectPtychoResult:
     """Persist one result and attach its complete provenance."""
 
     array_path, metadata_path = paths
@@ -94,6 +94,9 @@ def save_result(
     if result.parameter_slices is not None:
         metadata["parameter_slices"] = json_value(result.parameter_slices)
     arrays = {"object_wave": host_array(result.object_wave)}
+    if result.neural_phase is not None:
+        arrays["neural_phase"] = host_array(result.neural_phase)
+        arrays["annular_counts"] = host_array(result.annular_counts)
     if result.rotation_branches is not None:
         metadata["rotation_branches"], branch_arrays = result.rotation_branches.to_record()
         metadata["rotation_branches"] = json_value(metadata["rotation_branches"])
@@ -111,7 +114,7 @@ def load_result(
     paths: tuple[Path, Path],
     signature: dict[str, object],
     backend: Literal["cuda", "mps"],
-) -> SSBResult | None:
+) -> DirectPtychoResult | None:
     """Load one exact saved result, or return ``None`` on any mismatch."""
 
     array_path, metadata_path = paths
@@ -129,8 +132,17 @@ def load_result(
         saved = dict(metadata["result"])
         saved.setdefault("parameter_slices", metadata.get("parameter_slices"))
         saved.setdefault("calibration_context", metadata.get("calibration_context"))
+        options = saved.get("reconstruction_options", {})
+        if options.get("scan_basis") is not None:
+            options["scan_basis"] = tuple(tuple(row) for row in options["scan_basis"])
+        if options.get("neural_phase_model") is not None:
+            for name in ("object_sampling_A", "annulus_mrad"):
+                options["neural_phase_model"][name] = tuple(options["neural_phase_model"][name])
         with np.load(array_path, allow_pickle=False) as arrays:
             object_wave = arrays["object_wave"]
+            neural = "neural_phase_model" in saved.get("reconstruction_options", {})
+            neural_phase = arrays["neural_phase"] if neural else None
+            annular_counts = arrays["annular_counts"] if neural else None
             rotation_branches = (None if metadata.get("rotation_branches") is None
                                  else RotationBranches.from_record(metadata["rotation_branches"], arrays))
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
@@ -138,14 +150,16 @@ def load_result(
 
     if backend == "cuda":
         object_wave = cp.asarray(object_wave)
+        if neural_phase is not None:
+            neural_phase, annular_counts = cp.asarray(neural_phase), cp.asarray(annular_counts)
     for name in ("object_sampling_A", "bright_field_center_px", "sample_tilt_mrad", "phase_clim", "fit_scan_region"):
         if isinstance(saved.get(name), list):
             saved[name] = tuple(saved[name])
     note = retired_estimator_note(saved.get("phase_estimator"), f"{array_path.name} in {array_path.parent}")
     if note is not None:
         print(note)
-    return SSBResult(
-        object_wave=object_wave,
+    return DirectPtychoResult(
+        object_wave=object_wave, neural_phase=neural_phase, annular_counts=annular_counts,
         rotation_branches=rotation_branches,
         reused=True,
         saved_path=array_path,

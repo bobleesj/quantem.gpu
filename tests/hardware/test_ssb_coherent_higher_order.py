@@ -126,12 +126,12 @@ def test_each_active_higher_order_changes_coherent_output():
 
 
 def test_auto_sampling_preserves_higher_orders_when_saving_and_reloading(tmp_path):
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     source = tmp_path / "counts.npy"
     with _session(constant=False, source_path=source) as seed:
         backend = seed.backend
-    with SSB.open(source, backend=backend, voltage_kV=300, semiangle_mrad=30,
+    with DirectPtycho.open(source, backend=backend, voltage_kV=300, semiangle_mrad=30,
                   scan_sampling_A=(.5, .5), detector_sampling_mrad=(10., 10.)) as ssb:
         ssb.sample_tilt_mrad = (-9., 5.)
         ssb.depth_spread_nm = 18.

@@ -6,7 +6,7 @@ from copy import deepcopy
 import numpy as np
 
 from quantem.gpu.optics.physics import wrap_degrees
-from quantem.gpu.direct_ptycho.results import SSBResult, host_array
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
 
 
 def resolve_trial_count(trials: int | None, num_trials: int | None, *, default: int = 200) -> int:
@@ -17,7 +17,7 @@ def resolve_trial_count(trials: int | None, num_trials: int | None, *, default: 
     return default if value is None else value
 
 
-def label_trials(result: SSBResult, *, search: int) -> None:
+def label_trials(result: DirectPtychoResult, *, search: int) -> None:
     """Give every trial record its index, search pass and physical rotation.
 
     Backends record only the optimized parameters. Without these keys

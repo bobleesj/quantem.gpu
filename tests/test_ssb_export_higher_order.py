@@ -47,9 +47,9 @@ def test_fifth_order_screening_export_roundtrip(tmp_path, monkeypatch, separate_
     run.mkdir()
     phase = np.array([[-0.0, -1.25], [3.5, 1e-20]], dtype=np.float32)
     np.save(run / "ssb_phase.npy", phase if not separate_tilt else np.zeros_like(phase))
-    computed = {"ssb": fit}
+    computed = {"phase_of_mean": fit}
     if separate_tilt:
-        computed = {"ssb": {**fit, "aberrations": primary}, "ssb_tilt": fit}
+        computed = {"phase_of_mean": {**fit, "aberrations": primary}, "ssb_tilt": fit}
         np.save(run / "ssb_phase_tilt.npy", phase)
     (run / "config.json").write_text(json.dumps({"computed": computed}))
     destination = tmp_path / "results" / "ssb.json"

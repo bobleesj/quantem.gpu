@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from quantem.gpu.direct_ptycho.results import SSBResult
-from quantem.gpu.direct_ptycho.workflow import SSB
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
 
 def _saved_result():
@@ -16,7 +16,7 @@ def _saved_result():
     section = dict(column_values=[-1, 0, 1], row_values=[-1, 0, 1],
                    relative_agreement=[[0.3, 0.4, 0.3], [0.7, 1, 0.7], [0.3, 0.4, 0.3]],
                    fitted_point=[0, 0])
-    return SSBResult(
+    return DirectPtychoResult(
         object_wave=np.exp(1j * phase), backend="mps", aberrations={"C10_nm": 0},
         object_sampling_A=(0.5, 0.5), sample_tilt_mrad=(0, 0), depth_spread_nm=0,
         parameter_slices={"scan_detector_rotation_deg": 17,
@@ -67,9 +67,9 @@ def test_phase_save_and_comparison_colormap(tmp_path):
 def test_invalid_interactive_save_fails_before_fitting():
     # No data/session methods: invalid presentation options must fail before GPU work.
     with pytest.raises(ValueError, match="mode='static'"):
-        SSB.show(SimpleNamespace(), "focus", save="focus.png")
+        DirectPtycho.show(SimpleNamespace(), "focus", save="focus.png")
     with pytest.raises(ValueError, match="save_dir stores calibration"):
-        SSB.show(SimpleNamespace(), save="phase.png")
+        DirectPtycho.show(SimpleNamespace(), save="phase.png")
 
 
 @pytest.mark.parametrize("region,start", [
@@ -154,7 +154,9 @@ def test_compare_regularization_strengths_uses_one_contrast_and_region():
     figure = results[0].show(compare=results[1:], region="bottom-left", cmap="gray")
     axes = [axis for axis in figure.axes if axis.images]
     assert len(axes) == 6
-    for result, full, zoom in zip(results, axes[:3], axes[3:], strict=True):
+    full_fields = (axes[0], axes[1], axes[4])
+    zooms = (axes[2], axes[3], axes[5])
+    for result, full, zoom in zip(results, full_fields, zooms, strict=True):
         assert f"Phase damping {result.reconstruction_options['phase_damping']:g}" in full.get_title()
         np.testing.assert_array_equal(zoom.images[0].get_array(), full.images[0].get_array()[12:16, :4])
         # The gallery must use the first result's limits even when another
@@ -217,3 +219,31 @@ def test_interactive_phase_comparison_keeps_native_crops_and_shared_fft_scale(si
     for viewer in widget.children:
         viewer.close()
     widget.close()
+
+
+def test_neural_full_field_fft_preserves_signal_and_display_limit():
+    """Log amplitude is shared, not independently stretched for each method."""
+    from quantem.gpu.direct_ptycho.results import _phase_spectra
+
+    row, col = np.indices((128, 128))
+    phase = .2 * np.cos(2 * np.pi * col / 8)
+    spectra, step = _phase_spectra([phase, phase * .5], [np.array([.5, .5])] * 2,
+                                  log_amplitude=True, limit_inv_A=.5)
+    assert spectra[0].shape == (65, 65)
+    assert step == pytest.approx((1 / 64, 1 / 64))
+    assert spectra[1].max() - spectra[0].max() == pytest.approx(np.log10(.5))
+
+
+def test_damping_plot_uses_saved_scores_and_has_helpful_missing_error():
+    result = _saved_result()
+    with pytest.raises(ValueError, match="validate_damping"):
+        result.show("damping")
+    result.reconstruction_diagnostics["damping_validation"] = {
+        "selected_phase_damping": .03,
+        "records": [{"phase_damping": d, "a_to_b": a, "b_to_a": b, "mean": (a+b)/2}
+                    for d,a,b in ((.01,.95,.94),(.03,.93,.92),(.1,.96,.95))],
+    }
+    figure = result.show("damping")
+    assert len(figure.axes) == 2
+    np.testing.assert_array_equal(figure.axes[0].lines[0].get_xdata(), [.01,.03,.1])
+    assert "0.03" in figure.axes[0].get_title()

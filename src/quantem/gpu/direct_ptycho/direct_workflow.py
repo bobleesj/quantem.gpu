@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.units import validate_aberrations
 
 # drag-window tiles kept per control: a drag back and forth across one tile edge needs two
@@ -26,9 +26,11 @@ def settings(
     detector_weighting,
 ):
     """Resolve only the controls that belong to the selected reconstruction."""
-    if method not in ("ssb", "phase", "complex"):
-        raise ValueError(f"method must be 'ssb', 'phase' or 'complex'; got {method!r}.")
-    if method == "ssb":
+    if method not in ("phase_of_mean", "phase", "complex"):
+        raise ValueError(
+            f'method must be "phase_of_mean", "phase" or "complex"; got {method!r}.'
+        )
+    if method == "phase_of_mean":
         if any(
             value is not None
             for value in (
@@ -47,13 +49,13 @@ def settings(
             "amplitude_damping needs method='complex'; omit it for method='phase'."
         )
     strengths = {
-        "phase_damping": 0.03
+        "phase_damping": 0.3
         if phase_damping is None
         else float(phase_damping)
     }
     if method == "complex":
         strengths["amplitude_damping"] = (
-            0.03
+            0.3
             if amplitude_damping is None
             else float(amplitude_damping)
         )
@@ -76,6 +78,17 @@ def settings(
         smoothness_inv_A=smoothness,
         detector_weighting=weighting,
     )
+
+
+def _scan_basis(value, backend):
+    """Validate the physical (row, col) basis once at the public boundary."""
+    basis = np.asarray(value, dtype=float)
+    if (basis.shape != (2, 2) or not np.isfinite(basis).all()
+            or np.linalg.det(basis) <= 0):
+        raise ValueError("scan_basis must be a finite 2 by 2, orientation-preserving matrix.")
+    if backend != "cuda":
+        raise NotImplementedError("Calibrated scan_basis currently requires CUDA.")
+    return tuple(tuple(float(v) for v in row) for row in basis)
 
 
 def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=False):
@@ -140,7 +153,7 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     that control (``direct_ptycho.cuda.direct`` or ``direct_ptycho.mps.direct``), from the prepared
     system when the optics are those already prepared (a strength drag), and
     otherwise exactly by `solve`. SSB on CUDA
-    (``policy`` from ``settings("ssb", ...)``) on a fine grid is served from
+    (``policy`` from ``settings("phase_of_mean", ...)``) on a fine grid is served from
     a `WaveWindow`: the single-sideband terms interpolated, the triple-overlap
     terms exact. A
     window is valid while every other input is unchanged and the value lies
@@ -149,10 +162,10 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     and `prepare` asks for windows before a grab. Committed frames and saved
     results never come from a window, so they remain the exact model.
     """
-    method = policy.get("method", "ssb")
+    method = policy.get("method", "phase_of_mean")
     if not _windowed(session, factor, policy):
         return _exact(session, coefs, tilt, depth, factor, policy)
-    if method != "ssb":
+    if method != "phase_of_mean":
         key = _inputs(session, coefs, tilt, depth, factor, policy)[2]
         cached = getattr(session, "_prepared_direct", None)
         if cached is not None and cached[0] == key and method in cached[1]:
@@ -161,7 +174,7 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     if not window.series.ready:
         return _exact(session, coefs, tilt, depth, factor, policy)
     value = float(coefs.get(control, 0.0))
-    if method == "ssb":
+    if method == "phase_of_mean":
         return window.phase(value)
     wave, _ = window.solve(value, policy["phase_damping"], policy.get("amplitude_damping"),
                            complex_object=method == "complex")
@@ -194,7 +207,7 @@ def _windowed(session, factor, policy) -> bool:
     """Whether drags of this method can use a window: a resident region, and for SSB CUDA's fine-grid coherent sum."""
     if session._streamed is not None:
         return False
-    if policy.get("method", "ssb") == "ssb":
+    if policy.get("method", "phase_of_mean") == "phase_of_mean":
         return session.backend == "cuda" and factor > 1
     return True
 
@@ -209,9 +222,9 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
     match these are dropped first: a complex one holds about 4 GB on the test
     field. ``first`` puts this control and tile ahead in `advance`'s order.
     """
-    method = policy.get("method", "ssb")
+    method = policy.get("method", "phase_of_mean")
     complex_object = method == "complex"
-    kind = "ssb" if method == "ssb" else "direct"
+    kind = "phase_of_mean" if method == "phase_of_mean" else "direct"
     windows = getattr(session, "_direct_windows", None)
     if windows is None:
         windows = session._direct_windows = {}
@@ -231,7 +244,7 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
             center = anchor + width * round((value - anchor) / width)
         tile_coefs = {**coefs, control: center}
         engine, optics, _ = _inputs(session, tile_coefs, tilt, depth, factor, policy)
-        if kind == "ssb":
+        if kind == "phase_of_mean":
             from quantem.gpu.direct_ptycho.cuda.thick import WaveWindow
 
             window = WaveWindow(engine.thick, tile_coefs, control, tilt, depth, factor)
@@ -252,8 +265,8 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
 
 def _exact(session, coefs, tilt, depth, factor, policy):
     """The exact phase, as ``preview(..., output="native")`` computes it."""
-    method = policy.get("method", "ssb")
-    if method == "ssb":
+    method = policy.get("method", "phase_of_mean")
+    if method == "phase_of_mean":
         phase, _ = session.preview(coefs, compute_loss=False, upsampling=factor, sample_tilt_mrad=tilt or (0.0, 0.0),
                                    depth_spread_nm=depth or 0.0, output="native")
         return phase
@@ -286,6 +299,7 @@ def _inputs(session, coefs, tilt, depth, factor, policy):
         "aberrations": coefs,
         "sample_tilt_mrad": tilt or (0.0, 0.0),
         "depth_spread_nm": depth or 0.0,
+        "scan_basis": policy.get("scan_basis"),
     }
     key = (
         id(engine),
@@ -297,6 +311,7 @@ def _inputs(session, coefs, tilt, depth, factor, policy):
         factor,
         policy.get("smoothness_inv_A"),
         policy.get("detector_weighting"),
+        policy.get("scan_basis"),
     )
     return engine, optics, key
 
@@ -306,6 +321,7 @@ def run(
     parameters,
     *,
     aberrations,
+    neural_model,
     factor,
     policy,
     compute_loss,
@@ -314,7 +330,7 @@ def run(
     verbose,
 ):
     """Apply one regularized method with explicit provenance and saved reuse."""
-    if parameters is not None and not isinstance(parameters, SSBResult):
+    if parameters is not None and not isinstance(parameters, DirectPtychoResult):
         raise TypeError(
             "Pass the result of fit_aberrations(), or coefficients through aberrations={...}."
         )
@@ -344,6 +360,12 @@ def run(
         upsampling=factor,
         compute_loss=bool(compute_loss),
     )
+    if neural_model is not None:
+        neural_model._check(session, factor)
+        neural_model._check_policy(policy)
+        if session._input_dataset is None or session.scan_region is not None:
+            raise ValueError("Load a full counting acquisition with io.load and pass it to DirectPtycho.")
+        options["neural_phase_model"] = neural_model._signature()
     paths = signature = None
     if save_dir is not None:
         signature = session._result_signature("direct", options)
@@ -372,7 +394,7 @@ def run(
     )
     if session.backend == "cuda":
         cp.cuda.get_current_stream().synchronize()
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=wave,
         backend=session.backend,
         aberrations=coefs,
@@ -394,6 +416,30 @@ def run(
         fit_scan_region=correction.fit_scan_region if correction is not None else None,
         **session._fit_evidence(correction, coefs, tilt, depth),
     )
+    result.timings["direct_s"] = result.elapsed_s
+    if neural_model is not None:
+        from quantem.gpu.direct_ptycho._annular_detector import annular_counts
+
+        began = time.perf_counter()
+        guide = annular_counts(session, session._input_dataset, neural_model.annulus_mrad)
+        cp.cuda.get_current_stream().synchronize()
+        result.timings["annular_s"] = time.perf_counter() - began
+        began = time.perf_counter()
+        input_wave = wave
+        if policy["phase_damping"] != neural_model.input_phase_damping:
+            input_wave, _ = solve(
+                session, coefs, tilt, depth, factor,
+                {**policy, "phase_damping": neural_model.input_phase_damping},
+                compute_loss=False,
+            )
+        prepared = session._prepared_direct[1]["phase"]
+        neural = neural_model._apply(prepared, _phase(session, input_wave), result.object_sampling_A, guide)
+        result.neural_phase = cp.from_dlpack(neural)
+        result.annular_counts = cp.asarray(guide)
+        cp.cuda.get_current_stream().synchronize()
+        result.timings["neural_s"] = time.perf_counter() - began
+        result.reconstruction_options["neural_phase_model"] = neural_model._signature()
+        result.elapsed_s = time.perf_counter() - started
     # The relative prediction error is not the conventional phase-variance loss.
     result = session._accept_result(result)
     if paths is not None:

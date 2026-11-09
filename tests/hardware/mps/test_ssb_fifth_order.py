@@ -9,13 +9,13 @@ pytestmark = pytest.mark.slow
 @pytest.fixture(scope="module")
 def objective():
     pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho.mps.fifth_order import Objective
 
     counts = np.random.default_rng(617).poisson(
         10, size=(128, 128, 16, 16)
     ).astype(np.uint16)
-    with SSB(
+    with DirectPtycho(
         counts, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
         scan_sampling_A=0.373, detector_sampling_mrad=4.0,
         scan_detector_rotation_deg=17.3,

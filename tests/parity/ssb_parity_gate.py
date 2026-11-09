@@ -169,10 +169,10 @@ def run_reference(
 def open_mps_session(case: SSBParityCase, meta: dict[str, object]):
     """Open the production public MPS session on the exported exact artifact."""
 
-    from quantem.gpu.direct_ptycho import SSB
+    from quantem.gpu.direct_ptycho import DirectPtycho
 
     root = case_root(case)
-    return SSB.open(
+    return DirectPtycho.open(
         str(root / "source"),
         backend="mps",
         voltage_kV=case.voltage_kV,

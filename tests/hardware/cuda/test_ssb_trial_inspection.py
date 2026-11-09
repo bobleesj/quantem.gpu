@@ -195,11 +195,11 @@ def test_zero_trial_tilt_search_fails_before_backend_work(monkeypatch):
 
 def test_search_retains_anisotropic_scan_calibration():
     """Search and reconstruction results retain both physical pixel spacings."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     original, _ = _synthetic_session()
     try:
-        with SSB(original._data, backend='cuda', voltage_kV=300.0,
+        with DirectPtycho(original._data, backend='cuda', voltage_kV=300.0,
                  semiangle_mrad=30.0, scan_sampling_A=(0.3, 0.45),
                  detector_sampling_mrad=(3.0, 3.0)) as ssb:
             result = ssb.fit_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,

@@ -9,11 +9,11 @@ import numpy as np
 from quantem.gpu.detector.cuda.probe import mean_dp
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.detector import disk_edge_radius
-from quantem.gpu.direct_ptycho.contract import SSBExportState, SSBPrecision
+from quantem.gpu.direct_ptycho.contract import ExportState, BackendPrecision
 from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra, select_bright_field
 from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
 from quantem.gpu.direct_ptycho.cuda.optimizer import fit_sample, fit_standard
-from quantem.gpu.direct_ptycho.results import SSBResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 
 class CudaSSBBackend:
@@ -52,7 +52,7 @@ class CudaSSBBackend:
     """
 
     backend = "cuda"
-    precision = SSBPrecision()
+    precision = BackendPrecision()
 
     def __init__(
         self,
@@ -205,7 +205,7 @@ class CudaSSBBackend:
         - Batch caches (optimizer working memory)
 
         After this call, ``result()`` and ``fit()`` will fail - the
-        engine is no longer usable. Previously returned ``SSBResult``
+        engine is no longer usable. Previously returned ``DirectPtychoResult``
         objects remain valid (they hold independent copies of the phase).
 
         Call this when the SSB pipeline is done and you need VRAM for
@@ -275,7 +275,7 @@ class CudaSSBBackend:
 
         return self._get_accelerator().prepare_bf_subset(int(num_bright_field_pixels))
 
-    def browser_state(self) -> SSBExportState:
+    def browser_state(self) -> ExportState:
         """Return compact state for browser WebGPU integration."""
 
         return self._get_accelerator().export_state()
@@ -291,7 +291,7 @@ class CudaSSBBackend:
         path = engine.write_exact_bf_source(data, path_stem)
         return path, engine.bf_source_write_seconds
 
-    def result(self, *, compute_loss: bool = True) -> SSBResult:
+    def result(self, *, compute_loss: bool = True) -> DirectPtychoResult:
         """The SSB phase at the current aberrations (``fit()``'s final reconstruction), with the phase-variance loss.
 
         The phase is the native-grid phase of the bright-field mean wave, as ``preview_upsampled`` computes it at
@@ -313,7 +313,7 @@ class CudaSSBBackend:
             )
         elapsed_s = self._elapsed_optimize + self._elapsed_refine
         brightfield = self.browser_state().brightfield
-        return SSBResult(
+        return DirectPtychoResult(
             object_wave=cp.exp(1j * phase),
             backend="cuda",
             aberrations=self.aberrations.copy(),
@@ -347,7 +347,7 @@ class CudaSSBBackend:
         seed: int,
         verbose: bool,
         compute_loss: bool = True,
-    ) -> SSBResult:
+    ) -> DirectPtychoResult:
         """Standard fit (tilt=False) of C10, C12 and phi12, then the complex object and the phase-variance loss there.
 
         Maximizes the least-squares agreement of the SSB model with G(q, k) at sample tilt and depth spread 0

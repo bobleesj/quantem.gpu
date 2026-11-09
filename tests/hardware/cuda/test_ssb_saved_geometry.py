@@ -10,7 +10,7 @@ cp = pytest.importorskip("cupy")
 
 def test_saved_fit_replays_exact_detector_selection(tmp_path):
     """Reopen a correction whose disk edge lies between neighbouring pixels."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     rng = np.random.default_rng(42)
     data = rng.integers(1, 30, size=(128, 128, 16, 16), dtype=np.uint16)
@@ -24,7 +24,7 @@ def test_saved_fit_replays_exact_detector_selection(tmp_path):
     )
     center = (7.5001, 7.5)
     radius = float(np.hypot(5 - center[0], 5 - center[1]))
-    with SSB(
+    with DirectPtycho(
         data, **settings, bright_field_center_px=center,
         bright_field_radius_px=radius,
         aberrations={"C10_nm": 8.0, "C12_nm": 1.0, "phi12_deg": 21.0},
@@ -40,7 +40,7 @@ def test_saved_fit_replays_exact_detector_selection(tmp_path):
         pixels = session.num_bright_field_pixels
     saved = json.loads((tmp_path / "fit" / "ssb-find_aberrations.json").read_text())["result"]
     assert saved["bright_field_radius_px"] == radius
-    with SSB(
+    with DirectPtycho(
         data, **settings, bright_field_center_px=saved["bright_field_center_px"],
         bright_field_radius_px=saved["bright_field_radius_px"],
     ) as reopened:

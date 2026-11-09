@@ -18,7 +18,7 @@ import numpy as np
 from quantem.gpu.io.qem import save_streamed
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
-from quantem.gpu.direct_ptycho.contract import SSBExportState
+from quantem.gpu.direct_ptycho.contract import ExportState
 from quantem.gpu.direct_ptycho.cuda.kernels import get_fft_kernel
 from quantem.gpu.direct_ptycho.cuda.kernels.engine import (
     accumulate_phase_moments,
@@ -239,7 +239,7 @@ class SSBEngine:
             raise RuntimeError("No exact BF source has been written yet.")
         return self._bf_source_write_seconds
 
-    def export_state(self) -> SSBExportState:
+    def export_state(self) -> ExportState:
         """Return backend-neutral host metadata for a WebGPU consumer."""
 
         cache = self._cache
@@ -267,7 +267,7 @@ class SSBEngine:
             detector_shape=self.detector_shape,
         )
 
-        return SSBExportState(
+        return ExportState(
             backend="cuda",
             scan_shape=self.scan_shape,
             brightfield=selection,

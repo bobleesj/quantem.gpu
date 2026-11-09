@@ -35,7 +35,7 @@ def test_trials_reuses_the_fit_saved_with_the_legacy_keyword(tmp_path, monkeypat
 
 def test_rotation_reviews_accept_the_same_trial_budget(monkeypatch):
     from types import SimpleNamespace
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho import rotation_defocus
 
     budgets = []
@@ -43,7 +43,7 @@ def test_rotation_reviews_accept_the_same_trial_budget(monkeypatch):
         budgets.append(kwargs["num_trials"])
         return SimpleNamespace(rotation_branches="branches")
 
-    session = object.__new__(SSB)
+    session = object.__new__(DirectPtycho)
     session._device = None
     session.scan_detector_rotation_source = "recorded"
     session._find_aberrations = record

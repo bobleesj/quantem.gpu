@@ -416,7 +416,7 @@ class FifthOrderGradients(fifth_order.Objective):
         if self._last is None:
             raise RuntimeError("Evaluate the values before their gradients.")
         last_z, last_stride, last_band, numerators, denominators, weight, trial, chi = self._last
-        if (z is not None and not np.array_equal(np.atleast_2d(z), last_z)) or stride != last_stride \
+        if (z is not None and not np.array_equal(np.atleast_2d(z), last_z)) or stride != last_stride\
                 or tuple(band) != last_band:
             raise RuntimeError("The gradient pass needs the value pass of the same points, stride and band.")
         p = self.p

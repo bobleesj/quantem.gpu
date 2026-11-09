@@ -92,10 +92,10 @@ class _Backend:
         self.angle_deg = math.degrees(angle_rad)
 
     def fit(self, **settings):
-        from quantem.gpu import SSBResult
+        from quantem.gpu import DirectPtychoResult
 
         self.fits.append((self.angle_deg, settings["trials"]))
-        return SSBResult(object_wave=np.ones((2, 2), np.complex64), backend="mps",
+        return DirectPtychoResult(object_wave=np.ones((2, 2), np.complex64), backend="mps",
                          aberrations={"C10": -101.0 + self.angle_deg, "C12": 4.0, "phi12": 0.25},
                          scan_detector_rotation_deg=self.angle_deg, loss=0.125, elapsed_s=1.0,
                          num_trials=settings["trials"], refinement=settings["refinement"],
@@ -116,8 +116,8 @@ def _session(monkeypatch, tmp_path, backend, *, estimated):
     if not source.exists():
         source.write_bytes(b"detector counts")
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
-    monkeypatch.setattr(workflow.SSB, "_backend", lambda _self: backend)
-    session = workflow.SSB(np.zeros((2, 2, 3, 3), np.uint16), backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
+    monkeypatch.setattr(workflow.DirectPtycho, "_backend", lambda _self: backend)
+    session = workflow.DirectPtycho(np.zeros((2, 2, 3, 3), np.uint16), backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
                            scan_sampling_A=(0.2, 0.2), detector_sampling_mrad=(0.01, 0.01), source_path=str(source),
                            scan_detector_rotation_deg=3.0)
     session.source_kind = "detector"

@@ -57,9 +57,9 @@ def _selection():
 
 def test_public_ssb_has_one_backend_neutral_signature() -> None:
     """C1: one stateful API owns explicit units and backend choice."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    constructor = inspect.signature(SSB)
+    constructor = inspect.signature(DirectPtycho)
     shared = {
         "backend",
         "voltage_kV",
@@ -72,7 +72,7 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
     }
     assert shared <= constructor.parameters.keys()
     assert constructor.parameters["backend"].default == "auto"
-    reconstruct = inspect.signature(SSB.reconstruct)
+    reconstruct = inspect.signature(DirectPtycho.reconstruct)
     assert reconstruct.parameters["compute_loss"].default is True
 
 
@@ -223,8 +223,8 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
         "scan_sampling_A": (1.0, 1.0),
     }
 
-    default = workflow.SSB(data, **common)
-    explicit = workflow.SSB(
+    default = workflow.DirectPtycho(data, **common)
+    explicit = workflow.DirectPtycho(
         data,
         aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0},
         **common,
@@ -237,10 +237,10 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
 
 def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
     """C2: one result owns both optimization and object-wave output."""
-    from quantem.gpu import SSBResult
+    from quantem.gpu import DirectPtychoResult
 
     selection = _selection()
-    result = SSBResult(
+    result = DirectPtychoResult(
         object_wave=np.ones((2, 2), dtype=np.complex64),
         backend="mps",
         aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.1)},
@@ -262,7 +262,7 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
 def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
     """Logical BF membership and nonzero probe support are distinct evidence."""
     from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
-    from quantem.gpu.direct_ptycho.contract import SSBExportState
+    from quantem.gpu.direct_ptycho.contract import ExportState
 
     selection = BrightfieldDisk(
         rows=np.asarray([0, 1, 2], dtype=np.int32),
@@ -273,7 +273,7 @@ def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
         detector_shape=(3, 3),
     )
     values = np.ones(3, dtype=np.float32)
-    state = SSBExportState(
+    state = ExportState(
         backend="mps",
         scan_shape=(2, 2),
         brightfield=selection,
@@ -297,21 +297,21 @@ def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
 
 def test_float32_precision_contract_is_strict_and_backend_neutral() -> None:
     """C3: every backend advertises immutable float32 storage."""
-    from quantem.gpu.direct_ptycho.contract import SSBPrecision
+    from quantem.gpu.direct_ptycho.contract import BackendPrecision
 
     precision = PRECISION
-    assert isinstance(precision, SSBPrecision)
+    assert isinstance(precision, BackendPrecision)
     assert precision.real_dtype == "float32"
     assert precision.complex_dtype == "complex64"
     assert not hasattr(precision, "phase_rtol")
 
 
 def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> None:
-    """``SSB`` reaches its CUDA or MPS backend only through ``SSBProtocol`` members."""
+    """``SSB`` reaches its CUDA or MPS backend only through ``DirectPtychoProtocol`` members."""
     import ast
 
     from quantem.gpu.direct_ptycho import workflow
-    from quantem.gpu.direct_ptycho.contract import SSBProtocol
+    from quantem.gpu.direct_ptycho.contract import DirectPtychoProtocol
 
     called = set()
     for node in ast.walk(ast.parse(inspect.getsource(workflow))):
@@ -321,7 +321,7 @@ def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> 
                 and node.value.func.attr == "_backend")
         ):
             called.add(node.attr)
-    members = set(vars(SSBProtocol)) | set(SSBProtocol.__annotations__)
+    members = set(vars(DirectPtychoProtocol)) | set(DirectPtychoProtocol.__annotations__)
     assert {"preview_upsampled", "fit_sample"} <= called
     assert called <= members
 
@@ -346,15 +346,14 @@ def test_public_ssb_exports_are_backend_neutral() -> None:
         "RotationBranch",
         "RotationBranches",
         "RotationDefocusComparison",
-        "SSB",
-        "SSBResult",
+        "DirectPtychoResult",
     }
 
 
 def test_preview_context_is_consumed_by_public_workflow() -> None:
     """Live previews never need backend-private context handling."""
 
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     events: list[str] = []
 
@@ -366,7 +365,7 @@ def test_preview_context_is_consumed_by_public_workflow() -> None:
         def __exit__(self, *_args):
             events.append("exit")
 
-    class Session(SSB):
+    class Session(DirectPtycho):
         def _backend(self):
             return self._test_backend
 
@@ -383,3 +382,14 @@ def test_preview_context_is_consumed_by_public_workflow() -> None:
     assert events == ["enter", "exit"]
     assert phase.dtype == np.float32
     assert loss is None
+
+
+def test_removed_class_alias_and_fit_display_default():
+    import inspect
+    import quantem.gpu as gpu
+    from quantem.gpu import direct_ptycho
+
+    assert not hasattr(gpu, "SSB")
+    assert not hasattr(direct_ptycho, "SSB")
+    assert not hasattr(direct_ptycho.DirectPtycho, "find_aberrations")
+    assert inspect.signature(gpu.DirectPtycho.fit_aberrations).parameters["columns"].default == 2

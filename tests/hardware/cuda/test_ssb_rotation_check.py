@@ -49,10 +49,10 @@ def _astigmatism(aberrations) -> complex:
 
 
 def _simulated(scan_detector_rotation_deg: float):
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     data, detector_sampling_mrad = _simulated_crystal((3.0, -4.0))
-    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
+    return DirectPtycho(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
                           detector_sampling_mrad=detector_sampling_mrad, scan_detector_rotation_deg=scan_detector_rotation_deg)
 
 
@@ -71,10 +71,10 @@ def estimate(monkeypatch):
 
 
 def _estimated():
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     data, detector_sampling_mrad = _simulated_crystal((3.0, -4.0))
-    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
+    return DirectPtycho(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
                detector_sampling_mrad=detector_sampling_mrad)
 
 
@@ -153,13 +153,13 @@ def test_real_acquisition_compares_the_same_two_branches_from_either_angle():
     if not SOURCE.is_file():
         pytest.skip("set QUANTEM_SSB_ARINA_MASTER to a real Arina master file")
     _require_cuda()
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
-    with SSB.open(str(SOURCE), scan_detector_rotation_deg=REAL_ROTATION_DEG, **REAL) as session:
+    with DirectPtycho.open(str(SOURCE), scan_detector_rotation_deg=REAL_ROTATION_DEG, **REAL) as session:
         first = session.scan_rotations(report=False, verbose=False)
         assert session.scan_detector_rotation_deg == REAL_ROTATION_DEG   # given: reported, not applied
     cp.get_default_memory_pool().free_all_blocks()
-    with SSB.open(str(SOURCE), scan_detector_rotation_deg=REAL_ROTATION_DEG + 180.0, **REAL) as session:
+    with DirectPtycho.open(str(SOURCE), scan_detector_rotation_deg=REAL_ROTATION_DEG + 180.0, **REAL) as session:
         second = session.scan_rotations(report=False, apply=True, verbose=False)
         assert session.scan_detector_rotation_deg == pytest.approx(second.chosen_rotation_deg)
     assert first.chosen_rotation_deg == pytest.approx(second.chosen_rotation_deg, abs=1e-9)
@@ -195,7 +195,7 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
     By default one search fits the estimated rotation and the other branch gets its exact image;
     ``MAP_OPPOSITE_BRANCH=False`` runs two fresh searches.
     """
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
     from quantem.gpu.direct_ptycho import workflow
     from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
 
@@ -205,7 +205,7 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
     data, detector_sampling_mrad = _simulated_crystal((3.0, -4.0))
     source = tmp_path / "tilted_crystal.npy"
     np.save(source, data)
-    session = SSB(
+    session = DirectPtycho(
         data, source_path=source, backend="cuda", voltage_kV=300.0,
         semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25), detector_sampling_mrad=detector_sampling_mrad,
     )
@@ -248,11 +248,11 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
 
 def test_no_signal_scan_reports_unidentifiable_fit_without_changing_rotation():
     """No fit-band signal cannot support joint fitting or a rotation decision."""
-    from quantem.gpu import SSB
+    from quantem.gpu import DirectPtycho
 
     _require_cuda()
     counts = np.full((128, 128, 16, 16), 20, dtype=np.uint16)
-    with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20,
+    with DirectPtycho(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20,
              scan_sampling_A=(0.5, 0.5), detector_sampling_mrad=(5, 5), bright_field_center_px=(8, 8),
              bright_field_radius_px=4, scan_detector_rotation_deg=180) as session:
         with pytest.raises(ValueError, match="no positive finite agreement"):

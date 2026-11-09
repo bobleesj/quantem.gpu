@@ -7,7 +7,7 @@ import hdf5plugin
 import numpy as np
 import pytest
 
-from quantem.gpu import SSB, detector, io, screening
+from quantem.gpu import DirectPtycho, detector, io, screening
 from quantem.gpu.dpc.workflow import find_optimal_rotation
 from quantem.gpu.screening.workflow import _dpc_phase
 
@@ -101,12 +101,12 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
                       scan_sampling_A=(0.3, 0.3), scan_detector_rotation_deg=17)
         correction = dict(sample_tilt_mrad=(1., -2.), depth_spread_nm=15., compute_loss=True)
         aberrations = {"C10_nm": 4., "C12_nm": 1., "phi12_deg": 23.}
-        with SSB(loaded, source_path=str(master), **optics) as reused:
+        with DirectPtycho(loaded, source_path=str(master), **optics) as reused:
             phase, loss = reused.preview(aberrations, **correction)
             assert reused.source_provenance["hot_pixel_correction"] == loaded.metadata["hot_pixel_correction"]
             assert reused.source_bytes == loaded.logical_bytes
             assert reused.resident_identity is None  # The file signature identifies this source.
-        with SSB.open(str(master), verbose=False, **optics) as fresh:
+        with DirectPtycho.open(str(master), verbose=False, **optics) as fresh:
             reference_phase, reference_loss = fresh.preview(aberrations, **correction)
         np.testing.assert_array_equal(phase, reference_phase)
         assert loss == reference_loss
