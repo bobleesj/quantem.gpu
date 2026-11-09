@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
-from quantem.gpu.direct_ptycho.results import STORAGE_METHOD, DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import PUBLIC_METHOD, STORAGE_METHOD, DirectPtychoResult
 from quantem.gpu.direct_ptycho.units import validate_aberrations
 
 # drag-window tiles kept per control: a drag back and forth across one tile edge needs two
