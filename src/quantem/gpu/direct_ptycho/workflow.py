@@ -1865,7 +1865,7 @@ class DirectPtycho:
         replace that preview with three methods: conventional SSB, regularized
         phase-only, and amplitude + phase. All show phase under the same optics,
         Auto sampling and contrast limits. Regularized previews use the ``run``
-        defaults (0.03 for each applicable damping strength); these are
+        defaults (0.3 for each applicable damping strength); these are
         inspection alternatives, not an automatic quality ranking. MPS and
         streamed sessions retain the conventional SSB preview.
         Preparing the two regularized models adds reconstruction time only
@@ -2990,7 +2990,7 @@ class DirectPtycho:
             Supply an independently calibrated basis; this call does not fit it.
         phase_damping, amplitude_damping
             Positive dimensionless Tikhonov damping strengths (a damped
-            least-squares solve), 0.03 when omitted for applicable methods.
+            least-squares solve), 0.3 when omitted for applicable methods.
             Amplitude damping applies only to ``"complex"``.
             Larger strengths suppress poorly measured components more strongly.
             They do not refit aberrations or filter an already rendered image.

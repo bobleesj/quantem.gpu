@@ -49,13 +49,13 @@ def settings(
             "amplitude_damping needs method='complex'; omit it for method='phase'."
         )
     strengths = {
-        "phase_damping": 0.03
+        "phase_damping": 0.3
         if phase_damping is None
         else float(phase_damping)
     }
     if method == "complex":
         strengths["amplitude_damping"] = (
-            0.03
+            0.3
             if amplitude_damping is None
             else float(amplitude_damping)
         )

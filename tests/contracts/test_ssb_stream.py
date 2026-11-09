@@ -481,8 +481,8 @@ def test_show_draws_each_combined_image_and_the_drift(monkeypatch, tmp_path):
     assert [axis.get_title().split("\n")[0] for axis in images] == [
         "Direct phase", "Complex-fit phase", "Relative amplitude"]
     assert len({round(axis.get_position().x0, 3) for axis in images}) == 2
-    assert "phase damping 0.03" in images[0].get_title()
-    assert "amplitude damping 0.03" in images[2].get_title()
+    assert "phase damping 0.3" in images[0].get_title()
+    assert "amplitude damping 0.3" in images[2].get_title()
     assert images[0].images[0].get_clim() == fit.phase_limits != images[2].images[0].get_clim()
     assert len(series.show("phase").axes) == len(figure.axes) - 4
     single, _ = streamed(sources[:1], fit, None, method=("phase", "complex"))
