@@ -20,7 +20,7 @@ def test_all_reuses_one_fit_and_matches_separate_calls(monkeypatch):
     calls = []
 
     def conventional(parameters, **options):
-        calls.append(("ssb", parameters, options))
+        calls.append(("phase_of_mean", parameters, options))
         return "ssb-result"
 
     def direct(owner, parameters, **options):

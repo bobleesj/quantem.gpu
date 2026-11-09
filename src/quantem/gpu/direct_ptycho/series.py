@@ -465,7 +465,7 @@ def write_fit_metadata(
     # quantem.live's per-session 180-degree decision describes the fit it was made on: kept beside a new rotation it
     # would say this fit was moved, voted or flagged when it was not
     kept = {key: value for key, value in stored_fit(config).items() if key not in LIVE_BRANCH_DECISION}
-    computed["ssb"] = {
+    computed["phase_of_mean"] = {
         **kept,
         **settings,
         "schema": FIT_SCHEMA,
@@ -481,7 +481,7 @@ def write_fit_metadata(
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
 
-def stored_fit(config: dict[str, object], block: str = "ssb") -> dict[str, object]:
+def stored_fit(config: dict[str, object], block: str = "phase_of_mean") -> dict[str, object]:
     """Return one fit block of a screening ``config.json`` when the current engine wrote it; else an empty dict.
 
     The block is ``computed.ssb`` (or a sibling Live keeps beside it, named by ``block``), and it counts only when its

@@ -146,7 +146,7 @@ def test_ssb_window_matches_exact_preview(ptycho, control):
     the truncation adds below 4e-7 (tolerance 2e-6).
     """
     coefs, tilt, depth = dict(ABERRATIONS), OPTICS["sample_tilt_mrad"], OPTICS["depth_spread_nm"]
-    policy = direct_workflow.settings("ssb", None, None, None, None)
+    policy = direct_workflow.settings("phase_of_mean", None, None, None, None)
 
     def exact(aberrations):
         return ptycho.preview(aberrations, upsampling=3, sample_tilt_mrad=tilt, depth_spread_nm=depth,

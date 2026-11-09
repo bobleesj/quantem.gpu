@@ -66,7 +66,7 @@ RECORD_SCHEMA = "quantem.ssb-stream-frame/4"
 
 def _regularization(key, strengths):
     """Resolve the same damping strengths that produced this image."""
-    if key == "ssb":
+    if key == "phase_of_mean":
         return {}
     method = "complex" if key in ("complex", "amplitude") else "phase"
     policy = direct_settings(method, strengths.get("phase_damping"),
@@ -105,7 +105,7 @@ class _FrameStep:
         self.neural_model = neural_model
         self.annulus_mrad = annulus_mrad
         # SSB first: its phase is what each frame is registered on.
-        self.runs = ("ssb", *(name for name in methods if name not in ("ssb", "neural")))
+        self.runs = ("phase_of_mean", *(name for name in methods if name not in ("phase_of_mean", "neural")))
         self.reference = np.array(fit.optimizer["coordinates"])
         self.bounds = np.array(fit.optimizer["bounds"])[VARIED]
         self.start = self.reference[VARIED].copy()
@@ -171,32 +171,32 @@ class _FrameStep:
         confidence already measured; a frame below ``CONFIDENCE`` stays out of every combined image.
         """
         if index == 0:
-            self.lattice = _lattice(reconstructed["ssb"], sampling)
+            self.lattice = _lattice(reconstructed["phase_of_mean"], sampling)
             if self.bounded:
                 self.anchor = SimpleNamespace(last=SimpleNamespace(
-                    whole=(0, 0), piece=cp.asarray(reconstructed["ssb"], dtype=cp.float64)))
+                    whole=(0, 0), piece=cp.asarray(reconstructed["phase_of_mean"], dtype=cp.float64)))
                 self.placed.append((0, (0.0, 0.0)))
                 return (0.0, 0.0), float("inf")
             # The SSB canvas registers the frames; every other image only follows its shifts.
-            self.canvases = {key: _start(reconstructed[key]) for key in ("ssb", *_keys(self.methods)) if key in reconstructed}
+            self.canvases = {key: _start(reconstructed[key]) for key in ("phase_of_mean", *_keys(self.methods)) if key in reconstructed}
             self.placed = [(0, (0.0, 0.0))]
             return (0.0, 0.0), float("inf")
-        canvas = self.anchor if self.bounded else self.canvases["ssb"]
+        canvas = self.anchor if self.bounded else self.canvases["phase_of_mean"]
         if saved is None:
-            shift, score = _place(canvas, reconstructed["ssb"], self.lattice, sampling, REACH_A,
+            shift, score = _place(canvas, reconstructed["phase_of_mean"], self.lattice, sampling, REACH_A,
                                   _guess(self.placed, index), accumulate=not self.bounded)
         else:
             shift, score = saved
             if score >= CONFIDENCE:
                 if self.bounded:
-                    canvas.last = _positioned(reconstructed["ssb"], shift)
+                    canvas.last = _positioned(reconstructed["phase_of_mean"], shift)
                 else:
-                    _add(canvas, reconstructed["ssb"], shift)
+                    _add(canvas, reconstructed["phase_of_mean"], shift)
         if score >= CONFIDENCE:
             self.placed.append((index, shift))
             if not self.bounded:
                 for key, canvas in self.canvases.items():
-                    if key != "ssb":
+                    if key != "phase_of_mean":
                         _add(canvas, reconstructed[key], shift)
         return shift, score
 
@@ -205,7 +205,7 @@ class _FrameStep:
         self.start = coordinates[VARIED].copy()
 
 
-def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method="ssb", upsampling="auto", save_dir=None,
+def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method="phase_of_mean", upsampling="auto", save_dir=None,
            max_frames: int | None = None, neural_model=None, annulus_mrad=None, show: bool = True, verbose: bool = True, **strengths) -> "DirectPtychoSeries":
     """Refit C10, C12 and phi12 on each source with ``fit``'s higher orders, tilt and depth held.
 
@@ -214,7 +214,7 @@ def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method=
     calibration (voltage, semiangle, scan step, fitted detector sampling and bright-field disk, rotation),
     so frames differ only in their counts. Frame ``k`` starts from frame ``k - 1``'s low-order values and
     maximizes the normalized model agreement ``A(z) / A(z_start)`` over the three coordinates; its
-    conventional SSB phase is reconstructed with the result, and so is each ``method`` (``"ssb"``,
+    conventional SSB phase is reconstructed with the result, and so is each ``method`` (``"phase_of_mean"``,
     ``"phase"``, ``"complex"`` or a tuple of them) at the same optics, the regularized ones with
     ``strengths`` (``run``'s ``phase_damping``, ``amplitude_damping``, ``smoothness_inv_A``,
     ``detector_weighting``). ``fit`` must be a fifth-order fit (``search="standard"`` or ``"broad"``) of
@@ -308,7 +308,7 @@ class PtychoFrame:
         from quantem.gpu.display._layout import panel_figure, panel_inches
 
         for key, values in (("neural", self.neural_phase), ("phase", self.phase),
-                            ("complex", self.complex_phase), ("ssb", self.ssb_phase)):
+                            ("complex", self.complex_phase), ("phase_of_mean", self.ssb_phase)):
             if values is not None:
                 break
         image = host_array(values)
@@ -466,7 +466,7 @@ class DirectPtychoSeries:
         slot = len(self.frames) - 1
         images = {name: stack[slot] for name, stack in self.images.items()}
         row, col = self.shifts_A[slot]
-        display_key = next((key for key in ("neural", "phase", "complex") if key in images), "ssb")
+        display_key = next((key for key in ("neural", "phase", "complex") if key in images), "phase_of_mean")
         damping = self.session.get("regularization", {}).get(display_key, {})
         return PtychoFrame(
             index=self.total_frames - 1, name=self.frames[slot], ssb_phase=self.phase[slot],
@@ -579,7 +579,7 @@ class DirectPtychoSeries:
             shifts = np.vstack([self.shifts_A, np.array(shift) * np.array(sampling)])[window]
             placed = (*self.placed, score >= CONFIDENCE)[window]
             if self.max_frames is not None:
-                stacks = {"ssb": phase, **images}
+                stacks = {"phase_of_mean": phase, **images}
                 shifts_px = (*state.shifts_px, tuple(shift))[window]
                 step.canvases = {key: _window_canvas(stack, np.array(shifts_px), placed,
                                                     start_index=index + 1 - len(phase))
@@ -592,7 +592,7 @@ class DirectPtychoSeries:
              self.placed, self.combined, self.cover, self.aberrations, self.refits, self.fits, self.timings) = (
                 phase, images, tuple(float(value) for value in sampling), (*self.frames, name)[window],
                 (*self.sources, source)[window], shifts, (*self.confidence, float(score))[window], placed,
-                {key: _combined(step.canvases[key]) for key in images}, step.canvases["ssb"].cover,
+                {key: _combined(step.canvases[key]) for key in images}, step.canvases["phase_of_mean"].cover,
                 (*self.aberrations, dict(optics))[window],
                 (*self.refits, {"evaluations": evaluations, "stop": stop, "resumed": saved is not None})[window],
                 (*self.fits, chosen)[window], (*self.timings, clock)[window])
@@ -642,17 +642,17 @@ class DirectPtychoSeries:
         if self.max_frames is not None:
             count = min(index + 1, self.max_frames)
             stacks = {}
-            for key in ("ssb", *[key for key in _keys(self.methods) if key != "ssb"]):
+            for key in ("phase_of_mean", *[key for key in _keys(self.methods) if key != "phase_of_mean"]):
                 stack = cp.empty((count, *reconstructed[key].shape), dtype=cp.float32)
                 if count > 1:
                     stack[:-1] = state.stacks[key][-(count - 1):]
                 stack[-1] = reconstructed[key]
                 stacks[key] = stack
-            return stacks["ssb"], {key: stacks[key] for key in _keys(self.methods)}
+            return stacks["phase_of_mean"], {key: stacks[key] for key in _keys(self.methods)}
         if state.stacks is None:
-            phase = cp.empty((max(state.capacity, 1), *reconstructed["ssb"].shape), dtype=cp.float32)
-            state.stacks = {"ssb": phase, **{key: cp.empty_like(phase) for key in _keys(self.methods) if key != "ssb"}}
-        elif index == len(state.stacks["ssb"]):
+            phase = cp.empty((max(state.capacity, 1), *reconstructed["phase_of_mean"].shape), dtype=cp.float32)
+            state.stacks = {"phase_of_mean": phase, **{key: cp.empty_like(phase) for key in _keys(self.methods) if key != "phase_of_mean"}}
+        elif index == len(state.stacks["phase_of_mean"]):
             grown = {}
             for key, stack in state.stacks.items():
                 grown[key] = cp.empty((2 * len(stack), *stack.shape[1:]), dtype=stack.dtype)
@@ -660,8 +660,8 @@ class DirectPtychoSeries:
             state.stacks = grown
         for key, stack in state.stacks.items():
             stack[index] = reconstructed[key]
-        phase = state.stacks["ssb"][:index + 1]
-        return phase, {key: phase if key == "ssb" else state.stacks[key][:index + 1] for key in _keys(self.methods)}
+        phase = state.stacks["phase_of_mean"][:index + 1]
+        return phase, {key: phase if key == "phase_of_mean" else state.stacks[key][:index + 1] for key in _keys(self.methods)}
 
     def _announce_flagged(self):
         counts = ({outcome: len(names) for outcome, names in self._state.flagged.items()}
@@ -733,8 +733,8 @@ class DirectPtychoSeries:
                 del data, frame, reconstructed
                 cp.get_default_memory_pool().free_all_blocks()
             self.images.update(stacks)
-            # phase is the SSB stack registration and align read; it stays the array images["ssb"] is
-            self.phase = stacks.get("ssb", self.phase)
+            # phase is the SSB stack registration and align read; it stays the array images["phase_of_mean"] is
+            self.phase = stacks.get("phase_of_mean", self.phase)
             if method not in self.methods:
                 self.methods = (*self.methods, method)
             for key in stacks:
@@ -908,8 +908,8 @@ class DirectPtychoSeries:
 
 
 # Each method and image as a microscopist names it: report columns, figure titles, viewer labels.
-_METHODS = {"neural": "Frozen neural phase", "ssb": "SSB", "phase": "Phase-only", "complex": "Amplitude + phase"}
-_NAMES = {"neural": "Neural phase", "ssb": "SSB", "phase": "Direct phase", "complex": "Complex-fit phase",
+_METHODS = {"neural": "Frozen neural phase", "phase_of_mean": "SSB", "phase": "Phase-only", "complex": "Amplitude + phase"}
+_NAMES = {"neural": "Neural phase", "phase_of_mean": "SSB", "phase": "Direct phase", "complex": "Complex-fit phase",
           "amplitude": "Relative amplitude"}
 # Pixels no frame reaches: a colour no gray value takes.
 _UNCOVERED = "#b9c7d6"
@@ -933,7 +933,7 @@ def _reconstruct(session, chosen, methods, upsampling, strengths, *, neural=Fals
     images, seconds, sampling = {}, {}, None
     for name in methods:
         began = time.perf_counter()
-        options = {} if name == "ssb" else strengths
+        options = {} if name == "phase_of_mean" else strengths
         if neural and name == "phase" and "complex" in methods:
             options = {key: value for key, value in options.items() if key != "amplitude_damping"}
         result = session.reconstruct(chosen, method=name, upsampling=upsampling, compute_loss=False,

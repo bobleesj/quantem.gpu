@@ -104,7 +104,7 @@ def test_three_methods_match_cuda():
                 if not (p["corr"] >= 0.99999 and p["rms"] <= 1e-4 and p["rms"] <= 0.01 * p["std"]):
                     problems.append(f"phase corr {p['corr']} rms {p['rms']:.3g} (std {p['std']:.3g})")
                 gate = gates.get(f"{handle}/{optics['name']}/{stem}-phase")
-                if gate and entry["method"] != "ssb" and not (p["rms"] <= gate["rms_max"]
+                if gate and entry["method"] != "phase_of_mean" and not (p["rms"] <= gate["rms_max"]
                                                               and p["max"] <= gate["max_abs_max"]):
                     problems.append(f"phase rms {p['rms']:.3g} max {p['max']:.3g} beyond {gate}")
                 if entry.get("amplitude_file"):

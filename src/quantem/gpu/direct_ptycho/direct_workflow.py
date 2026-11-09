@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
-from quantem.gpu.direct_ptycho.results import PUBLIC_METHOD, STORAGE_METHOD, DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.units import validate_aberrations
 
 # drag-window tiles kept per control: a drag back and forth across one tile edge needs two
@@ -26,12 +26,11 @@ def settings(
     detector_weighting,
 ):
     """Resolve only the controls that belong to the selected reconstruction."""
-    method = STORAGE_METHOD.get(method, method)   # public name -> storage key
-    if method not in ("ssb", "phase", "complex"):
+    if method not in ("phase_of_mean", "phase", "complex"):
         raise ValueError(
             f'method must be "phase_of_mean", "phase" or "complex"; got {method!r}.'
         )
-    if method == "ssb":
+    if method == "phase_of_mean":
         if any(
             value is not None
             for value in (
@@ -154,7 +153,7 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     that control (``direct_ptycho.cuda.direct`` or ``direct_ptycho.mps.direct``), from the prepared
     system when the optics are those already prepared (a strength drag), and
     otherwise exactly by `solve`. SSB on CUDA
-    (``policy`` from ``settings("ssb", ...)``) on a fine grid is served from
+    (``policy`` from ``settings("phase_of_mean", ...)``) on a fine grid is served from
     a `WaveWindow`: the single-sideband terms interpolated, the triple-overlap
     terms exact. A
     window is valid while every other input is unchanged and the value lies
@@ -163,10 +162,10 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     and `prepare` asks for windows before a grab. Committed frames and saved
     results never come from a window, so they remain the exact model.
     """
-    method = policy.get("method", "ssb")
+    method = policy.get("method", "phase_of_mean")
     if not _windowed(session, factor, policy):
         return _exact(session, coefs, tilt, depth, factor, policy)
-    if method != "ssb":
+    if method != "phase_of_mean":
         key = _inputs(session, coefs, tilt, depth, factor, policy)[2]
         cached = getattr(session, "_prepared_direct", None)
         if cached is not None and cached[0] == key and method in cached[1]:
@@ -175,7 +174,7 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     if not window.series.ready:
         return _exact(session, coefs, tilt, depth, factor, policy)
     value = float(coefs.get(control, 0.0))
-    if method == "ssb":
+    if method == "phase_of_mean":
         return window.phase(value)
     wave, _ = window.solve(value, policy["phase_damping"], policy.get("amplitude_damping"),
                            complex_object=method == "complex")
@@ -208,7 +207,7 @@ def _windowed(session, factor, policy) -> bool:
     """Whether drags of this method can use a window: a resident region, and for SSB CUDA's fine-grid coherent sum."""
     if session._streamed is not None:
         return False
-    if policy.get("method", "ssb") == "ssb":
+    if policy.get("method", "phase_of_mean") == "phase_of_mean":
         return session.backend == "cuda" and factor > 1
     return True
 
@@ -223,9 +222,9 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
     match these are dropped first: a complex one holds about 4 GB on the test
     field. ``first`` puts this control and tile ahead in `advance`'s order.
     """
-    method = policy.get("method", "ssb")
+    method = policy.get("method", "phase_of_mean")
     complex_object = method == "complex"
-    kind = "ssb" if method == "ssb" else "direct"
+    kind = "phase_of_mean" if method == "phase_of_mean" else "direct"
     windows = getattr(session, "_direct_windows", None)
     if windows is None:
         windows = session._direct_windows = {}
@@ -245,7 +244,7 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
             center = anchor + width * round((value - anchor) / width)
         tile_coefs = {**coefs, control: center}
         engine, optics, _ = _inputs(session, tile_coefs, tilt, depth, factor, policy)
-        if kind == "ssb":
+        if kind == "phase_of_mean":
             from quantem.gpu.direct_ptycho.cuda.thick import WaveWindow
 
             window = WaveWindow(engine.thick, tile_coefs, control, tilt, depth, factor)
@@ -266,8 +265,8 @@ def _window(session, control, coefs, tilt, depth, factor, policy, *, first=False
 
 def _exact(session, coefs, tilt, depth, factor, policy):
     """The exact phase, as ``preview(..., output="native")`` computes it."""
-    method = policy.get("method", "ssb")
-    if method == "ssb":
+    method = policy.get("method", "phase_of_mean")
+    if method == "phase_of_mean":
         phase, _ = session.preview(coefs, compute_loss=False, upsampling=factor, sample_tilt_mrad=tilt or (0.0, 0.0),
                                    depth_spread_nm=depth or 0.0, output="native")
         return phase
@@ -408,9 +407,9 @@ def run(
         semiangle_mrad=session.semiangle_mrad,
         object_sampling_A=session._output_sampling(factor),
         upsampling=factor,
-        phase_estimator=PUBLIC_METHOD.get(policy["method"], policy["method"]),
+        phase_estimator=policy["method"],
         amplitude_estimated=policy["method"] == "complex",
-        reconstruction_method=PUBLIC_METHOD.get(policy["method"], policy["method"]),
+        reconstruction_method=policy["method"],
         reconstruction_options=dict(policy),
         reconstruction_diagnostics=diagnostics,
         phase_clim=correction.phase_limits if correction is not None else None,

@@ -55,12 +55,6 @@ def retired_estimator_note(phase_estimator: object, record: str) -> str | None:
             f"{phase_estimator}.")
 
 
-# The public method name for the conventional path. Storage keeps ``ssb`` because saved
-# screening configs, canvas keys and result file names already use it.
-PUBLIC_METHOD = {"ssb": "phase_of_mean", "phase": "phase", "complex": "complex"}
-STORAGE_METHOD = {public: stored for stored, public in PUBLIC_METHOD.items()}
-
-
 @dataclass
 class DirectPtychoResult(Mapping[str, float]):
     """Result from SSB ptychographic reconstruction.
@@ -241,7 +235,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
     def __repr__(self) -> str:
         method = self.reconstruction_method
-        lines = ["SSB Result" if method in ("ssb", "phase_of_mean") else f"Direct {method} result"]
+        lines = ["SSB Result" if method in ("phase_of_mean", "phase_of_mean") else f"Direct {method} result"]
         lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsampling}x output")
         if self.phase_estimator is not None:
             lines.append(f"  Estimator      {self.phase_estimator}")
@@ -1070,7 +1064,7 @@ def _phase_title(result: DirectPtychoResult, area: str = "Full field", *, neural
     """Name the measured channel, reconstruction method and recorded strengths."""
     method = result.reconstruction_method
     options = result.reconstruction_options
-    if method in ("ssb", "phase_of_mean"):
+    if method in ("phase_of_mean", "phase_of_mean"):
         heading = "Conventional SSB"
         detail = "No damping"
     else:

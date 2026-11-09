@@ -346,10 +346,10 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
     block = {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0, "scan_detector_rotation_flipped": False}
     config = tmp_path / "config.json"
     for marker in ({}, {"schema": f"quantem.ssb-fit/{SCHEMA - 1}"}, {"schema": SCHEMA}):
-        config.write_text(json.dumps({"computed": {"ssb": {**block, **marker}}}))
+        config.write_text(json.dumps({"computed": {"phase_of_mean": {**block, **marker}}}))
         assert stored_fit(json.loads(config.read_text())) == {}
         assert saved_fit(tmp_path) is None
-    config.write_text(json.dumps({"computed": {"ssb": {**block, "schema": FIT_SCHEMA}}}))
+    config.write_text(json.dumps({"computed": {"phase_of_mean": {**block, "schema": FIT_SCHEMA}}}))
     assert saved_fit(tmp_path) == {**block, "schema": FIT_SCHEMA}
     config.unlink()
     record = tmp_path / "ssb-fit" / "ssb-find_aberrations.json"
@@ -374,7 +374,7 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
                "aberration_unit": "nm", "picked_c10_nm": 4.0, "optuna_trials": [{"loss": 0.02}]}
     # a current screening record that still holds a fit block of an earlier fit schema
     config.write_text(json.dumps({"schema": SCREEN_ACQUISITION_SCHEMA, "human": {"notes": "kept"},
-                                  "computed": {"bright_field_radius_px": 55.0, "ssb": earlier}}))
+                                  "computed": {"bright_field_radius_px": 55.0, "phase_of_mean": earlier}}))
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": math.degrees(-0.5)}
     result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_radius_px=48.0)
@@ -385,21 +385,21 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
              "scan_detector_rotation_deg": 200.0, "scan_detector_rotation_flipped": False, "loss": 0.125, "bright_field_radius_px": 48.0,
              "bright_field_center_px": None, "detector_sampling_mrad": [0.55, 0.56]}
     assert written == {"schema": SCREEN_ACQUISITION_SCHEMA, "human": {"notes": "kept"},
-                       "computed": {"bright_field_radius_px": 55.0, "ssb": block}}
+                       "computed": {"bright_field_radius_px": 55.0, "phase_of_mean": block}}
     assert saved_fit(tmp_path) == block
     # a field the dashboard adds to a current block stays through the next fit
-    written["computed"]["ssb"]["ran_at"] = "2026-10-11T12:00:00"
+    written["computed"]["phase_of_mean"]["ran_at"] = "2026-10-11T12:00:00"
     config.write_text(json.dumps(written))
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
-    assert json.loads(config.read_text())["computed"]["ssb"] == {**block, "ran_at": "2026-10-11T12:00:00"}
+    assert json.loads(config.read_text())["computed"]["phase_of_mean"] == {**block, "ran_at": "2026-10-11T12:00:00"}
     # quantem.live's 180-degree decision on the earlier fit does not survive a new one: beside a new rotation it said
     # this fit had been moved to the other branch
     written = json.loads(config.read_text())
-    written["computed"]["ssb"].update(column_sign=-0.4, session_moved_180=True, rotation_disagrees=False,
+    written["computed"]["phase_of_mean"].update(column_sign=-0.4, session_moved_180=True, rotation_disagrees=False,
                                       session_rotation={"scan_detector_rotation_deg": 20.0})
     config.write_text(json.dumps(written))
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
-    assert json.loads(config.read_text())["computed"]["ssb"] == {**block, "ran_at": "2026-10-11T12:00:00"}
+    assert json.loads(config.read_text())["computed"]["phase_of_mean"] == {**block, "ran_at": "2026-10-11T12:00:00"}
 
 
 def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_block_needs(tmp_path, monkeypatch):
@@ -479,7 +479,7 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     write_fit_metadata(created, settings, result, (0.6, 0.6))
     record = json.loads((created / "config.json").read_text())
     assert list(record) == ["schema", "computed"] and record["schema"] == SCREEN_ACQUISITION_SCHEMA
-    assert saved_fit(created)["aberrations"] == aberrations and record["computed"]["ssb"]["schema"] == FIT_SCHEMA
+    assert saved_fit(created)["aberrations"] == aberrations and record["computed"]["phase_of_mean"]["schema"] == FIT_SCHEMA
     # existing and current: every other key stays byte for byte, in its place
     current = tmp_path / "current"
     current.mkdir()
@@ -491,7 +491,7 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     (current / "config.json").write_text(json.dumps(existing, indent=2), encoding="utf-8")
     write_fit_metadata(current, settings, result, (0.6, 0.6))
     expected = json.loads(json.dumps(existing))
-    expected["computed"]["ssb"] = json.loads((created / "config.json").read_text())["computed"]["ssb"]
+    expected["computed"]["phase_of_mean"] = json.loads((created / "config.json").read_text())["computed"]["phase_of_mean"]
     assert (current / "config.json").read_text(encoding="utf-8") == json.dumps(expected, indent=2)
     # existing with another schema, or none: refused before anything is written
     for number, earlier in enumerate(({"computed": {"bf_radius": 55.0}}, {"schema_version": 1, "computed": {}},

@@ -54,7 +54,7 @@ from quantem.gpu.direct_ptycho.persistence import (
     source_identity,
 )
 from quantem.gpu.direct_ptycho.neural_phase import NeuralPhaseModel
-from quantem.gpu.direct_ptycho.results import STORAGE_METHOD, DirectPtychoResult, check_phase_estimator, host_array
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, check_phase_estimator, host_array
 from quantem.gpu.direct_ptycho.trials import (
     choose_trials,
     label_trials,
@@ -1164,7 +1164,7 @@ class DirectPtycho:
                     "scan_sampling_A": self.scan_sampling_A,
                     "detector_sampling_mrad": self.detector_sampling_mrad,
                 },
-                "ssb": {
+                "phase_of_mean": {
                     "backend": self.backend,
                     "scan_detector_rotation_deg": self.scan_detector_rotation_deg,
                     "scan_detector_rotation_flipped": self.scan_detector_rotation_flipped,
@@ -2633,8 +2633,8 @@ class DirectPtycho:
                 raise ValueError(mismatch)
             # The fit can select the opposite rotation branch; evaluation below
             # uses its recorded angle. Every other preparation setting must match.
-            saved_preparation = dict(signature.get("ssb", {}))
-            current_preparation = dict(current["ssb"])
+            saved_preparation = dict(signature.get("phase_of_mean", {}))
+            current_preparation = dict(current["phase_of_mean"])
             saved_preparation.pop("scan_detector_rotation_deg", None)
             current_preparation.pop("scan_detector_rotation_deg")
             if saved_preparation != current_preparation:
@@ -2806,7 +2806,7 @@ class DirectPtycho:
                   f"depth spread {depth or 0.0:.3f} nm; loss at native 1x")
         cached = self._reconstruction
         if (not force and save_dir is None and parameters is None and aberrations is None
-                and cached is not None and cached.reconstruction_method in ("ssb", "phase_of_mean")
+                and cached is not None and cached.reconstruction_method in ("phase_of_mean", "phase_of_mean")
                 and cached.upsampling == upsampling
                 and cached.phase_estimator == "phase_of_mean"
                 and cached.scan_detector_rotation_deg == self.scan_detector_rotation_deg
@@ -2896,8 +2896,6 @@ class DirectPtycho:
         for name in names:
             if name not in ("phase_of_mean", "phase", "complex"):
                 raise ValueError(f'method={name!r} is retired; use "phase_of_mean", "phase" or "complex".')
-        method = (STORAGE_METHOD[method] if isinstance(method, str)
-                  else tuple(STORAGE_METHOD[name] for name in method))
         if fit is None:
             fit = self.fit_aberrations(show=False, verbose=verbose)
         return series(self, sources, fit, refit=refit, method=method, upsampling=upsampling, save_dir=save_dir,
@@ -2968,12 +2966,12 @@ class DirectPtycho:
             once and reused. Coefficients, tilt and effective depth are shared
             by all three methods. Effective depth is not measured thickness.
         method
-            ``"ssb"`` retains conventional SSB on CUDA and MPS. Experimental
+            ``"phase_of_mean"`` retains conventional SSB on CUDA and MPS. Experimental
             ``"phase"`` solves the linear weak-phase model; ``"complex"``
             solves relative log-amplitude and phase together, on CUDA and MPS.
             They are direct linear solves, not iterative multislice
             reconstruction. ``"all"`` returns a dictionary
-            keyed by ``"ssb"``, ``"phase"``, and ``"complex"``, sharing one fit.
+            keyed by ``"phase_of_mean"``, ``"phase"``, and ``"complex"``, sharing one fit.
             This comparison requires CUDA; it does not select a best method.
         neural_model : NeuralPhaseModel, optional
             Frozen residual U-Net, measured annular readout and bounded spectral
@@ -3010,7 +3008,7 @@ class DirectPtycho:
             support up to 4× (one line names a larger factor the scan sampling
             supports); it does not establish resolution.
         phase_estimator
-            Compatibility keyword: only ``"phase_of_mean"``, what ``"ssb"``
+            Compatibility keyword: only ``"phase_of_mean"``, what ``"phase_of_mean"``
             computes, is accepted. The retired ``"mean_phase"`` and
             ``"complex_wave"`` raise an error naming ``method="phase"`` and
             ``method="complex"``.
@@ -3052,7 +3050,6 @@ class DirectPtycho:
             raise ValueError(
                 f'method={method!r} is retired; use method="phase_of_mean", "phase", "complex" or "all".'
             )
-        method = STORAGE_METHOD.get(method, method)
         if neural_model is not None and method != "phase":
             raise ValueError('Use method="phase" with neural_model; the model corrects phase only.')
         if scan_basis is not None and method not in ("phase", "complex"):
@@ -3082,7 +3079,7 @@ class DirectPtycho:
 
         policy = direct_workflow.settings(method, phase_damping, amplitude_damping,
                                           smoothness_inv_A, detector_weighting)
-        if method == "ssb":
+        if method == "phase_of_mean":
             return self._run_ssb(parameters, aberrations=aberrations, trial_ids=trial_ids,
                                  upsampling=upsampling,
                                  compute_loss=compute_loss, save_dir=save_dir, force=force, verbose=verbose)
@@ -3240,10 +3237,9 @@ class DirectPtycho:
             raise NotImplementedError("Native SSB preview output requires backend='cuda'; use output='numpy' on this backend.")
         from quantem.gpu.direct_ptycho import direct_workflow
 
-        method = STORAGE_METHOD.get(method, method)   # public name -> storage key
         policy = direct_workflow.settings(method, phase_damping, amplitude_damping,
                                           smoothness_inv_A, detector_weighting)
-        if method != "ssb":
+        if method != "phase_of_mean":
             if context is not None or phase_estimator is not None:
                 raise ValueError("Regularized preview uses the full selected bright-field data; omit context and phase_estimator.")
             from concurrent.futures import CancelledError

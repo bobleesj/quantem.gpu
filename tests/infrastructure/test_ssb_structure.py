@@ -117,7 +117,7 @@ def test_reconstruct_series_reuses_only_exact_results(
         }
         # a record as quantem.live screens it: the series stores a fit only in a record of this schema
         (dataset / "config.json").write_text(
-            json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"ssb": settings}})
+            json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"phase_of_mean": settings}})
         )
         np.save(dataset / "bf.npy", np.full((8, 9), 20 + index))
         np.save(dataset / "df.npy", np.full((8, 9), 30 + index))
@@ -244,7 +244,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
         (raw / f"scan_{frame}_master.h5").write_bytes(b"raw")
     saved = out / "scan_1"
     saved.mkdir(parents=True)
-    (saved / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"ssb": {
+    (saved / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"phase_of_mean": {
         "schema": FIT_SCHEMA, "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
         "scan_detector_rotation_deg": 159.0, "scan_detector_rotation_flipped": True, "bright_field_radius_px": 53.4}}}))
     opened = []
@@ -351,7 +351,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
                 {
                     "schema": "quantem.screen-acquisition/2",
                     "computed": {
-                        "ssb": {
+                        "phase_of_mean": {
                             "schema": FIT_SCHEMA,
                             "voltage_kV": 300.0,
                             "semiangle_mrad": 30.0,
@@ -436,7 +436,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     earlier = {"C10": 5.0, "C12": -0.3, "phi12": 0.18}
     # every value differs from dataset.yaml, so anything read from this block would show below; the record itself
     # is current (quantem.live's rewrite stamps the record and leaves an earlier fit block as it is)
-    (reference / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"ssb": {
+    (reference / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"phase_of_mean": {
         "aberrations": earlier, "aberration_unit": "nm", "rotation_angle_deg": 0.0, "com_reversed": True, "loss": 0.014,
         "voltage_kV": 80.0, "semiangle_mrad": 20.0, "scan_sampling_A": (0.2, 0.2), "bright_field_radius_px": 55.0}}}))
     for frame in (1, 2):
@@ -485,7 +485,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     assert opened == [{"backend": "auto", "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5),
                        "scan_detector_rotation_deg": 12.0, "scan_detector_rotation_flipped": False, "bright_field_radius_px": None}] * 3
     assert [record["C10 (nm)"] for record in result.records] == [-10.5, -10.5]
-    stored = json.loads((reference / "config.json").read_text())["computed"]["ssb"]
+    stored = json.loads((reference / "config.json").read_text())["computed"]["phase_of_mean"]
     assert stored["schema"] == FIT_SCHEMA
     assert stored["aberrations"] == fitted
     assert (stored["scan_detector_rotation_deg"], stored["scan_detector_rotation_flipped"], stored["loss"]) == (12.0, False, 0.25)
@@ -502,7 +502,7 @@ def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
     folder = raw / "live" / "screen" / "scan_1"
     folder.mkdir(parents=True)
     (raw / "scan_1_master.h5").write_bytes(b"raw")
-    (folder / "config.json").write_text(json.dumps({"computed": {"ssb": {
+    (folder / "config.json").write_text(json.dumps({"computed": {"phase_of_mean": {
         "aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "aberration_unit": "nm", "rotation_angle_deg": 0.0,
         "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5)}}}))
     before = (folder / "config.json").read_bytes()
@@ -748,7 +748,7 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
            "scan_detector_rotation_deg": 339.78, "scan_detector_rotation_flipped": True,
            "bright_field_center_px": [95.5, 96.25], "bright_field_radius_px": 53.4}
     (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "source_master": str(source),
-                                                     "computed": {"ssb": fit}}))
+                                                     "computed": {"phase_of_mean": fit}}))
     opened = []
     monkeypatch.setattr(DirectPtycho, "open", classmethod(lambda cls, path, **kwargs: opened.append((path, kwargs)) or "session"))
 
@@ -760,7 +760,7 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
     assert (kwargs["detector_sampling_mrad"], kwargs["bright_field_center_px"], kwargs["bright_field_radius_px"]) == (
         (0.552, 0.552), (95.5, 96.25), 53.4)
     assert kwargs["aberrations"]["C10_nm"] == 15.77
-    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"ssb": {}}}))
+    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"phase_of_mean": {}}}))
     with pytest.raises(ValueError, match="holds no SSB fit"):
         open_screen_record(record)
 
@@ -793,10 +793,10 @@ def test_open_screen_record_opens_at_the_tilt_corrected_fit(tmp_path, monkeypatc
         lambda cls, path, **kwargs: sessions.append(SimpleNamespace(kwargs=kwargs, sample_tilt_mrad=None,
                                                                     depth_spread_nm=None)) or sessions[-1]))
     for computed, optics, sample in (
-            ({"ssb": plain, "ssb_tilt": joint}, joint["aberrations"], ((-0.1, -5.07), 10.7)),
-            ({"ssb": {**plain, "sample_tilt_mrad": [1.0, 2.0], "depth_spread_nm": 5.0}}, plain["aberrations"],
+            ({"phase_of_mean": plain, "ssb_tilt": joint}, joint["aberrations"], ((-0.1, -5.07), 10.7)),
+            ({"phase_of_mean": {**plain, "sample_tilt_mrad": [1.0, 2.0], "depth_spread_nm": 5.0}}, plain["aberrations"],
              ((1.0, 2.0), 5.0)),
-            ({"ssb": plain, "ssb_tilt": {**joint, "state": "failed"}}, plain["aberrations"], (None, None))):
+            ({"phase_of_mean": plain, "ssb_tilt": {**joint, "state": "failed"}}, plain["aberrations"], (None, None))):
         (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2",
                                                          "source_master": str(source), "computed": computed}))
         session = open_screen_record(record)

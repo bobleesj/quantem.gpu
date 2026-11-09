@@ -58,8 +58,8 @@ def test_preview_compares_three_final_methods_without_refitting(monkeypatch, siz
     assert [call.args[0] for call in ssb.reconstruct.call_args_list] == [initial, final, final, final]
     assert all(call.kwargs["upsampling"] == "auto" and not call.kwargs["compute_loss"]
                for call in ssb.reconstruct.call_args_list)
-    assert [call.kwargs.get("method", "ssb") for call in ssb.reconstruct.call_args_list] == [
-        "ssb", "ssb", "complex", "phase",
+    assert [call.kwargs.get("method", "phase_of_mean") for call in ssb.reconstruct.call_args_list] == [
+        "phase_of_mean", "phase_of_mean", "complex", "phase",
     ]
     ssb._accept_result.assert_called_with(final)
 

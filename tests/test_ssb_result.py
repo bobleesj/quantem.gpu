@@ -34,7 +34,7 @@ def test_export_to_selected_catalogue_preserves_prior_results(tmp_path):
     run.mkdir()
     phase = np.array([[0, 1], [-1, 2]], dtype=np.float32)
     np.save(run / "ssb_phase.npy", phase)
-    config = {"computed": {"ssb": _fit(voltage_kV=200, scan_sampling_A=[0.5, 0.5])}}
+    config = {"computed": {"phase_of_mean": _fit(voltage_kV=200, scan_sampling_A=[0.5, 0.5])}}
     (run / "config.json").write_text(json.dumps(config))
     catalogue = tmp_path / "processed"
     first = export_result(run, master, output_folder=catalogue)
@@ -103,10 +103,10 @@ def test_export_takes_only_a_current_fit_and_its_physical_rotation(tmp_path):
     np.save(run / "ssb_phase.npy", np.zeros((2, 2), np.float32))
     earlier = {"voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": 0.25, "aberration_unit": "nm",
                "aberrations": {"C10": 7, "C12": 2, "phi12": .1}, "rotation_angle_deg": 12.0, "com_reversed": True}
-    (run / "config.json").write_text(json.dumps({"computed": {"bf_radius": 5, "bf_center": [3, 4], "ssb": earlier}}))
+    (run / "config.json").write_text(json.dumps({"computed": {"bf_radius": 5, "bf_center": [3, 4], "phase_of_mean": earlier}}))
     with pytest.raises(ValueError, match="no current SSB fit"):
         export_result(run, master, tmp_path / "out.json")
-    (run / "config.json").write_text(json.dumps({"computed": {"ssb": _fit()}}))
+    (run / "config.json").write_text(json.dumps({"computed": {"phase_of_mean": _fit()}}))
     record, _ = read_result(export_result(run, master, tmp_path / "out.json"))
     assert record["scan_detector_rotation_deg"] == 192.0 and record["scan_detector_rotation_flipped"] is False
     assert record["calibration"]["detector_sampling_mrad"] == [0.55, 0.56]
@@ -135,18 +135,18 @@ def test_export_takes_the_tilt_corrected_fit_with_its_tilt_and_depth(tmp_path):
     joint = {"schema": FIT_SCHEMA, "state": "complete", "aberrations": {"C10_nm": 4.0, "C12_nm": 0.5, "phi12_deg": 10.0},
              "scan_detector_rotation_deg": 192.0, "scan_detector_rotation_flipped": False,
              "sample_tilt_mrad": [-0.1, -5.07], "depth_spread_nm": 10.7}
-    (run / "config.json").write_text(json.dumps({"computed": {"ssb": _fit(), "ssb_tilt": joint}}))
+    (run / "config.json").write_text(json.dumps({"computed": {"phase_of_mean": _fit(), "ssb_tilt": joint}}))
     record, phase = read_result(export_result(run, master, tmp_path / "both.json"))
     assert record["aberrations"] == joint["aberrations"] and float(phase[0, 0]) == 2.0
     assert (record["sample_tilt_mrad"], record["depth_spread_nm"]) == ([-0.1, -5.07], 10.7)
     assert record["calibration"]["detector_sampling_mrad"] == [0.55, 0.56]  # the session's, kept in computed.ssb
     assert record["provenance"]["phase_variant"].startswith("original ssb_phase_tilt.npy")
     # the default mode: computed.ssb is the tilt-corrected fit and ssb_phase.npy its phase
-    (run / "config.json").write_text(json.dumps({"computed": {"ssb": _fit(sample_tilt_mrad=[1.0, 2.0], depth_spread_nm=5.0)}}))
+    (run / "config.json").write_text(json.dumps({"computed": {"phase_of_mean": _fit(sample_tilt_mrad=[1.0, 2.0], depth_spread_nm=5.0)}}))
     record, phase = read_result(export_result(run, master, tmp_path / "default.json"))
     assert (record["sample_tilt_mrad"], record["depth_spread_nm"], float(phase[0, 0])) == ([1.0, 2.0], 5.0, 0.0)
     # a failed tilt fit beside an ordinary one is no result; a tilt-0 fit carries no sample keys
-    (run / "config.json").write_text(json.dumps({"computed": {"ssb": _fit(), "ssb_tilt": {**joint, "state": "failed"}}}))
+    (run / "config.json").write_text(json.dumps({"computed": {"phase_of_mean": _fit(), "ssb_tilt": {**joint, "state": "failed"}}}))
     record, _ = read_result(export_result(run, master, tmp_path / "ordinary.json"))
     assert record["aberrations"]["C10_nm"] == 7.0 and "sample_tilt_mrad" not in record
     half = tmp_path / "half.json"
@@ -177,7 +177,7 @@ def test_numbered_exports_respect_selected_output_folder(tmp_path):
     run.mkdir(parents=True)
     phase = np.array([[-0., -1.25], [3.5, 1e-20]], dtype=np.float32)
     np.save(run / "ssb_phase.npy", phase)
-    config = {"source_master": str(master), "computed": {"ssb": _fit()}}
+    config = {"source_master": str(master), "computed": {"phase_of_mean": _fit()}}
     (run / "config.json").write_text(json.dumps(config))
     first = export_result(run, master, output_folder=output_folder)
     assert first == output_folder / "gold_master/ssb.json"
@@ -214,7 +214,7 @@ def test_early_verification_rejects_changed_source(tmp_path, changed):
     verified = AcquisitionVerification(master)
     assert verified.identity(master) == expected
     np.save(tmp_path / "ssb_phase.npy", np.ones((2, 2), dtype=np.float32))
-    (tmp_path / "config.json").write_text(json.dumps({"computed": {"ssb": _fit()}}))
+    (tmp_path / "config.json").write_text(json.dumps({"computed": {"phase_of_mean": _fit()}}))
     record, _ = read_result(export_result(tmp_path, master, tmp_path / "result.json", verification=verified))
     assert record["source_identity"] == expected
     path = master if changed == "master" else member
@@ -244,7 +244,7 @@ def test_qem_export_binds_its_own_bytes_and_preserves_phase(tmp_path):
     assert verified.identity(source) == expected
     phase = np.array([[1, -1], [0.1, -0.0]], dtype=np.float32)
     np.save(tmp_path / "ssb_phase.npy", phase)
-    (tmp_path / "config.json").write_text(json.dumps({"computed": {"ssb": _fit()}}))
+    (tmp_path / "config.json").write_text(json.dumps({"computed": {"phase_of_mean": _fit()}}))
     manifest = export_result(tmp_path, source, tmp_path / "result.json", verification=verified)
     record, recovered = read_result(manifest, expected)
     assert recovered.tobytes() == phase.tobytes()
