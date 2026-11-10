@@ -197,7 +197,7 @@ def test_model_scores_and_public_joint_fit_remain_on_device(device, monkeypatch)
 
         result = ssb.aberrations(search="primary",
             tilt=True,
-            num_trials=200,
+            trials=200,
             compare_standard=False,
             check_rotation=False,
             verbose=False,

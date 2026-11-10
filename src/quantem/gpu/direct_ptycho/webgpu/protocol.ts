@@ -1,5 +1,5 @@
 export interface WebGPUOptimizationOptions {
-  /** Number of search trials, as Python's `num_trials`. */
+  /** Number of search trials, as Python's `trials`. */
   readonly numTrials: number;
   readonly refinement: "nelder-mead" | null;
   readonly seed: number;
@@ -17,7 +17,7 @@ export interface SSBOptimizationResult {
 }
 
 export interface WebGPUReconstructionOptions {
-  readonly upsampling?: 1 | 2 | 4 | 8;
+  readonly upsample?: 1 | 2 | 4 | 8;
   readonly phaseEstimator?: "phase_of_mean" | "mean_phase";
   /** No effect: every count is the strided subset `numBrightFieldPixels` selects. */
   readonly preview?: boolean;

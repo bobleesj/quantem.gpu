@@ -192,7 +192,7 @@ class MpsSSBBackend:
         self,
         aberrations: dict[str, float],
         *,
-        upsample_factor: int,
+        upsample: int,
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_A: float = 0.0,
@@ -210,7 +210,7 @@ class MpsSSBBackend:
                       higher_order_angles=higher_order_angles)
         phase = _reconstruct_upsampled(
             self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
-            thickness=depth_spread_A, upsample_factor=upsample_factor, **higher,
+            thickness=depth_spread_A, upsample=upsample, **higher,
         )
         if not compute_loss:
             return phase, None

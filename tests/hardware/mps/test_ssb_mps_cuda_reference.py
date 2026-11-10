@@ -1499,7 +1499,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     )
 
     optimized = workflow.aberrations(search="primary", tilt=False,
-        num_trials=0,
+        trials=0,
         refinement=None,
         verbose=False,
     )

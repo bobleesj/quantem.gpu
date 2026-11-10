@@ -41,7 +41,7 @@ def settings(
             )
         ):
             raise ValueError(
-                "Damping and prior controls need method='phase' or 'complex'; omit them for method='ssb'."
+                "Damping and prior controls need method='phase' or 'complex'; omit them for method='phase_of_mean'."
             )
         return {}
     if method == "phase" and amplitude_damp is not None:

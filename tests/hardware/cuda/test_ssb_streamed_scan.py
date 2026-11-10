@@ -87,7 +87,7 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
             expected, _ = dense.preview(ABERRATIONS, compute_loss=False,
                 upsample=factor, sample_tilt_mrad=(1., -2.), depth_spread_nm=depth, output="native")
             phase, loss = streamed.phase(aberrations_to_engine(ABERRATIONS), voltage_kV=300., semiangle_mrad=30.,
-                scan_sampling_A=SETTINGS["scan_sampling_A"], rotation_deg=27., upsample_factor=factor,
+                scan_sampling_A=SETTINGS["scan_sampling_A"], rotation_deg=27., upsample=factor,
                 sample_tilt_mrad=(1., -2.), depth_spread_A=depth * 10)
             assert streamed.num_bright_field_pixels == dense.num_bright_field_pixels
             assert loss is None and phase.dtype == cp.float32
@@ -102,14 +102,14 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
         with DirectPtycho(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True) as session:
             assert session._data is data and session._compute is None
             region = (173, 301, 251, 379)
-            fitted = session.aberrations(search="primary", tilt=False, scan_region=region, num_trials=0,
+            fitted = session.aberrations(search="primary", tilt=False, scan_region=region, trials=0,
                 refinement=None, check_rotation=False, verbose=False)
             assert fitted.phase.shape == (128, 128)
             assert fitted.fit_scan_region == region
             assert fitted.bright_field_center_px == SETTINGS["bright_field_center_px"]
             with DirectPtycho(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True,
                      scan_region=region) as explicit:
-                expected_fit = explicit.aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
+                expected_fit = explicit.aberrations(search="primary", tilt=False, trials=0, refinement=None,
                     check_rotation=False, verbose=False)
                 cp.testing.assert_array_equal(fitted.phase, expected_fit.phase)
             result = session.run(fitted, compute_loss=False)

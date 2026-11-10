@@ -8,7 +8,7 @@ non-zero when any metric is slower than the tolerance allows::
 
     python tests/benchmarks/mps_ssb.py run --out report.json
     python tests/benchmarks/mps_ssb.py compare report.json
-    python tests/benchmarks/mps_ssb.py compare report.json --tolerance find_aberrations=0.3
+    python tests/benchmarks/mps_ssb.py compare report.json --tolerance aberrations=0.3
     python tests/benchmarks/mps_ssb.py run --save-baseline    # re-record this chip's baseline
     python tests/benchmarks/mps_ssb.py merge a.json b.json c.json --save-baseline
 
@@ -33,10 +33,10 @@ p90 of its repeats. The metrics, all in milliseconds:
 - ``search_candidate``: one candidate of the aberration search, timed as a
   batch of eight agreement trials at depth spread 0 (the standard fit's
   objective, ``thick_fit_batch``) and divided by eight;
-- ``find_aberrations``: the historical key for ``aberrations()``, single shot. The rotation is
+- ``aberrations``: ``aberrations()``, single shot. The rotation is
   estimated, so it runs the tilt-corrected joint fit on both 180-degree
   branches and keeps one;
-- ``find_aberrations_standard``: one standard
+- ``aberrations_standard``: one standard
   (``search="primary", tilt=False``) 200-trial search and exact-derivative
   Newton at the kept rotation, single shot;
 - ``detector_update`` / ``detector_full``: Show4DSTEM's exact masked sum on
@@ -399,11 +399,11 @@ def measure(master, reps=20, load_reps=3, log=print):
         started = time.perf_counter()
         fit = ssb.aberrations(search="standard", verbose=False)
         synchronize()
-        metrics["find_aberrations"] = summary([1e3 * (time.perf_counter() - started)])
+        metrics["aberrations"] = summary([1e3 * (time.perf_counter() - started)])
     memory["fit_peak"] = round(fit_memory.peak - encoded, 2)
     memory["fit_steady"] = round(driver_gib() - encoded, 2)
     report["values"]["fit"] = fit_values(fit)
-    log(f"find_aberrations {metrics['find_aberrations']} -> {report['values']['fit']}")
+    log(f"aberrations {metrics['aberrations']} -> {report['values']['fit']}")
     log(f"memory above the encoded data, GiB: {memory}")
     rotation = float(fit.scan_detector_rotation_deg)
     ssb.close()
@@ -415,9 +415,9 @@ def measure(master, reps=20, load_reps=3, log=print):
     started = time.perf_counter()
     fit = ssb.aberrations(search="primary", tilt=False, verbose=False)
     synchronize()
-    metrics["find_aberrations_standard"] = summary([1e3 * (time.perf_counter() - started)])
+    metrics["aberrations_standard"] = summary([1e3 * (time.perf_counter() - started)])
     report["values"]["fit_standard"] = fit_values(fit)
-    log(f"find_aberrations_standard {metrics['find_aberrations_standard']} -> {report['values']['fit_standard']}")
+    log(f"aberrations_standard {metrics['aberrations_standard']} -> {report['values']['fit_standard']}")
     ssb.close()
 
     # Show4DSTEM on the gold scan as loaded: the uint16 count resident and its incremental exact sum.
@@ -556,7 +556,7 @@ def compare(arguments):
     old_values, new_values = baseline.get("values", {}), report.get("values", {})
     if old_values.get("fit") != new_values.get("fit"):
         print(f"note: the fit changed ({old_values.get('fit')} -> {new_values.get('fit')}); "
-              "find_aberrations may not be timing the same trajectory.")
+              "aberrations may not be timing the same trajectory.")
     if not new_values.get("detector_update_equals_full_sum", True):
         print("FAIL: the incremental detector sum no longer equals the full sum.")
         failed.append("detector_update_equals_full_sum")

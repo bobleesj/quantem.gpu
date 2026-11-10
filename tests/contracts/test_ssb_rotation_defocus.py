@@ -123,13 +123,13 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
 
     parent = SimpleNamespace(input_scan_shape=(128, 128), scan_detector_rotation_deg=340.0,
                              select_region=select_region, known_aberrations={"C10_nm": 4.0})
-    comparison = compare_rotation_defocus(parent, num_trials=200, refinement="newton", verbose=False)
+    comparison = compare_rotation_defocus(parent, trials=200, refinement="newton", verbose=False)
     assert len(selections) == len(closed) == 1
     assert selections[0][0] == (0, 128, 0, 128)
     assert [row[0] for row in calls] == [160.0, 160.0, 340.0, 340.0]
     assert all(row[1] == initial and row[2:4] == (None, None) for row in calls)
     assert [row[4]["search_ranges"]["C10_nm"] for row in calls] == [(-30, 0), (0, 30)] * 2
-    assert all(row[4]["num_trials"] == 200 and row[4]["refinement"] == "newton" for row in calls)
+    assert all(row[4]["trials"] == 200 and row[4]["refinement"] == "newton" for row in calls)
     assert [result.case for result in comparison.fits] == [1, 2, 3, 4]
     assert comparison.status.startswith("Unresolved")
     assert parent.scan_detector_rotation_deg == 340.0 and parent.known_aberrations == {"C10_nm": 4.0}

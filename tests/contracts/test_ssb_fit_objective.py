@@ -1,11 +1,9 @@
 """The SSB fit of ``aberrations()`` maximizes the model agreement: routed, checked, saved, reported.
 
-``aberrations()`` fits the sample tilt and depth spread with the aberrations, ``tilt=False`` holds them at 0.
-``objective`` is retired: ``"agreement"`` prints one line, ``"phase_variance"`` raises. The backend double records what
-reaches it; no GPU is used.
+``aberrations()`` fits the sample tilt and depth spread with the aberrations, ``tilt=False`` holds them at 0. The
+backend double records what reaches it; no GPU is used.
 """
 
-import pytest
 
 from tests.contracts.test_ssb_persistence import _Backend, _session
 
@@ -54,36 +52,6 @@ def test_standard_fit_is_the_tilt_corrected_agreement(tmp_path, monkeypatch):
     # a reconstruction of exactly that fit says which objective found its aberrations; changed ones do not
     assert session.run().objective == "agreement"
     assert session.run(aberrations={"C10_nm": 1.0}).objective is None
-
-
-def test_the_objective_keyword_is_retired(tmp_path, monkeypatch, capsys):
-    """objective='agreement' prints one line and fits; 'phase_variance' raises before any fit (a silent agreement fit
-    would land elsewhere), as does any other value."""
-    backend = _Recording()
-    session = _session(monkeypatch, _source(tmp_path), backend)
-    for call in (lambda: session.aberrations(search="primary", objective="phase_variance", verbose=False),
-                 lambda: session.aberrations(search="primary", tilt=False, objective="phase_variance",
-                                                  verbose=False),
-                 lambda: session.scan_rotations(report=False, objective="phase_variance", verbose=False)):
-        with pytest.raises(ValueError, match="objective='phase_variance' is retired"):
-            call()
-    with pytest.raises(ValueError, match="objective is retired"):
-        session.aberrations(search="primary", tilt=False, objective="variance", verbose=False)
-    assert not backend.fits
-    fit = session.aberrations(search="primary", tilt=False, objective="agreement", verbose=False)
-    assert fit.objective == "agreement" and len(backend.fits) == 1
-    assert capsys.readouterr().out.splitlines() == ["objective is retired; every fit maximizes the model agreement."]
-
-
-def test_an_explicit_agreement_objective_reuses_the_saved_fit(tmp_path, monkeypatch):
-    backend = _Recording()
-    source, saved = _source(tmp_path), tmp_path / "result"
-    settings = dict(tilt=False, save_dir=saved, verbose=False)
-    first = _session(monkeypatch, source, backend).aberrations(search="primary", **settings)
-    again = _session(monkeypatch, source, backend).aberrations(search="primary", objective="agreement", **settings)
-    assert first.metadata["signature"]["settings"]["objective"] == "agreement"
-    assert again.reused and again.objective == "agreement"
-    assert len(backend.fits) == 1
 
 
 def test_implicit_reconstruction_uses_default_fifth_order_fit(tmp_path, monkeypatch):

@@ -85,7 +85,7 @@ def test_mps_preview_honors_compute_loss(monkeypatch) -> None:
 
     def upsampled(candidate, **kwargs):
         assert candidate is prepared and "phase_estimator" not in kwargs
-        calls.append(("phase", kwargs["upsample_factor"]))
+        calls.append(("phase", kwargs["upsample"]))
         return np.ones((4, 4), dtype=np.float32)
 
     def variance(c10, c12, phi12):
@@ -101,8 +101,8 @@ def test_mps_preview_honors_compute_loss(monkeypatch) -> None:
     backend.reconstruct_with_loss = variance
 
     aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
-    phase, without_loss = backend.preview_upsampled(aberrations, upsample_factor=2, compute_loss=False)
-    _, with_loss = backend.preview_upsampled(aberrations, upsample_factor=2, compute_loss=True)
+    phase, without_loss = backend.preview_upsampled(aberrations, upsample=2, compute_loss=False)
+    _, with_loss = backend.preview_upsampled(aberrations, upsample=2, compute_loss=True)
     assert phase.shape == (4, 4)
     assert without_loss is None
     assert with_loss == 0.25
@@ -307,7 +307,7 @@ def test_float32_precision_contract_is_strict_and_backend_neutral() -> None:
 
 
 def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> None:
-    """``SSB`` reaches its CUDA or MPS backend only through ``DirectPtychoProtocol`` members."""
+    """``DirectPtycho`` reaches its CUDA or MPS backend only through ``DirectPtychoProtocol`` members."""
     import ast
 
     from quantem.gpu.direct_ptycho import workflow

@@ -76,7 +76,7 @@ def test_calibration_survives_result_roundtrip_without_session(tmp_path, monkeyp
     wave = fit.object_wave.copy()
     path = fit.save_calibration(tmp_path / "review" / "calibration.json")
     record = json.loads(path.read_text())
-    assert record["schema"] == "quantem.ssb-calibration/7"
+    assert record["schema"] == "quantem.ssb-calibration/8"
     assert record["aberrations"] == fit.aberrations
     assert record["sample_tilt_mrad"] == [1., -2.]
     assert record["scan_sampling_A"] == [.5, .5]

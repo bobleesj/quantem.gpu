@@ -17,7 +17,7 @@ def test_primary_preserves_budget_seed_and_options():
     session = SimpleNamespace(_find_aberrations=Mock(return_value="fit"))
     assert call(session, search="primary") == "fit"
     options = session._find_aberrations.call_args.kwargs
-    assert options["num_trials"] == 200
+    assert options["trials"] == 200
     assert options["seed"] == 42
     assert options["tilt"] is True
 
@@ -58,18 +58,9 @@ def test_mps_uses_same_default_model(monkeypatch):
 
 
 @pytest.mark.parametrize("refinement", ["newton", "nelder-mead", "bfgs"])
-def test_a_retired_refinement_prints_one_line_and_runs_auto(monkeypatch, capsys, refinement):
-    from quantem.gpu.direct_ptycho import fifth_order_fit
-    run = Mock(return_value="fit")
-    monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", run)
-    assert call(object(), search="broad", refinement=refinement) == "fit"
-    assert "refinement" not in run.call_args.kwargs
-    printed = capsys.readouterr().out.splitlines()
-    assert printed == [f"refinement={refinement!r} is retired; using refinement='auto', the exact-derivative fit."]
-    session = SimpleNamespace(_find_aberrations=Mock(return_value="primary fit"))
-    assert call(session, search="primary", refinement=refinement) == "primary fit"
-    assert session._find_aberrations.call_args.kwargs["refinement"] == "auto"
-    assert len(capsys.readouterr().out.splitlines()) == 1
+def test_refinement_is_auto_or_none(refinement):
+    with pytest.raises(ValueError, match="refinement must be 'auto' or None"):
+        call(object(), search="broad", refinement=refinement)
 
 
 def test_no_refinement_is_for_the_primary_search_only(capsys):
@@ -141,7 +132,7 @@ def test_broad_records_the_exact_gradient_budget(monkeypatch, tmp_path):
     assert result.optimizer["refinement_cap"] == 400 and "newton_cap" not in result.optimizer
     assert result.optimizer["stop"] == "test stop" and result.refinement == "bfgs"
     assert result.optimizer["trials"] == 400
-    assert session._find_aberrations.call_args.kwargs["num_trials"] == 200
+    assert session._find_aberrations.call_args.kwargs["trials"] == 200
 
 
 def test_trial_budget_comparison_keeps_start_and_saved_results_independent(tmp_path):
@@ -158,7 +149,7 @@ def test_trial_budget_comparison_keeps_start_and_saved_results_independent(tmp_p
             assert child.known_aberrations == {"C10_nm": 0.}
             child.known_aberrations["C10_nm"] = 99.
             options.append(kwargs)
-            return SimpleNamespace(aberrations=dict(child.known_aberrations), num_trials=kwargs["trials"])
+            return SimpleNamespace(aberrations=dict(child.known_aberrations), trials=kwargs["trials"])
         child.aberrations = run
         try:
             yield child
@@ -193,7 +184,7 @@ def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch):
         session, search="standard", trials=200, seed=42, save_dir=None, force=False, verbose=False,
         higher_order_limit=2, primary_options={"check_rotation": False, "refine_rotation": False})
     assert session._find_aberrations.call_args.args == ("off",)
-    assert session._find_aberrations.call_args.kwargs["num_trials"] == 200
+    assert session._find_aberrations.call_args.kwargs["trials"] == 200
     assert "refinement" not in session._find_aberrations.call_args.kwargs
     assert fit.optimizer["primary_trials"] == 200
     assert fit.optimizer["exploration_trials"] == 0
@@ -203,22 +194,3 @@ def test_standard_uses_initial_fit_without_extra_tpe(monkeypatch):
     assert fit.sample_tilt_mrad == (1., -2.) and fit.depth_spread_nm == 10.
     assert fit.refinement == "bfgs"
     assert fit.phase_clim is None
-
-
-def test_higher_order_subsets_are_retired(monkeypatch, capsys):
-    """A plain primary call asking for higher orders runs the fifth-order fit; with a primary-only control the
-    primary fit holds them at 0. Either way one line says so."""
-    from quantem.gpu.direct_ptycho import fifth_order_fit
-    run = Mock(return_value="fifth-order fit")
-    monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", run)
-    assert call(object(), search="primary", higher_order=("C21", "C30")) == "fifth-order fit"
-    assert run.call_args.kwargs["search"] == "standard"
-    assert capsys.readouterr().out.splitlines() == [
-        "higher_order is retired; running search='standard', the fifth-order fit that fits coma, trefoil, C30 and "
-        "every term through fifth order."]
-    session = SimpleNamespace(_find_aberrations=Mock(return_value="primary fit"))
-    assert call(session, search="primary", tilt=False, higher_order=("C21", "C30")) == "primary fit"
-    assert "higher_order" not in session._find_aberrations.call_args.kwargs
-    assert capsys.readouterr().out.splitlines() == [
-        "higher_order is retired; the default fit (search='standard') fits every term through fifth order, and this "
-        "primary fit holds them at 0."]

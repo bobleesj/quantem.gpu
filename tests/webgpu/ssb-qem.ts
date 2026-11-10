@@ -17,7 +17,7 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
   });
   const modes: WebGPUReconstructionOptions[] = [
     { computeLoss: true, phaseEstimator: "mean_phase" },
-    { computeLoss: true, phaseEstimator: "phase_of_mean", upsampling: 2,
+    { computeLoss: true, phaseEstimator: "phase_of_mean", upsample: 2,
       sample: { sampleTiltMrad: [2.2, -3.1], depthSpreadA: 140 } },
   ];
   const raw = new WebGPUSSBBackend(calibration, source(base + "ssb-columns.u16", "uint16"));

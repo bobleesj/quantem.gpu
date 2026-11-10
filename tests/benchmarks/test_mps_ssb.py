@@ -60,18 +60,18 @@ def test_compare_flags_only_slowdowns_beyond_tolerance_and_delta():
     def report(**p50):
         return {"metrics": {name: {"p50_ms": value} for name, value in p50.items()}}
 
-    baseline = report(preview_native=30.0, detector_update=1.0, io_load=5000.0, find_aberrations=25000.0)
-    current = report(preview_native=37.0, detector_update=1.4, io_load=6500.0, find_aberrations=19000.0)
+    baseline = report(preview_native=30.0, detector_update=1.0, io_load=5000.0, aberrations=25000.0)
+    current = report(preview_native=37.0, detector_update=1.4, io_load=6500.0, aberrations=19000.0)
 
-    rows, failed = harness.regressions(current, baseline, {"find_aberrations": 0.1})
+    rows, failed = harness.regressions(current, baseline, {"aberrations": 0.1})
 
     verdicts = {name: verdict for name, _old, _new, _change, _tolerance, verdict in rows}
     # 23 % slower than 30 ms fails; 40 % of 1 ms is under the 0.5 ms floor; io_load allows 35 %
     assert failed == ["preview_native"]
     assert verdicts["detector_update"] == verdicts["io_load"] == "ok"
-    assert verdicts["find_aberrations"].startswith("faster")
+    assert verdicts["aberrations"].startswith("faster")
     assert harness.regressions(report(preview_native=30.0), baseline)[1] == [
-        "detector_update", "io_load", "find_aberrations"]
+        "detector_update", "io_load", "aberrations"]
 
 
 def test_compare_flags_only_memory_growth_beyond_tolerance_and_delta():

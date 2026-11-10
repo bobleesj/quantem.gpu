@@ -47,7 +47,7 @@ def test_ssb_series_uses_inclusive_human_frame_bounds() -> None:
     """Series selection should not expose Python's half-open range contract."""
     from quantem.gpu import DirectPtycho
 
-    parameters = inspect.signature(DirectPtycho.reconstruct_series).parameters
+    parameters = inspect.signature(DirectPtycho.run_series).parameters
 
     assert "first_frame" in parameters
     assert "last_frame" in parameters
@@ -82,7 +82,7 @@ def test_ssb_auto_backend_never_falls_back_to_cpu(monkeypatch) -> None:
         workflow.resolve("auto")
 
 
-def test_reconstruct_series_reuses_only_exact_results(
+def test_run_series_reuses_only_exact_results(
     tmp_path,
     capsys,
     monkeypatch,
@@ -117,7 +117,7 @@ def test_reconstruct_series_reuses_only_exact_results(
         }
         # a record as quantem.live screens it: the series stores a fit only in a record of this schema
         (dataset / "config.json").write_text(
-            json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"phase_of_mean": settings}})
+            json.dumps({"schema": "quantem.screen-acquisition/3", "computed": {"phase_of_mean": settings}})
         )
         np.save(dataset / "bf.npy", np.full((8, 9), 20 + index))
         np.save(dataset / "df.npy", np.full((8, 9), 30 + index))
@@ -148,7 +148,7 @@ def test_reconstruct_series_reuses_only_exact_results(
 
         def aberrations(self, **kwargs):
             assert kwargs["save_dir"].name == "ssb-fit"
-            assert kwargs["num_trials"] == 200
+            assert kwargs["trials"] == 200
             return self._result(0.1 * self.index)
 
         def run(self, **kwargs):
@@ -162,19 +162,19 @@ def test_reconstruct_series_reuses_only_exact_results(
         classmethod(lambda cls, source, **kwargs: FakeSession(source)),
     )
 
-    independent = DirectPtycho.reconstruct_series(
+    independent = DirectPtycho.run_series(
         raw,
         first_frame=151,
         last_frame=153,
         trials=200,
         progress=False,
     )
-    fixed_probe_result = DirectPtycho.reconstruct_series(
+    fixed_probe_result = DirectPtycho.run_series(
         raw,
         first_frame=151,
         last_frame=153,
         probe_reference_frame=151,
-        num_trials=200,
+        trials=200,
     )
     assert "Checking exact saved SSB results" in capsys.readouterr().out
 
@@ -244,7 +244,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
         (raw / f"scan_{frame}_master.h5").write_bytes(b"raw")
     saved = out / "scan_1"
     saved.mkdir(parents=True)
-    (saved / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"phase_of_mean": {
+    (saved / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3", "computed": {"phase_of_mean": {
         "schema": FIT_SCHEMA, "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
         "scan_detector_rotation_deg": 159.0, "scan_detector_rotation_flipped": True, "bright_field_radius_px": 53.4}}}))
     opened = []
@@ -280,7 +280,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
                                                        "com_row", "com_col", "dpc_phase")})())
     (raw / "dataset.yaml").write_text("schema: quantem.dataset/2\nmicroscope: {voltage_kV: 300, semiangle_mrad: 30}\n"
                                       "calibrations: {default: {scan_sampling_A: [0.264, 0.264]}}\n")
-    result = DirectPtycho.reconstruct_series(raw, first_frame=1, last_frame=2, save_dir=out, progress=False)
+    result = DirectPtycho.run_series(raw, first_frame=1, last_frame=2, save_dir=out, progress=False)
 
     assert result.results_directory == out.resolve() and not (raw / "live").exists()
     first, second = (kwargs for _, kwargs in opened)
@@ -290,7 +290,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
     assert (out / "scan_2" / "config.json").is_file()
 
 
-def test_reconstruct_series_rejects_reversed_frame_bounds(tmp_path) -> None:
+def test_run_series_rejects_reversed_frame_bounds(tmp_path) -> None:
     """Inclusive frame bounds should fail clearly when reversed."""
     import pytest
 
@@ -302,7 +302,7 @@ def test_reconstruct_series_rejects_reversed_frame_bounds(tmp_path) -> None:
     screen.mkdir(parents=True)
 
     with pytest.raises(ValueError, match="first_frame must be at most last_frame"):
-        DirectPtycho.reconstruct_series(
+        DirectPtycho.run_series(
             raw,
             first_frame=3,
             last_frame=1,
@@ -349,7 +349,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
         (dataset / "config.json").write_text(
             json.dumps(
                 {
-                    "schema": "quantem.screen-acquisition/2",
+                    "schema": "quantem.screen-acquisition/3",
                     "computed": {
                         "phase_of_mean": {
                             "schema": FIT_SCHEMA,
@@ -403,7 +403,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
         classmethod(lambda cls, source, **kwargs: FakeSession(source)),
     )
 
-    result = DirectPtycho.reconstruct_series(
+    result = DirectPtycho.run_series(
         raw,
         first_frame=100,
         last_frame=900,
@@ -436,7 +436,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     earlier = {"C10": 5.0, "C12": -0.3, "phi12": 0.18}
     # every value differs from dataset.yaml, so anything read from this block would show below; the record itself
     # is current (quantem.live's rewrite stamps the record and leaves an earlier fit block as it is)
-    (reference / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"phase_of_mean": {
+    (reference / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3", "computed": {"phase_of_mean": {
         "aberrations": earlier, "aberration_unit": "nm", "rotation_angle_deg": 0.0, "com_reversed": True, "loss": 0.014,
         "voltage_kV": 80.0, "semiangle_mrad": 20.0, "scan_sampling_A": (0.2, 0.2), "bright_field_radius_px": 55.0}}}))
     for frame in (1, 2):
@@ -477,7 +477,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
 
     monkeypatch.setattr(DirectPtycho, "open", classmethod(open_session))
 
-    result = DirectPtycho.reconstruct_series(raw, first_frame=1, last_frame=2, probe_reference_frame=1, progress=False)
+    result = DirectPtycho.run_series(raw, first_frame=1, last_frame=2, probe_reference_frame=1, progress=False)
 
     assert fits == ["scan_1_master.h5"]
     assert reconstructions == [("scan_1_master.h5", fitted), ("scan_2_master.h5", fitted)]
@@ -508,7 +508,7 @@ def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
     before = (folder / "config.json").read_bytes()
     # the rotation is not missing: an acquisition without one has it estimated by DirectPtycho.open
     with pytest.raises(ValueError, match="missing voltage_kV, semiangle_mrad, scan_sampling_A\\. Run"):
-        DirectPtycho.reconstruct_series(raw, first_frame=1, last_frame=1, progress=False)
+        DirectPtycho.run_series(raw, first_frame=1, last_frame=1, progress=False)
     assert (folder / "config.json").read_bytes() == before
 
 
@@ -599,7 +599,7 @@ files:
     assert scaled[0] == scaled[1] == 0.373 * 5.1 / 3.6 and source == "scaled from dataset.yaml mag_5p1 to 3.6 MX"
 
 
-def test_reconstruct_series_initializes_missing_live_results(
+def test_run_series_initializes_missing_live_results(
     tmp_path,
     monkeypatch,
     capsys,
@@ -667,7 +667,7 @@ files:
         ),
     )
 
-    result = DirectPtycho.reconstruct_series(
+    result = DirectPtycho.run_series(
         raw,
         first_frame=1,
         last_frame=1,
@@ -747,7 +747,7 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
            "detector_sampling_mrad": [0.552, 0.552], "aberrations": {"C10_nm": 15.77, "C12_nm": 6.7, "phi12_deg": 17.5},
            "scan_detector_rotation_deg": 339.78, "scan_detector_rotation_flipped": True,
            "bright_field_center_px": [95.5, 96.25], "bright_field_radius_px": 53.4}
-    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "source_master": str(source),
+    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3", "source_master": str(source),
                                                      "computed": {"phase_of_mean": fit}}))
     opened = []
     monkeypatch.setattr(DirectPtycho, "open", classmethod(lambda cls, path, **kwargs: opened.append((path, kwargs)) or "session"))
@@ -760,7 +760,7 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
     assert (kwargs["detector_sampling_mrad"], kwargs["bright_field_center_px"], kwargs["bright_field_radius_px"]) == (
         (0.552, 0.552), (95.5, 96.25), 53.4)
     assert kwargs["aberrations"]["C10_nm"] == 15.77
-    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"phase_of_mean": {}}}))
+    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3", "computed": {"phase_of_mean": {}}}))
     with pytest.raises(ValueError, match="holds no SSB fit"):
         open_screen_record(record)
 
@@ -768,7 +768,7 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
 def test_open_screen_record_opens_at_the_tilt_corrected_fit(tmp_path, monkeypatch) -> None:
     """The record's result is its tilt-corrected fit: the session opens at its optics with its tilt and depth spread.
 
-    A --ssb-mode both record keeps the ordinary fit in computed.ssb and the tilt-corrected one in computed.ssb_tilt;
+    A --ssb-mode both record keeps the ordinary fit in computed.phase_of_mean and the tilt-corrected one in computed.ssb_tilt;
     the session opened at the ordinary fit, and a default-mode record's joint fit reopened at tilt 0.
     """
     from types import SimpleNamespace
@@ -797,11 +797,11 @@ def test_open_screen_record_opens_at_the_tilt_corrected_fit(tmp_path, monkeypatc
             ({"phase_of_mean": {**plain, "sample_tilt_mrad": [1.0, 2.0], "depth_spread_nm": 5.0}}, plain["aberrations"],
              ((1.0, 2.0), 5.0)),
             ({"phase_of_mean": plain, "ssb_tilt": {**joint, "state": "failed"}}, plain["aberrations"], (None, None))):
-        (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2",
+        (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3",
                                                          "source_master": str(source), "computed": computed}))
         session = open_screen_record(record)
         assert session.kwargs["aberrations"] == optics == screen_record_settings(record)["aberrations"]
-        assert session.kwargs["detector_sampling_mrad"] == (0.552, 0.552)  # the session's calibration, computed.ssb's
+        assert session.kwargs["detector_sampling_mrad"] == (0.552, 0.552)  # the session's calibration, computed.phase_of_mean's
         assert (session.sample_tilt_mrad, session.depth_spread_nm) == sample
         assert screen_record_sample(record) == (None if sample[0] is None else
                                                 {"sample_tilt_mrad": sample[0], "depth_spread_nm": sample[1]})

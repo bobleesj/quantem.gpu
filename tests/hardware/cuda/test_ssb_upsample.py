@@ -71,7 +71,7 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
         )
         expected, _ = engine.thick.run(
             -80.0, 40.0, -0.7, tilt, depth * 10, compute_loss=False,
-            upsample_factor=factor,
+            upsample=factor,
         )
         np.testing.assert_array_equal(actual, cp.asnumpy(expected))
         assert loss == native_loss
@@ -99,7 +99,7 @@ def test_wave_sum_matches_independent_torch_alias_construction(factor, depth):
         expected = _wave_sum_oracle(ssb, factor, (-80.0, 40.0, -0.7), (-9.0, 5.0), depth)
         size = 128 * factor
         actual, _ = engine.thick.run(-80, 40, -0.7, (-9, 5), depth,
-                    compute_loss=False, upsample_factor=factor, chunk_bytes=2 * size**2 * 16)
+                    compute_loss=False, upsample=factor, chunk_bytes=2 * size**2 * 16)
         np.testing.assert_allclose(cp.asnumpy(actual), expected, atol=2e-5)
     finally:
         ssb.close()

@@ -103,12 +103,12 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     backend = _Backend()
 
     first = _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
-        num_trials=200,
+        trials=200,
         save_dir=saved,
         verbose=False,
     )
     second = _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
-        num_trials=200,
+        trials=200,
         save_dir=saved,
         verbose=False,
     )
@@ -126,13 +126,13 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     assert second["C10_nm"] == first["C10_nm"] == -10.1
     assert second.timings == first.timings
     assert second.trial_records == first.trial_records
-    assert second.saved_path == saved / "ssb-find_aberrations.npz"
+    assert second.saved_path == saved / "ssb-aberrations.npz"
     assert second.metadata["signature"]["settings"]["num_trials"] == 200
     assert second.metadata["signature"]["software"]["ssb_source_sha256"]
     assert second.metadata["input"]["source"] == {"file_name": "scan.bin", "relative_path": None}
     assert second.metadata["result"]["loss"] == 0.125
 
-    readable = json.loads((saved / "ssb-find_aberrations.json").read_text(encoding="utf-8"))
+    readable = json.loads((saved / "ssb-aberrations.json").read_text(encoding="utf-8"))
     assert readable["signature"]["instrument"]["voltage_kV"] == 300.0
     assert readable["signature"]["data"]["dtype"] == "uint16"
     assert readable["result"]["bright_field_center_px"] == [31.5, 32.5]
@@ -143,7 +143,7 @@ def test_saved_fit_without_diagnostic_does_not_satisfy_a_loss_request(tmp_path, 
     source = tmp_path / "scan.bin"
     source.write_bytes(b"detector counts")
     backend = _Backend()
-    options = dict(tilt=False, num_trials=200, save_dir=tmp_path / "result",
+    options = dict(tilt=False, trials=200, save_dir=tmp_path / "result",
                    verbose=False)
     first = _session(monkeypatch, source, backend).aberrations(search="primary",
         **options, compute_loss=False,
@@ -168,14 +168,14 @@ def test_changed_fit_settings_or_source_recompute(tmp_path, monkeypatch) -> None
     backend = _Backend()
 
     _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
-        num_trials=200, save_dir=saved, verbose=False
+        trials=200, save_dir=saved, verbose=False
     )
     _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
-        num_trials=201, save_dir=saved, verbose=False
+        trials=201, save_dir=saved, verbose=False
     )
     source.write_bytes(b"different detector counts")
     _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
-        num_trials=201, save_dir=saved, verbose=False
+        trials=201, save_dir=saved, verbose=False
     )
 
     assert backend.fit_calls == 3
@@ -304,7 +304,7 @@ def test_changed_refinement_start_invalidates_saved_search(tmp_path, monkeypatch
     source.write_bytes(b"detector counts")
     backend = _Backend()
     session = _session(monkeypatch, source, backend)
-    settings = dict(tilt=False, num_trials=0, refinement=None, check_rotation=False,
+    settings = dict(tilt=False, trials=0, refinement=None, check_rotation=False,
                     save_dir=tmp_path / "search", verbose=False)
     first = session.aberrations(search="primary", **settings)
     session.run(aberrations={"C10_nm": 12.0})
@@ -352,7 +352,7 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
     config.write_text(json.dumps({"computed": {"phase_of_mean": {**block, "schema": FIT_SCHEMA}}}))
     assert saved_fit(tmp_path) == {**block, "schema": FIT_SCHEMA}
     config.unlink()
-    record = tmp_path / "ssb-fit" / "ssb-find_aberrations.json"
+    record = tmp_path / "ssb-fit" / "ssb-aberrations.json"
     record.parent.mkdir()
     # the saved result carries a schema string too; the earlier bare number, old or current, is no longer a match
     for marker in (SCHEMA - 1, SCHEMA, f"quantem.ssb-result/{RESULT_VERSION - 1}"):
@@ -405,7 +405,7 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
 def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_block_needs(tmp_path, monkeypatch):
     """DirectPtycho.open on exact bright-field columns holds the detector sampling its backend uses, and the fit block exports.
 
-    The session kept None there and the backend derived the sampling on its own, so reconstruct_series stored a fit
+    The session kept None there and the backend derived the sampling on its own, so run_series stored a fit
     with no detector sampling and export_result failed on it with a TypeError. The Apple backend needs MLX, so a
     double takes its place: this checks what the session holds and hands over, not a reconstruction on Apple hardware.
     """
@@ -459,9 +459,9 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
 def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     """The fit block goes into quantem.live's screening record: created with its schema, or left as found.
 
-    A record this function created held only ``computed.ssb``. quantem.live reads a screening record only with
-    ``"schema": "quantem.screen-acquisition/2"`` at its top level, so it left such an acquisition out of its Screen
-    list. A record of another schema, or none, is not written into: its other values are in an earlier layout.
+    A record this function created held only ``computed.phase_of_mean``. quantem.live reads a screening record only
+    with ``"schema": "quantem.screen-acquisition/3"`` at its top level, so it left such an acquisition out of its
+    Screen list. A record of another schema, or none, is not written into: its other values are in an earlier layout.
     """
     import pytest
 
@@ -469,7 +469,7 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
     from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
-    assert SCREEN_ACQUISITION_SCHEMA == "quantem.screen-acquisition/2"
+    assert SCREEN_ACQUISITION_SCHEMA == "quantem.screen-acquisition/3"
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": -0.5}
     result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_center_px=(31.5, 32.5))
@@ -495,12 +495,12 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     assert (current / "config.json").read_text(encoding="utf-8") == json.dumps(expected, indent=2)
     # existing with another schema, or none: refused before anything is written
     for number, earlier in enumerate(({"computed": {"bf_radius": 55.0}}, {"schema_version": 1, "computed": {}},
-                                      {"schema": "quantem.screen-acquisition/1", "computed": {}})):
+                                      {"schema": "quantem.screen-acquisition/2", "computed": {"ssb": {}}})):
         folder = tmp_path / f"earlier-{number}"
         folder.mkdir()
         (folder / "config.json").write_text(json.dumps(earlier), encoding="utf-8")
         before = (folder / "config.json").read_bytes()
-        with pytest.raises(ValueError, match="quantem.screen-acquisition/2") as refused:
+        with pytest.raises(ValueError, match="quantem.screen-acquisition/3") as refused:
             write_fit_metadata(folder, settings, result, (0.6, 0.6))
         assert str(folder / "config.json") in str(refused.value) and repr(earlier.get("schema")) in str(refused.value)
         assert (folder / "config.json").read_bytes() == before and sorted(path.name for path in folder.iterdir()) == ["config.json"]
@@ -519,7 +519,7 @@ def _saved_joint_fit(tmp_path, monkeypatch):
         source_path=str(source), scan_detector_rotation_deg=12.0,
     )
     paths = (tmp_path / "fit.npz", tmp_path / "fit.json")
-    session._save_result(result, paths=paths, signature=session._result_signature("find_aberrations", {}))
+    session._save_result(result, paths=paths, signature=session._result_signature("aberrations", {}))
     return session, result, paths
 
 
@@ -549,7 +549,7 @@ def test_parameter_slices_reject_mismatched_saved_fit_without_writes(tmp_path, m
 def test_parameter_slices_require_live_ownership_for_saved_array_fit(tmp_path, monkeypatch):
     session, result, paths = _saved_joint_fit(tmp_path, monkeypatch)
     session.source_kind = "array"
-    session._save_result(result, paths=paths, signature=session._result_signature("find_aberrations", {}))
+    session._save_result(result, paths=paths, signature=session._result_signature("aberrations", {}))
     before = [path.read_bytes() for path in paths]
     with pytest.raises(ValueError, match="Array fits"):
         session.measure_parameters(result)
@@ -599,8 +599,8 @@ def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path
 
 
 @pytest.mark.parametrize("tilt", [True, False])
-def test_a_retired_refinement_reuses_the_automatic_result(tmp_path, monkeypatch, capsys, tilt):
-    """Every fit uses the automatic refinement: an explicit other value is announced and shares its cache."""
+def test_the_automatic_refinement_is_reused_and_none_is_its_own_result(tmp_path, monkeypatch, tilt):
+    """Every fit uses the automatic refinement; refinement="auto" shares its cache and None is a separate result."""
     source = tmp_path / "scan.bin"
     source.write_bytes(b"detector counts")
     saved = tmp_path / "result"
@@ -618,14 +618,10 @@ def test_a_retired_refinement_reuses_the_automatic_result(tmp_path, monkeypatch,
     first = _session(monkeypatch, source, backend).aberrations(search="primary", **settings)
     assert first.refinement == "newton"
     assert first.num_trials == 200
-    capsys.readouterr()
-    for method in ("newton", "nelder-mead", "bfgs"):
-        explicit = _session(monkeypatch, source, backend).aberrations(
-            search="primary", refinement=method, **settings)
-        assert explicit.reused and explicit.refinement == "newton"
-        assert explicit.metadata["signature"]["settings"]["refinement"] == "newton"
-        np.testing.assert_array_equal(explicit.object_wave, first.object_wave)
-        assert f"refinement={method!r} is retired" in capsys.readouterr().out
+    explicit = _session(monkeypatch, source, backend).aberrations(search="primary", refinement="auto", **settings)
+    assert explicit.reused and explicit.refinement == "newton"
+    assert explicit.metadata["signature"]["settings"]["refinement"] == "newton"
+    np.testing.assert_array_equal(explicit.object_wave, first.object_wave)
     if tilt:
         assert len(joint_calls) == 1
         assert joint_calls[0]["polish"] == "newton" and joint_calls[0]["polish_starts"] == 3
@@ -672,28 +668,28 @@ def test_save_dir_is_a_results_directory_and_refuses_a_file_name(tmp_path):
     """save_dir names a folder; a path ending in .npz or .json is a file, not a folder of that name."""
     from quantem.gpu.direct_ptycho.persistence import result_paths
 
-    assert result_paths(tmp_path / "results", "reconstruct") == (
-        (tmp_path / "results" / "ssb-reconstruct.npz").resolve(),
-        (tmp_path / "results" / "ssb-reconstruct.json").resolve(),
+    assert result_paths(tmp_path / "results", "run") == (
+        (tmp_path / "results" / "ssb-run.npz").resolve(),
+        (tmp_path / "results" / "ssb-run.json").resolve(),
     )
-    assert result_paths(tmp_path / "scan.v2", "find_aberrations")[0].name == "ssb-find_aberrations.npz"
+    assert result_paths(tmp_path / "scan.v2", "aberrations")[0].name == "ssb-aberrations.npz"
     for name in ("fit.npz", "fit.JSON"):
         with pytest.raises(ValueError, match="save_dir names a results directory.*save_dir='fit'"):
-            result_paths(tmp_path / name, "find_aberrations")
+            result_paths(tmp_path / name, "aberrations")
 
 
 def test_a_result_record_of_an_earlier_schema_is_refused_with_one_line(tmp_path, capsys):
-    """quantem.ssb-result/11 held the raw agreement as sample_agreement; /12 reads only its own layout and says so."""
+    """quantem.ssb-result/12 held the -ing names (upsampling, phase_damping); /13 reads only its own layout and says so."""
     from quantem.gpu.direct_ptycho.persistence import RESULT_SCHEMA, load_result, result_paths
 
-    assert RESULT_SCHEMA == "quantem.ssb-result/12"
-    paths = result_paths(tmp_path / "fit", "find_aberrations")
+    assert RESULT_SCHEMA == "quantem.ssb-result/13"
+    paths = result_paths(tmp_path / "fit", "aberrations")
     paths[0].parent.mkdir()
     np.savez(paths[0], object_wave=np.ones((2, 2), np.complex64))
-    paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/11", "signature": {}, "result": {"sample_agreement": 4e17}}))
+    paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/12", "signature": {}, "result": {"upsampling": 2}}))
     assert load_result(paths=paths, signature={}, backend="mps") is None
     out = capsys.readouterr().out
-    assert "'quantem.ssb-result/11' record" in out and "'quantem.ssb-result/12' only" in out
+    assert "'quantem.ssb-result/12' record" in out and "'quantem.ssb-result/13' only" in out
 
 
 def _absolute_paths(value, found=None):
@@ -725,7 +721,7 @@ def test_saved_result_is_reused_after_its_folder_moves_and_holds_no_absolute_pat
     source.write_bytes(b"detector counts")
     backend = _Backend()
     first = _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False, save_dir=folder, verbose=False)
-    record = json.loads((folder / "ssb-find_aberrations.json").read_text(encoding="utf-8"))
+    record = json.loads((folder / "ssb-aberrations.json").read_text(encoding="utf-8"))
     assert record["input"]["source"] == {"file_name": "scan.bin", "relative_path": "data/scan.bin"}
     assert _absolute_paths(record) == []
     identity = record["signature"]["source"]["detector"]

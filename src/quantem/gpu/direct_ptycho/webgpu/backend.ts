@@ -2009,8 +2009,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
 
   async reconstruct(c10A: number, c12A: number, phi12Rad: number,
     options: WebGPUReconstructionOptions = {}): Promise<WebGPUSSBResult> {
-    const factor = options.upsampling ?? 1;
-    if (![1, 2, 4, 8].includes(factor)) throw new Error("WebGPU SSB upsampling must be 1, 2, 4, or 8.");
+    const factor = options.upsample ?? 1;
+    if (![1, 2, 4, 8].includes(factor)) throw new Error("WebGPU SSB upsample must be 1, 2, 4, or 8.");
     if (factor > 1 && options.phaseEstimator === "mean_phase") {
       throw new Error("Upsampling uses phase_of_mean; keep the diagnostic loss on the native grid.");
     }

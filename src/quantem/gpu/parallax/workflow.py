@@ -55,7 +55,7 @@ def run(
     undone, and the images are summed into one phase-contrast image. With
     ``aberrations=True`` the shift pattern also gives defocus, two-fold
     astigmatism and the scan-detector rotation, in the units and convention
-    ``SSB`` takes.
+    ``DirectPtycho`` takes.
 
     The acquisition stays encoded on the GPU: only the bright-field pixels
     are read, in bounded bands of scan rows, and every count is used exactly.
@@ -88,7 +88,7 @@ def run(
         Scan step in Angstrom per pixel, ``(row, col)``, or one number for both axes; converts the measured shifts
         to length.
     semiangle_mrad
-        Probe convergence semiangle in mrad. Calibrates the detector as ``SSB``
+        Probe convergence semiangle in mrad. Calibrates the detector as ``DirectPtycho``
         does: ``semiangle_mrad`` over the radius at which the bright-field disk
         of the mean pattern falls to half its plateau.
     detector_sampling_mrad

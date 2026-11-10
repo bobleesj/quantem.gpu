@@ -68,7 +68,7 @@ def test_a_saved_tilt_fit_of_resident_data_is_found_by_the_data(acquisition, tmp
     """A second session on the same resident acquisition reuses the saved fit; a region of it is other data."""
     from quantem.gpu import DirectPtycho
 
-    settings = dict(tilt=True, num_trials=8, compare_standard=False, check_rotation=False,
+    settings = dict(tilt=True, trials=8, compare_standard=False, check_rotation=False,
                     save_dir=tmp_path / "fit", verbose=False)
     with DirectPtycho(acquisition, **SETTINGS) as first:
         fitted = first.aberrations(search="primary", **settings)
@@ -83,13 +83,13 @@ def test_a_saved_tilt_fit_of_resident_data_is_found_by_the_data(acquisition, tmp
 
 
 def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu(acquisition):
-    """num_trials=0 starts from the session's fit and searches nothing; output='native' is the CuPy phase of the preview."""
+    """trials=0 starts from the session's fit and searches nothing; output='native' is the CuPy phase of the preview."""
     from quantem.gpu import DirectPtycho
 
     with DirectPtycho(acquisition, **SETTINGS) as ssb:
-        fitted = ssb.aberrations(search="primary", tilt=True, num_trials=8, compare_standard=False,
+        fitted = ssb.aberrations(search="primary", tilt=True, trials=8, compare_standard=False,
                                       check_rotation=False, verbose=False)
-        again = ssb.aberrations(search="primary", tilt=True, num_trials=0, compare_standard=False,
+        again = ssb.aberrations(search="primary", tilt=True, trials=0, compare_standard=False,
                                      check_rotation=False, verbose=False)
         assert again.num_trials == 0 and again.trial_records == []
         assert abs(again.aberrations["C10_nm"] - fitted.aberrations["C10_nm"]) < 0.5
@@ -131,7 +131,7 @@ def test_native_previews_are_their_own_arrays_and_a_region_refit_starts_from_ass
     with DirectPtycho(acquisition, **SETTINGS) as ssb:
         ssb.aberrations = {"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}
         ssb.sample_tilt_mrad, ssb.depth_spread_nm = (1.0, -2.0), 30.0
-        ssb.aberrations(search="primary", tilt=True, num_trials=0, compare_standard=False, check_rotation=False,
+        ssb.aberrations(search="primary", tilt=True, trials=0, compare_standard=False, check_rotation=False,
                              scan_region=(0, 128, 0, 128), verbose=False)
     assert starts == [{"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}]
 
@@ -171,7 +171,7 @@ def test_calibration_from_a_resident_acquisition_opens_no_file(tmp_path, monkeyp
     def counting(self, name, *args, **kwargs):
         opened_by_h5py.append(str(name))
         return original(self, name, *args, **kwargs)
-    fit = dict(tilt=True, num_trials=8, compare_standard=False, save_dir=tmp_path / "fit", verbose=False)
+    fit = dict(tilt=True, trials=8, compare_standard=False, save_dir=tmp_path / "fit", verbose=False)
     with load(str(source), verbose=False) as data:
         sys.addaudithook(_note_open)
         _WATCH["folder"] = str(source.resolve().parent)

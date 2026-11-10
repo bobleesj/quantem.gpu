@@ -42,7 +42,7 @@ export async function runSsbInteractionParity(base: string): Promise<Record<stri
   try {
     for (const factor of [1, 2, 4, 8] as const) for (const depth of [0, 180]) {
       const result = await flat.reconstruct(-80, 40, -0.7, { computeLoss: false,
-        upsampling: factor, sample: { sampleTiltMrad: [-9, 5], depthSpreadA: depth } });
+        upsample: factor, sample: { sampleTiltMrad: [-9, 5], depthSpreadA: depth } });
       for (const phase of result.phase) maximum = Math.max(maximum, Math.abs(phase));
       if (!(maximum < 1e-7)) throw new Error(`Constant scan acquired phase contrast: ${maximum}`);
     }

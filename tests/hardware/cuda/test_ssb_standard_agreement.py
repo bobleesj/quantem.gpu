@@ -83,12 +83,12 @@ def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
 
     frames, detector_sampling_mrad = _astigmatic_crystal(C12_A=0.0)  # truth C10 -8 nm, no astigmatism
     with DirectPtycho(frames, **_settings(detector_sampling_mrad)) as session:
-        fit = session.aberrations(search="primary", tilt=False, fixed_aberrations={"C12_nm": 0.0}, num_trials=60,
+        fit = session.aberrations(search="primary", tilt=False, fixed_aberrations={"C12_nm": 0.0}, trials=60,
                                        check_rotation=False, verbose=False)
         assert fit.refinement == "bfgs"  # a locked coefficient: the exact-gradient refinement in (C10, C12, phi12)
         assert fit.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.1)
         assert fit.aberrations["C12_nm"] == 0.0 and fit.aberrations["phi12_deg"] == 0.0
-        held = session.aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0}, num_trials=40,
+        held = session.aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0}, trials=40,
                                         check_rotation=False, verbose=False)
         assert held.aberrations["C10_nm"] == -7.0
         with pytest.raises(ValueError, match="nothing to fit"):
@@ -102,9 +102,9 @@ def test_phi12_range_bounds_the_standard_fit():
 
     frames, detector_sampling_mrad = _astigmatic_crystal()  # phi12 20 degrees
     with DirectPtycho(frames, **_settings(detector_sampling_mrad)) as session:
-        inside = session.aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (0.0, 45.0)}, num_trials=60,
+        inside = session.aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (0.0, 45.0)}, trials=60,
                                           check_rotation=False, verbose=False)
-        outside = session.aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (40.0, 80.0)}, num_trials=60,
+        outside = session.aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (40.0, 80.0)}, trials=60,
                                            check_rotation=False, verbose=False)
     assert inside.refinement == "bfgs" and inside.aberrations["phi12_deg"] == pytest.approx(20.0, abs=0.5)
     assert 40.0 <= outside.aberrations["phi12_deg"] <= 80.0

@@ -264,7 +264,7 @@ def _region_bounds(region: str | tuple[int, int, int, int] | None,
 
 
 def compare_rotation_defocus(
-    session: "DirectPtycho", *, num_trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
+    session: "DirectPtycho", *, trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
     search_ranges: dict[str, tuple[float, float] | float] | None = None,
     seed: int = 42, tilt: bool = True, verbose: bool = True,
     region: str | tuple[int, int, int, int] | None = None,
@@ -298,10 +298,10 @@ def compare_rotation_defocus(
                     candidate.depth_spread_nm = None
                     case = f"{angle:.1f}°, C10 [{interval[0]:g}, {interval[1]:g}] nm"
                     refinement_label = "" if refinement is None else f" + {refinement} refinement"
-                    progress.set_postfix_str(f"{case} | Fitting: {num_trials} trials{refinement_label}")
+                    progress.set_postfix_str(f"{case} | Fitting: {trials} trials{refinement_label}")
                     fitted = candidate.aberrations(
                         search="primary",
-                        tilt=tilt, num_trials=num_trials, refinement=refinement,
+                        tilt=tilt, trials=trials, refinement=refinement,
                         search_ranges={**ranges, "C10_nm": interval}, seed=seed,
                         check_rotation=False, compare_standard=False, verbose=False,
                     )

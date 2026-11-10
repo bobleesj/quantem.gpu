@@ -308,7 +308,7 @@ def test_automatic_sampling_rotation_and_saved_result(tmp_path):
             aberrations=coefs, upsample="auto", save_dir=tmp_path / "fine"
         )
         np.testing.assert_array_equal(restored.phase, original)
-        assert (tmp_path / "fine" / "ssb-reconstruct.npz").is_file()
+        assert (tmp_path / "fine" / "ssb-run.npz").is_file()
 
 
 @pytest.mark.parametrize("depth_nm", [0.0, 18.0])

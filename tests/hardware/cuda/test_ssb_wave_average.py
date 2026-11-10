@@ -110,7 +110,7 @@ def test_wave_average_chunking_and_inactive_higher_order_angles(depth):
         )
         assert loss is None
         batched, _ = engine.thick.run(
-            -80.0, 40.0, -0.7, tilt, depth * 10, upsample_factor=4, compute_loss=False,
+            -80.0, 40.0, -0.7, tilt, depth * 10, upsample=4, compute_loss=False,
             chunk_bytes=2 * 512 * 512 * 24,
         )
         np.testing.assert_allclose(cp.asnumpy(batched), candidate, atol=1e-6, rtol=0)

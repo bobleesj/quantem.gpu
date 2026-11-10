@@ -87,13 +87,13 @@
    "min_ms": 17.556,
    "timed_as": "an eighth of one search batch"
   },
-  "find_aberrations": {
+  "aberrations": {
    "n": 1,
    "p50_ms": 24369.524,
    "p90_ms": 24369.524,
    "min_ms": 24369.524
   },
-  "find_aberrations_standard": {
+  "aberrations_standard": {
    "n": 1,
    "p50_ms": 4973.638,
    "p90_ms": 4973.638,

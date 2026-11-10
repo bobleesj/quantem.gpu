@@ -42,12 +42,8 @@ def test_compare_methods_and_change_only_regularization(acquisition):
             verbose=False,
         )
         ssb = ptycho.run(optics, upsample="auto", compute_loss=False)
-        with pytest.warns(DeprecationWarning):
-            old = ptycho.run(
-                optics, upsample="auto", compute_loss=False
-            )
-        assert DirectPtycho is DirectPtycho
-        cp.testing.assert_array_equal(ssb.object_wave, old.object_wave)
+        again = ptycho.run(optics, method="phase_of_mean", upsample="auto", compute_loss=False)
+        cp.testing.assert_array_equal(ssb.object_wave, again.object_wave)
         phase = ptycho.run(optics, method="phase", upsample="auto")
         original = phase.object_wave.copy()
         prepared = ptycho._prepared_direct[1]["phase"]

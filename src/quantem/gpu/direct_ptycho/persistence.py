@@ -17,7 +17,7 @@ import numpy as np
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.inspect import inspect as inspect_source
 from quantem.gpu.direct_ptycho.branches import RotationBranches
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array, retired_estimator_note
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
 
 # One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
 # Bump it when fitted values acquire a different physical meaning or record layout: the automatic
@@ -32,17 +32,23 @@ from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array, re
 #    semiangle / disk-edge radius; C10 and C12 fitted under the first reconstruct a different image under the second.
 # 5: replayable, optimizer-neutral trial records and explicit correction overrides.
 SCHEMA = 7
-# What a stored fit must carry under "schema" to be read at all (Live's computed.ssb in config.json). Named like the
+# What a stored fit must carry under "schema" to be read at all (computed.phase_of_mean in Live's config.json). Named like the
 # .qem scientific-metadata schema string, so a reader refuses another version instead of reinterpreting its values.
 FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 # The top-level "schema" of the screening record that holds the fit block (live/screen/<dataset>/config.json). The
 # record belongs to quantem.live: this is the schema of the record its reader accepts, and it takes no other. It
-# is written here only when DirectPtycho.reconstruct_series creates the record, and required of a record that exists.
-SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
-# The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature. It follows
+# is written here only when DirectPtycho.run_series creates the record, and required of a record that exists.
+# 3: the fit block is computed.phase_of_mean (computed.ssb before).
+SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/3"
+# The same for a saved result record (ssb-aberrations.json, ssb-run.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
-# 11: the result field upsample_factor is upsample, and reconstruction_options names the direct strengths
-#     phase_damp and amplitude_damp (phase_regularization, amplitude_regularization before). A version-10
+# 13: the files and signature operations are ssb-aberrations and ssb-run (ssb-aberrations and ssb-run
+#     before); the result field upsampling is upsample, reconstruction_method "ssb" is "phase_of_mean", and
+#     phase_damping, amplitude_damping, input_phase_damping and nominal_upsampling_requirement drop their -ing.
+#     scripts/rewrite_saved_records.py carries a version-12 folder over once.
+# 12: sample_agreement is the fraction of the agreement band's power the fit explains (it was the raw agreement).
+# 11: the result field upsampling_factor is upsampling, and reconstruction_options names the direct strengths
+#     phase_damping and amplitude_damping (phase_regularization, amplitude_regularization before). A version-10
 #     record also carries the previous source hash in its signature, so it is computed again, as after any code change.
 # 10: the record holds no absolute path, inode, device or time: the source is its portable acquisition_identity, and
 #     input names files relative to the results folder (portable_source), so a moved or copied folder is reused.
@@ -50,8 +56,7 @@ SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 #    column test, phase tail and native phases), replacing column_sign, initial_column_sign,
 #    initial_scan_detector_rotation_deg and rotation_check_phases.
 # 8: the result field refine_method is refinement, the name of the aberrations keyword it records.
-# 12: sample_agreement is the fraction of the agreement band's power the fit explains (it was the raw agreement).
-RESULT_VERSION = 12
+RESULT_VERSION = 13
 RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"
 
 
@@ -155,9 +160,6 @@ def load_result(
     for name in ("object_sampling_A", "bright_field_center_px", "sample_tilt_mrad", "phase_clim", "fit_scan_region"):
         if isinstance(saved.get(name), list):
             saved[name] = tuple(saved[name])
-    note = retired_estimator_note(saved.get("phase_estimator"), f"{array_path.name} in {array_path.parent}")
-    if note is not None:
-        print(note)
     return DirectPtychoResult(
         object_wave=object_wave, neural_phase=neural_phase, annular_counts=annular_counts,
         rotation_branches=rotation_branches,

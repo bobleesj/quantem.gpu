@@ -4,7 +4,7 @@ Agent-side utility only: NumPy/h5py are not app dependencies. This exporter
 selects a record's tilt-corrected fit, the default SSB result, with its original
 phase: ssb_phase_tilt.npy with computed.ssb_tilt when the record also holds an
 ordinary fit (QuantEM Live's --ssb-mode both), else ssb_phase.npy with
-computed.ssb. It never takes a separately calibrated, locked, picked or denoised
+computed.phase_of_mean. It never takes a separately calibrated, locked, picked or denoised
 phase with different provenance.
 """
 
@@ -259,7 +259,7 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
                                "bright_field_center_px", "aberrations", "scan_detector_rotation_deg") if key not in ssb]
     if missing:
         raise ValueError(f"{run_folder / 'config.json'} holds no current SSB fit with {missing}; fit it again.")
-    # the record's result: computed.ssb itself, or the tilt-corrected fit Live keeps beside an ordinary one in
+    # the record's result: computed.phase_of_mean itself, or the tilt-corrected fit Live keeps beside an ordinary one in
     # computed.ssb_tilt, whose phase is ssb_phase_tilt.npy
     fit = screen_record_fit(config)
     phase_name = "ssb_phase.npy" if fit is ssb else "ssb_phase_tilt.npy"

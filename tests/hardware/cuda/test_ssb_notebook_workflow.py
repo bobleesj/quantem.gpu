@@ -49,7 +49,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, depth, mo
     np.save(source, cp.asnumpy(ssb._data))
     ssb.source_path = str(source)
     try:
-        correction = ssb.aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
+        correction = ssb.aberrations(search="primary", tilt=False, trials=0, refinement=None,
                                           check_rotation=False, verbose=False)
         correction = replace(correction, sample_tilt_mrad=(2., -3.), depth_spread_nm=depth)
         native, loss = ssb.preview(correction.aberrations, sample_tilt_mrad=correction.sample_tilt_mrad,

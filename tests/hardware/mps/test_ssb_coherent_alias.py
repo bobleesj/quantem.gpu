@@ -61,7 +61,7 @@ def test_coherent_sum_matches_per_detector_correction(monkeypatch, factor, aniso
         wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
         expected = mx.arctan2(mx.imag(wave), mx.real(wave))
         mx.eval(expected)
-        actual = up._reconstruct_upsampled(prepared, **sample, upsample_factor=factor)
+        actual = up._reconstruct_upsampled(prepared, **sample, upsample=factor)
         # Existing MPS coherent-object tolerance; no reduced support or precision.
         np.testing.assert_allclose(actual, np.asarray(expected), rtol=0, atol=1e-7)
 

@@ -97,11 +97,11 @@ class StreamedSSB:
         self.timings = {}
 
     def phase(self, aberrations, *, voltage_kV, semiangle_mrad, scan_sampling_A,
-              rotation_deg, upsample_factor, sample_tilt_mrad, depth_spread_A):
+              rotation_deg, upsample, sample_tilt_mrad, depth_spread_A):
         """Decode, transform and correct every selected count on the source GPU."""
         started = time.perf_counter()
         rows, cols = self.scan_shape
-        output_shape = (rows * upsample_factor, cols * upsample_factor)
+        output_shape = (rows * upsample, cols * upsample)
         output_pixels = math.prod(output_shape)
         free_bytes = cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes()
         # Two complex128 output planes, inverse work space and final phase.
@@ -132,7 +132,7 @@ class StreamedSSB:
         frequencies = []
         for side, output_side, step in zip(self.scan_shape, output_shape, scan_sampling_A):
             native = cp.fft.fftfreq(side, step).astype(cp.float32)
-            frequencies.append(native if upsample_factor == 1 else
+            frequencies.append(native if upsample == 1 else
                                (cp.fft.fftfreq(output_side) * output_side * native[1]).astype(cp.float32))
         coefficients = (aberrations["C10"], aberrations["C12"],
                         math.cos(2 * aberrations["phi12"]), math.sin(2 * aberrations["phi12"]))

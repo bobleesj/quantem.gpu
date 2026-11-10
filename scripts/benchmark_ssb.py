@@ -4,9 +4,9 @@ A cleanup or refactor must neither slow these paths nor change a value. This pri
 the first (cold, includes kernel compilation) and the median warm wall time, and the sha256 of every output array,
 so two checkouts compared back to back show both. Each fit starts from a fresh session with a fixed seed.
 
-Stages: ``session`` (SSB construction, bright-field crop and Fourier preparation), ``reconstruct`` (fixed probe,
-without and with the loss), ``fit`` (``fit_aberrations(search="primary", tilt=False)``, the standard model fit:
-200 trials and the exact-derivative Newton), ``tilt`` (``fit_aberrations()``, the default tilt-corrected fit
+Stages: ``session`` (SSB construction, bright-field crop and Fourier preparation), ``run`` (fixed probe,
+without and with the loss), ``fit`` (``aberrations(search="primary", tilt=False)``, the standard model fit:
+200 trials and the exact-derivative Newton), ``tilt`` (``aberrations()``, the default tilt-corrected fit
 through fifth order), ``dpc`` (``dpc.run``) and ``parallax`` (``parallax.run`` with the aberration fit).
 
 Compiled kernels are cached per process tree: give every checkout its own empty ``CUPY_CACHE_DIR`` (the script
@@ -15,7 +15,7 @@ makes a temporary one when it is unset), or one tree's cached binaries time the 
 Examples
 --------
 CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_ssb.py scan_master.h5 --voltage-kV 300 --semiangle-mrad 30
-CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_ssb.py a_master.h5 b_master.h5 --stages session,reconstruct
+CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_ssb.py a_master.h5 b_master.h5 --stages session,run
 """
 
 import argparse
@@ -29,7 +29,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-STAGES = ("session", "reconstruct", "fit", "tilt", "dpc", "parallax")
+STAGES = ("session", "run", "fit", "tilt", "dpc", "parallax")
 
 
 def main() -> None:
@@ -124,23 +124,23 @@ def run(arguments, stages) -> None:
                 hashes.append(f"num_bf {ssb.num_bright_field_pixels}, detector_sampling_mrad {ssb.detector_sampling_mrad!r}")
                 ssb.close()
             report("session", times, hashes)
-        if "reconstruct" in stages:
+        if "run" in stages:
             fixed = {"C10_nm": 1.47, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)}
             with prepared(data) as ssb:
                 for compute_loss in (False, True):
                     times, hashes = [], []
                     for _ in range(arguments.repeats):
-                        result, seconds = timed(lambda: ssb.reconstruct(aberrations=fixed, compute_loss=compute_loss))
+                        result, seconds = timed(lambda: ssb.run(aberrations=fixed, compute_loss=compute_loss))
                         times.append(seconds)
                         hashes.append(f"phase {digest(result.phase)} loss {result.loss!r}")
-                    report(f"reconstruct loss={compute_loss}", times, hashes)
+                    report(f"run loss={compute_loss}", times, hashes)
         for stage, options in (("fit", {"search": "primary", "tilt": False}), ("tilt", {})):
             if stage not in stages:
                 continue
             times, hashes = [], []
             for _ in range(arguments.fit_repeats):
                 with prepared(data) as ssb:
-                    result, seconds = timed(lambda: ssb.fit_aberrations(
+                    result, seconds = timed(lambda: ssb.aberrations(
                         **options, trials=arguments.trials, seed=arguments.seed, show=False, verbose=False))
                 times.append(seconds)
                 aberrations = {key: float(value) for key, value in result.aberrations.items()}
@@ -161,7 +161,7 @@ def run(arguments, stages) -> None:
             times, hashes = [], []
             for _ in range(arguments.repeats):
                 result, seconds = timed(lambda: parallax.run(
-                    data, bright_field_radius_px=20, upsampling_factor=2, fit_aberrations=True,
+                    data, bright_field_radius_px=20, upsample_factor=2, aberrations=True,
                     scan_sampling_A=(arguments.scan_sampling_A, arguments.scan_sampling_A), semiangle_mrad=arguments.semiangle_mrad))
                 times.append(seconds)
                 hashes.append(f"image {digest(result.image)} density {digest(result.density)} "

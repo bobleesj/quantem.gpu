@@ -16,44 +16,11 @@ from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 RefineMethod = Literal["bfgs", "newton"] | None
 
 
-def agreement_objective(objective) -> str:
-    """``"agreement"``, what every fit maximizes: the least-squares agreement of the SSB model with the data.
-
-    ``objective`` is retired: ``"agreement"`` prints one line; ``"phase_variance"`` (the earlier search) raises, since
-    a silent agreement fit would land elsewhere.
-    """
-    if objective is None:
-        return "agreement"
-    if objective == "agreement":
-        print("objective is retired; every fit maximizes the model agreement.")
-        return "agreement"
-    if objective == "phase_variance":
-        raise ValueError("objective='phase_variance' is retired: every fit maximizes the agreement of the SSB model with "
-                         "the data, which lands elsewhere. Drop objective=; the phase variance at the fit is still "
-                         "result.loss.")
-    raise ValueError(f"objective is retired: every fit maximizes the model agreement; got {objective!r}.")
-
-
-def retired_higher_order(higher_order, *, standard: bool = False) -> None:
-    """``higher_order`` is retired: the default fifth-order fit fits coma, trefoil, C30 and every term through fifth
-    order on exact gradients, with the half-band check. A subset prints one line: ``standard`` (a plain primary call)
-    says that call runs ``search="standard"`` instead; otherwise the primary fit holds the higher orders at 0."""
-    if higher_order and standard:
-        print("higher_order is retired; running search='standard', the fifth-order fit that fits coma, trefoil, C30 "
-              "and every term through fifth order.")
-    elif higher_order:
-        print("higher_order is retired; the default fit (search='standard') fits every term through fifth order, and "
-              "this primary fit holds them at 0.")
-    return None
-
-
-def auto_refinement(refinement) -> str | None:
-    """``"auto"``, the refinement every fit uses, or None for none (``search="primary"`` only). Choosing the method is
-    retired: another value prints one line and is ``"auto"``."""
+def check_refinement(refinement) -> str | None:
+    """``"auto"``, the exact-derivative refinement every fit uses, or None for none (``search="primary"`` only)."""
     if refinement is None or refinement == "auto":
         return refinement
-    print(f"refinement={refinement!r} is retired; using refinement='auto', the exact-derivative fit.")
-    return "auto"
+    raise ValueError(f"refinement must be 'auto' or None; got {refinement!r}.")
 
 
 @dataclass(frozen=True)
@@ -99,7 +66,7 @@ class ExportState:
 
 
 class DirectPtychoProtocol(Protocol):
-    """Backend contract implemented by CUDA and MPS: every call ``SSB`` makes.
+    """Backend contract implemented by CUDA and MPS: every call ``DirectPtycho`` makes.
 
     CUDA and MPS implement this protocol in Python. Browser WebGPU mirrors the
     same semantic contract in ``webgpu/protocol.ts`` because its execution is
@@ -140,7 +107,7 @@ class DirectPtychoProtocol(Protocol):
         self,
         aberrations: dict[str, float],
         *,
-        upsample_factor: int,
+        upsample: int,
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float],
         depth_spread_A: float,

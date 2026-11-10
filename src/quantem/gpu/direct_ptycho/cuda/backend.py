@@ -22,7 +22,7 @@ class CudaSSBBackend:
     Each bright-field pixel sees the sample through a slightly different probe tilt; correcting every pixel's image
     for the probe aberrations and averaging recovers the object phase at the scan resolution. This class prepares the
     bright-field spectra ``G_qk`` on the device and runs fits and reconstructions through ``SSBEngine``. Units are the
-    engine's (C10, C12 in Angstrom); ``SSB`` owns the public units, validation and result types.
+    engine's (C10, C12 in Angstrom); ``DirectPtycho`` owns the public units, validation and result types.
 
     Parameters
     ----------
@@ -400,7 +400,7 @@ class CudaSSBBackend:
         self,
         aberrations: dict[str, float],
         *,
-        upsample_factor: int,
+        upsample: int,
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_A: float = 0.0,
@@ -416,7 +416,7 @@ class CudaSSBBackend:
         coefficients = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
         phase, _ = accel.thick.run(
             *coefficients, sample_tilt_mrad, depth_spread_A, compute_loss=False,
-            upsample_factor=upsample_factor,
+            upsample=upsample,
             higher_order_magnitudes=higher_order_magnitudes,
             higher_order_angles=higher_order_angles,
         )

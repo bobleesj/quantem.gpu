@@ -56,7 +56,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
     ) as ssb:
         fit = ssb.aberrations(search="primary",
             tilt=True,
-            num_trials=8,
+            trials=8,
             refinement=None,
             compare_standard=False,
             check_rotation=False,
@@ -76,7 +76,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
         figure.savefig(tmp_path / "parameters.png", dpi=100)
         assert figure.number not in plt.get_fignums()
         restored = load_result(
-            paths=result_paths(tmp_path, "find_aberrations"), signature=fit.metadata["signature"], backend=backend
+            paths=result_paths(tmp_path, "aberrations"), signature=fit.metadata["signature"], backend=backend
         )
         assert restored.parameter_slices == evidence
         np.testing.assert_array_equal(host_array(restored.phase), phase)
@@ -176,7 +176,7 @@ def test_focus_grid_stack_and_static_preserve_images(monkeypatch):
     counts[:, :, np.hypot(rows, columns) < 10] += 200
     with DirectPtycho(counts, backend="mps", voltage_kV=300, semiangle_mrad=30,
              scan_sampling_A=0.3, detector_sampling_mrad=3.0) as ssb:
-        fit = ssb.aberrations(search="primary", num_trials=8, refinement=None, check_rotation=False,
+        fit = ssb.aberrations(search="primary", trials=8, refinement=None, check_rotation=False,
                                    compare_standard=False, compute_loss=False, verbose=False)
         options = {"focus_offsets_nm": (-3, 0, 7), "depth_spread_nm": (5, fit.depth_spread_nm)}
         grid = ssb.show("focus", cmap="viridis", **options)

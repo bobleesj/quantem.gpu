@@ -81,7 +81,7 @@ def test_joint_fit_rejects_scan_with_no_fitting_frequencies():
         _session(counts, det_mrad=3.0, scan_A=5.0) as ssb,
         pytest.raises(ValueError, match="acquire a finer scan"),
     ):
-        ssb.aberrations(search="primary", tilt=True, num_trials=8, verbose=False)
+        ssb.aberrations(search="primary", tilt=True, trials=8, verbose=False)
 
 
 def test_batch_fit_matches_reference_fit(monkeypatch):

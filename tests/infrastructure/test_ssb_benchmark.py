@@ -67,7 +67,7 @@ def test_cli_records_portable_report_and_scalar_calibration(tmp_path, monkeypatc
     )
     assert received["calibration"] == {"scan_sampling_A": 0.5}
     assert received["require_installed"] is True
-    assert received["num_trials"] == 200 and received["seed"] == 42
+    assert received["trials"] == 200 and received["seed"] == 42
     assert (
         json.loads(output.read_text())["measurements"]["full_field_fit"]["warm_n"] == 1
     )

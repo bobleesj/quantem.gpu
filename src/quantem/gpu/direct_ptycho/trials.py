@@ -9,14 +9,6 @@ from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
 
 
-def resolve_trial_count(trials: int | None, num_trials: int | None, *, default: int = 200) -> int:
-    """Resolve the search budget while preserving the legacy keyword."""
-    if trials is not None and num_trials is not None:
-        raise TypeError("Use trials=200, or the legacy num_trials keyword, not both.")
-    value = trials if trials is not None else num_trials
-    return default if value is None else value
-
-
 def label_trials(result: DirectPtychoResult, *, search: int) -> None:
     """Give every trial record its index, search pass and physical rotation.
 

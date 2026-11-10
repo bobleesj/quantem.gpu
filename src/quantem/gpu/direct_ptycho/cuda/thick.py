@@ -57,11 +57,11 @@ class ThickSample:
         thickness: float,
         compute_loss: bool = True,
         chunk_bytes: int = 1 << 30,
-        upsample_factor: int = 1,
+        upsample: int = 1,
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
-        """SSB phase of a thick, tilted crystal at ``upsample_factor``, and the native-grid phase-variance loss.
+        """SSB phase of a thick, tilted crystal at ``upsample``, and the native-grid phase-variance loss.
 
         Each pixel's SSB correction is averaged over the sample depth (see ``thick_correct_kernel``);
         ``sample_tilt_mrad`` = (row, col) in the scan frame, ``thickness`` in the C10 unit, and thickness 0 reproduces
@@ -70,9 +70,9 @@ class ThickSample:
         expanded image. Linear averaging commutes with the inverse FFT, but not with phase extraction. The loss,
         when asked for, is ``phase_variance``'s on the native grid.
         """
-        if type(upsample_factor) is not int or upsample_factor not in (1, 2, 3, 4, 8):
-            raise ValueError("upsample_factor must be 1, 2, 3, 4, or 8.")
-        qrow, qcol = self._frequencies(upsample_factor)
+        if type(upsample) is not int or upsample not in (1, 2, 3, 4, 8):
+            raise ValueError("upsample must be 1, 2, 3, 4, or 8.")
+        qrow, qcol = self._frequencies(upsample)
         return self._reconstruct_wave(
             C10, C12, phi12, sample_tilt_mrad, thickness, qrow, qcol,
             compute_loss=compute_loss, chunk_bytes=chunk_bytes,
@@ -294,7 +294,7 @@ class ThickSample:
         # the BF sum and the inverse FFT run in complex128; the phase is returned float32 like every other path
         return cp.angle(cp.fft.ifft2(spectrum / num_bright_field_pixels)).astype(cp.float32)
 
-    def _frequencies(self, upsample_factor: int) -> tuple[cp.ndarray, cp.ndarray]:
+    def _frequencies(self, upsample: int) -> tuple[cp.ndarray, cp.ndarray]:
         """Row and column frequencies (1/A) of the output grid.
 
         Same field of view at every factor: Fourier spacing is unchanged; the
@@ -302,9 +302,9 @@ class ThickSample:
         the new q.
         """
         cache = self.engine._cache
-        if upsample_factor == 1:
+        if upsample == 1:
             return cache["qx_1d"], cache["qy_1d"]
-        ny, nx = cache["ny"] * upsample_factor, cache["nx"] * upsample_factor
+        ny, nx = cache["ny"] * upsample, cache["nx"] * upsample
         return ((cp.fft.fftfreq(ny) * ny * cache["qx_1d"][1]).astype(cp.float32),
                 (cp.fft.fftfreq(nx) * nx * cache["qy_1d"][1]).astype(cp.float32))
 

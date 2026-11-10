@@ -46,7 +46,7 @@ def test_scan_rotation_report_and_zoom_preserve_four_case_evidence(monkeypatch):
     original = [fit.phase.copy() for fit in review.fits]
     result = session.scan_rotations(defocus=True, region=(128, 384, 128, 384), zoom=3, size=400)
     assert result is review and session.scan_detector_rotation_deg == 340.
-    assert calls[0] == {"region": (128, 384, 128, 384), "num_trials": 200}
+    assert calls[0] == {"region": (128, 384, 128, 384), "trials": 200}
     figure, table = displayed
     images = [ax.images[0] for ax in figure.axes if ax.images]
     assert [image.get_array().shape[:2] for image in images] == [(48, 48)] * 4 + [(16, 16)] * 4
@@ -77,12 +77,12 @@ def test_two_angle_region_and_trial_alias_reuse_the_same_solver():
         return result
     session._find_aberrations = fit
     returned = session.scan_rotations(report=False, region="center", trials=20)
-    legacy = session.scan_rotations(report=False, region=(128, 384, 128, 384), num_trials=20)
-    assert returned is legacy is result.rotation_branches
-    assert calls == [("apply", {"scan_region": (128, 384, 128, 384), "num_trials": 20})] * 2
+    explicit = session.scan_rotations(report=False, region=(128, 384, 128, 384), trials=20)
+    assert returned is explicit is result.rotation_branches
+    assert calls == [("apply", {"scan_region": (128, 384, 128, 384), "trials": 20})] * 2
     session.scan_detector_rotation_source = "recorded"
     session.scan_rotations(report=False, region=())
-    assert calls[-1] == ("keep", {"scan_region": None, "num_trials": 200})
+    assert calls[-1] == ("keep", {"scan_region": None, "trials": 200})
 
 
 def test_two_angle_zoom_keeps_full_fields_and_column_markers():

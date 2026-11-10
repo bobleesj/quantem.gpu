@@ -119,7 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 calibration[name] = value[0]
         report = run_ssb(
             args.source, backend=args.backend, runs=args.runs,
-            region_sizes=tuple(args.region_sizes), num_trials=args.trials,
+            region_sizes=tuple(args.region_sizes), trials=args.trials,
             seed=args.seed, calibration=calibration, progress=print,
             require_installed=args.require_installed,
             reference_phase=args.reference_phase,

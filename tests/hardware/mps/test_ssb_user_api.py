@@ -108,7 +108,7 @@ def test_reconstruct_replays_trials_by_trial_ids():
     from quantem.gpu import DirectPtycho
 
     with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
-        fitted = ssb.aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
+        fitted = ssb.aberrations(search="primary", tilt=False, trials=4, refinement=None, check_rotation=False, verbose=False)
         replay = ssb.run(fitted, trial_ids=[2, 0])
         assert replay.phase.shape == (2, *fitted.phase.shape)
         assert replay.metadata["trial_ids"] == [2, 0]

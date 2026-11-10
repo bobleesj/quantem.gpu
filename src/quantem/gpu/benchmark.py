@@ -290,7 +290,7 @@ def run_ssb(
     backend: str = "auto",
     runs: int = 6,
     region_sizes: tuple[int, ...] = (256, 128),
-    num_trials: int = 200,
+    trials: int = 200,
     seed: int = 42,
     calibration: dict | None = None,
     progress: Callable[[str], None] | None = None,
@@ -318,7 +318,7 @@ def run_ssb(
     region_sizes : tuple of int
         Square scan sizes in original pixels. The smallest is also moved and
         resized by one row to measure non-power-of-two dispatch.
-    num_trials : int
+    trials : int
         Trials in each search, before Newton refinement.
     seed : int
         The same seed is reused in every measurement.
@@ -349,8 +349,8 @@ def run_ssb(
     from quantem.gpu import DirectPtycho, io
     from quantem.gpu.device import resolve
 
-    if runs < 2 or num_trials < 1:
-        raise ValueError("Use runs >= 2 and num_trials >= 1 to measure repeated fits.")
+    if runs < 2 or trials < 1:
+        raise ValueError("Use runs >= 2 and trials >= 1 to measure repeated fits.")
     selected = resolve(backend)
     if selected not in {"cuda", "mps"}:
         raise RuntimeError(
@@ -439,7 +439,7 @@ def run_ssb(
                     partial(
                         ssb.aberrations,
                         search="standard",
-                        num_trials=num_trials,
+                        trials=trials,
                         seed=seed,
                         compare_standard=False,
                         verbose=False,
@@ -451,7 +451,7 @@ def run_ssb(
                     if fitted.rotation_branches
                     else 1
                 )
-                record = _fit_record(fitted, selected, num_trials, branches)
+                record = _fit_record(fitted, selected, trials, branches)
                 keep("full_field_fit", seconds, fitted.phase, record)
                 output, output_s = _timed(
                     partial(
@@ -516,7 +516,7 @@ def run_ssb(
                             partial(
                                 regional.aberrations,
                                 search="standard",
-                                num_trials=num_trials,
+                                trials=trials,
                                 seed=seed,
                                 check_rotation=False,
                                 compare_standard=False,
@@ -552,7 +552,7 @@ def run_ssb(
                         raise RuntimeError(
                             "Regional correction changed the BF support or full-scan output shape."
                         )
-                    record = _fit_record(local, selected, num_trials, 1)
+                    record = _fit_record(local, selected, trials, 1)
                     record.update(
                         bounds=list(bounds),
                         prepare_s=prepare_s,
@@ -574,7 +574,7 @@ def run_ssb(
             "settings": {
                 "runs": runs,
                 "seed": seed,
-                "trials_per_branch": num_trials,
+                "trials_per_branch": trials,
                 "refinement": "newton",
                 "region_sizes": list(region_sizes),
                 "full_field_loss_diagnostic": True,

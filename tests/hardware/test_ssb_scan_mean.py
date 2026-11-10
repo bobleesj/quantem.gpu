@@ -45,18 +45,13 @@ def test_constant_scan_remains_flat_inside_alias_support(factor, depth):
 
 
 def test_shared_default_retains_native_diagnostic_and_saved_policy(tmp_path):
-    """The diagnostic stays on the native grid at every output factor; the retired estimator names its replacement."""
+    """The diagnostic stays on the native grid at every output factor."""
     coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
     sample = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18.)
     with _session(constant=False, source_path=tmp_path / "counts.npy") as ssb:
-        wave_phase, native_loss = ssb.preview(coefs, **sample)
-        explicit, explicit_loss = ssb.preview(coefs, **sample, phase_estimator="phase_of_mean")
-        np.testing.assert_array_equal(wave_phase, explicit)
-        assert native_loss == explicit_loss
+        _, native_loss = ssb.preview(coefs, **sample)
         _, fine_loss = ssb.preview(coefs, **sample, upsample=3)
         assert fine_loss == native_loss
-        with pytest.raises(ValueError, match="method='phase'"):
-            ssb.preview(coefs, **sample, phase_estimator="mean_phase")
         saved = ssb.run(aberrations=coefs, upsample="auto", save_dir=tmp_path)
         assert saved.phase_estimator == "phase_of_mean"
         assert saved.metadata["signature"]["reconstruction"]["upsample_dc_policy"] == "single_origin"

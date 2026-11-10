@@ -103,10 +103,6 @@ def test_all_orders_coherent_tilt_and_upsample_match_polar_oracle(factor, depth)
         np.testing.assert_allclose(phase, expected, rtol=0, atol=5e-6)
         _, native_loss = reference(ssb, COEFS, 1, (-9., 5.), depth, phase_variance=True)
         assert loss == pytest.approx(native_loss, rel=1e-5, abs=1e-10)
-        explicit, _ = ssb.preview(COEFS, upsample=factor,
-                                 sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth,
-                                 phase_estimator="phase_of_mean", compute_loss=False)
-        np.testing.assert_array_equal(phase, explicit)
 
 
 @pytest.mark.parametrize("factor", [1, 3, 4, 8])

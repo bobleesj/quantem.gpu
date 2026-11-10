@@ -118,7 +118,7 @@ def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp
 
     from quantem.gpu.direct_ptycho.persistence import load_result, result_paths, save_result
 
-    paths = result_paths(tmp_path / "rotation", "find_aberrations")
+    paths = result_paths(tmp_path / "rotation", "aberrations")
     save_result(checked, paths=paths, signature={"test": "rotation"}, input_metadata={})
     restored = load_result(paths=paths, signature={"test": "rotation"}, backend="cuda")
     assert restored.rotation_branches.summary == branches.summary
@@ -231,7 +231,7 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
         np.testing.assert_array_equal(_host(result.phase), kept.phase)
 
         restored = load_result(
-            paths=result_paths(tmp_path / "joint", "find_aberrations"),
+            paths=result_paths(tmp_path / "joint", "aberrations"),
             signature=result.metadata["signature"], backend="cuda",
         )
         assert restored.scan_detector_rotation_deg == result.scan_detector_rotation_deg
@@ -256,7 +256,7 @@ def test_no_signal_scan_reports_unidentifiable_fit_without_changing_rotation():
              scan_sampling_A=(0.5, 0.5), detector_sampling_mrad=(5, 5), bright_field_center_px=(8, 8),
              bright_field_radius_px=4, scan_detector_rotation_deg=180) as session:
         with pytest.raises(ValueError, match="no positive finite agreement"):
-            session.scan_rotations(report=False, apply=True, tilt=True, num_trials=8,
+            session.scan_rotations(report=False, apply=True, tilt=True, trials=8,
                                               refinement=None, verbose=False)
         assert session.scan_detector_rotation_deg == 180.0
 

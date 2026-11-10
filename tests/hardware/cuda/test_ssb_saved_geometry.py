@@ -30,7 +30,7 @@ def test_saved_fit_replays_exact_detector_selection(tmp_path):
         aberrations={"C10_nm": 8.0, "C12_nm": 1.0, "phi12_deg": 21.0},
     ) as session:
         fitted = session.aberrations(search="primary", tilt=False,
-            num_trials=0, refinement=None, check_rotation=False,
+            trials=0, refinement=None, check_rotation=False,
             save_dir=tmp_path / "fit",
         )
         expected = {
@@ -38,7 +38,7 @@ def test_saved_fit_replays_exact_detector_selection(tmp_path):
             for factor in (1, 3)
         }
         pixels = session.num_bright_field_pixels
-    saved = json.loads((tmp_path / "fit" / "ssb-find_aberrations.json").read_text())["result"]
+    saved = json.loads((tmp_path / "fit" / "ssb-aberrations.json").read_text())["result"]
     assert saved["bright_field_radius_px"] == radius
     with DirectPtycho(
         data, **settings, bright_field_center_px=saved["bright_field_center_px"],

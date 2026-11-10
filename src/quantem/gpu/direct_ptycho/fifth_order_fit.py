@@ -268,9 +268,9 @@ def fit_fifth_order(
                                           "max_half_band_rms_rad": MAX_HALF_BAND_RMS_RAD}
     if search == "broad":
         settings["broad_starts"] = BROAD_STARTS
-    paths = result_paths(save_dir, "find_aberrations") if save_dir is not None else None
+    paths = result_paths(save_dir, "aberrations") if save_dir is not None else None
     signature = (
-        ssb._result_signature("find_aberrations", settings)
+        ssb._result_signature("aberrations", settings)
         if paths is not None
         else None
     )
@@ -288,7 +288,7 @@ def fit_fifth_order(
     primary = ssb._find_aberrations(
         ("apply" if primary_options["check_rotation"] == "both" else
          "auto" if primary_options["check_rotation"] else "off"),
-        num_trials=primary_trials,
+        trials=primary_trials,
         seed=primary_seed,
         compare_standard=compare_standard,
         compute_loss=False,

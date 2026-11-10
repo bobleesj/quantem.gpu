@@ -59,9 +59,10 @@ CONFIDENCE = 0.04
 # The live search reaches as far as drift's pairs: the residual past the extrapolated guess is a few Å.
 REACH_A = 30.0
 # The layout of a saved frame record; a record of another layout is computed again.
-# 3: the shared settings name the output factor upsample (upsample_factor in 2).
+# 3: the shared settings name the output factor upsampling (upsampling_factor in 2).
 # 4: each frame's C10/C12 refit is the exact-gradient trust region, held coordinates fixed (main's /3).
-RECORD_SCHEMA = "quantem.ssb-stream-frame/4"
+# 5: the shared settings name the output factor upsample (upsampling in 4).
+RECORD_SCHEMA = "quantem.ssb-stream-frame/5"
 
 
 def _regularization(key, strengths):

@@ -1,4 +1,4 @@
-"""SSB reconstruction of an acquisition series (``DirectPtycho.reconstruct_series``) and the Live layout it reads and writes.
+"""SSB reconstruction of an acquisition series (``DirectPtycho.run_series``) and the Live layout it reads and writes.
 
 A series directory holds raw ``*_master.h5`` acquisitions and, under ``live/screen/<dataset>`` (or the ``save_dir``
 a caller names, such as Live's ``<output>/live/screen``), the products QuantEM Live already made: ``config.json`` with the fitted SSB settings, bright- and dark-field images, and saved SSB results.
@@ -17,19 +17,17 @@ import yaml
 
 from quantem.gpu import screening
 from quantem.gpu.formats import dataset_yaml
-from quantem.gpu.direct_ptycho.contract import auto_refinement
+from quantem.gpu.direct_ptycho.contract import check_refinement
 from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, RESULT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
 from quantem.gpu.direct_ptycho.results import (
     DirectPtychoResult,
     DirectPtychoSeriesResult,
     host_array,
-    retired_estimator_note,
 )
-from quantem.gpu.direct_ptycho.trials import resolve_trial_count
 from quantem.gpu.direct_ptycho.units import sampling_pair, validate_aberrations
 
 
-def reconstruct_series(
+def run_series(
     cls,
     source_directory: str | Path,
     *,
@@ -46,13 +44,12 @@ def reconstruct_series(
     backend: Literal["auto", "cuda", "mps"] = "auto",
     save_dir: str | Path | None = None,
     progress: bool = True,
-    num_trials: int | None = None,
 ) -> DirectPtychoSeriesResult:
-    """Reconstruct an SSB series with independent or fixed-probe fitting (``DirectPtycho.reconstruct_series``; ``cls`` is ``SSB``).
+    """Reconstruct an SSB series with independent or fixed-probe fitting (``DirectPtycho.run_series``; ``cls`` is ``DirectPtycho``).
 
     Existing QuantEM Live products under ``save_dir`` (default
     ``<source>/live/screen``) are discovered and reused automatically. Missing
-    products run through :class:`SSB` and are saved to the same location. When
+    products run through :class:`DirectPtycho` and are saved to the same location. When
     no Live screening exists, physical settings are read from ``dataset.yaml``
     or from explicit keyword arguments; an acquisition with no recorded
     rotation has it estimated by ``DirectPtycho.open``. A stored fit counts only when it carries
@@ -85,11 +82,8 @@ def reconstruct_series(
         Scan step in Angstrom, ``[row, col]`` or one number for both axes, used on the same terms.
     trials : int, optional
         Search trials per rotation branch of each missing acquisition. Default 200.
-    num_trials : int, optional
-        Compatibility alias for ``trials``. Supply only one of them.
     refinement : str or None, default "auto"
-        ``"auto"``, the exact-derivative fit (``aberrations()``), or None for no local refinement; another value
-        is retired and prints one line.
+        ``"auto"``, the exact-derivative fit (``aberrations()``), or None for no local refinement.
     backend : {"auto", "cuda", "mps"}, default "auto"
         Accelerated SSB backend. CPU is never used.
     save_dir : str or Path, optional
@@ -105,8 +99,8 @@ def reconstruct_series(
         One independent-fit or fixed-probe phase stack, with its bright- and
         dark-field companions and a ``metadata()`` table.
     """
-    num_trials = resolve_trial_count(trials, num_trials)
-    refinement = auto_refinement(refinement)
+    trials = 200 if trials is None else trials
+    refinement = check_refinement(refinement)
     source_root = Path(source_directory).expanduser().resolve()
     if not source_root.is_dir():
         raise FileNotFoundError(f"SSB source directory not found: {source_root}")
@@ -149,7 +143,7 @@ def reconstruct_series(
                 )
             with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
                 reference_result = ssb.aberrations(
-                    search="primary", num_trials=num_trials,
+                    search="primary", trials=trials,
                     refinement=refinement,
                     save_dir=reference_path / "ssb-fit",
                     verbose=False,
@@ -196,7 +190,7 @@ def reconstruct_series(
                 )
             else:
                 result = ssb.aberrations(
-                    search="primary", num_trials=num_trials,
+                    search="primary", trials=trials,
                     refinement=refinement,
                     save_dir=screen_path / "ssb-fit",
                     verbose=False,
@@ -245,7 +239,7 @@ def reconstruct_series(
         source_directory=source_root,
         results_directory=results_root,
         requested_backend=backend,
-        num_trials=num_trials,
+        num_trials=trials,
         refinement=refinement,
     )
 
@@ -392,7 +386,7 @@ def acquisition_settings(
         raise ValueError(
             f"Cannot reconstruct {screen_path.name}: missing {joined}. Run "
             "QuantEM Live screening once, add the values to dataset.yaml, or "
-            "pass the missing physical parameters to reconstruct_series()."
+            "pass the missing physical parameters to run_series()."
         )
     values["bright_field_radius_px"] = saved.get("bright_field_radius_px")
     if values["scan_detector_rotation_deg"] is None:
@@ -445,7 +439,7 @@ def write_fit_metadata(
 
     The file is quantem.live's screening record. A record this function creates carries
     ``"schema": SCREEN_ACQUISITION_SCHEMA`` at its top level: without it Live leaves the acquisition out of its
-    Screen list. In a record that exists nothing outside ``computed.ssb`` changes, and one with another top-level
+    Screen list. In a record that exists nothing outside ``computed.phase_of_mean`` changes, and one with another top-level
     schema, or none, raises ``ValueError`` before anything is written: a fit stored into a record of an earlier
     layout would sit beside values Live no longer reads under their names.
     """
@@ -484,7 +478,7 @@ def write_fit_metadata(
 def stored_fit(config: dict[str, object], block: str = "phase_of_mean") -> dict[str, object]:
     """Return one fit block of a screening ``config.json`` when the current engine wrote it; else an empty dict.
 
-    The block is ``computed.ssb`` (or a sibling Live keeps beside it, named by ``block``), and it counts only when its
+    The block is ``computed.phase_of_mean`` (or a sibling Live keeps beside it, named by ``block``), and it counts only when its
     ``"schema"`` equals ``FIT_SCHEMA``. A block with another schema or none is the same as no block: nothing in it is
     read, converted or kept. Without this one test, values fitted under an earlier convention (another automatic
     detector sampling, Angstrom stored as nm, an azimuth in radians) reconstruct a different image with no error. QuantEM Live reads its
@@ -495,12 +489,12 @@ def stored_fit(config: dict[str, object], block: str = "phase_of_mean") -> dict[
 
 
 def screen_record_fit(config: dict[str, object]) -> dict[str, object]:
-    """The fit a QuantEM Live screening record's result is: its tilt-corrected fit, else ``computed.ssb``.
+    """The fit a QuantEM Live screening record's result is: its tilt-corrected fit, else ``computed.phase_of_mean``.
 
-    A record of Live's default mode holds the tilt-corrected fit in ``computed.ssb`` and it is returned as it is
+    A record of Live's default mode holds the tilt-corrected fit in ``computed.phase_of_mean`` and it is returned as it is
     (``stored_fit(config)``, the same dict). A ``--ssb-mode both`` record holds the ordinary fit there and the
     tilt-corrected one in ``computed.ssb_tilt``; that block's optics, rotation, sample tilt and depth spread are then
-    returned over ``computed.ssb``'s beam, sampling and bright-field calibration, which the two fits share. A failed
+    returned over ``computed.phase_of_mean``'s beam, sampling and bright-field calibration, which the two fits share. A failed
     tilt fit, or one of another schema, is no result. Records are read as written.
     """
     plain = stored_fit(config)
@@ -522,7 +516,7 @@ def saved_fit(screen_path: Path) -> dict[str, object] | None:
         settings = stored_fit(json.loads(config_path.read_text()))
         if "aberrations" in settings and "scan_detector_rotation_deg" in settings:
             return {**settings, "aberrations": validate_aberrations(settings["aberrations"])}
-    metadata_path = screen_path / "ssb-fit" / "ssb-find_aberrations.json"
+    metadata_path = screen_path / "ssb-fit" / "ssb-aberrations.json"
     if metadata_path.is_file():
         metadata = json.loads(metadata_path.read_text())
         result = metadata.get("result") or {}
@@ -676,7 +670,7 @@ def open_screen_record(
     backend: Literal["auto", "cuda", "mps"] = "auto",
     verbose: bool = False,
 ):
-    """Open an ``SSB`` session on a QuantEM Live screened acquisition, at its stored fit (``screen_record_settings``).
+    """Open an ``DirectPtycho`` session on a QuantEM Live screened acquisition, at its stored fit (``screen_record_settings``).
 
     The bridge from a microscope session to the notebook: the screening record names the raw source
     (``source_master``) and every calibration of its fit, so the session opens with the fitted aberrations, the
@@ -697,10 +691,6 @@ def open_screen_record(
     config_path = path if path.name == "config.json" else path / "config.json"
     settings = screen_record_settings(config_path)
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    note = retired_estimator_note(screen_record_fit(config).get("phase_estimator"), str(config_path))
-    if note is not None:
-        # the record's optics are used as they were fitted; only its stored image belongs to the retired estimator
-        print(note)
     if source is None:
         source = config.get("source_master")
         if not source:

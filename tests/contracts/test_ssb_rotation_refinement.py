@@ -129,7 +129,7 @@ def _session(monkeypatch, tmp_path, backend, *, estimated):
 def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path, monkeypatch, capsys):
     backend = _Backend()
     session = _session(monkeypatch, tmp_path, backend, estimated=True)
-    fit = session.aberrations(search="primary", tilt=False, num_trials=4, check_rotation=False, refine_rotation=True,
+    fit = session.aberrations(search="primary", tilt=False, trials=4, check_rotation=False, refine_rotation=True,
                                    save_dir=tmp_path / "result")
     assert backend.fits[0] == (3.0, 4) and all(trials == 0 for _, trials in backend.fits[1:])
     assert 3 <= len(backend.fits) - 1 <= 12
@@ -153,7 +153,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
 
     calls = len(backend.fits)
     again = _session(monkeypatch, tmp_path, backend, estimated=True).aberrations(search="primary",
-        tilt=False, num_trials=4, check_rotation=False, refine_rotation=True, save_dir=tmp_path / "result",
+        tilt=False, trials=4, check_rotation=False, refine_rotation=True, save_dir=tmp_path / "result",
         verbose=False)
     assert again.reused and len(backend.fits) == calls
     assert again.metadata["signature"]["settings"]["refine_rotation"] is True
@@ -163,7 +163,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
     # without refine_rotation the saved refined fit is not this fit: one search again, no polishes
     unrefined = _Backend()
     plain = _session(monkeypatch, tmp_path, unrefined, estimated=True).aberrations(search="primary",
-        tilt=False, num_trials=4, check_rotation=False, save_dir=tmp_path / "result", verbose=False)
+        tilt=False, trials=4, check_rotation=False, save_dir=tmp_path / "result", verbose=False)
     assert not plain.reused and unrefined.fits == [(3.0, 4)]
     assert "refine_rotation" not in plain.metadata["signature"]["settings"]
 
@@ -171,7 +171,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
 def test_a_given_rotation_is_never_refined(tmp_path, monkeypatch, capsys):
     backend = _Backend()
     fit = _session(monkeypatch, tmp_path, backend, estimated=False).aberrations(search="primary",
-        tilt=False, num_trials=4, refine_rotation=True)
+        tilt=False, trials=4, refine_rotation=True)
     assert backend.fits == [(3.0, 4)]
     assert fit.scan_detector_rotation_deg == 3.0
     assert (fit.rotation_refined, fit.rotation_estimate_deg, fit.rotation_refinement) == (False, None, None)
@@ -184,7 +184,7 @@ def test_the_default_fit_searches_once_and_records_no_refinement(tmp_path, monke
     for options in ({}, {"refine_rotation": False}):
         backend = _Backend()
         results.append(_session(monkeypatch, tmp_path, backend, estimated=True).aberrations(search="primary",
-            tilt=False, num_trials=4, check_rotation=False, verbose=False, **options))
+            tilt=False, trials=4, check_rotation=False, verbose=False, **options))
         assert backend.fits == [(3.0, 4)]
     for fit in results:
         assert (fit.rotation_refined, fit.rotation_estimate_deg, fit.rotation_refinement) == (False, None, None)

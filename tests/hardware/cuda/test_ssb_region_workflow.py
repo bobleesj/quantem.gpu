@@ -24,7 +24,7 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
         aberrations={"C10_nm": 3, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)},
         source_path=source_path,
     )
-    search = dict(tilt=False, num_trials=0, refinement=None, check_rotation=False, verbose=False)
+    search = dict(tilt=False, trials=0, refinement=None, check_rotation=False, verbose=False)
     with DirectPtycho(data, **options) as full, DirectPtycho(
         # the region keeps the full scan's calibration, its estimated rotation included; a crop left to estimate
         # its own (6.9 instead of 4.9 degrees here) is a different fit
@@ -47,7 +47,7 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
         from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
 
         restored = load_result(
-            paths=result_paths(tmp_path / "region", "find_aberrations"),
+            paths=result_paths(tmp_path / "region", "aberrations"),
             signature=regional.metadata["signature"], backend="cuda",
         )
         assert tuple(restored.fit_scan_region) == regional.fit_scan_region

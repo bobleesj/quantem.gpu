@@ -11,7 +11,7 @@ from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
 
 
 def _fit(**changes):
-    """A stored fit block of the current schema, as DirectPtycho.reconstruct_series writes it."""
+    """A stored fit block of the current schema, as DirectPtycho.run_series writes it."""
     return {"schema": FIT_SCHEMA, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": [.25, .25],
             "detector_sampling_mrad": [0.55, 0.56], "bright_field_center_px": [3, 4], "bright_field_radius_px": 5,
             "scan_detector_rotation_deg": 192.0, "scan_detector_rotation_flipped": False,
@@ -116,7 +116,7 @@ def test_export_takes_only_a_current_fit_and_its_physical_rotation(tmp_path):
 def test_export_takes_the_tilt_corrected_fit_with_its_tilt_and_depth(tmp_path):
     """The model-based, tilt-corrected fit is the default SSB result, so the portable pair is that fit.
 
-    A record of Live's default mode holds it in computed.ssb; a --ssb-mode both record holds the ordinary fit there
+    A record of Live's default mode holds it in computed.phase_of_mean; a --ssb-mode both record holds the ordinary fit there
     and the tilt-corrected one, with its own phase, in computed.ssb_tilt. The pair states the fit's sample tilt and
     depth spread, which C10 (at mid-depth) needs; a tilt-0 fit adds neither key, and the reader refuses half of them.
     """
@@ -139,9 +139,9 @@ def test_export_takes_the_tilt_corrected_fit_with_its_tilt_and_depth(tmp_path):
     record, phase = read_result(export_result(run, master, tmp_path / "both.json"))
     assert record["aberrations"] == joint["aberrations"] and float(phase[0, 0]) == 2.0
     assert (record["sample_tilt_mrad"], record["depth_spread_nm"]) == ([-0.1, -5.07], 10.7)
-    assert record["calibration"]["detector_sampling_mrad"] == [0.55, 0.56]  # the session's, kept in computed.ssb
+    assert record["calibration"]["detector_sampling_mrad"] == [0.55, 0.56]  # the session's, kept in computed.phase_of_mean
     assert record["provenance"]["phase_variant"].startswith("original ssb_phase_tilt.npy")
-    # the default mode: computed.ssb is the tilt-corrected fit and ssb_phase.npy its phase
+    # the default mode: computed.phase_of_mean is the tilt-corrected fit and ssb_phase.npy its phase
     (run / "config.json").write_text(json.dumps({"computed": {"phase_of_mean": _fit(sample_tilt_mrad=[1.0, 2.0], depth_spread_nm=5.0)}}))
     record, phase = read_result(export_result(run, master, tmp_path / "default.json"))
     assert (record["sample_tilt_mrad"], record["depth_spread_nm"], float(phase[0, 0])) == ([1.0, 2.0], 5.0, 0.0)

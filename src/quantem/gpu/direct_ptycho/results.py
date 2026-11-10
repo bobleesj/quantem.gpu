@@ -19,42 +19,6 @@ if TYPE_CHECKING:
 
     from quantem.gpu.direct_ptycho.branches import RotationBranches
 
-# SSB reconstructs the phase of the bright-field mean wave, ``phase_of_mean`` (``method="phase_of_mean"``). The older estimators
-# were retired on 2026-10-25, each in favour of the regularized method named here. Saved results and records that name
-# one still load as they were saved; asking for one raises an error naming its replacement.
-RETIRED_PHASE_ESTIMATORS = {"mean_phase": "phase", "complex_wave": "complex"}
-
-
-def check_phase_estimator(phase_estimator: str | None) -> None:
-    """Accept ``None`` or ``"phase_of_mean"``; raise for any other estimator, naming the method that replaces it.
-
-    Examples
-    --------
-    >>> check_phase_estimator("phase_of_mean")  # what method="phase_of_mean" computes
-    """
-    if phase_estimator in (None, "phase_of_mean"):
-        return
-    method = RETIRED_PHASE_ESTIMATORS.get(phase_estimator)
-    if method == "phase":
-        raise ValueError("phase_estimator='mean_phase' was retired. method='ssb' reconstructs the phase of the mean "
-                         "wave; for the regularized phase reconstruction use method='phase'.")
-    if method == "complex":
-        raise ValueError("phase_estimator='complex_wave' was retired. Use method='complex', which reconstructs "
-                         "amplitude and phase together.")
-    raise ValueError(f"phase_estimator must be 'phase_of_mean' (what method='ssb' computes) or omitted; "
-                     f"got {phase_estimator!r}.")
-
-
-def retired_estimator_note(phase_estimator: object, record: str) -> str | None:
-    """The one-line notice for a saved ``record`` whose image a retired estimator made; None otherwise."""
-    method = RETIRED_PHASE_ESTIMATORS.get(phase_estimator) if isinstance(phase_estimator, str) else None
-    if method is None:
-        return None
-    return (f"SSB: {record} was saved with the retired {phase_estimator} estimator and loads as saved; "
-            f"run(method='ssb') reconstructs the phase of the mean wave, run(method='{method}') replaces "
-            f"{phase_estimator}.")
-
-
 @dataclass
 class DirectPtychoResult(Mapping[str, float]):
     """Result from SSB ptychographic reconstruction.
@@ -124,8 +88,7 @@ class DirectPtychoResult(Mapping[str, float]):
         ``phase_of_mean`` for SSB (the phase of the bright-field mean wave);
         a regularized result records its method, ``phase`` or ``complex``.
         None marks a backend fit's working image, which the session replaces
-        with its SSB phase. Results saved with the retired ``mean_phase`` or
-        ``complex_wave`` estimators load with that name.
+        with its SSB phase.
     amplitude_estimated : bool
         False for phase-only paths, whose complex wave has unit amplitude.
     loss : float | None
@@ -139,7 +102,7 @@ class DirectPtychoResult(Mapping[str, float]):
     objective : str | None
         What ``aberrations()`` maximized: ``"agreement"`` (the least-squares agreement of the SSB model with the
         data, with or without tilt) or ``"broad_fifth_agreement"`` (the same through fifth order); None for a result
-        that was not fitted. Results saved by earlier versions may say ``"phase_variance"`` (a retired search).
+        that was not fitted.
     refinement : str | None
         Local refinement the fit applied after its search: ``"bfgs"`` (the fifth-order exact-gradient refinement),
         ``"newton"`` (the low-order trust-region Newton on the exact derivatives; a locked or bounded standard fit
@@ -235,7 +198,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
     def __repr__(self) -> str:
         method = self.reconstruction_method
-        lines = ["SSB Result" if method in ("phase_of_mean", "phase_of_mean") else f"Direct {method} result"]
+        lines = ["SSB Result" if method == "phase_of_mean" else f"Direct {method} result"]
         lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsample}x output")
         if self.phase_estimator is not None:
             lines.append(f"  Estimator      {self.phase_estimator}")
@@ -1130,7 +1093,7 @@ def _phase_title(result: DirectPtychoResult, area: str = "Full field", *, neural
     """Name the measured channel, reconstruction method and recorded strengths."""
     method = result.reconstruction_method
     options = result.reconstruction_options
-    if method in ("phase_of_mean", "phase_of_mean"):
+    if method == "phase_of_mean":
         heading = "Phase of the mean"
         detail = "No smoothing"
     else:

@@ -38,7 +38,8 @@ class NeuralPhaseModel:
     >>> neural_phase = reconstruction.neural_phase
     """
 
-    _SCHEMA = "quantem.phase-refinement/1"
+    # 2: the output factor is "upsample" (was "upsampling"); scripts/rewrite_saved_records.py carries a /1 file over.
+    _SCHEMA = "quantem.phase-refinement/2"
 
     def __init__(self, checkpoint: dict):
         if checkpoint.get("schema") != self._SCHEMA:

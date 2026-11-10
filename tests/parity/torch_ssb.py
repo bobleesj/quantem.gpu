@@ -23,7 +23,7 @@ Tilt fit objective (what finds the tilt; the phase-variance loss does not): leas
     fit = sum_{q in band} |sum_k G conj(gamma)|^2 / sum_k |gamma|^2, evaluated on the half-plane (the -q term equals the q term).
 
 Units follow the engine: C10, C12, thickness in Angstrom; phi12 rad; tilt mrad in the scan frame; q, k in 1/Angstrom. The public
-``SSB`` session converts from nm.
+``DirectPtycho`` session converts from nm.
 
 Precision follows G: complex64 G evaluates and accumulates in float32, complex128 G (on the CPU; MPS has no float64) in
 float64, the oracle the float32 paths are measured against.
@@ -60,7 +60,7 @@ class TorchSSB:
 
     @classmethod
     def from_ssb(cls, ssb, device: str | torch.device | None = None) -> Self:
-        """The exact G and geometry of a prepared CUDA ``SSB`` session (same rotation), as torch tensors on ``device``."""
+        """The exact G and geometry of a prepared CUDA ``DirectPtycho`` session (same rotation), as torch tensors on ``device``."""
         backend = ssb._backend()
         engine = backend._get_accelerator()
         engine.cache_rotation(backend._scan_detector_rotation_rad)
