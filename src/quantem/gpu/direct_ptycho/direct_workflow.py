@@ -347,7 +347,7 @@ def run(
             session.set_rotation(correction.scan_detector_rotation_deg)
     else:
         coefs, tilt, depth = (
-            dict(session.aberrations),
+            dict(session.known_aberrations),
             session.sample_tilt_mrad,
             session.depth_spread_nm,
         )

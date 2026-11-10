@@ -208,9 +208,9 @@ def run_ssb_preview(
     backend = ssb.backend
     if backend not in ("mps", "cuda"):
         raise ValueError("Open the SSB session on MPS or CUDA before benchmarking.")
-    if ssb.aberrations is None:
+    if ssb.known_aberrations is None:
         raise ValueError("Restore or fit the SSB calibration before measuring redraws.")
-    optics = dict(ssb.aberrations)
+    optics = dict(ssb.known_aberrations)
     sample = {
         "sample_tilt_mrad": tuple(ssb.sample_tilt_mrad or (0.0, 0.0)),
         "depth_spread_nm": float(ssb.depth_spread_nm or 0.0),
