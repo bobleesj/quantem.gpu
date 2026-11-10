@@ -18,7 +18,6 @@ export interface SSBOptimizationResult {
 
 export interface WebGPUReconstructionOptions {
   readonly upsample?: 1 | 2 | 4 | 8;
-  readonly phaseEstimator?: "phase_of_mean" | "mean_phase";
   /** No effect: every count is the strided subset `numBrightFieldPixels` selects. */
   readonly preview?: boolean;
   readonly numBrightFieldPixels?: number;

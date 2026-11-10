@@ -27,6 +27,7 @@ deprecated keyword or reader of an old saved key remains for them.
 | `phase_damping`, `amplitude_damping` | `phase_damp`, `amplitude_damp` | keyword, record key |
 | `NeuralPhaseModel.input_phase_damping`, `nominal_upsampling_requirement` | `input_phase_damp`, `nominal_upsample_requirement` | attribute, diagnostic key |
 | WebGPU `WebGPUReconstructionOptions.upsampling` | `upsample` | option |
+| WebGPU `WebGPUReconstructionOptions.phaseEstimator` (`"mean_phase"`) | removed: `reconstruct` returns the phase of the mean wave; `computeLoss` adds the native-grid loss | option |
 | `scripts/benchmark_ssb.py --stages reconstruct` | `--stages run` | stage name |
 | `tests/benchmarks/mps_ssb.py` metrics `find_aberrations`, `find_aberrations_standard` | `aberrations`, `aberrations_standard` | benchmark keys (the M5 Max baseline follows) |
 

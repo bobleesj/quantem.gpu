@@ -246,9 +246,8 @@ def generate_ssb_higher_order(directory: Path) -> None:
     }))
 
     def run(terms, sign):
-        """Both estimators: phase_of_mean = angle(ifft2(mean_k C_k)), mean_phase = mean_k angle(ifft2(C_k))."""
+        """The phase of the mean wave, angle(ifft2(mean_k C_k))."""
         total = np.zeros((scan, scan), complex)
-        phases = np.zeros((scan, scan))
         for start in range(0, len(bf), 128):
             br, bc = (bf[start:start + 128, axis][:, None, None] for axis in (0, 1))
             first = probe(br - qr, bc - qc, terms) if sign == "k-q" else probe(qr - br, qc - bc, terms)
@@ -259,8 +258,7 @@ def generate_ssb_higher_order(directory: Path) -> None:
             corrected = g[start:start + 128] * unit
             corrected[:, 0, 0] = dc
             total += corrected.sum(0)
-            phases += np.angle(np.fft.ifft2(corrected, axes=(1, 2))).sum(0)
-        return {"phase_of_mean": np.angle(np.fft.ifft2(total / len(bf))), "mean_phase": phases / len(bf)}
+        return np.angle(np.fft.ifft2(total / len(bf)))
 
     def correlation(image):
         a, b = image - image.mean(), object_phase - object_phase.mean()
@@ -272,13 +270,13 @@ def generate_ssb_higher_order(directory: Path) -> None:
                           "C23": (truth["C23"][0], truth["C23"][1] + 60.0)}}
     images = {(name, "k-q"): run(terms, "k-q") for name, terms in cases.items()}
     images["truth", "q-k"] = run(truth, "q-k")
-    scores = {f"{name}|{sign}": correlation(image["phase_of_mean"]) for (name, sign), image in images.items()}
-    separation = float(np.abs(images["truth", "k-q"]["phase_of_mean"] - images["truth", "q-k"]["phase_of_mean"]).max())
+    scores = {f"{name}|{sign}": correlation(image) for (name, sign), image in images.items()}
+    separation = float(np.abs(images["truth", "k-q"] - images["truth", "q-k"]).max())
     # The sign must matter on this fixture, and the probe's own coefficients must reconstruct the object best.
     assert separation > 100 * HIGHER_ORDER_TOLERANCE_RAD, separation
     assert scores["truth|k-q"] == max(scores.values()), scores
-    order = [[name, estimator, sign] for (name, sign) in images for estimator in ("phase_of_mean", "mean_phase")]
-    reference = np.concatenate([images[name, sign][estimator].ravel() for name, estimator, sign in order])
+    order = [[name, sign] for (name, sign) in images]
+    reference = np.concatenate([images[name, sign].ravel() for name, sign in order])
     reference.astype(np.float32).tofile(directory / "reference.f32")
 
     def options(terms):

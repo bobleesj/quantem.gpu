@@ -10,7 +10,7 @@ export async function runSsbInteractionParity(base: string): Promise<Record<stri
     dtype: "uint16", encoding: "uint16", num_bright_field_pixels: cal.num_bright_field_pixels,
     plane, scan_shape: cal.g_shape.slice(1), bytes_per_bright_field_pixel: plane * 2, bits_per_value: 16 }) });
   const engine = new WebGPUSSBBackend(calibration, source(base + "ssb-columns.u16"));
-  const options = { computeLoss: true, phaseEstimator: "mean_phase" as const,
+  const options = { computeLoss: true,
     sample: { sampleTiltMrad: [2.2, -3.1] as [number, number], depthSpreadA: 140 } };
   try {
     const expected = await engine.reconstruct(-120, 35, 0.6, options);

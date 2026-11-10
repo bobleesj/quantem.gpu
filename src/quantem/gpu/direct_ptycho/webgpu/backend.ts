@@ -2011,16 +2011,12 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     options: WebGPUReconstructionOptions = {}): Promise<WebGPUSSBResult> {
     const factor = options.upsample ?? 1;
     if (![1, 2, 4, 8].includes(factor)) throw new Error("WebGPU SSB upsample must be 1, 2, 4, or 8.");
-    if (factor > 1 && options.phaseEstimator === "mean_phase") {
-      throw new Error("Upsampling uses phase_of_mean; keep the diagnostic loss on the native grid.");
-    }
     return this.runExclusive(async () => {
       options.signal?.throwIfAborted();
       // Loss is a native-grid diagnostic. It must not change the displayed estimator on release.
       const wantsLoss = options.computeLoss !== false;
       const native = wantsLoss || factor === 1
         ? await this.reconstructNative(c10A, c12A, phi12Rad, {...options, computeLoss: wantsLoss}) : null;
-      if (options.phaseEstimator === "mean_phase") return native!;
       let result: WebGPUSSBResult;
       if (factor === 1) {
         result = wantsLoss
@@ -2147,7 +2143,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       // the same estimator as the Python SSB.result() reference (verified
       // corr 0.997 vs backend, 0.9965 vs the exact browser path at identical
       // state). Loss commits always use the exact per-BF path below.
-      if (!computeLoss && options.phaseEstimator !== "mean_phase") {
+      if (!computeLoss) {
         enc.clearBuffer(buffers.stage, 0, this.plane * 8);
         for (let bfOffset = 0; bfOffset < buffers.activeBfCount; bfOffset += buffers.chunkCapacity) {
           const chunkBf = Math.min(buffers.chunkCapacity, buffers.activeBfCount - bfOffset);

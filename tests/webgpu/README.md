@@ -168,7 +168,7 @@ C12, C21 (coma), C23 (trefoil) and C30, a 128 x 128 scan of 293 uint16
 bright-field columns. The fixture also reconstructs the counts in float64 from
 the physics, G(q, k) ~ P(k - q) conj P(k) - P(k) conj P(k + q) with chi in polar
 form. With the probe's own coefficients, none above C12, and the odd ones
-reversed, both estimators must match that reference within 1e-5 rad. The WGSL
+reversed, the phase of the mean wave must match that reference within 1e-5 rad. The WGSL
 once evaluated the first term at q - k, which reverses coma and trefoil on that
 sideband: it missed the reference by 2.8e-2 rad and matched the q - k form to
 7.5e-8 rad. The fixed WGSL is within 7.5e-8 rad (apple / metal-3, 2026-10-21).
