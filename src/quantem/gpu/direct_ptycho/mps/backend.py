@@ -11,6 +11,7 @@ import numpy as np
 from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.direct_ptycho.contract import ExportState, BackendPrecision
+from quantem.gpu.direct_ptycho.padding import pad_scan, padded_side
 from quantem.gpu.direct_ptycho.mps.frames import (
     MpsBfColumnFrames,
     MpsTensorFrames,
@@ -25,7 +26,6 @@ from quantem.gpu.direct_ptycho.mps.hardware import (
 )
 from quantem.gpu.direct_ptycho.mps.optimizer import fit_sample
 from quantem.gpu.direct_ptycho.mps.optimizer import optimize as optimize_mps
-from quantem.gpu.direct_ptycho.mps.padding import pad_scan
 from quantem.gpu.direct_ptycho.mps.prepared import (
     PreparedMpsSSB,
     as_sampling,
@@ -44,8 +44,8 @@ class MpsSSBBackend:
     The prepared state (``prepared.py``) owns MPS preparation and device state. UI and export consumers
     use only the public reconstruction methods and :meth:`browser_state`.
     Dense rectangles are centered on the next supported square FFT grid using
-    their mean detector pattern, matching CUDA's padding convention. Padding
-    is announced; reconstructed phases include the padded extent.
+    their mean detector pattern (``direct_ptycho.padding``, shared with CUDA).
+    Padding is announced; reconstructed phases include the padded extent.
     """
 
     backend = "mps"
@@ -64,7 +64,7 @@ class MpsSSBBackend:
         bright_field_radius_px: int | None,
         scan_detector_rotation_deg: float,
     ) -> None:
-        self._frames = as_chunked_frames(pad_scan(data))
+        self._frames = as_chunked_frames(pad_scan(data, any_square=True))
         self._scan_shape = frames_scan_shape(self._frames)
         self._detector_shape = tuple(int(size) for size in self._frames.shape[-2:])
         self._voltage_kV = float(voltage_kV)
@@ -316,12 +316,7 @@ class MpsSSBBackend:
             return
         recommended = mx.device_info().get("max_recommended_working_set_size", 0)
         # Rectangular regions use the ordinary square mean-pattern padding.
-        side = max(scan_shape)
-        if scan_shape[0] != scan_shape[1]:
-            from quantem.gpu.direct_ptycho.mps.kernels import MPS_FFT_CONFIGS
-
-            side = next((size for size in sorted(MPS_FFT_CONFIGS)
-                         if size >= side), side)
+        side = padded_side(scan_shape, any_square=True) or max(scan_shape)
         parent_pixels = math.prod(self._prepared.scan_shape)
         region_bytes = self._prepared.g_qk.nbytes * side * side // parent_pixels
         reserve_bytes = 4 * region_bytes + (2 << 30)

@@ -27,6 +27,7 @@ from quantem.gpu.resident.mps.frames import ChunkedFrames
 from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 from quantem.gpu.direct_ptycho.calibration import READABLE_CALIBRATION_SCHEMAS
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
+from quantem.gpu.direct_ptycho.padding import announce_padding, padded_side
 
 # The layout of a ShowPtycho folder's snapshots/cal.json as quantem.widget writes it; another value is refused.
 # 2: keys follow the shared vocabulary (bright_field_rows, bright_field_cols, bright_field_center_px,
@@ -585,8 +586,6 @@ class EncodedBrightFieldFrames:
     block_bytes = 64 * 1024**2
 
     def __init__(self, crop: EncodedBrightFieldCrop) -> None:
-        from quantem.gpu.direct_ptycho.mps.kernels import MPS_FFT_CONFIGS
-
         self.crop = crop
         rows, cols, *detector_shape = crop.shape
         self.detector_shape = tuple(int(size) for size in detector_shape)
@@ -594,24 +593,15 @@ class EncodedBrightFieldFrames:
         self._measured_total = crop.detector_total()
         self.offset = (0, 0)
         self._pattern = None
-        if rows == cols and rows <= max(MPS_FFT_CONFIGS):
+        side = padded_side((rows, cols), any_square=True)
+        if side is None:
             self.scan_shape = (rows, cols)
         else:
-            target = next((size for size in sorted(MPS_FFT_CONFIGS) if size >= max(rows, cols)), None)
-            if target is None:
-                raise ValueError(
-                    f"MPS SSB supports scans up to 1024x1024; got {rows}x{cols}. "
-                    "Select a region with at most 1024 positions per side."
-                )
-            self.scan_shape = (target, target)
-            self.offset = ((target - rows) // 2, (target - cols) // 2)
+            self.scan_shape = (side, side)
+            self.offset = ((side - rows) // 2, (side - cols) // 2)
             # pad_scan's integer mean: the exact total divided in float64, truncated to the counts' dtype
             self._pattern = (self._measured_total.astype(np.float64) / (rows * cols)).astype(self.dtype)
-            print(
-                f"MPS SSB: padded the {rows}x{cols} scan to {target}x{target} with its "
-                "mean pattern for the Metal FFT. Every measured position is retained; "
-                "the phase covers the padded grid."
-            )
+            announce_padding((rows, cols), side)
         self.measured_shape = (rows, cols)
         self.metadata = {"scan_shape": self.scan_shape}
         self.shape = (int(np.prod(self.scan_shape)), *self.detector_shape)

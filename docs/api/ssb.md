@@ -322,13 +322,17 @@ copied with its data is therefore reused; another acquisition is fitted again.
 - `phi12_deg`: degrees.
 
 For a dense CUDA input, native supported scan shapes are 128×128, 256×256,
-512×512 and 1024×1024. Other smaller scan shapes are padded with the mean
-diffraction pattern to a supported square. For example, a 32×32 input currently
-produces a 128×128 working grid before any requested upsample. Check
-`ptycho.scan_shape` and `result.phase.shape`; padded pixels are not additional
-measured scan positions; the session prints one line naming the padded size.
-Dense CUDA arrays larger than 1024 along either axis are unsupported. Use the
-encoded acquisition for the bounded-memory large-scan workflow below.
+512×512 and 1024×1024; MPS also runs any other square scan up to 1024×1024.
+Other smaller scan shapes are padded with the mean diffraction pattern to the
+next supported square. For example, a 32×32 input on CUDA produces a 128×128
+working grid before any requested upsample. Check `ptycho.scan_shape` and
+`result.phase.shape`; padded pixels are not additional measured scan positions.
+The session prints one line with the measured shape, the padded shape and the
+padded fraction, for example
+`SSB: 200 x 200 scan padded to 256 x 256 with its mean pattern (39% of positions are padding); crop to a supported side (128, 256, 512, 1024) to fit measured positions only.`
+Dense arrays larger than 1024 along either axis are unsupported on both
+backends. Use the encoded acquisition for the bounded-memory large-scan
+workflow below.
 Computational padding is separate from `run(..., upsample=2)`.
 
 The default fit evaluates 200 seeded TPE candidates of the least-squares

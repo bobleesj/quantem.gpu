@@ -178,6 +178,7 @@ the first run after this change computes them again, as after any code change; t
 
 ### Removed
 
+- `direct_ptycho.mps.padding` (`pad_scan`): the shared `direct_ptycho.padding.pad_scan(data, any_square=...)` replaces it.
 - `direct_ptycho.torch_agreement` (the float64 plain-torch reference of the fit's agreement and derivatives) moves to
   `tests/parity/torch_agreement.py`: only tests used it.
 - Test-only helpers leave the package: `mps.hardware.exact_pair_row_policy_512`, `mps.prepared.bf_storage_chunk_packs`,
@@ -311,6 +312,11 @@ the first run after this change computes them again, as after any code change; t
 
 ### Changed
 
+- SSB scan padding is one function for CUDA and MPS (`direct_ptycho.padding.pad_scan`, Torch, mean pattern). A padded
+  scan prints one line with the measured shape, the padded shape and the padded fraction, e.g. `SSB: 200 x 200 scan
+  padded to 256 x 256 with its mean pattern (39% of positions are padding); crop to a supported side (128, 256, 512,
+  1024) to fit measured positions only.` A scan above 1024 positions per side raises the same error on both backends
+  (the CUDA error no longer points to MPS, which has the same limit).
 - `movie.save_gif` and `movie.save_mp4` keep native panel pixels: `max_width` defaults to None instead of 1200, and a
   width the grid exceeds prints one line with the new panel size. `save_mp4(device="cpu")` and pre-rendered PIL frame
   input are removed (no caller); `device="auto"` still prints one line and encodes with ffmpeg when no GPU writer can
