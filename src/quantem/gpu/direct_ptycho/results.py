@@ -681,10 +681,9 @@ class DirectPtychoResult(Mapping[str, float]):
             over every panel in the call. ``(0.5, 99.5)`` clips the tails; pass
             a narrow pair to pull out faint contrast. Mutually exclusive with
             ``clim``.
-        size : {"small", "medium", "large", "xlarge"}, int or None, optional
-            Per-panel width: small 3, medium 4.5, large 6 or xlarge 9 inches
-            at the static 100-DPI reference, or a positive integer pixel width
-            such as ``size=750``. Medium is the default. Plot aspect
+        size : {"small", "medium", "large", "xlarge"}, optional
+            Per-panel width: 300, 450, 600 or 900 px (3, 4.5, 6 or 9 inches at the static
+            100-DPI reference), as in quantem.widget. Medium is the default. Plot aspect
             ratios are preserved. Changes only display size, never sampling
             or fitted values. Use either ``size`` or an explicit ``axsize``.
         rows, columns : int, optional
@@ -1116,7 +1115,7 @@ def _phase_title(result: DirectPtychoResult, area: str = "Full field", *, neural
 
 def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "inferno",
                       region: str | None = "center", show_fft: bool = False,
-                      interactive: bool = False, size: str | int = "medium",
+                      interactive: bool = False, size: str = "medium",
                       columns: int | None = None, rows: int | None = None,
                       fft_limit_inv_A: float | None = None,
                       clim: tuple[float, float] | None = None,

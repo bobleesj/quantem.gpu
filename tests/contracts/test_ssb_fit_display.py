@@ -8,7 +8,7 @@ import pytest
 from quantem.gpu.direct_ptycho.fit_display import FitDisplay
 
 
-@pytest.mark.parametrize("size", ["small", "medium", "large", "xlarge", 750, 900])
+@pytest.mark.parametrize("size", ["small", "medium", "large", "xlarge"])
 @pytest.mark.parametrize("columns", [1, 2, 3])
 def test_preview_compares_three_final_methods_without_refitting(monkeypatch, size, columns):
     ipython = pytest.importorskip("IPython")
@@ -73,7 +73,7 @@ def test_disabled_or_cli_fit_creates_no_display(monkeypatch, enabled, notebook):
     ssb.run.assert_not_called()
 
 
-@pytest.mark.parametrize("size,width", [("large", 6), (750, 7.5)])
+@pytest.mark.parametrize("size,width", [("large", 6), ("xlarge", 9)])
 def test_large_convergence_is_live_throttled_and_does_not_run(monkeypatch, size, width):
     import IPython
     import IPython.display
@@ -110,7 +110,7 @@ def test_default_does_not_collect_live_chart_history():
     assert view.figure is None
 
 
-@pytest.mark.parametrize("size", ["small", "medium", "large", "xlarge", 750, 900])
+@pytest.mark.parametrize("size", ["small", "medium", "large", "xlarge"])
 def test_fit_heading_clears_the_phase_title(size):
     """An inline fit preview keeps its heading above the full image title."""
     import numpy as np
@@ -196,7 +196,7 @@ def test_regional_preview_boxes_measured_positions_at_auto_sampling(monkeypatch,
     fit = DirectPtychoResult(object_wave=np.ones((64, 64)), backend="mps", fit_scan_region=(32, 96, 16, 80))
     session = SimpleNamespace(input_scan_shape=(126, 126), run=Mock(return_value=full),
                               _accept_result=Mock(), backend=backend, _streamed=None)
-    view = FitDisplay(session, enabled=True, size=750, columns=columns,
+    view = FitDisplay(session, enabled=True, size="large", columns=columns,
                       scan_region=fit.fit_scan_region)
     view.update(fit, final=False)
     view.update(fit, final=True)

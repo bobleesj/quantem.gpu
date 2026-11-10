@@ -6,15 +6,13 @@ import numbers
 PANEL_WIDTHS = {"small": 300, "medium": 450, "large": 600, "xlarge": 900}
 
 
-def panel_inches(size: str | int) -> float:
-    """Translate a preset or pixel width at the static 100-DPI reference."""
+def panel_inches(size: str) -> float:
+    """Panel width in inches for a preset, at the static 100-DPI reference (quantem.widget's widths)."""
     if isinstance(size, str) and size in PANEL_WIDTHS:
         return PANEL_WIDTHS[size] / 100
-    if isinstance(size, numbers.Integral) and not isinstance(size, bool) and size > 0:
-        return int(size) / 100
     raise ValueError(
-        "size must be 'small', 'medium', 'large', 'xlarge', or a positive integer "
-        f"panel width in pixels; use size=900, got {size!r}."
+        "size must be 'small', 'medium', 'large' or 'xlarge' (300, 450, 600, 900 px wide, as in "
+        f"quantem.widget); got {size!r}."
     )
 
 

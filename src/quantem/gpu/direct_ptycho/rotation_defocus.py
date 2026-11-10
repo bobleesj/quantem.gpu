@@ -88,7 +88,7 @@ class RotationDefocusComparison:
         return self.report()._repr_html_()
 
     def show(self, *, view_fraction: float | None = None, zoom: float | None = None,
-             size: str | int = "medium", cmap: str = "inferno") -> "Figure":
+             size: str = "medium", cmap: str = "inferno") -> "Figure":
         """Show matched phase images above native-pixel histograms.
 
         Parameters
@@ -101,8 +101,8 @@ class RotationDefocusComparison:
             Show full fitted fields above boxed central magnifications. 1 shows
             only the full fields. Histograms use the whole fitted region; all
             views share contrast and the same per-image median subtraction.
-        size : str or int, optional
-            Per-panel size preset or positive pixel width, default "medium".
+        size : {"small", "medium", "large", "xlarge"}, optional
+            Per-panel size preset, default "medium" (300, 450, 600 or 900 pixels wide).
         cmap : str, optional
             Phase colormap, default "inferno". Fits and stored arrays are unchanged.
 

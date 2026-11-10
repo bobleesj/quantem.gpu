@@ -1602,10 +1602,9 @@ class DirectPtycho:
             The existing ShowPtycho widget, the focus-depth landscape, the
             row-column tilt landscape, both landscapes, reconstructed images,
             or selected search trials.
-        size : {"small", "medium", "large", "xlarge"}, int or None, optional
-            Plot or focus-gallery panel size only; medium by default. Accepts
-            a positive integer width in pixels, or presets corresponding to
-            300, 450, 600 or 900 pixels. Does not change
+        size : {"small", "medium", "large", "xlarge"}, optional
+            Plot or focus-gallery panel size only; medium by default. The presets
+            are 300, 450, 600 or 900 pixels wide, as in quantem.widget. Does not change
             data or sampling.
         rows, columns : int, optional
             Images down or across focus and parameter galleries. Set either
@@ -1839,9 +1838,8 @@ class DirectPtycho:
         after fitting. Set ``show=False`` to skip previews and that preparation.
         Command-line calls do not create plots.
         Display time is recorded separately and excluded from the fit clock.
-        ``size="small"``, ``"medium"`` (default), ``"large"`` or ``"xlarge"``
-        or an integer pixel width such as ``size=900`` controls only the display.
-        Numeric widths use the same 100-DPI reference as the presets.
+        ``size="small"``, ``"medium"`` (default), ``"large"`` or ``"xlarge"`` (300, 450, 600,
+        900 px wide, as in quantem.widget) controls only the display.
         ``columns`` sets methods per row (default
         3); ``columns=1`` stacks them vertically. Regional comparisons keep
         full fields above their matching zooms in each row group. These options
@@ -2164,7 +2162,7 @@ class DirectPtycho:
     def scan_rotations(
         self, *, report: bool = True,
         region: str | tuple[int, int, int, int] | None = None,
-        zoom: float = 3, size: str | int = "medium", cmap: str = "inferno",
+        zoom: float = 3, size: str = "medium", cmap: str = "inferno",
         defocus: bool = False, apply: bool | None = None, **fit_options,
     ) -> "RotationBranches | RotationDefocusComparison":
         """Compare scan-detector rotations and display their phase images and evidence.
@@ -2190,9 +2188,8 @@ class DirectPtycho:
             Display magnification, default 3. Full fitted fields remain above
             boxed central zooms. 1 shows full fields only. This changes neither
             fitting nor sampling; histograms use the full fitted region.
-        size : str or int, optional
-            Per-panel size: "small", "medium" (default), "large", "xlarge",
-            or a positive integer width in pixels, for example 600.
+        size : {"small", "medium", "large", "xlarge"}, optional
+            Per-panel size, "medium" by default: 300, 450, 600 or 900 pixels wide.
         cmap : str, optional
             Phase colormap, default "inferno". All candidates share contrast.
         defocus : bool, optional
@@ -2220,7 +2217,7 @@ class DirectPtycho:
         --------
         >>> rotations = ptycho.scan_rotations(size="large")  # doctest: +SKIP
         >>> rotations = ptycho.scan_rotations(  # doctest: +SKIP
-        ...     region=(128, 384, 128, 384), zoom=3, size=600)
+        ...     region=(128, 384, 128, 384), zoom=3, size="large")
         >>> review = ptycho.scan_rotations(defocus=True)  # doctest: +SKIP
         >>> rotations = ptycho.scan_rotations(report=False)  # doctest: +SKIP
         """

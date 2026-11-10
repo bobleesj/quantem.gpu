@@ -53,12 +53,12 @@ def test_every_panel_gets_a_round_bar_near_a_fifth_of_the_field(scan):
 
 def test_bar_and_label_grow_with_panel_size(scan):
     small = _bars(detector.show(scan, size="small"))
+    large = _bars(detector.show(scan, size="large"))
     xlarge = _bars(detector.show(scan, size="xlarge"))
-    integer = _bars(detector.show(scan, size=1200))
-    for small_bar, xlarge_bar, integer_bar in zip(small, xlarge, integer, strict=True):
-        assert small_bar[0] == xlarge_bar[0] == integer_bar[0]
-        assert small_bar[1] < xlarge_bar[1] <= integer_bar[1]
-        assert small_bar[2] < xlarge_bar[2] < integer_bar[2]
+    for small_bar, large_bar, xlarge_bar in zip(small, large, xlarge, strict=True):
+        assert small_bar[0] == large_bar[0] == xlarge_bar[0]
+        assert small_bar[1] <= large_bar[1] <= xlarge_bar[1] and small_bar[1] < xlarge_bar[1]
+        assert small_bar[2] < large_bar[2] < xlarge_bar[2]
 
 
 def test_missing_sampling_leaves_its_panels_without_a_bar(scan):

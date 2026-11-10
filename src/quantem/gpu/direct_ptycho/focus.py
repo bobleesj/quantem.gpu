@@ -41,7 +41,7 @@ def show_focus(
         raise ValueError(f"Use layout='grid' for Show2D or 'stack' for Show3D; got {layout!r}.")
     width_inches = panel_inches("medium" if size is None else size)
     if axsize is not None and (size is not None or mode != "static"):
-        raise ValueError("Choose size (a preset or pixel width), or axsize=(width, height) with mode='static'.")
+        raise ValueError("Choose size ('small', 'medium', 'large' or 'xlarge'), or axsize=(width, height) with mode='static'.")
     offsets = np.asarray(focus_offsets_nm, dtype=float)
     if offsets.ndim != 1 or not offsets.size or not np.isfinite(offsets).all():
         raise ValueError("Give finite focus_offsets_nm, for example (-5, 0, 5), relative to the joint fit.")
