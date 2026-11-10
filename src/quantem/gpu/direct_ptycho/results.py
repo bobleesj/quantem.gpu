@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.display._layout import panel_figure, panel_inches, resolve_columns, scalebar
-from quantem.gpu.optics.physics import wrap_degrees
+from quantem.gpu.optics.physics import wavelength_A_from_kV, wrap_degrees
 from quantem.gpu.direct_ptycho.probe import model_probe, probe_grid
 
 if TYPE_CHECKING:
@@ -656,7 +656,8 @@ class DirectPtychoResult(Mapping[str, float]):
             magnitude displays, not independent-resolution FRC curves.
         fft_limit_inv_A : float or None, optional
             Display only the common Fourier band within this frequency on each
-            axis. Neural comparisons use full-field log10 amplitude with shared
+            axis. By default, the aperture limit 2*alpha/lambda, so every
+            upsample factor shows the same physical region. Neural comparisons use full-field log10 amplitude with shared
             1–99.8 percentile limits and magma colors. Only displayed frequency
             support is restricted; stored reconstruction arrays are unchanged.
         size : {"small", "medium", "large", "xlarge"}, int or None, optional
@@ -1155,9 +1156,16 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
             for index, result in enumerate(results):
                 labels[index] += "\nTilt fixed at zero" if result.sample_tilt_mrad is None else "\nTilt-corrected"
     if show_fft:
+        # The displayed band is the measured one: without an explicit limit, crop
+        # to the aperture, 2*alpha/lambda, so an upsampled grid shows the same
+        # physical frequency region instead of zooming past the aperture.
+        limit = fft_limit_inv_A
+        if limit is None and all(result.voltage_kV is not None and result.semiangle_mrad is not None
+                                 for result in results):
+            limit = 2 * (results[0].semiangle_mrad / 1000.0) / wavelength_A_from_kV(results[0].voltage_kV)
         spectra, frequency_sampling = _phase_spectra(
             phases if neural_comparison else crops, sampling,
-            log_amplitude=neural_comparison, limit_inv_A=fft_limit_inv_A,
+            log_amplitude=neural_comparison, limit_inv_A=limit,
         )
         groups.append(spectra)
         area = "Full-field" if neural_comparison or region is None else "Crop"
