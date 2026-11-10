@@ -179,6 +179,8 @@ the first run after this change computes them again, as after any code change; t
 ### Removed
 
 - `direct_ptycho.mps.padding` (`pad_scan`): the shared `direct_ptycho.padding.pad_scan(data, any_square=...)` replaces it.
+- Backend detector sampling attributes `CudaSSBBackend.angular_sampling` and `MpsSSBBackend._det_sampling`: both are
+  `detector_sampling_mrad`.
 - `direct_ptycho.torch_agreement` (the float64 plain-torch reference of the fit's agreement and derivatives) moves to
   `tests/parity/torch_agreement.py`: only tests used it.
 - Test-only helpers leave the package: `mps.hardware.exact_pair_row_policy_512`, `mps.prepared.bf_storage_chunk_packs`,
@@ -317,6 +319,11 @@ the first run after this change computes them again, as after any code change; t
   padded to 256 x 256 with its mean pattern (39% of positions are padding); crop to a supported side (128, 256, 512,
   1024) to fit measured positions only.` A scan above 1024 positions per side raises the same error on both backends
   (the CUDA error no longer points to MPS, which has the same limit).
+- The SSB backend protocol (`direct_ptycho.contract.DirectPtychoProtocol`) now carries every call `DirectPtycho` makes:
+  `detector_sampling_mrad` (public on both backends), `shares_full_field_preparation`, `phase_variance`,
+  `release_cache`, `release_prepared`, `release_for_region` and `inherit_full_field_preparation` (returns whether it
+  shared). CUDA implements the memory calls as no-ops; the workflow no longer imports or type-checks
+  `MpsSSBBackend`.
 - `movie.save_gif` and `movie.save_mp4` keep native panel pixels: `max_width` defaults to None instead of 1200, and a
   width the grid exceeds prints one line with the new panel size. `save_mp4(device="cpu")` and pre-rendered PIL frame
   input are removed (no caller); `device="auto"` still prints one line and encodes with ffmpeg when no GPU writer can

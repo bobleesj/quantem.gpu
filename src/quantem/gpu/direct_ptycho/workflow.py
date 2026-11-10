@@ -38,7 +38,6 @@ from quantem.gpu.direct_ptycho.contract import (
     DirectPtychoProtocol,
     check_refinement,
 )
-from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
 from quantem.gpu.direct_ptycho.mps.frames import EncodedBrightFieldCrop, MpsBfColumnFrames, find_bf_columns
 from quantem.gpu.direct_ptycho.mps.optimizer import newton_supported
 from quantem.gpu.direct_ptycho.mps.reconstruct import fit_loss_tiles
@@ -703,8 +702,7 @@ class DirectPtycho:
                 source = labels.MODIFIED_IN_SESSION
             if name == "detector_sampling_mrad" and value is None:
                 if self._compute is not None:
-                    value = (self._compute._det_sampling if self.backend == "mps"
-                             else self._compute.angular_sampling)
+                    value = self._compute.detector_sampling_mrad
                     if self.scan_detector_rotation_flipped:
                         value = value[::-1]
                 else:
@@ -1096,13 +1094,11 @@ class DirectPtycho:
             regional.scan_detector_rotation_source = self.scan_detector_rotation_source
         regional._dark_field, regional._dark_field_source = None, self
         regional._dark_field_region = tuple(scan_region)
-        if full_field and isinstance(self._compute, MpsSSBBackend):
-            compute = regional._backend()
-            compute.inherit_full_field_preparation(self._compute)
-            if compute._prepared is None:
-                # Changed geometry needs its own preparation. Avoid holding
-                # two full Fourier stacks when sharing is not applicable.
-                self._release_cached_buffers()
+        if (full_field and self._compute is not None and self._compute.shares_full_field_preparation
+                and not regional._backend().inherit_full_field_preparation(self._compute)):
+            # Changed geometry needs its own preparation. Avoid holding
+            # two full Fourier stacks when sharing is not applicable.
+            self._release_cached_buffers()
         for name in ("source_kind", "source_storage_path", "source_dtype", "source_bytes",
                      "source_detector_bin", "source_provenance", "calibration_path",
                      "source_manifest_path", "resident_identity"):
@@ -1404,11 +1400,12 @@ class DirectPtycho:
         shape, the backend keeps it only when sufficient fitting headroom is
         available; a later full-field correction can then reuse the same bits.
         """
-        if isinstance(self._compute, MpsSSBBackend):
-            if region_shape is None:
-                self._compute.release_prepared()
-            else:
-                self._compute.release_for_region(region_shape)
+        if self._compute is None:
+            return
+        if region_shape is None:
+            self._compute.release_prepared()
+        else:
+            self._compute.release_for_region(region_shape)
 
     def _center_in_data(self) -> tuple[float, float] | None:
         """The bright-field centre in pixels of the array the session holds, which the backends index.
@@ -1469,6 +1466,8 @@ class DirectPtycho:
                     aberrations=aberrations_to_engine(self.known_aberrations) if self._aberrations_explicit else None,
                 )
             else:
+                from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
+
                 self._compute = MpsSSBBackend(
                     self._data, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                     scan_sampling=self.scan_sampling_A, detector_sampling_mrad=self._sampling_in_data(),
@@ -1478,8 +1477,7 @@ class DirectPtycho:
             if self.detector_sampling_mrad is None:
                 # Retain the backend's probe estimate in the working calibration
                 # so region sessions and Save use the value actually computed.
-                sampling = (self._compute._det_sampling if self.backend == "mps"
-                            else self._compute.angular_sampling)
+                sampling = self._compute.detector_sampling_mrad
                 self.detector_sampling_mrad = tuple(sampling[::-1] if self.scan_detector_rotation_flipped else sampling)
                 self._calibration_initial["detector_sampling_mrad"] = self.detector_sampling_mrad
                 _announce_detector_sampling(self.detector_sampling_mrad, self.semiangle_mrad, recordable=False)
@@ -1528,7 +1526,7 @@ class DirectPtycho:
                 phases.append(np.array(host_array(phase), dtype=np.float32))
         finally:
             self.set_rotation(saved_rotation)
-        if isinstance(self._compute, MpsSSBBackend):
+        if self._compute is not None:
             self._compute.release_cache()
         return factor, tuple(phases)
 
@@ -2505,7 +2503,7 @@ class DirectPtycho:
         if not compute_loss:
             result.loss = None
             self.best_loss = float("inf")
-        if isinstance(self._compute, MpsSSBBackend):
+        if self._compute is not None:
             # the fits reuse their batch buffers through MLX's allocator cache, across both branches and the phase
             # diagnostic (up to ~20 GB on a 512 x 512 scan); once the fit is done the session keeps only G(q, k)
             self._compute.release_cache()
@@ -2761,7 +2759,7 @@ class DirectPtycho:
             sample_tilt_mrad=tilt or (0.0, 0.0), depth_spread_nm=depth or 0.0,
             compute_loss=compute_loss,
         )
-        if isinstance(self._compute, MpsSSBBackend):
+        if self._compute is not None:
             # slider previews reuse their chunk buffers through MLX's cache (the loss's row IFFT is 8.6 GB at 4096
             # bright-field pixels); a finished reconstruction keeps only G(q, k)
             self._compute.release_cache()

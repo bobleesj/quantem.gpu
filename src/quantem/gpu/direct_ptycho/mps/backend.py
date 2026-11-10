@@ -50,6 +50,8 @@ class MpsSSBBackend:
 
     backend = "mps"
     precision = BackendPrecision()
+    # A full-field region can copy this session's prepared G(q, k) instead of transforming the same counts again.
+    shares_full_field_preparation = True
 
     def __init__(
         self,
@@ -115,7 +117,7 @@ class MpsSSBBackend:
             # the bright-field disk edge sits at the semiangle
             detector_pixel_mrad = self._semiangle_mrad / self._selection.bright_field_edge_radius_px
             calibration = (detector_pixel_mrad, detector_pixel_mrad)
-        self._det_sampling = calibration
+        self.detector_sampling_mrad = calibration
         self._scan_detector_rotation_deg = float(scan_detector_rotation_deg)
         self._prepared = None
         # the rotation G(q, k) was first built at, and whether its geometry was retargeted since: a rebuild after
@@ -323,8 +325,8 @@ class MpsSSBBackend:
         if mx.get_active_memory() + reserve_bytes > recommended // 2:
             self.release_prepared()
 
-    def inherit_full_field_preparation(self, source: "MpsSSBBackend") -> None:
-        """Share unchanged full-field evidence with an independent fit session.
+    def inherit_full_field_preparation(self, source: Self) -> bool:
+        """Share unchanged full-field evidence with an independent fit session; True when it was shared.
 
         The caller establishes that both sessions cover the same source
         positions. Geometry must match a fresh preparation too: retargeted
@@ -333,19 +335,20 @@ class MpsSSBBackend:
         session cannot replace the source session's arrays or caches.
         """
         if source._prepared is None or source._retargeted:
-            return
+            return False
         attributes = (
             "_scan_shape", "_voltage_kV", "_semiangle_mrad", "_scan_sampling",
-            "_det_sampling", "_scan_detector_rotation_deg",
+            "detector_sampling_mrad", "_scan_detector_rotation_deg",
         )
         if any(getattr(self, name) != getattr(source, name) for name in attributes):
-            return
+            return False
         if not (np.array_equal(self._selection.rows, source._selection.rows)
                 and np.array_equal(self._selection.cols, source._selection.cols)):
-            return
+            return False
         self._prepared = dataclasses.replace(source._prepared)
         self._built_rotation_deg = source._built_rotation_deg
         self._retargeted = source._retargeted
+        return True
 
     def close(self) -> None:
         """Release MPS preparation and cached Metal buffers; the source data stays its owner's."""
@@ -399,7 +402,7 @@ class MpsSSBBackend:
                 voltage_kV=self._voltage_kV,
                 semiangle_mrad=self._semiangle_mrad,
                 scan_sampling=self._scan_sampling,
-                detector_sampling_mrad=self._det_sampling,
+                detector_sampling_mrad=self.detector_sampling_mrad,
                 scan_detector_rotation_deg=self._built_rotation_deg,
                 chunk_bf=self._setup_chunk_bf,
                 compact_inactive=True,
@@ -546,7 +549,7 @@ class MpsSSBBackend:
             max_value=maximum,
             detector_sum=exact_detector_sum,
             dc_value=self._dc_value_override,
-            detector_sampling_mrad=self._det_sampling,
+            detector_sampling_mrad=self.detector_sampling_mrad,
             verbose=False,
         )
         self._frames = replacement
@@ -582,8 +585,8 @@ class MpsSSBBackend:
         # between files.
         wavelength = float(wavelength_A_from_kV(self._voltage_kV))
         semiangle_rad = self._semiangle_mrad * 1e-3
-        ang_y_rad = self._det_sampling[0] * 1e-3
-        ang_x_rad = self._det_sampling[1] * 1e-3
+        ang_y_rad = self.detector_sampling_mrad[0] * 1e-3
+        ang_x_rad = self.detector_sampling_mrad[1] * 1e-3
         qx_1d = np.fft.fftfreq(
             self._scan_shape[0], self._scan_sampling[0]
         ).astype(np.float32)

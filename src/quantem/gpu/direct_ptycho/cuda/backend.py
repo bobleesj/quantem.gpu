@@ -39,7 +39,8 @@ class CudaSSBBackend:
     scan_sampling : float or (float, float)
         Scan step in Angstrom, (row, col).
     detector_sampling_mrad : float or (float, float), optional
-        Detector sampling in mrad per pixel; ``semiangle / disk_edge_radius(mean pattern)`` when omitted.
+        Detector sampling in mrad per pixel; ``semiangle / disk_edge_radius(mean pattern)`` when omitted. The value
+        used, given or estimated, is the ``detector_sampling_mrad`` attribute.
     voltage_kV : float
         Accelerating voltage in kV.
     bright_field_intensity_threshold, bright_field_radius_px, bright_field_center_px
@@ -55,6 +56,8 @@ class CudaSSBBackend:
 
     backend = "cuda"
     precision = BackendPrecision()
+    # A full-field region builds its own G(q, k) from its counts on first use; there is no prepared stack to share.
+    shares_full_field_preparation = False
 
     def __init__(
         self,
@@ -114,7 +117,7 @@ class CudaSSBBackend:
         self.voltage_kV = voltage_kV
         self.semiangle_mrad = semiangle
         self.scan_sampling = scan_sampling
-        self.angular_sampling = detector_sampling_mrad
+        self.detector_sampling_mrad = detector_sampling_mrad
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.aberrations = aberrations.copy()
         self._scan_detector_rotation_rad = scan_detector_rotation_rad
@@ -205,7 +208,7 @@ class CudaSSBBackend:
                 q_col=self.q_col,
                 wavelength=self.wavelength,
                 semiangle_cutoff=self.semiangle_mrad,
-                angular_sampling=self.angular_sampling,
+                angular_sampling=self.detector_sampling_mrad,
             )
             # Interactive preview/export may be the first operation, before
             # optimize or result has prepared rotation-dependent geometry.
@@ -411,6 +414,26 @@ class CudaSSBBackend:
     def band_power(self, band_inv_A: tuple[float, float]) -> float:
         """G's power over the band, the agreement's upper bound (``ThickSample.band_power``)."""
         return self._get_accelerator().thick.band_power(band_inv_A)
+
+    def phase_variance(self, aberrations: dict[str, float]) -> tuple[cp.ndarray, float]:
+        """The phase-variance objective at C10/C12 optics on the native grid: (mean BF phase, loss).
+
+        The fits' own evaluator (``SSBEngine.reconstruct_with_loss``), so the loss matches the one a fit reports.
+        """
+        return self._get_accelerator().reconstruct_with_loss(aberrations["C10"], aberrations["C12"], aberrations["phi12"])
+
+    def release_cache(self) -> None:
+        """Nothing to release between calls: CuPy's pool keeps its blocks so the next fit or preview reuses them."""
+
+    def release_prepared(self) -> None:
+        """Nothing to release: the CUDA session keeps G(q, k) resident until ``close``."""
+
+    def release_for_region(self, scan_shape: tuple[int, int]) -> None:
+        """Nothing to release before a region fit: the CUDA session keeps G(q, k) resident until ``close``."""
+
+    def inherit_full_field_preparation(self, source) -> bool:
+        """CUDA builds G(q, k) from the region's own counts (``shares_full_field_preparation`` is False)."""
+        return False
 
     def close(self) -> None:
         """Release CUDA-owned session state."""

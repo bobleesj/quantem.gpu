@@ -10,6 +10,8 @@ from tests.parity.ssb_precision import PRECISION
 
 class _Backend:
     backend = "mps"
+    detector_sampling_mrad = (1.0, 1.0)
+    shares_full_field_preparation = False
     scan_shape = (4, 4)
     detector_shape = (3, 3)
     num_bright_field_pixels = 1
@@ -37,6 +39,9 @@ class _Backend:
 
     def export_brightfield(self, data, path_stem):
         return None
+
+    def release_cache(self) -> None:
+        pass
 
     def close(self) -> None:
         pass
@@ -316,13 +321,16 @@ def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> 
     for node in ast.walk(ast.parse(inspect.getsource(workflow))):
         if isinstance(node, ast.Attribute) and (
             (isinstance(node.value, ast.Name) and node.value.id == "backend")
+            or (isinstance(node.value, ast.Attribute) and node.value.attr == "_compute")
             or (isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
                 and node.value.func.attr == "_backend")
         ):
             called.add(node.attr)
     members = set(vars(DirectPtychoProtocol)) | set(DirectPtychoProtocol.__annotations__)
-    assert {"preview_upsampled", "fit_sample"} <= called
+    assert {"preview_upsampled", "fit_sample", "detector_sampling_mrad", "release_cache"} <= called
     assert called <= members
+    # the workflow names no backend class outside the one place that builds it
+    assert "isinstance(self._compute" not in inspect.getsource(workflow)
 
 
 def test_backend_specific_fit_entry_points_are_not_public() -> None:

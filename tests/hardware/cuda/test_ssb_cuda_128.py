@@ -589,7 +589,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     full_engine.sampling = herm.sampling
     full_engine.wavelength = herm.wavelength
     full_engine.semiangle_cutoff = herm.semiangle_mrad
-    full_engine.angular_sampling = herm.angular_sampling
+    full_engine.angular_sampling = herm.detector_sampling_mrad
     full_engine._factor = accel._factor
     full_engine.cache_rotation(herm._scan_detector_rotation_rad, force=True)
     args = (
@@ -640,7 +640,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
     full_engine.sampling = herm.sampling
     full_engine.wavelength = herm.wavelength
     full_engine.semiangle_cutoff = herm.semiangle_mrad
-    full_engine.angular_sampling = herm.angular_sampling
+    full_engine.angular_sampling = herm.detector_sampling_mrad
     full_engine._factor = accel._factor
     full_engine.cache_rotation(herm._scan_detector_rotation_rad, force=True)
     full_phase, _ = full_engine.reconstruct_with_loss(-120.0, 55.0, math.radians(17.0))

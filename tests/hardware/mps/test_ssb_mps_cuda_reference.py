@@ -130,7 +130,7 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
         frames, voltage_kV=300, semiangle_mrad=20, scan_sampling=1.0, detector_sampling_mrad=None,
         bright_field_intensity_threshold=0.0, bright_field_center_px=None, bright_field_radius_px=None, scan_detector_rotation_deg=0.0,
     )
-    assert session._det_sampling == ((0.7, 0.8) if stored else (16.0, 16.0))
+    assert session.detector_sampling_mrad == ((0.7, 0.8) if stored else (16.0, 16.0))
     session.close()
 
 
@@ -223,7 +223,7 @@ def test_mps_backend_writes_exact_integer_bf_columns(
     backend._selection = selection
     backend._scan_shape = (2, 3)
     backend._detector_sum = detector_sum
-    backend._det_sampling = (1.0, 1.0)
+    backend.detector_sampling_mrad = (1.0, 1.0)
     backend._dc_value_override = complex(
         np.complex64(detector_sum[rows, cols].astype(np.float64).mean())
     )

@@ -64,7 +64,7 @@ def test_automatic_detector_sampling_matches_the_simulation_and_recovers_the_def
     with DirectPtycho(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
              scan_detector_rotation_deg=0.0) as ssb:
         result = ssb.aberrations(search="primary", tilt=False, trials=200, verbose=False)
-        automatic_sampling = ssb._backend().angular_sampling[0]
+        automatic_sampling = ssb._backend().detector_sampling_mrad[0]
     assert automatic_sampling == pytest.approx(detector_sampling_mrad[0], rel=0.004)
     assert result.aberrations["C10_nm"] == pytest.approx(-10.0, rel=0.04)
 
