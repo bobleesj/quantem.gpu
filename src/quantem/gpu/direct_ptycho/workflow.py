@@ -815,12 +815,11 @@ class DirectPtycho:
 
         GPU acquisitions use ANS-encoded storage.
 
-        File-based SSB loads with ``io.load``'s default detector preprocessing:
-        recorded invalid pixels receive the median of their valid neighbors on
-        the GPU, and one line says how many.
-        The original file is unchanged, and the correction is recorded in
-        ``source_provenance``. To choose another policy, load with ``io.load``
-        and pass that dataset to ``DirectPtycho(data)``.
+        File-based SSB loads with ``io.load``'s default: recorded invalid pixels
+        keep their stored values and SSB leaves them out of the bright field.
+        To replace them by their neighbor median, load with
+        ``io.load(path, hot_pixel_correction="median")`` and pass that dataset to
+        ``DirectPtycho(data)``; the correction is then recorded in ``source_provenance``.
 
         Omitted voltage, convergence semiangle and scan step come from the
         acquisition's calibrated metadata. Missing physical values raise an

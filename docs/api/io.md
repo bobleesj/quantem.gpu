@@ -103,11 +103,11 @@ folder = Path(root) / "denoise/simulated_au_nanobeam_pg_dose1"
 
 Keep `data` open while analyzing it or using a viewer, then call `data.close()`.
 A pixel the stored detector mask flags holds no measurement, and its value
-would bias every sum over the detector. The default `hot_pixel_correction="median"`
-replaces it by the median of the valid pixels of its 3 × 3 window (or of the
-smallest larger window that holds one, inside a flagged cluster), rounded half
-to even, and the load line says how many. `hot_pixel_correction="none"` keeps
-the stored values. This master flags no pixels, so both settings return the
+would bias every sum over the detector. The default `hot_pixel_correction="none"`
+keeps the stored values and leaves those pixels out of detector products and SSB.
+`hot_pixel_correction="median"` replaces each by the median of the valid pixels
+of its 3 × 3 window (or of the smallest larger window that holds one, inside a
+flagged cluster), rounded half to even, and the load line says how many. This master flags no pixels, so both settings return the
 same values here.
 Neither setting fits a detector noise model. Use `io.report(master)` for an
 optional header-only check before loading.
@@ -653,9 +653,8 @@ CUDA overlaps bounded compressed reads with GPU decoding and encoding; MPS
 overlaps loading with Metal work and reuses bounded staging buffers. Native
 Swift/Metal uses the same bounded-window approach through its native loader.
 No performance switch or pre-conversion is required. Keep the master and all
-external detector files together. To retain every original detector value,
-including flagged pixels, use `hot_pixel_correction="none"`; the ordinary
-detector-correction default is unchanged.
+external detector files together. The default keeps every original detector
+value, including flagged pixels; `hot_pixel_correction="median"` fills them.
 
 QEM loading authenticates its encoded buffers before returning them. It avoids
 HDF5 decoding and re-encoding, but still reads the complete saved representation

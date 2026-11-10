@@ -43,7 +43,7 @@ def load(
     scan_region: tuple[int, int, int, int] | None = None,
     detector_region: tuple[int, int, int, int] | None = None,
     apply_mask: bool | None = None,
-    hot_pixel_correction: str = "median",
+    hot_pixel_correction: str = "none",
     stack: bool | None = None,
     device: int | str | None = None,
     verbose: bool = True,
@@ -80,8 +80,8 @@ def load(
     Complete native HDF5 acquisitions can be loaded together into compact
     encoded accelerator storage with ``stack=False``. Encoded is the default
     on CUDA and MPS. Each result remains an independent encoded owner, not a
-    dense stacked array. Pixels the detector mask flags are replaced by the
-    median of their valid neighbors by default (see ``hot_pixel_correction``).
+    dense stacked array. Pixels the detector mask flags keep their stored values
+    by default and are excluded from detector products (see ``hot_pixel_correction``).
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
     how the complete logical data is retained. Ordinary HDF5 selects
@@ -106,13 +106,13 @@ def load(
 
     A flagged pixel's stored value (dead, hot, or a marker such as 65535) is not
     a measurement and biases anything summed over the detector. The default
-    ``hot_pixel_correction="median"`` replaces each one by the median of the
-    valid pixels of its 3 x 3 window (the smallest larger window when a flagged
-    cluster hides all of them), rounded half to even, on the GPU, changing no
-    other value; the load line says how many, and the change is recorded in the
-    metadata and any saved copy. ``"none"`` keeps every stored value, markers
-    included: detector products then exclude the flagged pixels without
-    changing storage. ``"zero"`` writes 0. On MPS a bitshuffle master's uint16
+    ``hot_pixel_correction="none"`` keeps every stored value, markers included,
+    so a load never changes data: detector products and SSB exclude the flagged
+    pixels without changing storage. ``"median"`` replaces each one by the median
+    of the valid pixels of its 3 x 3 window (the smallest larger window when a
+    flagged cluster hides all of them), rounded half to even, on the GPU, changing
+    no other value; the load line says how many, and the change is recorded in the
+    metadata and any saved copy. ``"zero"`` writes 0. On MPS a bitshuffle master's uint16
     or uint32 counts are held as uint8 or uint16 when every value fits; they
     read back unchanged, one printed line names the stored type, and
     ``dtype="native"`` reads them in the file's dtype.
