@@ -76,5 +76,5 @@ def test_named_method_comparison_displays_each_result_once():
     image_axes = [axis for axis in figure.axes if axis.images]
     assert len(image_axes) == 6  # Full field and matched zoom, once per method.
     assert [axis.get_title().splitlines()[0] for axis in image_axes[:3]] == [
-        "Conventional SSB", "Regularized phase-only", "Amplitude + phase",
+        "Phase of the mean", "Smoothed phase", "Phase and amplitude",
     ]

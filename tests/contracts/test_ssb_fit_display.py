@@ -43,7 +43,7 @@ def test_preview_compares_three_final_methods_without_refitting(monkeypatch, siz
     assert [axis.get_subplotspec().colspan.start for axis in axes] == [i % columns for i in range(3)]
     assert [axis.get_subplotspec().rowspan.start for axis in axes] == [i // columns for i in range(3)]
     assert [axis.get_title().splitlines()[0] for axis in axes] == [
-        "Conventional SSB", "Regularized phase-only", "Amplitude + phase",
+        "Phase of the mean", "Smoothed phase", "Phase and amplitude",
     ]
     assert len({axis.images[0].get_clim() for axis in axes}) == 1
     canvas = FigureCanvasAgg(figure)

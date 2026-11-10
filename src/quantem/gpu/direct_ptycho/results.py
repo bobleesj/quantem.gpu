@@ -1083,21 +1083,21 @@ def _phase_title(result: DirectPtychoResult, area: str = "Full field", *, neural
     method = result.reconstruction_method
     options = result.reconstruction_options
     if method in ("phase_of_mean", "phase_of_mean"):
-        heading = "Conventional SSB"
-        detail = "No damping"
+        heading = "Phase of the mean"
+        detail = "No smoothing"
     else:
-        heading = "Regularized phase-only" if method == "phase" else "Amplitude + phase"
+        heading = "Smoothed phase" if method == "phase" else "Phase and amplitude"
         strength = options.get("phase_damp")
         phase = "not recorded" if strength is None else f"{strength:g}"
-        detail = f"Phase damping {phase}"
+        detail = f"Smoothing {phase}"
         if method == "complex":
             strength = options.get("amplitude_damp")
             amplitude = "not recorded" if strength is None else f"{strength:g}"
-            detail = f"Damping: phase {phase}, amplitude {amplitude}"
+            detail = f"Smoothing: phase {phase}, amplitude {amplitude}"
     if neural:
-        heading = "Neural phase: U-Net + ADF + bounded correction"
+        heading = "Learned correction"
         strength = options["neural_phase_model"]["input_phase_damp"]
-        detail = f"Input phase damping {strength:g}"
+        detail = f"Trained with smoothing {strength:g}"
     return f"{heading}\n{detail}\n{area} · {result.upsample}× upsample · phase (rad)"
 
 

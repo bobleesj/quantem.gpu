@@ -175,8 +175,8 @@ def test_direct_neural_comparison_keeps_both_images_visible():
     figure = result.show(show_fft=True, cmap="gray")
     images = [axis for axis in figure.axes if axis.images]
     assert len(images) == 6
-    assert "Phase damping 0.02" in images[0].get_title()
-    assert "Input phase damping 0.03" in images[1].get_title()
+    assert "Smoothing 0.02" in images[0].get_title()
+    assert "Trained with smoothing 0.03" in images[1].get_title()
     from matplotlib.colors import Normalize
 
     normalization = Normalize(*np.percentile(np.concatenate([result.phase.ravel(), result.neural_phase.ravel()]), [.5, 99.5]))

@@ -908,7 +908,7 @@ class DirectPtychoSeries:
 
 
 # Each method and image as a microscopist names it: report columns, figure titles, viewer labels.
-_METHODS = {"neural": "Frozen neural phase", "phase_of_mean": "SSB", "phase": "Phase-only", "complex": "Amplitude + phase"}
+_METHODS = {"neural": "Learned correction", "phase_of_mean": "Phase of the mean", "phase": "Smoothed phase", "complex": "Phase and amplitude"}
 _NAMES = {"neural": "Neural phase", "phase_of_mean": "SSB", "phase": "Direct phase", "complex": "Complex-fit phase",
           "amplitude": "Relative amplitude"}
 # Pixels no frame reaches: a colour no gray value takes.

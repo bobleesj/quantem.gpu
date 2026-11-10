@@ -325,7 +325,7 @@ def plot_training(model, *, size):
         rows = [r for r in model.training_history if r.get("stage", "unet") == stage]
         index = 1 if stage == "readout" else 2 if stage.startswith("direction") else 0
         axis = axes[index]
-        label = stage
+        label = {"unet": "learned correction", "readout": "blend"}.get(stage, stage)
         selected = model.selected_step
         if stage == "readout":
             selected = model.training_record.get("selected_readout_ridge")
@@ -342,10 +342,11 @@ def plot_training(model, *, size):
                 axis.plot(row["step"], row["validation_gain"], "*", color=line.get_color(),
                           markersize=12, label=f"Selected {selected:g}")
         axis.axhline(0, color=".7", lw=.7)
-        axis.set(xlabel="Readout ridge" if stage == "readout" else "Optimizer update",
-                 ylabel="Validation error reduction", title="U-Net vs direct phase" if index == 0 else "Incremental stage gain")
+        axis.set(xlabel="Blending strength" if stage == "readout" else "Optimizer update",
+                 ylabel="Match to measured data\n(higher is better)",
+                 title="Learned correction vs direct phase" if index == 0 else "Added by the correction")
         axis.grid(alpha=.2)
         axis.legend()
-    figure.suptitle("Training selection · higher gain is better · zero correction remains a candidate")
+    figure.suptitle("Training selection · higher is better · no correction stays a candidate")
     plt.close(figure)
     return figure

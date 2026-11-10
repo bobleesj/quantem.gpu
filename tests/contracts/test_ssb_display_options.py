@@ -89,9 +89,9 @@ def test_method_comparison_marks_the_same_physical_zoom(region, start):
     original = phase.object_wave.copy()
     figure = phase.show(compare=fine, region=region, cmap="gray", size="large")
     axes = [axis for axis in figure.axes if axis.images]
-    assert "Regularized phase-only" in axes[0].get_title()
-    assert "Phase damping 0.03" in axes[0].get_title()
-    assert "Conventional SSB" in axes[1].get_title()
+    assert "Smoothed phase" in axes[0].get_title()
+    assert "Smoothing 0.03" in axes[0].get_title()
+    assert "Phase of the mean" in axes[1].get_title()
     assert "4× upsample" in axes[1].get_title()
     assert f"{region.capitalize()} zoom" in axes[2].get_title()
     for factor, full, zoom in zip((1, 4), axes[:2], axes[2:], strict=True):
@@ -115,7 +115,7 @@ def test_complex_phase_display_names_both_regularization_strengths():
     for show_parameters in (False, True):
         figure = result.show(show_parameters=show_parameters, size="large")
         title = figure.axes[0].get_title()
-        assert "Amplitude + phase" in title
+        assert "Phase and amplitude" in title
         assert "phase 0.03, amplitude 0.1" in title
         assert "phase (rad)" in title
 
@@ -157,7 +157,7 @@ def test_compare_regularization_strengths_uses_one_contrast_and_region():
     full_fields = (axes[0], axes[1], axes[4])
     zooms = (axes[2], axes[3], axes[5])
     for result, full, zoom in zip(results, full_fields, zooms, strict=True):
-        assert f"Phase damping {result.reconstruction_options['phase_damp']:g}" in full.get_title()
+        assert f"Smoothing {result.reconstruction_options['phase_damp']:g}" in full.get_title()
         np.testing.assert_array_equal(zoom.images[0].get_array(), full.images[0].get_array()[12:16, :4])
         # The gallery must use the first result's limits even when another
         # result has its own contrast range saved.

@@ -385,7 +385,7 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
         live = placed_by_hand(series.images[key], np.array(series.shifts_A), series.placed)
         cupy.testing.assert_allclose(series.combined[key], live, atol=1e-6)
     table = series.report()
-    assert {"SSB (s)", "Phase-only (s)", "Amplitude + phase (s)", "Near threshold"} <= set(table.columns)
+    assert {"Phase of the mean (s)", "Smoothed phase (s)", "Phase and amplitude (s)", "Near threshold"} <= set(table.columns)
 
 
 @pytest.mark.usefixtures("cuda_runtime")
