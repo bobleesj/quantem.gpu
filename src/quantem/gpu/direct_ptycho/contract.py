@@ -78,6 +78,12 @@ class DirectPtychoProtocol(Protocol):
 
     backend: Literal["cuda", "mps"]
     precision: BackendPrecision
+    # Detector step in mrad per pixel, (row, col) in the backend's axes: the given calibration or the backend's
+    # estimate from the bright-field disk edge, which the session then records.
+    detector_sampling_mrad: tuple[float, float]
+    # Whether a full-field region session can copy this session's prepared G(q, k)
+    # (``inherit_full_field_preparation``) instead of transforming the same counts again.
+    shares_full_field_preparation: bool
 
     @property
     def scan_shape(self) -> tuple[int, int]: ...
@@ -121,7 +127,19 @@ class DirectPtychoProtocol(Protocol):
 
     def band_power(self, band_inv_A: tuple[float, float]) -> float: ...
 
+    def phase_variance(self, aberrations: dict[str, float]) -> tuple[object, float]: ...
+
     def preview_context(self, num_bright_field_pixels: int) -> AbstractContextManager | None: ...
+
+    # Memory between calls. Metal keeps freed buffers in MLX's cache and can rebuild G(q, k) from its source, so
+    # MPS releases them here; CUDA keeps G(q, k) resident and CuPy's pool as is, so these are no-ops there.
+    def release_cache(self) -> None: ...
+
+    def release_prepared(self) -> None: ...
+
+    def release_for_region(self, scan_shape: tuple[int, int]) -> None: ...
+
+    def inherit_full_field_preparation(self, source: "DirectPtychoProtocol") -> bool: ...
 
     def browser_state(self) -> ExportState: ...
 

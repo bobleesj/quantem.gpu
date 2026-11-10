@@ -589,7 +589,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     full_engine.sampling = herm.sampling
     full_engine.wavelength = herm.wavelength
     full_engine.semiangle_cutoff = herm.semiangle_mrad
-    full_engine.angular_sampling = herm.angular_sampling
+    full_engine.angular_sampling = herm.detector_sampling_mrad
     full_engine._factor = accel._factor
     full_engine.cache_rotation(herm._scan_detector_rotation_rad, force=True)
     args = (
@@ -640,7 +640,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
     full_engine.sampling = herm.sampling
     full_engine.wavelength = herm.wavelength
     full_engine.semiangle_cutoff = herm.semiangle_mrad
-    full_engine.angular_sampling = herm.angular_sampling
+    full_engine.angular_sampling = herm.detector_sampling_mrad
     full_engine._factor = accel._factor
     full_engine.cache_rotation(herm._scan_detector_rotation_rad, force=True)
     full_phase, _ = full_engine.reconstruct_with_loss(-120.0, 55.0, math.radians(17.0))
@@ -750,7 +750,7 @@ def test_ssb_roi96_auto_pads_to_128_not_256(capsys) -> None:
     )
 
     assert ssb._scan_shape == (128, 128)
-    assert "padded the 96x96 scan to 128x128 with its mean pattern" in capsys.readouterr().out
+    assert "SSB: 96 x 96 scan padded to 128 x 128 with its mean pattern (44% of positions are padding)" in capsys.readouterr().out
     accel = ssb._get_accelerator()
     accel.cache_rotation(0.0)
     assert accel._custom_fft._size == 128
@@ -762,7 +762,7 @@ def test_ssb_refuses_to_crop_a_scan_larger_than_1024() -> None:
     from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
 
     data = cp.ones((1025, 2, 8, 8), dtype=cp.uint16)
-    with pytest.raises(ValueError, match="at most 1024 x 1024 positions; got 1025x2"):
+    with pytest.raises(ValueError, match="at most 1024 x 1024 positions; got 1025 x 2"):
         CudaSSBBackend(data, voltage_kV=300, semiangle=21.4, scan_sampling=0.5, detector_sampling_mrad=(1.0, 1.0), bright_field_radius_px=2)
 
 

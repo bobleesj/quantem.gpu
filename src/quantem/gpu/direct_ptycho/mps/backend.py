@@ -11,6 +11,7 @@ import numpy as np
 from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.direct_ptycho.contract import ExportState, BackendPrecision
+from quantem.gpu.direct_ptycho.padding import pad_scan, padded_side
 from quantem.gpu.direct_ptycho.mps.frames import (
     MpsBfColumnFrames,
     MpsTensorFrames,
@@ -25,7 +26,6 @@ from quantem.gpu.direct_ptycho.mps.hardware import (
 )
 from quantem.gpu.direct_ptycho.mps.optimizer import fit_sample
 from quantem.gpu.direct_ptycho.mps.optimizer import optimize as optimize_mps
-from quantem.gpu.direct_ptycho.mps.padding import pad_scan
 from quantem.gpu.direct_ptycho.mps.prepared import (
     PreparedMpsSSB,
     as_sampling,
@@ -44,12 +44,14 @@ class MpsSSBBackend:
     The prepared state (``prepared.py``) owns MPS preparation and device state. UI and export consumers
     use only the public reconstruction methods and :meth:`browser_state`.
     Dense rectangles are centered on the next supported square FFT grid using
-    their mean detector pattern, matching CUDA's padding convention. Padding
-    is announced; reconstructed phases include the padded extent.
+    their mean detector pattern (``direct_ptycho.padding``, shared with CUDA).
+    Padding is announced; reconstructed phases include the padded extent.
     """
 
     backend = "mps"
     precision = BackendPrecision()
+    # A full-field region can copy this session's prepared G(q, k) instead of transforming the same counts again.
+    shares_full_field_preparation = True
 
     def __init__(
         self,
@@ -64,7 +66,7 @@ class MpsSSBBackend:
         bright_field_radius_px: int | None,
         scan_detector_rotation_deg: float,
     ) -> None:
-        self._frames = as_chunked_frames(pad_scan(data))
+        self._frames = as_chunked_frames(pad_scan(data, any_square=True))
         self._scan_shape = frames_scan_shape(self._frames)
         self._detector_shape = tuple(int(size) for size in self._frames.shape[-2:])
         self._voltage_kV = float(voltage_kV)
@@ -115,7 +117,7 @@ class MpsSSBBackend:
             # the bright-field disk edge sits at the semiangle
             detector_pixel_mrad = self._semiangle_mrad / self._selection.bright_field_edge_radius_px
             calibration = (detector_pixel_mrad, detector_pixel_mrad)
-        self._det_sampling = calibration
+        self.detector_sampling_mrad = calibration
         self._scan_detector_rotation_deg = float(scan_detector_rotation_deg)
         self._prepared = None
         # the rotation G(q, k) was first built at, and whether its geometry was retargeted since: a rebuild after
@@ -316,20 +318,15 @@ class MpsSSBBackend:
             return
         recommended = mx.device_info().get("max_recommended_working_set_size", 0)
         # Rectangular regions use the ordinary square mean-pattern padding.
-        side = max(scan_shape)
-        if scan_shape[0] != scan_shape[1]:
-            from quantem.gpu.direct_ptycho.mps.kernels import MPS_FFT_CONFIGS
-
-            side = next((size for size in sorted(MPS_FFT_CONFIGS)
-                         if size >= side), side)
+        side = padded_side(scan_shape, any_square=True) or max(scan_shape)
         parent_pixels = math.prod(self._prepared.scan_shape)
         region_bytes = self._prepared.g_qk.nbytes * side * side // parent_pixels
         reserve_bytes = 4 * region_bytes + (2 << 30)
         if mx.get_active_memory() + reserve_bytes > recommended // 2:
             self.release_prepared()
 
-    def inherit_full_field_preparation(self, source: "MpsSSBBackend") -> None:
-        """Share unchanged full-field evidence with an independent fit session.
+    def inherit_full_field_preparation(self, source: Self) -> bool:
+        """Share unchanged full-field evidence with an independent fit session; True when it was shared.
 
         The caller establishes that both sessions cover the same source
         positions. Geometry must match a fresh preparation too: retargeted
@@ -338,19 +335,20 @@ class MpsSSBBackend:
         session cannot replace the source session's arrays or caches.
         """
         if source._prepared is None or source._retargeted:
-            return
+            return False
         attributes = (
             "_scan_shape", "_voltage_kV", "_semiangle_mrad", "_scan_sampling",
-            "_det_sampling", "_scan_detector_rotation_deg",
+            "detector_sampling_mrad", "_scan_detector_rotation_deg",
         )
         if any(getattr(self, name) != getattr(source, name) for name in attributes):
-            return
+            return False
         if not (np.array_equal(self._selection.rows, source._selection.rows)
                 and np.array_equal(self._selection.cols, source._selection.cols)):
-            return
+            return False
         self._prepared = dataclasses.replace(source._prepared)
         self._built_rotation_deg = source._built_rotation_deg
         self._retargeted = source._retargeted
+        return True
 
     def close(self) -> None:
         """Release MPS preparation and cached Metal buffers; the source data stays its owner's."""
@@ -404,7 +402,7 @@ class MpsSSBBackend:
                 voltage_kV=self._voltage_kV,
                 semiangle_mrad=self._semiangle_mrad,
                 scan_sampling=self._scan_sampling,
-                detector_sampling_mrad=self._det_sampling,
+                detector_sampling_mrad=self.detector_sampling_mrad,
                 scan_detector_rotation_deg=self._built_rotation_deg,
                 chunk_bf=self._setup_chunk_bf,
                 compact_inactive=True,
@@ -551,7 +549,7 @@ class MpsSSBBackend:
             max_value=maximum,
             detector_sum=exact_detector_sum,
             dc_value=self._dc_value_override,
-            detector_sampling_mrad=self._det_sampling,
+            detector_sampling_mrad=self.detector_sampling_mrad,
             verbose=False,
         )
         self._frames = replacement
@@ -587,8 +585,8 @@ class MpsSSBBackend:
         # between files.
         wavelength = float(wavelength_A_from_kV(self._voltage_kV))
         semiangle_rad = self._semiangle_mrad * 1e-3
-        ang_y_rad = self._det_sampling[0] * 1e-3
-        ang_x_rad = self._det_sampling[1] * 1e-3
+        ang_y_rad = self.detector_sampling_mrad[0] * 1e-3
+        ang_x_rad = self.detector_sampling_mrad[1] * 1e-3
         qx_1d = np.fft.fftfreq(
             self._scan_shape[0], self._scan_sampling[0]
         ).astype(np.float32)

@@ -5,6 +5,7 @@ import time
 
 import cupy as cp
 import numpy as np
+import torch
 
 from quantem.gpu.detector.cuda.probe import mean_pattern
 from quantem.gpu.optics.physics import wavelength_A_from_kV
@@ -13,6 +14,7 @@ from quantem.gpu.direct_ptycho.contract import ExportState, BackendPrecision
 from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra, select_bright_field
 from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
 from quantem.gpu.direct_ptycho.cuda.optimizer import fit_sample, fit_standard
+from quantem.gpu.direct_ptycho.padding import pad_scan, padded_side
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 
@@ -30,14 +32,15 @@ class CudaSSBBackend:
         Counts, 3D ``(scan, det_row, det_col)`` (square scan unless ``scan_shape`` is given) or 4D
         ``(scan_row, scan_col, det_row, det_col)``, in their native dtype: reductions accumulate in uint64, and only the
         selected bright-field pixels are cast to complex64. Scans that are not 128, 256, 512 or 1024 square are
-        padded with the mean pattern to the next of those sizes, with a printed notice; scans larger than 1024
-        raise ``ValueError`` rather than being cropped.
+        padded with the mean pattern to the next of those sizes, with a printed line (``direct_ptycho.padding``);
+        scans larger than 1024 raise ``ValueError`` rather than being cropped.
     semiangle : float
         Probe convergence semiangle in mrad.
     scan_sampling : float or (float, float)
         Scan step in Angstrom, (row, col).
     detector_sampling_mrad : float or (float, float), optional
-        Detector sampling in mrad per pixel; ``semiangle / disk_edge_radius(mean pattern)`` when omitted.
+        Detector sampling in mrad per pixel; ``semiangle / disk_edge_radius(mean pattern)`` when omitted. The value
+        used, given or estimated, is the ``detector_sampling_mrad`` attribute.
     voltage_kV : float
         Accelerating voltage in kV.
     bright_field_intensity_threshold, bright_field_radius_px, bright_field_center_px
@@ -53,6 +56,8 @@ class CudaSSBBackend:
 
     backend = "cuda"
     precision = BackendPrecision()
+    # A full-field region builds its own G(q, k) from its counts on first use; there is no prepared stack to share.
+    shares_full_field_preparation = False
 
     def __init__(
         self,
@@ -93,45 +98,10 @@ class CudaSSBBackend:
         elif data.ndim != 4:
             raise ValueError("data must be 3D or 4D.")
 
-        # The CUDA FFT kernels take square scans of 128, 256, 512 or 1024 positions. A smaller or non-square scan is
-        # padded with its mean pattern to the next of those sizes so callers can pass arbitrary scans (simulations,
-        # drift-corrected cubes); every measured position is kept and the padding is announced. A scan larger than
-        # 1024 is refused: fitting it would mean dropping measured positions.
-        scan_rows, scan_cols = int(data.shape[0]), int(data.shape[1])
-        if max(scan_rows, scan_cols) > 1024:
-            raise ValueError(
-                f"CUDA SSB reconstructs scans of at most 1024 x 1024 positions; got {scan_rows}x{scan_cols}. Select a "
-                "square region of 128, 256, 512 or 1024 positions per side, or use backend='mps', which takes any "
-                "square scan. SSB never crops a scan."
-            )
-        if (scan_rows, scan_cols) not in ((128, 128), (256, 256), (512, 512), (1024, 1024)):
-            target = next(side for side in (128, 256, 512, 1024) if max(scan_rows, scan_cols) <= side)
-            print(
-                f"CUDA SSB: padded the {scan_rows}x{scan_cols} scan to {target}x{target} with its mean pattern, as the "
-                "CUDA FFT takes 128, 256, 512 or 1024 square scans; the phase covers the padded grid. Pass a square "
-                "scan of one of those sizes to reconstruct without padding."
-            )
-            # Pad with the mean DP: preserves realistic DP statistics so
-            # probe detection + BF/DF integrals stay well-conditioned.
-            # Chunked int64 sum avoids the 4× float32 transient that
-            # `data.reshape(...).mean()` would allocate (would OOM on
-            # 17 GB cube → 68 GB transient).
-            pad_top = (target - scan_rows) // 2
-            pad_left = (target - scan_cols) // 2
-            det_rows, det_cols = data.shape[2], data.shape[3]
-            flat = data.reshape(-1, det_rows * det_cols)
-            is_integer = np.issubdtype(data.dtype, np.integer)
-            sum_dtype = cp.int64 if is_integer else cp.float64
-            pattern_sum = cp.zeros(det_rows * det_cols, dtype=sum_dtype)
-            for start in range(0, flat.shape[0], 16 * scan_cols):
-                pattern_sum += flat[start:start + 16 * scan_cols].astype(sum_dtype).sum(axis=0)
-            padding_pattern = (pattern_sum.reshape(det_rows, det_cols).astype(cp.float64)
-                               / flat.shape[0]).astype(data.dtype)
-            padded = cp.broadcast_to(
-                padding_pattern[None, None], (target, target, det_rows, det_cols),
-            ).copy()
-            padded[pad_top:pad_top + scan_rows, pad_left:pad_left + scan_cols] = data
-            data = padded
+        # The CUDA FFT kernels take square scans of 128, 256, 512 or 1024 positions; any other scan is padded with
+        # its mean pattern (``direct_ptycho.padding``). Torch and CuPy share the device buffer through DLPack.
+        if padded_side(data.shape[:2], any_square=False) is not None:
+            data = cp.from_dlpack(pad_scan(torch.from_dlpack(data), any_square=False))
 
         if isinstance(scan_sampling, (int, float)):
             scan_sampling = (float(scan_sampling), float(scan_sampling))
@@ -147,7 +117,7 @@ class CudaSSBBackend:
         self.voltage_kV = voltage_kV
         self.semiangle_mrad = semiangle
         self.scan_sampling = scan_sampling
-        self.angular_sampling = detector_sampling_mrad
+        self.detector_sampling_mrad = detector_sampling_mrad
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.aberrations = aberrations.copy()
         self._scan_detector_rotation_rad = scan_detector_rotation_rad
@@ -238,7 +208,7 @@ class CudaSSBBackend:
                 q_col=self.q_col,
                 wavelength=self.wavelength,
                 semiangle_cutoff=self.semiangle_mrad,
-                angular_sampling=self.angular_sampling,
+                angular_sampling=self.detector_sampling_mrad,
             )
             # Interactive preview/export may be the first operation, before
             # optimize or result has prepared rotation-dependent geometry.
@@ -444,6 +414,26 @@ class CudaSSBBackend:
     def band_power(self, band_inv_A: tuple[float, float]) -> float:
         """G's power over the band, the agreement's upper bound (``ThickSample.band_power``)."""
         return self._get_accelerator().thick.band_power(band_inv_A)
+
+    def phase_variance(self, aberrations: dict[str, float]) -> tuple[cp.ndarray, float]:
+        """The phase-variance objective at C10/C12 optics on the native grid: (mean BF phase, loss).
+
+        The fits' own evaluator (``SSBEngine.reconstruct_with_loss``), so the loss matches the one a fit reports.
+        """
+        return self._get_accelerator().reconstruct_with_loss(aberrations["C10"], aberrations["C12"], aberrations["phi12"])
+
+    def release_cache(self) -> None:
+        """Nothing to release between calls: CuPy's pool keeps its blocks so the next fit or preview reuses them."""
+
+    def release_prepared(self) -> None:
+        """Nothing to release: the CUDA session keeps G(q, k) resident until ``close``."""
+
+    def release_for_region(self, scan_shape: tuple[int, int]) -> None:
+        """Nothing to release before a region fit: the CUDA session keeps G(q, k) resident until ``close``."""
+
+    def inherit_full_field_preparation(self, source) -> bool:
+        """CUDA builds G(q, k) from the region's own counts (``shares_full_field_preparation`` is False)."""
+        return False
 
     def close(self) -> None:
         """Release CUDA-owned session state."""
