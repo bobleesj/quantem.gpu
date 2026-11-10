@@ -102,7 +102,7 @@ def save(
     format: str = "arina",
     backend: str = "auto",
     compression: str = "auto",
-) -> SaveResult | list[Path]:
+) -> SaveResult | list[str]:
     """Save encoded acquisitions as QEM, GPU data as HDF5, or a reconstruction as arrays.
 
     When ``data`` is a :class:`DirectPtychoResult` the call writes that result's

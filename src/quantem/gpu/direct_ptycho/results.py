@@ -543,7 +543,7 @@ class DirectPtychoResult(Mapping[str, float]):
             raise ValueError("A trial stack has several probes. Reconstruct one trial's parameters first.")
         return model_probe(self, space=space)
 
-    def save(self, path: str | Path = "phase.npz", *, calibration: bool = True) -> list[Path]:
+    def save(self, path: str | Path = "phase.npz", *, calibration: bool = True) -> list[str]:
         """Write this result to one folder and return what was written.
 
         A path with no suffix, or a directory, means the folder to write into:
@@ -561,8 +561,9 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Returns
         -------
-        list of pathlib.Path
-            Every file written, in the order written.
+        list of str
+            Every file written, in the order written, as a path a reader can
+            paste or open.
         """
         target = Path(path)
         folder = target if target.suffix == "" else target.parent
@@ -575,10 +576,10 @@ class DirectPtychoResult(Mapping[str, float]):
         written = []
         npz = target if target.suffix == ".npz" else folder / "phase.npz"
         np.savez_compressed(npz, **arrays)
-        written.append(npz)
+        written.append(str(npz))
         if calibration:
             try:
-                written.append(self.save_calibration(folder / "calibration.json"))
+                written.append(str(self.save_calibration(folder / "calibration.json")))
             except ValueError:
                 # An array-backed fit has no acquisition identity to record; the arrays stand.
                 pass

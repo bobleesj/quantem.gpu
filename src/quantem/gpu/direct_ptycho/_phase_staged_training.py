@@ -160,7 +160,7 @@ def _fit_unet(training, validation, steps, trace):
     best, selected, saved = 0.0, 0, deepcopy(network.state_dict())
     checks = {0, 5, 10, 25, 50, 100, 200, 400, steps}
     began = time.perf_counter()
-    for step in tqdm(range(steps + 1), desc="correction", leave=False):
+    for step in tqdm(range(steps + 1), desc="learned correction", leave=False):
         if step in checks or step % 100 == 0:
             with torch.no_grad():
                 gain = float(
@@ -281,7 +281,7 @@ def _direction_gain(case, head):
     return -change / case.power
 
 
-def _fit_head(training, validation, steps, seed, trace):
+def _fit_head(training, validation, steps, seed, trace, label="direction head"):
     device = training[0].base.device
     torch.manual_seed(seed)
     head = Direction().to(device)
@@ -290,7 +290,7 @@ def _fit_head(training, validation, steps, seed, trace):
     optimizer = torch.optim.AdamW(head.parameters(), lr=0.002, weight_decay=0.0001)
     best, selected, saved = 0.0, 0, deepcopy(head.state_dict())
     significant, last_change = 0.0, 0
-    for step in tqdm(range(steps + 1), desc=f"head {seed}", leave=False):
+    for step in tqdm(range(steps + 1), desc=label, leave=False):
         if step % 100 == 0 or step == steps:
             with torch.no_grad():
                 gain = float(torch.stack([_direction_gain(c, head) for c in validation]).mean())
@@ -376,8 +376,9 @@ def train(
         weights, ridge, _ = _fit_readout(training, validation, kernels, trace)
         _direction_cases([*training, *validation])
         heads, head_steps = [], []
-        for head_seed in (seed + 13, seed + 37):
-            head, selected = _fit_head(training, validation, direction_steps, head_seed, trace)
+        for index, head_seed in enumerate((seed + 13, seed + 37), start=1):
+            head, selected = _fit_head(training, validation, direction_steps, head_seed, trace,
+                                       label=f"direction head {index} of 2")
             heads.append(head)
             head_steps.append(selected)
         torch.cuda.synchronize(device)
