@@ -54,7 +54,7 @@ def test_uint8_master_loads_the_counts_h5py_decodes(tmp_path, detector_shape):
     path, expected = _master(tmp_path, counts)
     np.testing.assert_array_equal(expected, counts)
 
-    with io.load(path, backend=backend, scan_shape=counts.shape[:2],
+    with io.load(path, device=backend, scan_shape=counts.shape[:2],
                   hot_pixel_correction="none", verbose=False) as loaded:
         assert loaded.dtype == np.uint8
         np.testing.assert_array_equal(loaded.read().cpu().numpy(), expected)
@@ -73,7 +73,7 @@ def test_uint8_master_decodes_exactly_across_cuda_upload_batches(tmp_path, monke
         encoded, "decompress_prepared",
         lambda prepared, batch_bytes_target: partial(decode, batch_bytes_target=3 * 96 * 100)(prepared),
     )
-    with io.load(path, backend="cuda", scan_shape=counts.shape[:2],
+    with io.load(path, device="cuda", scan_shape=counts.shape[:2],
                  hot_pixel_correction="none", verbose=False) as loaded:
         np.testing.assert_array_equal(loaded.read().cpu().numpy(), expected)
 
@@ -84,5 +84,5 @@ def test_uint8_frames_with_an_unshuffled_remainder_are_refused(tmp_path):
     counts = np.random.default_rng(5).integers(0, 256, (2, 2, 33, 33), dtype=np.uint8)
     path, _ = _master(tmp_path, counts)
     with pytest.raises(ValueError, match="multiple of 8 elements"):
-        io.load(path, backend=backend, scan_shape=counts.shape[:2],
+        io.load(path, device=backend, scan_shape=counts.shape[:2],
                 hot_pixel_correction="none", verbose=False)

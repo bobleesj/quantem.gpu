@@ -460,7 +460,7 @@ def extract_bf_columns(
     row0, row1, col0, col1 = (int(v) for v in case.scan_region)
     columns = np.empty((rows.size, row1 - row0, col1 - col0), dtype=np.uint16)
     with load(
-        str(case.source), backend="mps", hot_pixel_correction="none", verbose=verbose,
+        str(case.source), device="mps", hot_pixel_correction="none", verbose=verbose,
     ) as loaded:
         # Bounded reads of 32 scan rows keep the dense block small; the BF
         # pixels of each block transpose into their own scan rows.

@@ -82,8 +82,8 @@ def test_encoded_load_matches_the_cpu_reference_load(tmp_path):
     counts = np.random.default_rng(9).integers(0, 8, (8 * 9, *shape), dtype=np.uint16)
     counts[:, mask != 0] = 65535
     master = _write_master(tmp_path, counts, mask)
-    reference = io.load(master, backend="cpu", representation="dense", scan_shape=(8, 9), verbose=False)
-    with io.load(master, backend=backend, scan_shape=(8, 9), verbose=False) as loaded:
+    reference = io.load(master, device="cpu", representation="dense", scan_shape=(8, 9), verbose=False)
+    with io.load(master, device=backend, scan_shape=(8, 9), verbose=False) as loaded:
         record = loaded.metadata["hot_pixel_correction"]
         assert (record["method"], record["applied"], record["largest_window_px"]) == ("median", True, 5)
         np.testing.assert_array_equal(loaded.read().cpu().numpy(), np.asarray(reference.data))

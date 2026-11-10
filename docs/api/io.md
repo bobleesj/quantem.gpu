@@ -45,14 +45,13 @@ shows the same calibration fields before loading; header inspection does not
 authenticate the detector payload.
 
 Metadata parsing may run on the host, but detector decoding and compression do
-not silently fall back to CPU. `backend="auto"` selects CUDA or MPS and raises
-with a corrective message when neither accelerated backend is available. The
-explicit `backend="cpu"` path exists for reference and parity tests, and for
-computers without a GPU: `io.load(path, device="cpu")` is the same request and
+not silently fall back to CPU. Without `device=` (or with `device="auto"`) the
+load selects CUDA or MPS and raises with a corrective message when neither
+accelerated backend is available. The explicit `device="cpu"` path exists for
+reference and parity tests, and for computers without a GPU: it
 returns a dense host acquisition whose indexing gives CPU tensors and which
-`numpy.asarray` converts. `device=` takes the names used across QuantEM:
-`"auto"` (CUDA, then MPS, then CPU, printing which), `"cuda"`, `"cuda:N"`,
-`"mps"` and `"cpu"`.
+`numpy.asarray` converts. `device=` takes `"auto"` (CUDA or MPS, never the
+CPU), a GPU number (`0`, `1`), `"cuda"`, `"cuda:N"`, `"mps"` and `"cpu"`.
 
 (shared-tutorial-data)=
 ## Shared tutorial data
@@ -194,7 +193,7 @@ with io.load("acquisition.qem") as data:
     metadata = data.metadata
 ```
 
-`io.load` returns a `Dataset4dstemGPU` acquisition handle. QuantEM.GPU owns
+`io.load` returns a `Dataset4dstem` acquisition handle. QuantEM.GPU owns
 its storage, decoding and metadata; QuantEM's core data classes are unchanged.
 
 | Attribute or expression | Meaning |
@@ -258,11 +257,11 @@ an operation handle or viewer after closing its acquisition.
 ### Inspect the loaded acquisition
 
 Every supported source uses the same entry point. It returns
-`Dataset4dstemGPU`, which keeps backend-native data and its scientific/storage
+`Dataset4dstem`, which keeps backend-native data and its scientific/storage
 metadata together:
 
 ```python
-loaded = io.load("scan-lossless.h5", backend="auto")
+loaded = io.load("scan-lossless.h5")
 
 print(loaded.shape)
 print(loaded.dtype)
@@ -284,7 +283,7 @@ the same encoded-device workflow as supported HDF5 sources:
 ```python
 from quantem.gpu import detector, io
 
-with io.load("scan.npy", backend="mps") as loaded:  # or backend="cuda"
+with io.load("scan.npy", device="mps") as loaded:  # or device="cuda"
     dp = loaded[10, 20]
     mean_pattern = detector.mean(loaded)
     bright = detector.bf(loaded)
@@ -327,7 +326,7 @@ Use `io.report(path, dataset_path="experiment/acquisition/data")` and the same
 `dataset_path` in `io.load` when an EMD contains multiple acquisitions.
 
 GPU NumPy/EMPAD loading rejects a dense residency override. Explicit
-`backend="cpu", representation="dense"` remains available for reference access,
+`device="cpu", representation="dense"` remains available for reference access,
 not as an automatic fallback. Unsupported dtypes/layouts raise an actionable
 error before allocating a resident cube.
 
@@ -364,12 +363,12 @@ are not documented in the companion remain unspecified.
 ```python
 from quantem.gpu import detector, io
 
-with io.load("data_roi0_Ndp128_dp.hdf5", backend="mps") as loaded:
+with io.load("data_roi0_Ndp128_dp.hdf5", device="mps") as loaded:
     pattern = loaded[0, 0]
     io.save("acquisition.qem", loaded)
 ```
 
-Use `backend="cuda"` for an NVIDIA device. Gzip HDF5 uses bounded host reads
+Use `device="cuda"` for an NVIDIA device. Gzip HDF5 uses bounded host reads
 followed by GPU ANS encoding; this is not GPU gzip decompression. Float64 input
 retains all original IEEE bits in typed ANS on both CUDA and MPS. Torch MPS
 cannot represent float64 tensors: use `loaded.read(output="native")` for an
@@ -390,13 +389,13 @@ CUDA and MPS preserve these original FP8 variants without quantization:
 ```python
 from quantem.gpu import detector, io
 
-with io.load(original_fp8_array, backend="mps") as loaded:
+with io.load(original_fp8_array, device="mps") as loaded:
     original_pattern = loaded[10, 12]  # original FP8 Torch tensor on the GPU
     image = detector.bf(loaded)       # float32 calculation on the GPU
     io.save("acquisition.qem", loaded)
 ```
 
-Use `backend="cuda"` on NVIDIA. Default reads retain every FP8 byte; inspect
+Use `device="cuda"` on NVIDIA. Default reads retain every FP8 byte; inspect
 their bits through `original_pattern.view(torch.uint8)` when the caller's
 tensor library lacks FP8 arithmetic. Detector products and SSB interpret the
 original values in float32 with CUDA/Metal kernels. They do not change stored
@@ -415,7 +414,7 @@ with h5py.File("acquisition.h5", "w") as handle:
     data = handle.create_dataset("data", data=original_fp8_array.view("uint8"))
     data.attrs["quantem_dtype"] = original_fp8_array.dtype.name
 
-loaded = io.load("acquisition.h5", backend="cuda")
+loaded = io.load("acquisition.h5", device="cuda")
 io.save("acquisition.qem", loaded)
 loaded.close()
 ```
@@ -445,7 +444,7 @@ names instead of treating the bytes as integer counts.
 ```python
 from quantem.gpu import io, detector
 
-loaded = io.load("scan_master.h5", backend="cuda")
+loaded = io.load("scan_master.h5", device="cuda")
 pattern = loaded[0, 0]
 ```
 
@@ -471,7 +470,7 @@ metadata. Open a complete calibrated 4D diffraction image directly:
 ```python
 from quantem.gpu import detector, io
 
-loaded = io.load("STEM SI.dm4", backend="cuda")
+loaded = io.load("STEM SI.dm4", device="cuda")
 pattern = loaded[0, 0]
 bright_field = detector.bf(loaded, bright_field_center_px=(431.5, 431.5), bright_field_radius_px=126)
 # Close after all operations and viewers finish using the acquisition.
@@ -485,17 +484,17 @@ be multiples of 512. No crop, binning, clipping, detector masking, or intensity
 normalization is applied. Geometry and calibration use `(row, col)` order;
 metadata retains axis units, sampling, pixel origins and microscope voltage.
 Unsupported axis layouts and ambiguous multiple 4D images raise actionable
-errors. `backend="cpu", representation="dense"` explicitly opens a read-only
+errors. `device="cpu", representation="dense"` explicitly opens a read-only
 memory map for reference access.
 
 Save this encoded CUDA resident once to reopen it without re-encoding counts
 or rebuilding spatial indexes:
 
 ```python
-loaded = io.load("STEM SI.dm4", backend="cuda")
+loaded = io.load("STEM SI.dm4", device="cuda")
 io.save("STEM SI.qem", loaded, format="quantem", backend="cuda")
 loaded.close()
-reopened = io.load("STEM SI.qem", backend="cuda")
+reopened = io.load("STEM SI.qem", device="cuda")
 ```
 
 This writes a `QEMDATA1` (`quantem.qem`) copy of the exact ANS bytes, spatial
@@ -517,7 +516,7 @@ public API on either accelerator:
 ```python
 from quantem.gpu import detector, io
 
-with io.load("measurements.qem", backend="cuda") as loaded:  # or "mps"
+with io.load("measurements.qem", device="cuda") as loaded:  # or "mps"
     pattern = loaded[0, 0]
     mean_pattern = detector.mean(loaded)
     io.save("measurements-copy.qem", loaded)
@@ -541,7 +540,7 @@ The CLI and `quantem.gpu.io.convert.convert` use the same conversion method.
 ```bash
 quantem-gpu convert /data/arina/session --dry     # GPU payload-size estimate; no copies written
 quantem-gpu convert /data/arina/session           # writes name.qem beside each name_master.h5
-quantem-gpu convert /data/arina/session --out /archive/session
+quantem-gpu convert /data/arina/session --save-dir /archive/session
 ```
 
 Each published copy keeps master-file fields and attributes (units included) under
@@ -640,7 +639,7 @@ functions without a session or representation option.
 ```python
 from quantem.gpu import io, detector
 
-series = io.load(masters, backend="cuda", representation="paired",
+series = io.load(masters, device="cuda", representation="paired",
                  dtype="native", apply_mask=False)
 session = detector.prepare(series)
 images = session.masked_sum(detector_mask, output="native")
@@ -659,7 +658,7 @@ Save the resident arrays once and reopen them without decoding:
 
 ```python
 series[0].data.save("acquisition.paired")
-reopened = io.load("acquisition.paired", backend="cuda", dtype="native", apply_mask=False)
+reopened = io.load("acquisition.paired", device="cuda", dtype="native", apply_mask=False)
 ```
 
 The saved form starts with the fixed `QGPUPAIR` magic, so `io.load` selects
@@ -702,7 +701,7 @@ unified memory, and host memory are residency locations, not representations.
 The shortest call is source-native:
 
 ```python
-loaded = io.load("scan-lossless.h5", backend="auto")
+loaded = io.load("scan-lossless.h5")
 ```
 
 Ordinary HDF5 uses ANS residency on accelerator backends. A saved `.qem`
@@ -729,7 +728,7 @@ data = io.load("scan_master.h5")
 pattern = data[0, 0]
 ```
 
-Tiny explicit CPU references may use `backend="cpu", representation="dense"`.
+Tiny explicit CPU references may use `device="cpu", representation="dense"`.
 They are not a production loading fallback.
 
 ### Selection

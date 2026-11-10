@@ -23,7 +23,7 @@ correctness reference, not an accelerated full-acquisition encoder.
 ```python
 from quantem.gpu import io
 
-with io.load("acquisition.h5", backend="cuda", representation="encoded") as resident:
+with io.load("acquisition.h5", device="cuda", representation="encoded") as resident:
     io.save("acquisition.qem", resident, format="quantem", backend="cuda")
 ```
 
@@ -60,11 +60,11 @@ dense acquisition is allocated when `representation="encoded"` is selected:
 ```python
 from quantem.gpu import detector, io
 
-with io.load(saved.path, backend="cuda", representation="encoded", device=0) as loaded:
+with io.load(saved.path, representation="encoded", device=0) as loaded:
     pattern = loaded[0, 0]
     image = detector.prepare(loaded).masked_sum_exact(binary_detector_mask)
 
-reference_counts = io.load(saved.path, backend="cpu", representation="dense").data
+reference_counts = io.load(saved.path, device="cpu", representation="dense").data
 ```
 
 Downstream browser viewers consume canonical files through the package WebGPU

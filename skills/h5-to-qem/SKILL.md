@@ -30,7 +30,7 @@ Normal-dose data saves about a quarter. Near-empty nanobeam data saves less; con
    CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
      quantem-gpu convert <session_folder> --verify --source-hashes
    ```
-   - A folder converts every `*_master.h5` below it; each `.qem` lands beside its master, or under `--out DIR` mirroring the layout.
+   - A folder converts every `*_master.h5` below it; each `.qem` lands beside its master, or under `--save-dir DIR` mirroring the layout.
    - `--verify` compares every decoded value with the source and prints `verified: N values identical`.
    - `--source-hashes` records the SHA-256 of every original file.
    - Keep the default `--hot-pixel-correction none` for archives: every stored value is retained.

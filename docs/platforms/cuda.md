@@ -20,11 +20,11 @@ launch details through the public API.
 The ordinary IO call path is:
 
 ```text
-io.load(..., backend="cuda")
+io.load(..., device="cuda")
   → device.select.resolve_backend
   → io.load source/index/read planning
   → bounded source decode + ANS encoding
-  → Dataset4dstemGPU with encoded storage and provenance
+  → Dataset4dstem with encoded storage and provenance
 ```
 
 Detector and reconstruction calls dispatch from their public workflow to the
@@ -34,14 +34,14 @@ classes and RawKernel launch shapes do not appear in the public API.
 ```python
 from quantem.gpu import io
 
-with io.load("scan_master.h5", backend="cuda") as loaded:
+with io.load("scan_master.h5", device="cuda") as loaded:
     diffraction = loaded[0, 0]
 ```
 
 Saved `.qem` acquisitions use the same public loader and remain encoded:
 
 ```python
-encoded = io.load("scan.qem", backend="cuda")
+encoded = io.load("scan.qem", device="cuda")
 assert encoded.representation is io.DataRepresentation.ENCODED
 ```
 

@@ -16,9 +16,9 @@ def test_native_dense_median_matches_neighbors(selection):
     if not source or not Path(source).is_file():
         pytest.skip('Set QUANTEM_MEDIAN_TEST_MASTER to a complete Arina master.')
     pytest.importorskip('cupy')
-    with load(source, backend='cuda', hot_pixel_correction='none', verbose=False) as raw_source:
+    with load(source, device='cuda', hot_pixel_correction='none', verbose=False) as raw_source:
         raw = raw_source.read(**selection).cpu().numpy()
-    with load(source, backend='cuda', verbose=False) as result:
+    with load(source, device='cuda', verbose=False) as result:
         corrected = result.read(**selection).cpu().numpy()
         correction = result.metadata['hot_pixel_correction']
     mask = read_pixel_mask(source)

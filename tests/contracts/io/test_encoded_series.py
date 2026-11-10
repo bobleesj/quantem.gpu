@@ -35,7 +35,7 @@ def test_encoded_series_keeps_order_geometry_and_device(monkeypatch, tmp_path, b
 
     monkeypatch.setattr(streamed, "load_h5_ans", load)
     device = 0 if backend == "cuda" else None
-    loaded = io.load(paths, backend=backend, device=device, stack=False)
+    loaded = io.load(paths, device=device if backend == "cuda" else "mps", stack=False)
     assert loaded == owners
     assert calls == [(path, device, backend) for path in paths]
     assert [owner.shape[0] for owner in loaded] == [2, 3, 4]
@@ -64,5 +64,5 @@ def test_incomplete_encoded_series_closes_prior_acquisitions(monkeypatch, tmp_pa
 
     monkeypatch.setattr(streamed, "load_h5_ans", load)
     with pytest.raises(OSError, match="scan_1.h5"):
-        io.load(paths, backend=backend, stack=False)
+        io.load(paths, device=backend, stack=False)
     assert released == paths[:1]

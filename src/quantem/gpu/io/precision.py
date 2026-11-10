@@ -27,7 +27,7 @@ from quantem.gpu.device.metal_runtime import complete_command, metal_queue
 from quantem.gpu.formats.hdf5.readiness import file_signature
 from quantem.gpu.formats.hdf5.reads import FrameReader
 from quantem.gpu.formats.precision import PRECISION_ATTRIBUTE, saved_precision
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
 from quantem.gpu.io.hdf5.write import H5Writer, wait_for_saves
 from quantem.gpu.io.inspect import inspect
@@ -139,7 +139,7 @@ def save_precision(
             "Converted intensities are not raw detector counts; pass calibration through metadata instead of source_master."
         )
     metadata = dict(metadata or {})
-    if isinstance(data, Dataset4dstemGPU):
+    if isinstance(data, Dataset4dstem):
         metadata = {**data.metadata, **metadata}
         payload = data.data
     else:
@@ -621,7 +621,7 @@ def _load_regional(source, scan_region, detector_region, verbose, pack, resident
         )
         if verbose:
             print_report(report, shape, resident.nbytes, saved=bool(source.saved))
-        return Dataset4dstemGPU(resident, metadata)
+        return Dataset4dstem(resident, metadata)
     except BaseException:
         for chunk in chunks:
             chunk.release()

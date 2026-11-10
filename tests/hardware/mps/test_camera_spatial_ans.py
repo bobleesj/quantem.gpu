@@ -39,7 +39,7 @@ def test_native_camera_spatial_roundtrip(tmp_path, dtype):
         assert not (tmp_path / "camera.bin").exists()
         path = tmp_path / "camera.qem"
         io.save(path, resident, format="quantem", backend="mps")
-        reopened = io.load(path, backend="mps")
+        reopened = io.load(path, device="mps")
         try:
             assert reopened.metadata["container"] == "quantem.qem"
             axes = reopened.metadata["scientific_metadata"]["axes"]
@@ -90,10 +90,10 @@ def test_dm4_mps_preserves_counts_and_saved_calibration(tmp_path, dtype):
     counts = np.random.default_rng(5).poisson(0.3, shape).astype(dtype)
     counts[22, 24, 3, 5] = np.iinfo(dtype).max
     path = write_dm4(tmp_path / "camera.dm4", counts)
-    with io.load(path, backend="mps", verbose=False) as loaded:
+    with io.load(path, device="mps", verbose=False) as loaded:
         saved = tmp_path / "camera.qem"
         io.save(saved, loaded, format="quantem", backend="mps")
-    with io.load(saved, backend="mps", verbose=False) as loaded:
+    with io.load(saved, device="mps", verbose=False) as loaded:
         assert loaded.metadata["scan_sampling_A"] == [2.5, 2.5]
         assert loaded.metadata["detector_sampling_inv_A"] == [0.025, 0.025]
         output = loaded.data.decode_scan_range_device(0, 575)
@@ -111,7 +111,7 @@ def test_public_detector_session_reads_camera_counts(tmp_path):
 
     counts = np.arange(12 * 16 * 16, dtype=np.uint16).reshape(3, 4, 16, 16)
     path = write_dm4(tmp_path / "camera.dm4", counts)
-    with io.load(path, backend="mps", verbose=False) as loaded:
+    with io.load(path, device="mps", verbose=False) as loaded:
         session = detector.prepare(loaded)
         try:
             np.testing.assert_array_equal(session.frame(5), counts[1, 1])

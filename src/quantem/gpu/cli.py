@@ -20,7 +20,7 @@ def _parser() -> argparse.ArgumentParser:
         "benchmark-ssb", help="measure full-field and regional SSB joint fits on CUDA or MPS",
     )
     benchmark.add_argument("source", type=Path, help="local H5 or QEM acquisition")
-    benchmark.add_argument("--out", type=Path, required=True, help="write the timing report outside the repository")
+    benchmark.add_argument("--output", type=Path, required=True, help="write the timing report outside the repository")
     benchmark.add_argument("--backend", choices=("auto", "cuda", "mps"), default="auto")
     benchmark.add_argument("--runs", type=int, default=6, help="one first observation plus five warm measurements")
     benchmark.add_argument("--region-sizes", type=int, nargs="+", default=[256, 128])
@@ -45,7 +45,7 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     convert_command.add_argument("source", type=Path, help="a *_master.h5 file, or a folder of acquisitions")
-    convert_command.add_argument("--out", type=Path, help="write copies here, mirroring the folder layout (default: beside each master)")
+    convert_command.add_argument("--save-dir", type=Path, help="write copies here, mirroring the folder layout (default: beside each master)")
     convert_command.add_argument("--dry", action="store_true", help="encode on GPU and estimate payload size without writing a copy")
     convert_command.add_argument("--backend", choices=("auto", "cuda", "mps"), default="auto")
     convert_command.add_argument("--verify", action=argparse.BooleanOptionalAction, default=False,
@@ -74,14 +74,14 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     serve_command.add_argument("data_folder", help="folder containing *_master.h5 sessions")
-    gpu_selection = serve_command.add_mutually_exclusive_group()
-    gpu_selection.add_argument(
-        "--gpu",
+    device_selection = serve_command.add_mutually_exclusive_group()
+    device_selection.add_argument(
+        "--device",
         type=int,
         help="use one CUDA device index",
     )
-    gpu_selection.add_argument(
-        "--gpus",
+    device_selection.add_argument(
+        "--devices",
         default="auto",
         help="CUDA device pool: auto or comma-separated indices (default: auto)",
     )
@@ -124,8 +124,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             require_installed=args.require_installed,
             reference_phase=args.reference_phase,
         )
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
         print("Fit                              first (s)   warm median (s)   warm p90 (s)")
         for name, result in report["measurements"].items():
             print(f"{name:32} {result['first_s']:9.3f} {result['warm_p50_s']:17.3f} {result['warm_p90_s']:14.3f}")
@@ -153,7 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Dry run: GPU encoding estimates payload size; metadata and file overhead are additional. No copies written.")
         before = after = failed = kept = 0
         for master in masters:
-            destination = convert.destination_for(master, args.source, args.out)
+            destination = convert.destination_for(master, args.source, args.save_dir)
             try:
                 result = convert.convert(
                     master, destination, write=not args.dry, verify=args.verify,
@@ -220,19 +220,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return validation.main([str(path) for path in args.paths])
     if not 1 <= args.port <= 65_535:
         raise SystemExit("--port must be between 1 and 65535")
-    if args.gpu is not None and args.gpu < 0:
-        raise SystemExit("--gpu must be zero or greater")
-    if args.gpu is not None:
-        gpus: list[int] | str = [args.gpu]
-    elif args.gpus == "auto":
-        gpus = "auto"
+    if args.device is not None and args.device < 0:
+        raise SystemExit("--device must be zero or greater")
+    if args.device is not None:
+        devices: list[int] | str = [args.device]
+    elif args.devices == "auto":
+        devices = "auto"
     else:
         try:
-            gpus = list(dict.fromkeys(int(value) for value in args.gpus.split(",")))
+            devices = list(dict.fromkeys(int(value) for value in args.devices.split(",")))
         except ValueError as exc:
-            raise SystemExit("--gpus must be 'auto' or comma-separated CUDA indices") from exc
-        if not gpus or any(gpu < 0 for gpu in gpus):
-            raise SystemExit("--gpus must contain CUDA indices zero or greater")
+            raise SystemExit("--devices must be 'auto' or comma-separated CUDA indices") from exc
+        if not devices or any(device < 0 for device in devices):
+            raise SystemExit("--devices must contain CUDA indices zero or greater")
     if not Path(args.data_folder).is_dir():
         raise SystemExit(f"quantem-gpu serve: {args.data_folder} is not a folder")
     try:
@@ -248,7 +248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     app = create_app(
         args.data_folder,
-        gpus=gpus,
+        devices=devices,
         implementation_revision=args.implementation_revision,
     )
     service = app.state.browse_service

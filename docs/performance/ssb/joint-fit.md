@@ -3,7 +3,7 @@
 Measure the installed SSB fitter on your own H5 or QEM acquisition:
 
 ```bash
-quantem-gpu benchmark-ssb scan.qem --out /tmp/ssb-benchmark.json
+quantem-gpu benchmark-ssb scan.qem --output /tmp/ssb-benchmark.json
 ```
 
 CUDA or MPS is selected automatically. The command uses one seed, 200 trials
@@ -21,7 +21,7 @@ Saved acquisition calibration is reused. Supply missing physical calibration
 explicitly when an H5 file does not contain it:
 
 ```bash
-quantem-gpu benchmark-ssb scan_master.h5 --out /tmp/ssb-benchmark.json \
+quantem-gpu benchmark-ssb scan_master.h5 --output /tmp/ssb-benchmark.json \
   --voltage-kv 300 --semiangle-mrad 30 --scan-sampling-a 0.5
 ```
 
@@ -118,7 +118,7 @@ Run the command in a new environment installed from the candidate wheel:
 
 ```bash
 quantem-gpu benchmark-ssb scan.qem --require-installed \
-  --backend mps --out /tmp/ssb-release-mps.json
+  --backend mps --output /tmp/ssb-release-mps.json
 ```
 
 Run independently with `--backend cuda` on CUDA. Missing hardware, memory

@@ -227,24 +227,24 @@ def _publish(path: Path, data: bytes) -> None:
 
 def export_result(run_folder: Path, master: Path, output: Path | None = None,
                   expected_identity: str | None = None, *,
-                  output_folder: Path | None = None,
+                  save_dir: Path | None = None,
                   verification: AcquisitionVerification | None = None) -> Path:
     """Preserve phase bits and physical settings in a JSON/NumPy result pair.
 
-    ``output_folder`` selects the parent of numbered acquisition folders;
+    ``save_dir`` selects the parent of numbered acquisition folders;
     otherwise they are placed in ``<source folder>/live/screen``. An explicit
-    ``output`` filename and ``output_folder`` are mutually exclusive.
+    ``output`` filename and ``save_dir`` are mutually exclusive.
 
     Example: export_result(run_folder, master, Path('result.json'), digest).
 
     ``verification`` can carry a byte hash computed earlier in the same job.
     Every source member must still match its verified file generation.
 
-    ``output_folder`` selects a result catalogue without writing beside the raw
+    ``save_dir`` selects a result catalogue without writing beside the raw
     acquisition. Automatic names retain previous results on repeated exports.
     """
-    if output is not None and output_folder is not None:
-        raise ValueError("Choose either an output filename or output_folder, not both.")
+    if output is not None and save_dir is not None:
+        raise ValueError("Choose either an output filename or save_dir, not both.")
     identity = acquisition_identity(master) if verification is None else verification.identity(master)
     if expected_identity is not None and identity != expected_identity:
         raise ValueError("Local acquisition does not match the verified remote source. No result was exported.")
@@ -304,7 +304,7 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
                       depth_spread_nm=float(fit["depth_spread_nm"]))
     if output is None:
         stem = master.stem
-        folder = Path(output_folder) if output_folder is not None else master.parent / "live" / "screen"
+        folder = Path(save_dir) if save_dir is not None else master.parent / "live" / "screen"
         # Stable numbering, including distinct calibrations of the same image.
         for number in range(1, 10000):
             name = stem if number == 1 else f"{stem}-{number:02d}"

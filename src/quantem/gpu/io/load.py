@@ -26,7 +26,7 @@ from quantem.gpu.formats import empad, zarr_zip
 from quantem.gpu.formats.float8 import FLOAT8_DTYPES, is_float8
 from quantem.gpu.formats.qem.snapshot import is_qem_file
 from quantem.gpu.io import arrays, digitalmicrograph, encoded, paired, qem
-from quantem.gpu.io.dataset import Dataset4dstemGPU, drop_unread_calibration
+from quantem.gpu.io.dataset import Dataset4dstem, drop_unread_calibration
 from quantem.gpu.io.hdf5 import cpu
 from quantem.gpu.io.precision import load_precision, precision_name, saved_precision
 from quantem.gpu.io.representation import DataRepresentation
@@ -39,7 +39,6 @@ def load(
     source: str | os.PathLike[str] | Sequence[str | os.PathLike[str]] | np.ndarray | torch.Tensor,
     *,
     dtype: str | type | np.dtype | None = None,
-    backend: str = "auto",
     representation: DataRepresentation | str | None = None,
     dataset_path: str | None = None,
     scan_shape: tuple[int, int] | None = None,
@@ -51,7 +50,7 @@ def load(
     stack: bool | None = None,
     device: int | str | None = None,
     verbose: bool = True,
-) -> Dataset4dstemGPU | list[Dataset4dstemGPU]:
+) -> Dataset4dstem | list[Dataset4dstem]:
     """Load one or more 4D-STEM sources through an accelerated backend.
 
     Supported original acquisitions default to bounded ANS ingestion
@@ -108,7 +107,7 @@ def load(
     acquisitions (one path or a list, each returned as its own source) into
     the CUDA paired-count tANS resident layout, and a saved paired resident
     form reopens under the same name without decoding. CPU reference expansion
-    requires ``backend="cpu", representation="dense"``. Unsupported conversions
+    requires ``device="cpu", representation="dense"``. Unsupported conversions
     raise instead of silently loading HDF5, expanding densely, or using CPU.
     The CPU reference reads the stored detector mask unless ``apply_mask=False``
     and treats its pixels with ``hot_pixel_correction``, bit for bit as the GPU
@@ -116,7 +115,7 @@ def load(
     their metadata.
     File format and compression are detected from contents, independently of
     resident representation.
-    ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
+    Without ``device`` the load selects CUDA or MPS and never selects CPU silently.
 
     A flagged pixel's stored value (dead, hot, or a marker such as 65535) is not
     a measurement and biases anything summed over the detector. The default
@@ -155,14 +154,11 @@ def load(
         source/representation/backend combinations raise rather than transform
         implicitly. Representation never changes scan coverage,
         detector coverage, binning, calibration, or scientific dtype.
-    backend
-        ``"auto"``, ``"cuda"``, ``"mps"``, or explicit reference ``"cpu"``.
     device
-        Omit to let ``backend`` choose. ``"cpu"`` loads the dense CPU
-        reference (the same as ``backend="cpu"``), ``"mps"`` the Apple GPU,
-        ``"cuda"`` or ``"cuda:N"`` (or the integer ``N``) a CUDA GPU.
-        ``"auto"`` picks CUDA, then MPS, then CPU, and prints which; the
-        meaning is the same as ``quantem.gpu.device.resolve_device``.
+        Omit (or ``"auto"``) to load onto CUDA or MPS, whichever this machine
+        has, never the CPU. ``"cpu"`` loads the explicit dense CPU reference,
+        ``"mps"`` the Apple GPU, ``"cuda"`` or ``"cuda:N"`` (or the integer
+        ``N``) a CUDA GPU.
     stack
         Omit to retain compressed or independently calibrated acquisitions as
         a list, while stacking CPU reference arrays. Use ``False``
@@ -175,10 +171,10 @@ def load(
 
     Returns
     -------
-    Dataset4dstemGPU or list[Dataset4dstemGPU]
+    Dataset4dstem or list[Dataset4dstem]
         Data stays backend-resident.
     """
-    backend, device = _device_backend(backend, device)
+    backend, device = _device_backend(device)
     # Residency policy does not depend on whether a device is available.
     if (
         representation is not None
@@ -189,7 +185,7 @@ def load(
             "GPU acquisitions must remain ANS encoded; omit representation "
             "or use representation='encoded'. Read bounded regions from the "
             "loaded acquisition instead of expanding the full cube. "
-            "Tiny reference arrays require backend='cpu'."
+            "Tiny reference arrays require device='cpu'."
         )
     hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
     # One path, array or generated block source is one acquisition; a list or
@@ -247,7 +243,7 @@ def load(
                 reader = zarr_zip if zarr_zip.is_zarr_zip(path) else empad
                 data, metadata = reader.load_array_source(path, scan_shape)
                 if array_backend == "cpu":
-                    results.append(Dataset4dstemGPU(data, metadata))
+                    results.append(Dataset4dstem(data, metadata))
                 else:
                     try:
                         source_files = {Path(path)}
@@ -375,7 +371,7 @@ def load(
     selected_representation = _selected_representation(sources, representation)
     if selected_representation is DataRepresentation.PAIRED:
         if select.resolve_backend(backend) != "cuda":
-            raise NotImplementedError("The paired resident layout requires backend='cuda'.")
+            raise NotImplementedError("The paired resident layout requires a CUDA device.")
         if any(value is not None for value in (dataset_path, scan_region, detector_region)):
             raise ValueError("The paired layout preserves complete native acquisitions; remove selection options.")
         if dtype not in {None, "native"} or apply_mask:
@@ -538,23 +534,20 @@ def bin(data, factor: int = 2, axes: str = "detector", dtype=None, reduction: st
     return blocks.mean(axis=tuple(reduced), dtype=dtype) if reduction == "mean" else blocks.sum(axis=tuple(reduced), dtype=dtype)
 
 
-def _device_backend(backend: str, device: int | str | None) -> tuple[str, int | str | None]:
-    """Turn a ``device=`` name into the backend it implies and the CUDA device the loaders take.
+def _device_backend(device: int | str | None) -> tuple[str, int | str | None]:
+    """Turn ``device=`` into the backend the loaders take and the CUDA device they place the data on.
 
-    ``device="cpu"`` and ``backend="cpu"`` must mean the same thing, as must
-    ``device="mps"`` and ``backend="mps"``; a device naming a different
-    backend than an explicit ``backend=`` is a contradiction, not a choice.
+    None or ``"auto"`` (or a GPU number, which the loaders place) leaves the backend ``"auto"``: CUDA or MPS,
+    never the CPU, which is loaded only when named.
     """
     if device is None or isinstance(device, int):
-        return backend, device
+        return "auto", device
     requested = str(device).strip().lower()
     if requested == "auto":
-        requested = select.resolve_device("auto")
+        return "auto", None
     implied = "cuda" if requested.startswith("cuda") else requested
     if implied not in {"cuda", "mps", "cpu"}:
         raise ValueError(f"Unknown device {device!r}; use 'auto', 'cuda', 'cuda:N', 'mps', or 'cpu'.")
-    if backend not in (None, "auto", implied):
-        raise ValueError(f"device={device!r} contradicts backend={backend!r}; pass one of them.")
     return implied, (requested if requested.startswith("cuda:") else None)
 
 

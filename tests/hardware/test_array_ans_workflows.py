@@ -48,7 +48,7 @@ def test_float_detector_geometries(tmp_path, backend, detector_shape):
     np.save(original, values)
     mask = np.zeros(detector_shape, bool)
     mask[::2, ::2] = True
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
         np.testing.assert_array_equal(session.frame(5), values[-1, -1])
         np.testing.assert_allclose(session.mean_pattern(), values.mean((0, 1)), atol=1e-6)
@@ -66,7 +66,7 @@ def test_float_detector_geometries(tmp_path, backend, detector_shape):
         io.save(saved, loaded)
         assert loaded.data.peak_decode_bytes <= 32 << 20
     assert validate_qem(saved)["codec_layout"] == "verified"
-    with io.load(saved, backend=backend, verbose=False) as loaded:
+    with io.load(saved, device=backend, verbose=False) as loaded:
         np.testing.assert_array_equal(
             detector.prepare(loaded).frame(5).view(np.uint32),
             values[-1, -1].view(np.uint32),
@@ -82,7 +82,7 @@ def test_existing_float_products_preserve_gpu_baseline(tmp_path, backend):
         np.arange(32 * 128 * 128, dtype=np.float32).reshape(4, 8, 128, 128) % 101
     ) / 8
     np.save(original, values)
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
         results = [
             session.frame(17),
@@ -199,7 +199,7 @@ def test_float_original_to_qem_and_native_patterns(
         np.testing.assert_allclose(session.mean_pattern(), values.mean((0, 1)), atol=1e-6)
         io.save(saved, loaded)
     assert validate_qem(saved)["integrity"] == "verified"
-    with io.load(saved, backend=backend, verbose=False) as reopened:
+    with io.load(saved, device=backend, verbose=False) as reopened:
         assert reopened.representation.value == "encoded"
         np.testing.assert_array_equal(
             reopened.read(scan_region=(4, 5, 6, 7)).cpu().numpy().view(np.uint32),
@@ -215,7 +215,7 @@ def test_float_original_to_qem_and_native_patterns(
         record.view(np.uint32)[:] = 0x40001234
         record.tofile(tmp_path / "scan.raw")
         with pytest.raises(NotImplementedError, match="encoded detector words"):
-            io.load(original, backend=backend, verbose=False)
+            io.load(original, device=backend, verbose=False)
 
 
 @pytest.mark.parametrize("format_name", ["numpy", "hdf5"])
@@ -231,7 +231,7 @@ def test_integer_original_native_outputs_and_qem(
     else:
         with h5py.File(original, "w") as handle:
             handle["entry/data/data"] = values
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
         pattern = session.frame(34, output="native")
         assert not isinstance(pattern, np.ndarray)
@@ -243,7 +243,7 @@ def test_integer_original_native_outputs_and_qem(
         saved = tmp_path / "scan.qem"
         io.save(saved, loaded)
     np.testing.assert_array_equal(_host(pattern), values[-1, -1])
-    with io.load(saved, backend=backend, verbose=False) as reopened:
+    with io.load(saved, device=backend, verbose=False) as reopened:
         np.testing.assert_array_equal(
             detector.prepare(reopened).frame(34), values[-1, -1]
         )
@@ -266,10 +266,10 @@ def test_float_ingestion_preserves_ieee_bits(tmp_path, backend, detector_shape):
     ]
     original, saved = tmp_path / "bits.npy", tmp_path / "bits.qem"
     np.save(original, words.view(np.float32))
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         io.save(saved, loaded)
     assert validate_qem(saved)["integrity"] == "verified"
-    with io.load(saved, backend=backend, verbose=False) as loaded:
+    with io.load(saved, device=backend, verbose=False) as loaded:
         for row, column in np.ndindex(words.shape[:2]):
             result = loaded.read(scan_region=(row, row + 1, column, column + 1))
             np.testing.assert_array_equal(
@@ -288,7 +288,7 @@ def test_simulated_integer_counts_to_qem(
     original, saved = tmp_path / "counts.npy", tmp_path / "counts.qem"
     np.save(original, values)
     monkeypatch.setattr(arrays, "MAX_INGEST_BYTES", 2 * 80 * 80 * 4)
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         assert loaded.metadata["source_dtype"] == "int32"
         assert loaded.metadata["dtype"] == "int32"
         assert "count_range" not in loaded.metadata
@@ -298,7 +298,7 @@ def test_simulated_integer_counts_to_qem(
         np.testing.assert_allclose(session.mean_pattern(), values.mean((0, 1)), rtol=1e-6)
         io.save(saved, loaded)
     assert validate_qem(saved)["integrity"] == "verified"
-    with io.load(saved, backend=backend, verbose=False) as reopened:
+    with io.load(saved, device=backend, verbose=False) as reopened:
         np.testing.assert_array_equal(
             detector.prepare(reopened).frame(5), values[-1, -1]
         )
@@ -306,7 +306,7 @@ def test_simulated_integer_counts_to_qem(
                    for record in reopened.metadata["scientific_metadata"]["processing"])
     values[-1, -1, -1, -1] = 65536
     np.save(original, values)
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         assert loaded.dtype == np.int32
         assert int(loaded[-1, -1, -1, -1]) == 65536
 
@@ -337,7 +337,7 @@ def test_exact_promoted_float_measurements(tmp_path, backend, monkeypatch, forma
     write_source()
     limit = 2 * 8 * 12 * 24
     monkeypatch.setattr(arrays, "MAX_INGEST_BYTES", limit)
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         assert loaded.metadata["source_dtype"] == "float64"
         assert loaded.metadata["working_dtype"] == "float64"
         assert "exact_float_narrowing" not in loaded.metadata
@@ -350,7 +350,7 @@ def test_exact_promoted_float_measurements(tmp_path, backend, monkeypatch, forma
                 decoded.release()
         io.save(saved, loaded)
     assert validate_qem(saved)["integrity"] == "verified"
-    with io.load(saved, backend=backend, verbose=False) as reopened:
+    with io.load(saved, device=backend, verbose=False) as reopened:
         for index, expected in enumerate(promoted.reshape(6, 8, 12)):
             decoded = reopened.data.extract_diffraction_device(*divmod(index, 3))
             try:
@@ -362,7 +362,7 @@ def test_exact_promoted_float_measurements(tmp_path, backend, monkeypatch, forma
                    for record in reopened.metadata["scientific_metadata"]["processing"])
     promoted[-1, -1, -1, -1] = np.nextafter(promoted[-1, -1, -1, -1], np.inf)
     write_source()
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         decoded = loaded.data.extract_diffraction_device(1, 2)
         try:
             assert decoded.get().tobytes() == promoted[1, 2].tobytes()
@@ -390,12 +390,12 @@ def test_empad_multiple_detector_regions(tmp_path, backend):
     saved = tmp_path / "copy.qem"
     assert io.inspect(source).ready
     assert io.inspect(tmp_path / "scan.raw").scan_shape == (2, 3)
-    with io.load(tmp_path / "scan.raw", backend=backend, verbose=False) as loaded:
+    with io.load(tmp_path / "scan.raw", device=backend, verbose=False) as loaded:
         np.testing.assert_array_equal(
             detector.prepare(loaded).frame(5), record[-1, -1, :128]
         )
         io.save(saved, loaded)
-    with io.load(saved, backend=backend, verbose=False) as loaded:
+    with io.load(saved, device=backend, verbose=False) as loaded:
         metadata = loaded.metadata["scientific_metadata"]
         assert metadata["source_metadata"]["empad_xml"] == source.read_text()
         assert (
@@ -415,7 +415,7 @@ def test_empad_multiple_detector_regions(tmp_path, backend):
         assert quantities["scan_controller/regular_scan/dwell_time"]["value"] == 1000
     (tmp_path / "other.xml").write_text(source.read_text())
     with pytest.raises(ValueError, match="Multiple XML acquisitions"):
-        io.load(tmp_path / "scan.raw", backend=backend, verbose=False)
+        io.load(tmp_path / "scan.raw", device=backend, verbose=False)
 
 
 def test_prepared_bitshuffle_stack_found_by_inspect_loads_through_the_dataset_reader(tmp_path, backend):
@@ -436,7 +436,7 @@ def test_prepared_bitshuffle_stack_found_by_inspect_loads_through_the_dataset_re
         Np_p=np.array([16, 16]), voltage=300.0, alpha=21.4, dk=0.02, dx=0.4, crop_idx0=np.array([1, 4, 1, 3]),
     ))
     assert io.inspect(stack).metadata["dataset_path"] == "/dp"
-    with io.load(stack, backend=backend, verbose=False) as loaded:
+    with io.load(stack, device=backend, verbose=False) as loaded:
         assert loaded.metadata["load_timings"]["storage_reader"] == "bounded-hdf5"
         np.testing.assert_array_equal(_host(loaded[:, :]).reshape(12, 16, 16), counts)
 
@@ -462,7 +462,7 @@ def test_gzip_frame_stack_loads_every_stored_value(tmp_path, backend, stored):
             data.id.write_direct_chunk((index, 0, 0), payload, filter_mask=int(unfiltered))
     expected = intensities.copy()
     expected[frames:] = 0
-    with io.load(stack, backend=backend, dataset_path="dp", scan_shape=(3, 300), verbose=False) as loaded:
+    with io.load(stack, device=backend, dataset_path="dp", scan_shape=(3, 300), verbose=False) as loaded:
         assert loaded.metadata["load_timings"]["storage_reader"] == "bounded-hdf5"
         restored = _host(loaded[:, :]).reshape(expected.shape)
         assert restored.dtype == np.float32 and restored.tobytes() == expected.tobytes()

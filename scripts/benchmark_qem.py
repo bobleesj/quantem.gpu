@@ -125,7 +125,7 @@ def _profile_reload(path: Path, backend: str, load) -> dict:
     threading.setprofile(trace)
     try:
         sys.setprofile(trace)
-        with load(path, backend=backend, representation="encoded", verbose=False):
+        with load(path, device=backend, representation="encoded", verbose=False):
             _sync_backend(backend)
             elapsed = time.perf_counter() - started
             sys.setprofile(previous_main)
@@ -320,7 +320,7 @@ def main() -> None:
                     state = cache_state(destination)
                     before = _process_io()
                     started = time.perf_counter()
-                    with load(destination, backend=args.backend, representation="encoded", verbose=False) as acquisition:
+                    with load(destination, device=args.backend, representation="encoded", verbose=False) as acquisition:
                         _sync_backend(args.backend)
                         elapsed = time.perf_counter() - started
                         after = _process_io()

@@ -221,7 +221,7 @@ def test_eviction_releases_the_resident_even_while_referenced(tmp_path):
     backend = weakref.ref(resident.session._backend)
 
     with service.residency._lock:
-        freed = service.residency._evict_one(resident.gpu)
+        freed = service.residency._evict_one(resident.device)
     service.close()
 
     assert freed == held.metadata["physical_resident_bytes"]

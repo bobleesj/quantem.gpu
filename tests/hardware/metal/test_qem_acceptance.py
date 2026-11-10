@@ -45,7 +45,7 @@ def test_float_qem_bits(tmp_path):
     # Export from the NPY bit oracle so the check covers the Python MPS writer.
     saved = tmp_path / "current.qem"
     with io.load(
-        fixtures / "float32-special-bits.npy", backend="mps", verbose=False
+        fixtures / "float32-special-bits.npy", device="mps", verbose=False
     ) as loaded:
         io.save(saved, loaded)
     _run(
@@ -64,6 +64,6 @@ def test_float_numpy_native_qem_geometry(tmp_path, detector_shape):
     values = np.random.default_rng(4).normal(size=(4, 5, *detector_shape)).astype(np.float32)
     np.save(original, values)
     saved = tmp_path / "python.qem"
-    with io.load(original, backend="mps", verbose=False) as acquisition:
+    with io.load(original, device="mps", verbose=False) as acquisition:
         io.save(saved, acquisition)
     _run("check_qem_float_reference.sh", original, saved)

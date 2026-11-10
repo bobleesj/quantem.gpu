@@ -42,7 +42,7 @@ def test_original_h5_auto_selects_lossless_runtime_ans(tmp_path):
     )
 
     # "none" keeps every file count; detector queries apply validity separately.
-    loaded = io.load(master, backend="mps", apply_mask=False, hot_pixel_correction="none")
+    loaded = io.load(master, device="mps", apply_mask=False, hot_pixel_correction="none")
     try:
         assert loaded.representation is io.DataRepresentation.ENCODED
         assert loaded.shape == (32, 32, 4, 8)
@@ -80,7 +80,7 @@ def test_uint32_counts_that_fit_load_as_exact_uint16(tmp_path, capsys):
 
     counts = _uint32_counts(20261020)
     master = _write_bslz4_master(tmp_path, "uint32-fits", counts)
-    with io.load(master, backend="mps", scan_shape=(64, 80)) as loaded:
+    with io.load(master, device="mps", scan_shape=(64, 80)) as loaded:
         assert loaded.dtype == np.dtype("uint16")
         assert loaded.metadata["source_dtype"] == "uint32"
         assert loaded.metadata["resident_profile"] == INTEGER_CODEC
@@ -110,7 +110,7 @@ def test_counts_that_fit_a_byte_load_as_exact_uint8(tmp_path, capsys, source):
     master = _write_bslz4_master(tmp_path, f"byte-{np.dtype(source).name}", counts)
     with h5py.File(master) as handle:
         stored = handle["entry/data/data_000001"][:].reshape(64, 80, 4, 8)
-    with io.load(master, backend="mps", scan_shape=(64, 80)) as loaded:
+    with io.load(master, device="mps", scan_shape=(64, 80)) as loaded:
         assert loaded.dtype == np.dtype("uint8") and loaded.data.dtype == np.dtype("uint8")
         assert loaded.metadata["source_dtype"] == np.dtype(source).name
         values = _read_back(loaded)
@@ -118,7 +118,7 @@ def test_counts_that_fit_a_byte_load_as_exact_uint8(tmp_path, capsys, source):
         np.testing.assert_array_equal(values.astype(source), stored)
     name = np.dtype(source).name
     assert f'Stored as uint8: every {name} value fits in 8 bits, so every count reads back unchanged (dtype="native" reads {name}).' in capsys.readouterr().out
-    with io.load(master, backend="mps", scan_shape=(64, 80), dtype="native", verbose=False) as native:
+    with io.load(master, device="mps", scan_shape=(64, 80), dtype="native", verbose=False) as native:
         assert native.dtype == np.dtype(source) and native.data.dtype == np.dtype("uint8")
         values = _read_back(native)
         assert values.dtype == np.dtype(source)
@@ -126,7 +126,7 @@ def test_counts_that_fit_a_byte_load_as_exact_uint8(tmp_path, capsys, source):
         np.testing.assert_array_equal(native.read(scan_region=(3, 5, 7, 9)).cpu().numpy(), stored[3:5, 7:9])
     counts[0, 0, 0] = 256
     master = _write_bslz4_master(tmp_path, f"word-{np.dtype(source).name}", counts)
-    with io.load(master, backend="mps", scan_shape=(64, 80), verbose=False) as loaded:
+    with io.load(master, device="mps", scan_shape=(64, 80), verbose=False) as loaded:
         assert loaded.dtype == np.dtype("uint16")
 
 
@@ -145,7 +145,7 @@ def test_uint32_values_above_uint16_keep_uint32_storage(tmp_path, capsys):
     for name, counts, mask in (("late", late, None), ("marker", marker, pixel_mask)):
         master = _write_bslz4_master(tmp_path, f"uint32-{name}", counts, pixel_mask=mask)
         # "none" keeps the 0xffffffff marker; io.load's default median fill would replace it and narrow to uint16
-        with io.load(master, backend="mps", scan_shape=(64, 80), hot_pixel_correction="none") as loaded:
+        with io.load(master, device="mps", scan_shape=(64, 80), hot_pixel_correction="none") as loaded:
             assert loaded.dtype == np.dtype("uint32")
             values = _read_back(loaded)
         with h5py.File(master) as handle:
@@ -164,7 +164,7 @@ def test_uint32_counts_narrowed_after_correction_match_uint32_storage(tmp_path):
     pixel_mask = np.zeros((4, 8), np.uint8)
     pixel_mask[2, 5] = 1
     master = _write_bslz4_master(tmp_path, "uint32-median", counts, pixel_mask=pixel_mask)
-    with io.load(master, backend="mps", scan_shape=(64, 80), hot_pixel_correction="median",
+    with io.load(master, device="mps", scan_shape=(64, 80), hot_pixel_correction="median",
                  verbose=False) as narrowed:
         assert narrowed.dtype == np.dtype("uint16")
         values = _read_back(narrowed)
@@ -192,8 +192,8 @@ def test_original_h5_series_stays_independent_and_batches_diffraction(tmp_path):
     ]
 
     with pytest.raises(ValueError, match="omit stack"):
-        io.load(paths, backend="mps", stack=True, apply_mask=False)
-    loaded = io.load(paths, backend="mps", apply_mask=False)
+        io.load(paths, device="mps", stack=True, apply_mask=False)
+    loaded = io.load(paths, device="mps", apply_mask=False)
     try:
         assert len(loaded) == len(counts)
         assert all(item.representation is io.DataRepresentation.ENCODED for item in loaded)
@@ -214,7 +214,7 @@ def test_decode_scratch_handles_changing_compressed_batch_sizes(tmp_path):
     )
     master = _write_bslz4_master(tmp_path, "varying-batches", counts)
     for _ in range(2):
-        with io.load(master, backend="mps", scan_shape=(96, 128), verbose=False) as loaded:
+        with io.load(master, device="mps", scan_shape=(96, 128), verbose=False) as loaded:
             assert len(loaded.data.chunks) == 2
             np.testing.assert_array_equal(
                 _decoded(loaded.data), counts.reshape(96, 128, 4, 8)
@@ -324,7 +324,7 @@ def test_prefetched_h5_batches_preserve_late_high_counts(tmp_path):
     counts = np.random.default_rng(67).integers(0, 40, (16448, 4, 8), dtype=np.uint16)
     counts[16384, 2, 3] = 65535
     master = _write_bslz4_master(tmp_path, "late-high-count", counts)
-    with io.load(master, backend="mps", scan_shape=(257, 64), verbose=False) as loaded:
+    with io.load(master, device="mps", scan_shape=(257, 64), verbose=False) as loaded:
         assert loaded.dtype == np.dtype("uint16")
         np.testing.assert_array_equal(_read_back(loaded).reshape(counts.shape), counts)
 
@@ -358,7 +358,7 @@ def test_failed_ingest_releases_prefetched_frames(tmp_path, monkeypatch):
     monkeypatch.setattr(MPSDecompressor, "load_prepared_frames", capture)
     monkeypatch.setattr(MPSStreamedCounts, "append", fail)
     with pytest.raises(RuntimeError, match="Injected encoding failure"):
-        io.load(master, backend="mps", scan_shape=(129, 64), verbose=False)
+        io.load(master, device="mps", scan_shape=(129, 64), verbose=False)
     assert len(decoded) == 2
     assert all(raw._mtl is None for raw in decoded)
     assert owners[0].is_released

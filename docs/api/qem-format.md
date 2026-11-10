@@ -352,7 +352,7 @@ not accepted as float32 merely because an XML label says float32.
 ### Supported entry points
 
 - Python: `io.save("copy.qem", encoded_resident, backend="mps")`, then
-  `io.load("copy.qem", backend="mps")`. The shared integer codec also has a CUDA
+  `io.load("copy.qem", device="mps")`. The shared integer codec also has a CUDA
   reader, but CUDA execution must be qualified independently. Explicit
   `backend="cpu"` reads both integer and EMPAD float32 codecs as original dense
   measurements, and writes supported NumPy arrays. Python GPU float32 ANS-QEM

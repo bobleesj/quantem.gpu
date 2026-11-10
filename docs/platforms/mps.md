@@ -19,11 +19,11 @@ MLX/PyObjC/Metal and chunk-backed unified-memory representations.
 The IO call path is:
 
 ```text
-io.load(..., backend="mps")
+io.load(..., device="mps")
   → backend validation
   → source and chunk planning
   → bounded source decode + ANS encoding
-  → Dataset4dstemGPU with encoded storage and provenance
+  → Dataset4dstem with encoded storage and provenance
 ```
 
 Python owns validation and typed results. Metal owns bounded device decode and
@@ -33,14 +33,14 @@ implementation layers of one MPS runtime, not separate public workflows.
 ```python
 from quantem.gpu import io
 
-with io.load("scan_master.h5", backend="mps") as loaded:
+with io.load("scan_master.h5", device="mps") as loaded:
     diffraction = loaded[0, 0]
 ```
 
 Saved `.qem` acquisitions remain encoded:
 
 ```python
-encoded = io.load("scan.qem", backend="mps")
+encoded = io.load("scan.qem", device="mps")
 assert encoded.representation is io.DataRepresentation.ENCODED
 ```
 
@@ -67,7 +67,7 @@ fused decode/conversion/bin/reduction while preserving exact counts. A unified
 memory mapping is not an H2D copy, so profiling should report page-in and GPU
 access honestly rather than inventing “upload” time.
 
-Use `loaded.close()` after the final reader of a `Dataset4dstemGPU` has
+Use `loaded.close()` after the final reader of a `Dataset4dstem` has
 finished. Array indexing returns a Torch MPS tensor and requires PyTorch;
 MLX and Metal still implement the accelerated loading and SSB paths.
 

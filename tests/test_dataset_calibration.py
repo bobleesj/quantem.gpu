@@ -3,7 +3,7 @@
 import pytest
 
 from quantem.gpu.formats.qem.metadata import acquisition_metadata, effective_metadata
-from quantem.gpu.io import Dataset4dstemGPU
+from quantem.gpu.io import Dataset4dstem
 
 
 def test_calibration_properties_follow_effective_qem_overrides():
@@ -27,7 +27,7 @@ def test_calibration_properties_follow_effective_qem_overrides():
         },
     }
     # a loader states the shape it holds; the saved record does not carry it
-    data = Dataset4dstemGPU(None, {**effective_metadata(recorded, scientific), "working_shape": shape})
+    data = Dataset4dstem(None, {**effective_metadata(recorded, scientific), "working_shape": shape})
     assert data.sampling == pytest.approx((0.5, 0.75, 0.02, 0.03))
     assert data.units == ("angstrom", "angstrom", "1/angstrom", "1/angstrom")
     assert data.origin == (1.5, -2.0, None, None)
@@ -39,7 +39,7 @@ def test_calibration_properties_follow_effective_qem_overrides():
 
 def test_partial_calibration_does_not_invent_detector_units_or_origin():
     """A calibrated scan can still have an uncalibrated detector."""
-    data = Dataset4dstemGPU(None, {
+    data = Dataset4dstem(None, {
         "working_shape": (16, 24, 128, 128), "scan_sampling_A": [0.4, 0.4],
     })
     assert data.sampling == (0.4, 0.4, None, None)
@@ -56,7 +56,7 @@ def test_partial_calibration_does_not_invent_detector_units_or_origin():
 
 def test_explicit_series_axes_keep_their_units_and_coordinates():
     """A series can describe time followed by scan and detector axes."""
-    data = Dataset4dstemGPU(None, {
+    data = Dataset4dstem(None, {
         "working_shape": (3, 16, 24, 128, 128),
         "sampling": [2.0, 0.4, 0.6, 0.02, 0.03],
         "units": ["s", "angstrom", "angstrom", "mrad", "mrad"],
@@ -84,7 +84,7 @@ def test_origin_coordinates_follow_normalized_units(
         "units": [scan_units, scan_units, unit, unit],
     }
     scientific = acquisition_metadata(shape, metadata)
-    data = Dataset4dstemGPU(None, {**effective_metadata(metadata, scientific), "working_shape": shape})
+    data = Dataset4dstem(None, {**effective_metadata(metadata, scientific), "working_shape": shape})
     assert data.sampling[2:] == pytest.approx((expected_spacing,) * 2)
     assert data.units[2:] == (expected_unit,) * 2
     assert data.origin[2:] == pytest.approx((expected_origin,) * 2)
@@ -116,7 +116,7 @@ def test_origin_without_detector_units_is_scaled_as_the_recorded_step_was(
         "origin": [None, None, origin, origin], "units": explicit_units,
     }
     scientific = acquisition_metadata(shape, {"scan_sampling_A": [0.4, 0.6], key: [expected_spacing, expected_spacing]})
-    data = Dataset4dstemGPU(None, {**effective_metadata(retained, scientific), "working_shape": shape})
+    data = Dataset4dstem(None, {**effective_metadata(retained, scientific), "working_shape": shape})
     assert data.sampling[2:] == pytest.approx((expected_spacing,) * 2)
     assert data.units[2:] == (expected_unit,) * 2
     assert data.origin[2:] == pytest.approx((expected_origin,) * 2)
@@ -126,7 +126,7 @@ def test_origin_without_detector_units_is_scaled_as_the_recorded_step_was(
 
     # A saved number without a detector unit is not a physical calibration.
     unknown = {"detector_sampling": [spacing, spacing]}
-    reopened = Dataset4dstemGPU(None, {**effective_metadata(unknown, acquisition_metadata(shape, {})), "working_shape": shape})
+    reopened = Dataset4dstem(None, {**effective_metadata(unknown, acquisition_metadata(shape, {})), "working_shape": shape})
     assert reopened.sampling == (None,) * 4
     assert reopened.units == (None,) * 4
 
@@ -134,10 +134,10 @@ def test_origin_without_detector_units_is_scaled_as_the_recorded_step_was(
 def test_name_is_the_recorded_name_else_the_source_file():
     """A loaded acquisition names itself as a quantem core dataset does, without decoding data."""
     shape = {"working_shape": (2, 2, 4, 4)}
-    assert Dataset4dstemGPU(None, {**shape, "source_path": "/data/scan_001_master.h5"}).name == "scan_001"
-    assert Dataset4dstemGPU(None, {**shape, "source_path": "/data/scan.npy"}).name == "scan"
-    assert Dataset4dstemGPU(None, {**shape, "source_path": "/data/scan.npy", "name": "gold"}).name == "gold"
-    assert Dataset4dstemGPU(None, shape).name == ""
+    assert Dataset4dstem(None, {**shape, "source_path": "/data/scan_001_master.h5"}).name == "scan_001"
+    assert Dataset4dstem(None, {**shape, "source_path": "/data/scan.npy"}).name == "scan"
+    assert Dataset4dstem(None, {**shape, "source_path": "/data/scan.npy", "name": "gold"}).name == "gold"
+    assert Dataset4dstem(None, shape).name == ""
 
 
 def test_metadata_table_preserves_saved_overrides_and_missing_rotation():
@@ -159,7 +159,7 @@ def test_metadata_table_preserves_saved_overrides_and_missing_rotation():
     }
     original = copy.deepcopy(metadata)
     # No array owner is needed to review stored metadata.
-    data = Dataset4dstemGPU(None, metadata)
+    data = Dataset4dstem(None, metadata)
     table = data.metadata_table()
     assert table.loc["Accelerating voltage", "Value"] == 300.0
     assert table.loc["Accelerating voltage", "Metadata"] == "Overridden"

@@ -19,7 +19,7 @@ def simulate_drift(
     reference: cp.ndarray,
     *,
     sampling_A: tuple[float, float],
-    num_scans: int = 11,
+    scans: int = 11,
     step_nm: tuple[float, float] = (0.02, -0.015),
 ) -> tuple[cp.ndarray, np.ndarray]:
     """Move a reconstructed phase by known translations for a registration control.
@@ -30,7 +30,7 @@ def simulate_drift(
         CuPy phase image. Fourier shifts wrap at the edges; inspect the interior.
     sampling_A
         Reconstructed pixel size in (row, col) Angstrom.
-    num_scans, step_nm
+    scans, step_nm
         Number of synthetic scans and added (row, col) drift per scan in nm.
 
     Returns
@@ -42,7 +42,7 @@ def simulate_drift(
     --------
     >>> simulated, truth_nm = simulate_drift(phases[0], sampling_A=sampling_A)
     """
-    displacement_nm = np.arange(num_scans)[:, None] * np.asarray(step_nm)
+    displacement_nm = np.arange(scans)[:, None] * np.asarray(step_nm)
     images = cp.stack(
         [
             shifted(reference, shift * 10 / np.asarray(sampling_A))

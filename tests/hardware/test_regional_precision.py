@@ -50,7 +50,7 @@ def test_generated_scan_roundtrip_and_calibrated_products(tmp_path):
     original = fixture()
     source = GeneratedScan(original)
     with io.load(
-        source, dtype="scaled_uint16", backend=BACKEND, verbose=False
+        source, dtype="scaled_uint16", device=BACKEND, verbose=False
     ) as loaded:
         assert loaded.representation.value == "encoded"
         assert loaded.metadata["resident_codec"] == "ans"
@@ -85,12 +85,12 @@ def test_generated_scan_roundtrip_and_calibrated_products(tmp_path):
         )
         path = tmp_path / "scaled_master.h5"
         io.save(path, loaded, backend=BACKEND, verbose=False)
-        with io.load(path, backend=BACKEND, representation="encoded", verbose=False) as reopened:
+        with io.load(path, device=BACKEND, representation="encoded", verbose=False) as reopened:
             np.testing.assert_array_equal(reopened.read().cpu(), expected)
             assert reopened.metadata["precision"] == report
         with io.load(
             path,
-            backend=BACKEND,
+            device=BACKEND,
             scan_region=(1, 5, 2, 5),
             detector_region=(1, 6, 2, 8),
             verbose=False,
@@ -99,7 +99,7 @@ def test_generated_scan_roundtrip_and_calibrated_products(tmp_path):
                 selected.read().cpu(), expected[1:5, 2:5, 1:6, 2:8]
             )
         with pytest.raises(NotImplementedError, match="Only dtype=.scaled_uint16. is a stored precision"):
-            io.load(path, dtype="float16", backend=BACKEND, verbose=False)
+            io.load(path, dtype="float16", device=BACKEND, verbose=False)
         # The returned Torch allocation remains valid after subsequent reads/close.
         retained = loaded.read(scan_region=(1, 2, 0, 1))
     np.testing.assert_array_equal(retained.cpu(), expected[1:2, :1])
@@ -110,7 +110,7 @@ def test_same_float_fixture_codes_match_numpy():
 
     original = fixture()
     with io.load(
-        GeneratedScan(original), dtype="scaled_uint16", backend=BACKEND, verbose=False
+        GeneratedScan(original), dtype="scaled_uint16", device=BACKEND, verbose=False
     ) as loaded:
         blocks = list(loaded.data.encoded_blocks())
         codes = np.concatenate([block.get() for block in blocks])
@@ -124,20 +124,20 @@ def test_same_float_fixture_codes_match_numpy():
 
 def test_generated_save_is_single_pass_and_reloads(tmp_path, capsys):
     from quantem.gpu import io
-    from quantem.gpu.io.dataset import Dataset4dstemGPU
+    from quantem.gpu.io.dataset import Dataset4dstem
 
     original = fixture()
     source = GeneratedScan(original)
     path = tmp_path / "streamed_master.h5"
     io.save(path, source, dtype="scaled_uint16", backend=BACKEND, verbose=False)
     assert source.passes == 1
-    with io.load(path, backend=BACKEND, verbose=False) as loaded:
+    with io.load(path, device=BACKEND, verbose=False) as loaded:
         expected = restore_precision_reference(original, loaded.metadata["precision"])
         np.testing.assert_array_equal(loaded.read().cpu(), expected)
     source = GeneratedScan(original)
-    with Dataset4dstemGPU.from_blocks(
+    with Dataset4dstem.from_blocks(
         source, dtype="scaled_uint16", device=BACKEND,
-        save_to=tmp_path / "reported_master.h5", verbose=True,
+        path=tmp_path / "reported_master.h5", verbose=True,
     ) as reported:
         np.testing.assert_array_equal(reported.read().cpu(), expected)
         assert reported.metadata["resident_codec"] == "ans"
@@ -169,7 +169,7 @@ def test_ties_and_wide_ranges_match_numpy(magnitude):
     with io.load(
         torch.as_tensor(values, device=BACKEND),
         dtype="scaled_uint16",
-        backend=BACKEND,
+        device=BACKEND,
         verbose=False,
     ) as loaded:
         expected = restore_precision_reference(values, loaded.metadata["precision"])
@@ -181,7 +181,7 @@ def test_calibrated_center_of_mass():
 
     original = np.abs(fixture()) + 1
     with io.load(
-        GeneratedScan(original), dtype="scaled_uint16", backend=BACKEND, verbose=False
+        GeneratedScan(original), dtype="scaled_uint16", device=BACKEND, verbose=False
     ) as loaded:
         values = restore_precision_reference(original, loaded.metadata["precision"])
         denominator = values.sum((-2, -1), dtype=np.float64)

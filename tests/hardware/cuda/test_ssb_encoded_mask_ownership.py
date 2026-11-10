@@ -26,7 +26,7 @@ def test_masked_fit_crop_does_not_modify_acquisition(tmp_path, dtype):
         handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
     original_hash = hashlib.sha256(source.read_bytes()).hexdigest()
 
-    with io.load(source, backend="cuda", hot_pixel_correction="none", verbose=False) as data:
+    with io.load(source, device="cuda", hot_pixel_correction="none", verbose=False) as data:
         original = data.read().cpu().numpy()
         crop, _, _, _, (row, col), _ = crop_bright_field(data, "cuda", 0.05, None)
         expected = counts[:, :, row:row + crop.shape[2], col:col + crop.shape[3]].copy()

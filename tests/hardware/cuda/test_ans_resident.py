@@ -5,7 +5,7 @@ import os
 import numpy as np
 import pytest
 
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 
 cp = pytest.importorskip("cupy")
 pytestmark = pytest.mark.skipif(
@@ -327,7 +327,7 @@ def test_saved_copy_holds_each_encoded_array_at_its_offset(tmp_path, monkeypatch
         assert path.read_bytes()[start:] == bytes(expected)
     finally:
         source.release()
-    with io.load(path, backend="cuda", verbose=False) as reopened:
+    with io.load(path, device="cuda", verbose=False) as reopened:
         assert bool(cp.all(reopened.data.decode_scan_range_device(0, 1800) == values))
 
 
@@ -341,7 +341,7 @@ def test_resident_read_matches_numpy_region():
     valid[2, 4] = False
     source = StreamedCounts(shape, np.uint16, valid)
     source.append(cp.ascontiguousarray(values.reshape(-1, *shape[2:])))
-    loaded = Dataset4dstemGPU(
+    loaded = Dataset4dstem(
         source,
         {
             "working_shape": shape,
@@ -385,7 +385,7 @@ def test_detector_region_read_decodes_only_the_cropped_counts(monkeypatch):
         return block
 
     monkeypatch.setattr(source, "decode_scan_range_device", record_decode)
-    loaded = Dataset4dstemGPU(
+    loaded = Dataset4dstem(
         source,
         {"working_shape": shape, "working_dtype": "uint16", "representation": "encoded"},
     )

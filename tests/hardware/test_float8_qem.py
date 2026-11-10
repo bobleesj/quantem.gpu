@@ -41,7 +41,7 @@ def test_e8m0_extreme_products_preserve_values(backend):
     codes = np.asarray([0, 1, 0, 254, 0, 2, 254, 254], np.uint8).reshape(2, 1, 2, 2)
     values = codes.view(FLOAT8_DTYPES["float8_e8m0fnu"])
     expected = values.astype(np.float64).mean(axis=(0, 1)).astype(np.float32)
-    with io.load(values, backend=backend, verbose=False) as data:
+    with io.load(values, device=backend, verbose=False) as data:
         np.testing.assert_array_equal(detector.prepare(data).mean_pattern(), expected)
 
     codes = np.asarray(
@@ -49,7 +49,7 @@ def test_e8m0_extreme_products_preserve_values(backend):
          [252] * 4, [254] * 4, [0, 0, 0, 255]], np.uint8,
     )
     values = codes.reshape(7, 1, 2, 2).view(FLOAT8_DTYPES["float8_e8m0fnu"])
-    with io.load(values, backend=backend, verbose=False) as data:
+    with io.load(values, device=backend, verbose=False) as data:
         session = detector.prepare(data)
         for selected in (0, 1, 4):
             mask = (np.arange(4) < selected).reshape(2, 2)
@@ -83,7 +83,7 @@ def test_float8_linked_collection_conversion(tmp_path, backend, kind):
     assert result.verified, result
     assert result.verification["compared_values"] == bits.size
     assert original.exists() and chunk.exists()
-    with io.load(tmp_path / "copy.qem", backend=backend, verbose=False) as data:
+    with io.load(tmp_path / "copy.qem", device=backend, verbose=False) as data:
         assert data.dtype == FLOAT8_DTYPES[kind]
         np.testing.assert_array_equal(
             data.read().view(torch.uint8).cpu().reshape(bits.shape), bits
@@ -136,7 +136,7 @@ def test_float8_original_bits_survive_save_move_and_reopen(
     else:
         original = values
     saved = tmp_path / "copy.qem"
-    with io.load(original, backend=backend, verbose=False, **options) as loaded:
+    with io.load(original, device=backend, verbose=False, **options) as loaded:
         assert loaded.dtype == values.dtype
         assert loaded.metadata["file_counts_exact"] is True
         assert loaded.representation.value == "encoded"
@@ -171,7 +171,7 @@ def test_float8_original_bits_survive_save_move_and_reopen(
     saved.rename(moved)
     if input_kind.startswith("h5"):
         original.unlink()
-    with io.load(moved, backend=backend, verbose=False) as reopened:
+    with io.load(moved, device=backend, verbose=False) as reopened:
         assert reopened.dtype == values.dtype
         assert reopened.sampling[:2] == (0.4, 0.5)
         assert reopened.metadata["source_note"] == "Original FP8 bytes"
@@ -213,10 +213,10 @@ def test_float8_detector_products_match_float32(tmp_path, backend, kind):
         )
     with (
         io.load(
-            original, backend=backend, hot_pixel_correction="none", verbose=False
+            original, device=backend, hot_pixel_correction="none", verbose=False
         ) as data,
         io.load(
-            baseline, backend=backend, hot_pixel_correction="none", verbose=False
+            baseline, device=backend, hot_pixel_correction="none", verbose=False
         ) as reference,
     ):
         assert not data.data.valid_pixels[0, 0]
@@ -275,13 +275,13 @@ def test_float8_ssb_matches_float32_and_survives_reopen(tmp_path, backend, kind)
                 result.append(phase.get() if backend == "cuda" else np.asarray(phase))
             return result
 
-    with io.load(baseline, backend=backend, verbose=False) as reference:
+    with io.load(baseline, device=backend, verbose=False) as reference:
         expected = phases(reference)
     saved = tmp_path / "float8.qem"
-    with io.load(values, backend=backend, verbose=False) as data:
+    with io.load(values, device=backend, verbose=False) as data:
         before = phases(data)
         io.save(saved, data)
-    with io.load(saved, backend=backend, verbose=False) as data:
+    with io.load(saved, device=backend, verbose=False) as data:
         after = phases(data)
     for original, reopened, reference in zip(before, after, expected, strict=True):
         np.testing.assert_array_equal(original, reopened)

@@ -79,7 +79,7 @@ def test_validator_and_cpu_reference_restore_regional_calibration(scaled):
     report = validate_qem(path)
     assert report["codec_layout"] == "verified"
     assert report["measurements_changed_by"] == ["scaled_uint16_quantization"]
-    data = io.load(path, backend="cpu")
+    data = io.load(path, device="cpu")
     assert np.array_equal(np.asarray(data.data).view(np.uint32), expected.view(np.uint32))
     assert data.metadata["precision"]["regions"][1]["scale"] == REGIONS[1][2]
 
@@ -101,7 +101,7 @@ def test_merge_records_read_the_same_from_a_qem_and_an_hdf5_master(tmp_path):
     with h5py.File(tmp_path / "merged_master.h5", "w") as handle:
         handle["entry/data/data"] = np.zeros((2, 3, 4, 5), np.uint16)
         handle.attrs.update(stored)
-    from_qem = io.load(tmp_path / "merged.qem", backend="cpu").metadata
+    from_qem = io.load(tmp_path / "merged.qem", device="cpu").metadata
     from_master = io.inspect(tmp_path / "merged_master.h5").metadata
     assert from_qem["maped_merge"] == from_master["maped_merge"] == merge
     assert from_qem["maped_summary"] == from_master["maped_summary"] == summary
@@ -112,7 +112,7 @@ def test_merge_records_read_the_same_from_a_qem_and_an_hdf5_master(tmp_path):
     # text that is not a version-1 record is left out by both readers, not returned raw
     _write(tmp_path / "other.qem", codes, {"quantem_maped_merge_v1": json.dumps({"version": 2}),
                                            "quantem_maped_summary_v1": "not json"})
-    other = io.load(tmp_path / "other.qem", backend="cpu").metadata
+    other = io.load(tmp_path / "other.qem", device="cpu").metadata
     assert "maped_merge" not in other and "maped_summary" not in other
 
 
@@ -134,7 +134,7 @@ def test_corrupt_or_truncated_scaled_qem_is_refused(scaled, tmp_path):
 def test_metal_reader_is_bitwise_and_masks_are_exact(scaled, tmp_path):
     pytest.importorskip("Metal")
     path, codes, expected = scaled
-    data = io.load(path, backend="mps")
+    data = io.load(path, device="mps")
     source = data.data
     assert data.metadata["resident_profile"] == "scaled-uint16-column-rans-v1"
     assert source.shape == SHAPE and len(source.parts) == 2
@@ -154,4 +154,4 @@ def test_metal_reader_is_bitwise_and_masks_are_exact(scaled, tmp_path):
     corrupt = tmp_path / "corrupt.qem"
     corrupt.write_bytes(raw)
     with pytest.raises(ValueError, match="checksum"):
-        io.load(corrupt, backend="mps")
+        io.load(corrupt, device="mps")

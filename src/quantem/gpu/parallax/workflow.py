@@ -24,7 +24,7 @@ import torch
 from quantem.gpu import detector
 from quantem.gpu.detector.cuda.probe import detect_bf_radius
 from quantem.gpu.device.cuda_runtime import cp
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.parallax.cuda.alignment import align_vbf_stack_multiscale_cp
 from quantem.gpu.parallax.results import ParallaxResult
@@ -36,7 +36,7 @@ BATCH_BYTES = 256 * 1024**2
 
 
 def run(
-    data: Dataset4dstemGPU,
+    data: Dataset4dstem,
     *,
     bright_field_center_px: tuple[int, int] | None = None,
     bright_field_radius_px: float | None = None,
@@ -122,26 +122,26 @@ def run(
     Examples
     --------
     >>> from quantem.gpu import DirectPtycho, io, parallax
-    >>> data = io.load("scan_master.h5", backend="cuda")
+    >>> data = io.load("scan_master.h5", device="cuda")
     >>> result = parallax.run(data, aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
     >>> ssb = DirectPtycho(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
     ...           aberrations=result.aberrations, scan_detector_rotation_deg=result.scan_detector_rotation_deg)
     """
-    if not isinstance(data, Dataset4dstemGPU):
+    if not isinstance(data, Dataset4dstem):
         raise TypeError(
             "parallax.run takes the acquisition returned by "
-            f"quantem.gpu.io.load(path, backend='cuda'); got {type(data).__name__}."
+            f"quantem.gpu.io.load(path, device='cuda'); got {type(data).__name__}."
         )
     device = data.device
     if device is not None and device.type == "mps":
         raise NotImplementedError(
             "Parallax has no Apple GPU (MPS) implementation; it runs on CUDA only. "
-            "Load the acquisition with io.load(path, backend='cuda') on a CUDA machine."
+            "Load the acquisition with io.load(path, device='cuda') on a CUDA machine."
         )
     if device is None or device.type != "cuda":
         raise ValueError(
             f"Parallax runs on a CUDA GPU, but this acquisition is on {device}. "
-            "Load it with io.load(path, backend='cuda')."
+            "Load it with io.load(path, device='cuda')."
         )
     if aberrations and (scan_sampling_A is None or (semiangle_mrad is None and detector_sampling_mrad is None)):
         raise ValueError(

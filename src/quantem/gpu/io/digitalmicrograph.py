@@ -19,7 +19,7 @@ from quantem.gpu.device.metal_runtime import (
 )
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
 from quantem.gpu.io.arrays import load_array_resident, read_frame_block
-from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
+from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
 from quantem.gpu.io.qem import mps_counts_dataset
 from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.resident.cuda.counts import StreamedCounts
@@ -160,7 +160,7 @@ def load_dm(path, *, backend, representation, scan_shape, device, verbose):
     if backend == "cpu" and representation is DataRepresentation.DENSE:
         metadata.update(backend="cpu", residency="host", file_counts_exact=True,
                         lossless_exact=True, scan_bin=1, detector_bin=1, crop=None)
-        return Dataset4dstemGPU(source.memmap(), metadata)
+        return Dataset4dstem(source.memmap(), metadata)
     if (backend in {"cuda", "mps"} and representation is DataRepresentation.ENCODED
             and source.dtype == np.dtype("float32")):
         mapped = source.memmap()
@@ -252,7 +252,7 @@ def load_dm(path, *, backend, representation, scan_shape, device, verbose):
             if verbose:
                 print(f"Loaded {source.path.name} {source.shape} {source.dtype.name} into "
                       f"lossless CUDA ANS in {metadata['load_timings']['resident_ready_seconds']:.2f} s.")
-            return Dataset4dstemGPU(resident, metadata)
+            return Dataset4dstem(resident, metadata)
         except BaseException:
             resident.release()
             raise
@@ -260,7 +260,7 @@ def load_dm(path, *, backend, representation, scan_shape, device, verbose):
             stream.synchronize()
 
 
-def _load_counts_mps(source: DMSource, started: float, verbose: bool) -> Dataset4dstemGPU:
+def _load_counts_mps(source: DMSource, started: float, verbose: bool) -> Dataset4dstem:
     """Read unchanged DM counts through one shared staging buffer and encode them on Metal.
 
     Unified memory lets the file read land where the encoder reads it, so the

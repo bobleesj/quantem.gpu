@@ -23,7 +23,7 @@ from quantem.gpu.formats.hdf5.reads import FrameReader
 from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
 from quantem.gpu.io import arrays
-from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
+from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
 from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
 from quantem.gpu.io.inspect import inspect
 from quantem.gpu.resident.cuda.counts import StreamedCounts
@@ -210,7 +210,7 @@ def load_h5_ans(
         )
         if verbose:
             print(_loaded_report(source.shape, "NVIDIA GPU", metadata))
-        return Dataset4dstemGPU(source, metadata)
+        return Dataset4dstem(source, metadata)
 
 
 class _ExceedsUint16(Exception):
@@ -405,7 +405,7 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
         if dtype != stored_dtype:
             print(f"Stored as {dtype.name}: every {stored_dtype.name} value fits in {8 * dtype.itemsize} bits, so every "
                   f'count reads back unchanged (dtype="native" reads {stored_dtype.name}).')
-    return Dataset4dstemGPU(source, metadata)
+    return Dataset4dstem(source, metadata)
 
 
 def _loaded_report(shape, device_name: str, metadata: dict) -> str:

@@ -17,7 +17,7 @@ from tqdm.auto import tqdm
 
 from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE, get_metadata, read_pixel_mask
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.resident.hot_pixels import fill_flagged, hot_pixel_outcome, hot_pixel_record, median_plan
 
@@ -32,7 +32,7 @@ def load_reference(
     auto_narrow: bool,
     stack: bool,
     verbose: bool,
-) -> Dataset4dstemGPU | list[Dataset4dstemGPU]:
+) -> Dataset4dstem | list[Dataset4dstem]:
     """Decode complete HDF5 acquisitions on the CPU as the explicit reference.
 
     With ``apply_mask`` the pixels the stored mask flags receive
@@ -99,7 +99,7 @@ def load_reference(
                 print(f"  Loaded {tuple(data.shape)} ({data.nbytes / 1e9:.1f} GB) in "
                       f"{time.perf_counter() - started:.2f}s (cpu backend). "
                       f"{hot_pixel_outcome(meta['hot_pixel_correction'])}.")
-            results.append(record_dense_representation(Dataset4dstemGPU(data, meta)))
+            results.append(record_dense_representation(Dataset4dstem(data, meta)))
         return results[0] if single else results
     first, meta = load_one(paths[0])
     out = np.empty((len(paths), *first.shape), dtype=first.dtype)
@@ -110,10 +110,10 @@ def load_reference(
     if verbose:
         print(f"  Loaded {len(paths)} files {out.shape} ({out.nbytes / 1e9:.1f} GB) in "
               f"{time.perf_counter() - started:.2f}s (cpu backend)")
-    return record_dense_representation(Dataset4dstemGPU(out, meta))
+    return record_dense_representation(Dataset4dstem(out, meta))
 
 
-def record_dense_representation(result: Dataset4dstemGPU) -> Dataset4dstemGPU:
+def record_dense_representation(result: Dataset4dstem) -> Dataset4dstem:
     """Attach the common representation fields to a CPU reference result.
 
     Encoded loaders record these fields themselves; the reference array reports
@@ -135,7 +135,7 @@ def record_dense_representation(result: Dataset4dstemGPU) -> Dataset4dstemGPU:
         "lossless_exact",
         source_dtype is not None and np.dtype(source_dtype) == np.dtype(dtype),
     )
-    return Dataset4dstemGPU(data, metadata)
+    return Dataset4dstem(data, metadata)
 
 
 def load_master(

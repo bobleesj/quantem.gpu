@@ -45,11 +45,11 @@ Loaded data uses one vocabulary across runtimes:
 | `residency` | host or runtime device location | where the physical payload remains; Python reports it as `metadata["residency"]` |
 | `storage_schema` | versioned internal format | which decoder/profile produced it; Python metadata names it `resident_profile` |
 
-CUDA and Python MPS expose this through `io.Dataset4dstemGPU`, native Swift/Metal
+CUDA and Python MPS expose this through `io.Dataset4dstem`, native Swift/Metal
 through `Metal4DSTEMResidentReceipt`, and WebGPU through
 `LocalH5LoadResult`.
 Python CUDA/MPS acquisition loading defaults to ANS and CUDA also accepts
-`paired`; Python `dense` requires `backend="cpu"`, and Python has no `packed`
+`paired`; Python `dense` requires `device="cpu"`, and Python has no `packed`
 representation. A representation enum is not a promise that every runtime can
 load that layout. See the
 [representation support matrix](../api/representations.md) before assuming an

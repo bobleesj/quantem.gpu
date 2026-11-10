@@ -22,7 +22,7 @@ An ordinary acquisition loads complete and encoded; `io.load` rejects
 ```python
 from quantem.gpu import io
 
-data = io.load("scan_master.h5", backend="cuda")
+data = io.load("scan_master.h5", device="cuda")
 patch = data.read(scan_region=(0, 32, 0, 48))
 
 print(patch.shape)
@@ -35,7 +35,7 @@ storage applies the region before resident allocation:
 ```python
 result = io.load(
     "float32_master.h5",
-    backend="cuda",
+    device="cuda",
     dtype="scaled_uint16",
     scan_region=(0, 32, 0, 48),
 )
@@ -56,7 +56,7 @@ $(r_1-r_0,c_1-c_0)$ and detector axes, detector sampling, and requested dtype
 remain unchanged unless a separate explicit detector operation says otherwise.
 Scan coordinates are indices until scan calibration is supplied.
 
-For precision storage, `Dataset4dstemGPU.metadata` records `source_shape`,
+For precision storage, `Dataset4dstem.metadata` records `source_shape`,
 `selection` with the half-open `scan_region` and `detector_region`, the selected
 `scan_shape`, `detector_shape`, `source_dtype`, `working_dtype`,
 `storage_dtype`, and the measured `precision` report. A tensor returned by

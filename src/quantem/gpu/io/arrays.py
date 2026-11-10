@@ -25,7 +25,7 @@ from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.float8 import hdf5_dtype, is_float8
 from quantem.gpu.formats.qem import metadata as qem_metadata
 from quantem.gpu.formats.qem.snapshot import BIT_CODEC, BIT_DTYPES, FLOAT_CODEC, INTEGER_CODEC, encode_valid
-from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
+from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
 from quantem.gpu.resident import float_ans
 from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.cuda.counts import StreamedCounts
@@ -78,7 +78,7 @@ def load_array_resident(
     pixel_mask: np.ndarray | None = None,
     hot_pixel_correction: str = "none",
     verbose: bool = False,
-) -> Dataset4dstemGPU:
+) -> Dataset4dstem:
     """Encode bounded input windows; never allocate a dense acquisition."""
     started = time.perf_counter()
     shape = tuple(shape)
@@ -205,7 +205,7 @@ def load_array_resident(
                     f"Loaded {source_dtype.name} measurements as {dtype.name} ANS on {backend}; "
                     "no binning or cropping."
                 )
-            return Dataset4dstemGPU(source, record)
+            return Dataset4dstem(source, record)
         except BaseException:
             if source is not None:
                 source.release()

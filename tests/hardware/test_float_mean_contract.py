@@ -47,7 +47,7 @@ def test_mean_pattern_and_scan_region_means_equal_the_float64_reference(tmp_path
     np.save(tmp_path / "intensities.npy", intensities)
     # 1480 scan positions cross two 512-scan chunk boundaries of the stored streams.
     region = np.flatnonzero(np.hypot(*(np.indices(SCAN_SHAPE) - np.array([19.0, 18.0])[:, None, None])) < 14.5)
-    with io.load(tmp_path / "intensities.npy", backend=backend) as loaded:
+    with io.load(tmp_path / "intensities.npy", device=backend) as loaded:
         assert loaded.dtype == np.float32
         session = detector.prepare(loaded)
         mean_pattern = session.mean_pattern()
@@ -71,7 +71,7 @@ def test_real_float_acquisitions_equal_the_float64_reference():
     if not sources:
         pytest.skip("Set QEM_FLOAT_MEAN_SOURCES to float32 acquisitions (EMPAD RAW, background-subtracted EMPAD HDF5).")
     for source in sources:
-        with io.load(source, backend=backend, verbose=False) as loaded:
+        with io.load(source, device=backend, verbose=False) as loaded:
             assert loaded.dtype == np.float32, source.name
             scan_rows, scan_cols = loaded.shape[:2]
             total = np.zeros(loaded.shape[2:], np.float64)
@@ -96,7 +96,7 @@ def test_scan_region_over_released_rows_raises(tmp_path):
     intensities = (np.random.default_rng(29).gamma(3.0, 50.0, (4, 512, 8, 8))).astype(np.float32)
     frames = intensities.reshape(-1, 8, 8).astype(np.float64)
     np.save(tmp_path / "intensities.npy", intensities)
-    with io.load(tmp_path / "intensities.npy", backend=backend, verbose=False) as loaded:
+    with io.load(tmp_path / "intensities.npy", device=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
         loaded.release_rows_before(2)
         kept = np.arange(2 * 512 + 5, 3 * 512 + 300)
@@ -113,7 +113,7 @@ def test_mean_pattern_of_released_rows_raises(tmp_path):
     np.save(tmp_path / "intensities.npy", intensities)
     mean = (intensities.reshape(-1, 8, 8).astype(np.float64).sum(axis=0) / (4 * 512)).astype(np.float32)
     for asked_before in (False, True):
-        with io.load(tmp_path / "intensities.npy", backend=backend, verbose=False) as loaded:
+        with io.load(tmp_path / "intensities.npy", device=backend, verbose=False) as loaded:
             session = detector.prepare(loaded)
             if asked_before:
                 np.testing.assert_array_equal(session.mean_pattern(), mean)

@@ -700,7 +700,7 @@ def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
     loaded = load(
         path,
         scan_region=(64, 192, 64, 192),
-        backend="cuda",
+        device="cuda",
         verbose=False,
     )
     ssb = CudaSSBBackend(

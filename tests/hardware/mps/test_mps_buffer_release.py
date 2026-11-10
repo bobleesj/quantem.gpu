@@ -2,7 +2,7 @@
 
 PyObjC does not release buffers created by ``newBufferWithLength_options_`` when
 the Python wrapper is collected, so without an explicit release every
-``load(backend="mps")`` permanently retains its output. Seven no-bin tilts then
+``load(device="mps")`` permanently retains its output. Seven no-bin tilts then
 exhaust a 128 GB Mac even though only one tilt is ever meant to be resident.
 """
 
@@ -195,7 +195,7 @@ def test_partial_bitshuffle_tail_preserves_selective_order_and_duplicates(
     with load(
         str(master),
         scan_shape=(2, 2),
-        backend="mps",
+        device="mps",
         verbose=False,
     ) as result:
         selected = np.stack([
@@ -311,12 +311,12 @@ def test_repeated_load_does_not_accumulate():
     if len(masters) < 2:
         pytest.skip("needs at least 2 masters")
 
-    result = load(masters[0], backend="mps", verbose=False)
+    result = load(masters[0], device="mps", verbose=False)
     one_tilt = _allocated_bytes()
     del result
     gc.collect()
     for path in masters[1:]:
-        result = load(path, backend="mps", verbose=False)
+        result = load(path, device="mps", verbose=False)
         del result
         gc.collect()
     assert _allocated_bytes() <= one_tilt * 1.5, (

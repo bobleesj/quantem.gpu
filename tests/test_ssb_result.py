@@ -37,11 +37,11 @@ def test_export_to_selected_catalogue_preserves_prior_results(tmp_path):
     config = {"computed": {"phase_of_mean": _fit(voltage_kV=200, scan_sampling_A=[0.5, 0.5])}}
     (run / "config.json").write_text(json.dumps(config))
     catalogue = tmp_path / "processed"
-    first = export_result(run, master, output_folder=catalogue)
+    first = export_result(run, master, save_dir=catalogue)
     assert first.is_relative_to(catalogue)
-    assert export_result(run, master, output_folder=catalogue) == first
+    assert export_result(run, master, save_dir=catalogue) == first
     np.save(run / "ssb_phase.npy", phase + 1)
-    second = export_result(run, master, output_folder=catalogue)
+    second = export_result(run, master, save_dir=catalogue)
     assert first != second
     np.testing.assert_array_equal(read_result(first)[1], phase)
     np.testing.assert_array_equal(read_result(second)[1], phase + 1)
@@ -179,19 +179,19 @@ def test_numbered_exports_respect_selected_output_folder(tmp_path):
     np.save(run / "ssb_phase.npy", phase)
     config = {"source_master": str(master), "computed": {"phase_of_mean": _fit()}}
     (run / "config.json").write_text(json.dumps(config))
-    first = export_result(run, master, output_folder=output_folder)
+    first = export_result(run, master, save_dir=output_folder)
     assert first == output_folder / "gold_master/ssb.json"
-    assert export_result(run, master, output_folder=output_folder) == first
+    assert export_result(run, master, save_dir=output_folder) == first
     assert read_result(first)[1].tobytes() == phase.tobytes()
     np.save(run / "ssb_phase.npy", phase + 1)
-    second = export_result(run, master, output_folder=output_folder)
+    second = export_result(run, master, save_dir=output_folder)
     assert second == output_folder / "gold_master-02/ssb.json"
-    assert export_result(run, master, output_folder=output_folder) == second
+    assert export_result(run, master, save_dir=output_folder) == second
     assert read_result(first)[1].tobytes() == phase.tobytes()
     assert read_result(second)[1].tobytes() == (phase + 1).tobytes()
     assert {p.name: p.read_bytes() for p in raw.iterdir()} == raw_bytes
-    with pytest.raises(ValueError, match="either an output filename or output_folder"):
-        export_result(run, master, tmp_path / "conflict.json", output_folder=output_folder)
+    with pytest.raises(ValueError, match="either an output filename or save_dir"):
+        export_result(run, master, tmp_path / "conflict.json", save_dir=output_folder)
     assert not (tmp_path / "conflict.json").exists()
 
 

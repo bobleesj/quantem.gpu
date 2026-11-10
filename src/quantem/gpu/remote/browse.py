@@ -43,14 +43,14 @@ class BrowseService:
     ----------
     data_folder : str or os.PathLike
         Root of the served acquisitions.
-    gpus : sequence of int or "auto"
+    devices : sequence of int or "auto"
         CUDA device indices of the pool, or ``"auto"`` for every visible
         device. A device that cannot initialize is left out and reported in
         :meth:`capabilities`.
 
     Examples
     --------
-    >>> service = BrowseService("/data", gpus="auto")
+    >>> service = BrowseService("/data", devices="auto")
     >>> path, plan = service.plan("detector/session", "scan_master.h5", detector_bin=2, scan_bin=1, scan_region=None)
     >>> image = service.compute(path, lambda entry: service.virtual_image(
     ...     entry, plan, mode="BF", inner_bright_field_fraction=0, outer_bright_field_fraction=1))
@@ -60,14 +60,14 @@ class BrowseService:
         self,
         data_folder: str | os.PathLike[str],
         *,
-        gpus: Sequence[int] | str = (0,),
+        devices: Sequence[int] | str = (0,),
     ) -> None:
-        if isinstance(gpus, str):
-            if gpus != "auto":
-                raise ValueError("gpus must be 'auto' or a sequence of CUDA indices")
+        if isinstance(devices, str):
+            if devices != "auto":
+                raise ValueError("devices must be 'auto' or a sequence of CUDA indices")
             requested = None
         else:
-            requested = tuple(dict.fromkeys(int(value) for value in gpus))
+            requested = tuple(dict.fromkeys(int(value) for value in devices))
             if not requested or any(value < 0 for value in requested):
                 raise ValueError("CUDA device indices must be zero or greater")
         self.data_folder = Path(data_folder).expanduser().resolve()

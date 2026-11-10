@@ -28,6 +28,6 @@ def test_prepared_loader_preserves_uint16_acquisitions(tmp_path):
         )
     for _ in range(2):
         _prepare_cuda_loader()
-        with io.load(source, backend="cuda", scan_shape=(4, 8), verbose=False) as data:
+        with io.load(source, device="cuda", scan_shape=(4, 8), verbose=False) as data:
             actual = cp.asnumpy(cp.from_dlpack(data.read()))
             np.testing.assert_array_equal(actual, values)

@@ -49,7 +49,7 @@ the [RosettaSciIO ARINA reader](https://github.com/hyperspy/rosettasciio/blob/ma
 
 ## What becomes automatic
 
-`io.load(...)` returns a `Dataset4dstemGPU` with microscope voltage, camera
+`io.load(...)` returns a `Dataset4dstem` with microscope voltage, camera
 length, raw companion attributes and the paired filename in `metadata`.
 Calibrated scan steps populate `sampling[:2]` in Å. A nominal step instead
 appears in `metadata["scan_sampling_nominal_A"]`; the scan sampling remains

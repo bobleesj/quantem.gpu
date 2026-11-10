@@ -189,7 +189,7 @@ def _trial(path: Path, files: list[Path], backend: str, expected: dict,
     _sync_backend(backend)
     io_before = _process_io()
     started = time.perf_counter()
-    with io.load(path, backend=backend, representation="encoded",
+    with io.load(path, device=backend, representation="encoded",
                  hot_pixel_correction="none", verbose=False) as data:
         _sync_backend(backend)
         elapsed = time.perf_counter() - started

@@ -257,7 +257,7 @@ reading the arrays straight into GPU memory: `MetalPackedSource.loadQEM` and Pyt
 `io.load(path)` on Apple GPUs keep the streams ANS encoded and restore values only
 inside queries, bit-identical between the two. Masked sums add the integer codes of
 the listed pixels and calibrate once per scan, `float32(scale * sum + offset * n)`.
-`io.load(path, backend="cpu")` is the dense NumPy reference; CUDA reading is not
+`io.load(path, device="cpu")` is the dense NumPy reference; CUDA reading is not
 implemented and fails with that explanation.
 
 ## Conformance and extension policy

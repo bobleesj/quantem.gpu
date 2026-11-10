@@ -247,12 +247,12 @@ def save_mp4(
     gap: int,
     label_height: int,
     max_width: int | None,
-    cols: int | None,
+    columns: int | None,
     limits: Sequence[tuple[float, float]],
     qp: int = 18,
     preset: str = "P3",
     tuning_info: str = "high_quality",
-    gpu_id: int = 0,
+    device: int = 0,
     faststart: bool = True,
 ) -> Path:
     """Save a grayscale movie grid as H.264 MP4 using NVIDIA NVENC.
@@ -267,14 +267,14 @@ def save_mp4(
     if not stacks:
         raise ValueError("movie.cuda.save_mp4 requires at least one stack")
     # A device context, not Device.use(): the caller's current device is restored on return.
-    with cp.cuda.Device(int(gpu_id)):
+    with cp.cuda.Device(int(device)):
         frames, height, width = stacks[0].shape
         n_panels = len(stacks)
         layout = grid_layout(
             n_panels,
             height,
             width,
-            cols=cols,
+            columns=columns,
             gap=gap,
             label_height=label_height,
             max_width=max_width,
@@ -307,7 +307,7 @@ def save_mp4(
         nv12_frames = [Nv12Frame(buffer) for buffer in nv12_buffers]
         config = {
             "codec": "h264",
-            "gpu_id": int(gpu_id),
+            "gpu_id": int(device),
             "preset": str(preset).upper(),
             "tuning_info": str(tuning_info),
             "rc": "constqp",

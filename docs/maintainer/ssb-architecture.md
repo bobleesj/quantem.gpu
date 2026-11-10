@@ -70,7 +70,7 @@ The same call does not return the same phase image on CUDA and MPS:
 - the agreement and loss reduction orders differ.
 
 Each result records its backend, `phase_of_mean` and output factor
-(`result.phase_estimator`, `result.upsample`).
+(`result.reconstruction_method`, `result.upsample`).
 
 ## Ownership boundaries
 

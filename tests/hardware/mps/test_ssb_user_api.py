@@ -65,7 +65,7 @@ def test_a_recorded_rotation_wins_over_the_estimate():
 
     metadata = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.3, 0.3),
                 "scan_detector_rotation_deg": 12.0, "scan_detector_rotation_flipped": True}
-    data = io.Dataset4dstemGPU(_rotated_gradient_scan(35.0), metadata)
+    data = io.Dataset4dstem(_rotated_gradient_scan(35.0), metadata)
     with DirectPtycho(data, backend="mps") as ssb:
         assert (ssb.scan_detector_rotation_deg, ssb.scan_detector_rotation_flipped) == (12.0, True)
         assert ssb.scan_detector_rotation_source == "metadata"

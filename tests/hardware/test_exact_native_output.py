@@ -58,8 +58,8 @@ def test_float_sources_refuse_exact_sums_on_both_outputs(tmp_path):
     io.save(tmp_path / "float.qem", values, backend="cpu")
     np.save(tmp_path / "float.npy", values)
     with (
-        io.load(tmp_path / "float.qem", backend=backend) as float_ans,
-        io.load(tmp_path / "float.npy", dtype="scaled_uint16", backend=backend, verbose=False) as precision,
+        io.load(tmp_path / "float.qem", device=backend) as float_ans,
+        io.load(tmp_path / "float.npy", dtype="scaled_uint16", device=backend, verbose=False) as precision,
     ):
         for loaded in (float_ans, precision):
             session = detector.prepare(loaded)

@@ -30,7 +30,7 @@ from quantem.gpu.formats.hdf5.frames import (
     chunk_locations,
     detector_sources,
 )
-from quantem.gpu.io.dataset import Dataset4dstemGPU, drop_unread_calibration, resident_metadata
+from quantem.gpu.io.dataset import Dataset4dstem, drop_unread_calibration, resident_metadata
 from quantem.gpu.io.hdf5.cuda.decode import kernel
 from quantem.gpu.io.inspect import inspect
 from quantem.gpu.resident.cuda.hot_pixels import CUDAHotPixelCorrector
@@ -119,7 +119,7 @@ class PairedLoader:
         self.close()
 
     def stream(self, paths, *, scan_shape=None, device=None, admit=None, verbose=False):
-        """Yield ``(path, Dataset4dstemGPU)`` per admitted acquisition, as :func:`io.load` returns.
+        """Yield ``(path, Dataset4dstem)`` per admitted acquisition, as :func:`io.load` returns.
 
         The same pipeline as :meth:`load_many`, with each source wrapped in the
         public result type (``representation="paired"``, per-source
@@ -623,4 +623,4 @@ def _result(source, timings, verbose):
     )
     if verbose:
         print(f"Paired resident source {shape} ready in {metadata['load_timings']['resident_ready_seconds']:.2f} s.")
-    return Dataset4dstemGPU(source, metadata)
+    return Dataset4dstem(source, metadata)

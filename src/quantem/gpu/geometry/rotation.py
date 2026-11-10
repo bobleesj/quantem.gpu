@@ -9,7 +9,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.geometry import cuda
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 
 Interpolation = Literal["auto", "nearest", "bilinear"]
@@ -41,7 +41,7 @@ def rotate_scan(
     ----------
     data
         A 4D NumPy, CuPy, or Torch array ordered as ``(scan_row, scan_col,
-        detector_row, detector_col)``, or a ``Dataset4dstemGPU`` returned by
+        detector_row, detector_col)``, or a ``Dataset4dstem`` returned by
         :func:`quantem.gpu.io.load`.
     display_rotation_deg
         Counterclockwise rotation in the displayed scan plane.
@@ -61,7 +61,7 @@ def rotate_scan(
 
     Returns
     -------
-    array or Dataset4dstemGPU
+    array or Dataset4dstem
         Rotated data in the same resident array family. A load result retains
         its metadata and records scan-rotation provenance; an encoded one
         stays encoded, and the source acquisition is left unchanged.
@@ -113,7 +113,7 @@ def rotate_scan(
             f"got {interpolation!r}."
         )
 
-    loaded = isinstance(data, Dataset4dstemGPU)
+    loaded = isinstance(data, Dataset4dstem)
     array = data.data if loaded else data
     metadata = deepcopy(data.metadata) if loaded else None
     if loaded and _quarter_turn(angle) is None:
@@ -145,7 +145,7 @@ def rotate_scan(
         raise NotImplementedError(
             "Scan rotation of an encoded acquisition has no Apple GPU (MPS) "
             "implementation; it runs on CUDA only. Load the acquisition with "
-            "io.load(path, backend='cuda') on a CUDA machine, or rotate the scan "
+            "io.load(path, device='cuda') on a CUDA machine, or rotate the scan "
             "images reconstructed from it."
         )
     elif loaded:
@@ -156,7 +156,7 @@ def rotate_scan(
     else:
         raise TypeError(
             "rotate_scan expects a 4D NumPy, CuPy, or Torch array, or the "
-            f"Dataset4dstemGPU returned by quantem.gpu.io.load; got {type(data).__name__}."
+            f"Dataset4dstem returned by quantem.gpu.io.load; got {type(data).__name__}."
         )
     if loaded:
         history = list(metadata.get("scan_rotation_history", ()))
@@ -204,14 +204,14 @@ def rotate_scan(
             for axis, size in zip(axes, rotated.shape):
                 axis["size"] = int(size)
         metadata["scan_rotation_history"] = history
-    result = Dataset4dstemGPU(rotated, metadata) if loaded else rotated
+    result = Dataset4dstem(rotated, metadata) if loaded else rotated
     if not return_valid_mask:
         return result
     return result, _mask_on_backend(valid, rotated)
 
 
 def _rotate_encoded(
-    dataset: Dataset4dstemGPU,
+    dataset: Dataset4dstem,
     angle_degrees: float,
     output_shape: OutputShape,
     interpolation: Interpolation,

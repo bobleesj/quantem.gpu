@@ -7,11 +7,11 @@ import numpy as np
 import pytest
 
 from quantem.gpu.formats.qem import metadata
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 
 
 def test_calibration_summary_and_atomic_override():
-    data = Dataset4dstemGPU(
+    data = Dataset4dstem(
         np.zeros((2, 3, 4, 5), np.uint32),
         {
             "voltage_kV": 300,
@@ -53,7 +53,7 @@ def test_calibration_summary_and_atomic_override():
 
 def test_unknown_calibration_does_not_prevent_raw_inspection():
     values = np.ones((2, 3, 4, 5), np.uint16)
-    data = Dataset4dstemGPU(values, {})
+    data = Dataset4dstem(values, {})
     assert set(data.calibration.table().Source) == {"Not recorded"}
     assert data.calibration.voltage_kV is None
     np.testing.assert_array_equal(data.read().numpy(), values)
@@ -61,7 +61,7 @@ def test_unknown_calibration_does_not_prevent_raw_inspection():
 
 
 def test_calibration_fields_are_named_and_a_scalar_sets_both_axes():
-    data = Dataset4dstemGPU(np.zeros((2, 3, 4, 5), np.uint16), {})
+    data = Dataset4dstem(np.zeros((2, 3, 4, 5), np.uint16), {})
     data.calibration.scan_sampling_A = 0.264
     assert data.calibration.scan_sampling_A == (0.264, 0.264)
     with pytest.raises(AttributeError, match="Did you mean 'voltage_kV'"):
@@ -75,7 +75,7 @@ def test_every_calibration_table_uses_one_label_set():
     """data.calibration.table(), data.metadata_table() and DirectPtycho.calibration() name rows and units alike."""
     from quantem.gpu.io import metadata_display as labels
 
-    data = Dataset4dstemGPU(np.zeros((2, 3, 4, 5), np.uint16), {
+    data = Dataset4dstem(np.zeros((2, 3, 4, 5), np.uint16), {
         "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
         "detector_sampling_mrad": [0.55, 0.55]})
     calibration = data.calibration.table()
@@ -123,7 +123,7 @@ def test_tables_round_for_reading_and_a_confirmed_value_stays_recorded():
     assert labels.display_value(0.6035446045631986) == 0.603545
     assert labels.display_value((0.6035446045631986, 2)) == (0.603545, 2)
     assert labels.display_value("Not recorded") == "Not recorded"
-    data = Dataset4dstemGPU(np.zeros((2, 3, 4, 5), np.uint16), {
+    data = Dataset4dstem(np.zeros((2, 3, 4, 5), np.uint16), {
         "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
         "detector_sampling_mrad": [0.6035446045631986, 0.6035446045631986]})
     assert data.calibration.table().loc["Detector step (row, col)", "Value"] == (0.603545, 0.603545)
@@ -135,11 +135,11 @@ def test_tables_round_for_reading_and_a_confirmed_value_stays_recorded():
     assert table.loc["Convergence semiangle", "Source"] == "Overridden"
 
 
-def _disk_acquisition(metadata: dict) -> Dataset4dstemGPU:
+def _disk_acquisition(metadata: dict) -> Dataset4dstem:
     rows, cols = np.mgrid[:48, :48]
     disk = np.hypot(rows - 23.0, cols - 25.0) <= 12.0
     counts = (np.random.default_rng(1).poisson(1, (4, 5, 48, 48)) + 60 * disk).astype(np.uint16)
-    return Dataset4dstemGPU(counts, metadata)
+    return Dataset4dstem(counts, metadata)
 
 
 def test_detector_sampling_records_the_disk_and_its_detector_step():

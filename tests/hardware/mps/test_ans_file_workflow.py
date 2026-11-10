@@ -22,7 +22,7 @@ def test_public_ans_series_keeps_sources_independent_and_exact(tmp_path):
 
     loaded = io.load(
         paths,
-        backend="mps",
+        device="mps",
         representation="encoded",
         stack=False,
         verbose=False,

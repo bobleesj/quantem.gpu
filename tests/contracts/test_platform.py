@@ -141,8 +141,6 @@ def test_cpu_device_loads_an_arina_master_as_the_numpy_counts(tmp_path) -> None:
         np.testing.assert_array_equal(np.asarray(loaded), counts)
         np.testing.assert_array_equal(loaded[1, 2:4, 3].numpy(), counts[1, 2:4, 3])
         assert loaded[0, 0].device == torch.device("cpu")
-    with pytest.raises(ValueError, match="contradicts"):
-        io.load(master, device="cpu", backend="cuda")
 
 
 def test_cpu_device_reopens_a_qem_file() -> None:

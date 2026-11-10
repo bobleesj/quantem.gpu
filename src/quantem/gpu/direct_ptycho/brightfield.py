@@ -14,7 +14,7 @@ import torch
 from quantem.gpu import detector
 from quantem.gpu.detector import disk_edge_radius
 from quantem.gpu.device.cuda_runtime import cp
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ class BrightFieldSelection:
 
 
 def crop_bright_field(
-    loaded: Dataset4dstemGPU,
+    loaded: Dataset4dstem,
     backend: str,
     threshold: float,
     bright_field_radius_px: float | None,
@@ -171,7 +171,7 @@ def crop_bright_field(
 
 
 def bright_field_crop_region(
-    loaded: Dataset4dstemGPU,
+    loaded: Dataset4dstem,
     threshold: float,
     bright_field_radius_px: float | None,
     *,

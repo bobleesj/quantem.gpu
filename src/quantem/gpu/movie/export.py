@@ -142,7 +142,7 @@ def _movie_frames(
     gap: int,
     label_height: int,
     max_width: int | None,
-    cols: int | None,
+    columns: int | None,
     shared_contrast: bool,
     ref_stacks: Sequence[np.ndarray] | None,
     percentile: tuple[float, float],
@@ -181,7 +181,7 @@ def _movie_frames(
         len(stacks),
         height,
         width,
-        cols=cols,
+        columns=columns,
         gap=gap,
         label_height=label_height,
         max_width=max_width,
@@ -225,14 +225,14 @@ def save_gif(
     gap: int = 12,
     label_height: int = 28,
     max_width: int | None = 1200,
-    cols: int | None = None,
+    columns: int | None = None,
     shared_contrast: bool = True,
     ref_stacks: Sequence[np.ndarray] | None = None,
     percentile: tuple[float, float] = (1.0, 99.0),
 ) -> Path:
     """Save one or more grayscale movie stacks as an animated GIF."""
     frames = _movie_frames(
-        data, labels=labels, gap=gap, label_height=label_height, max_width=max_width, cols=cols,
+        data, labels=labels, gap=gap, label_height=label_height, max_width=max_width, columns=columns,
         shared_contrast=shared_contrast, ref_stacks=ref_stacks, percentile=percentile,
     )
     return _write_gif(frames, path, float(fps))
@@ -247,41 +247,36 @@ def save_mp4(
     gap: int = 12,
     label_height: int = 28,
     max_width: int | None = 1200,
-    cols: int | None = None,
+    columns: int | None = None,
     shared_contrast: bool = True,
     ref_stacks: Sequence[np.ndarray] | None = None,
     percentile: tuple[float, float] = (1.0, 99.0),
     crf: int = 18,
-    backend: str = "auto",
-    gpu_id: int = 0,
+    device: int | str = "auto",
 ) -> Path:
     """Save one or more grayscale movie stacks as an H.264 MP4.
 
     Parameters
     ----------
-    backend : {"auto", "cuda", "mps", "cpu"}
-        ``"auto"`` uses the NVIDIA CUDA/NVENC writer when it is available and
-        the frame is at least 256 pixels on each side, then the Apple Metal
-        writer. When neither writes the movie it prints one line saying why
-        and uses the CPU writer, whose frames differ from the GPU writers'
-        (Lanczos instead of nearest-neighbour resizing, unoutlined labels).
-        ``"cuda"`` and ``"mps"`` raise instead. Pre-rendered PIL frames always
+    device : {"auto", "cuda", "cuda:N", "mps", "cpu"} or int
+        Where the movie is written. ``"auto"`` uses the NVIDIA CUDA/NVENC writer
+        on CUDA device 0 when it is available and the frame is at least 256
+        pixels on each side, then the Apple Metal writer. When neither writes
+        the movie it prints one line saying why and uses the CPU writer, whose
+        frames differ from the GPU writers' (Lanczos instead of nearest-neighbour
+        resizing, unoutlined labels). A GPU number ``N`` or ``"cuda:N"`` selects
+        the NVENC writer on CUDA device N; ``"cuda"`` is device 0. A named GPU
+        writer raises instead of using another. Pre-rendered PIL frames always
         use the CPU writer.
-    gpu_id : int
-        CUDA device of the NVENC writer.
     """
-    backend = str(backend).lower()
-    if backend not in {"auto", "cuda", "mps", "cpu"}:
-        raise ValueError(
-            f"unknown movie backend {backend!r}; use 'auto', 'cuda', 'mps', or 'cpu'"
-        )
+    backend, index = _movie_device(device)
     if backend in {"cuda", "mps"} and _is_pil_frame_sequence(data):
         raise ValueError(
-            f"backend={backend!r} requires array movie data; rendered PIL frames "
-            "must use backend='cpu'"
+            f"device={device!r} requires array movie data; rendered PIL frames "
+            "must use device='cpu'"
         )
     # the grid and contrast options every writer takes
-    grid = dict(labels=labels, gap=gap, label_height=label_height, max_width=max_width, cols=cols)
+    grid = dict(labels=labels, gap=gap, label_height=label_height, max_width=max_width, columns=columns)
     contrast = dict(percentile=percentile, shared_contrast=shared_contrast, ref_stacks=ref_stacks)
     # why "auto" did not reach a GPU writer, announced before the CPU writer runs
     fallback = "no CUDA/NVENC or Apple Metal movie writer is available"
@@ -291,7 +286,7 @@ def save_mp4(
             stacks = _as_stack_list(data)
             _, height, width = _validate_stacks(stacks)
             layout = grid_layout(
-                len(stacks), height, width, cols=cols, gap=gap, label_height=label_height, max_width=max_width
+                len(stacks), height, width, columns=columns, gap=gap, label_height=label_height, max_width=max_width
             )
             # PyNvVideoCodec may import successfully while NVENC rejects
             # small H.264 surfaces at encoder initialization time.
@@ -304,7 +299,7 @@ def save_mp4(
             stacks, limits = _stacks_with_limits(data, **contrast)
             try:
                 return cuda.save_mp4(
-                    stacks, path, fps=float(fps), limits=limits, qp=int(crf), gpu_id=int(gpu_id), **grid
+                    stacks, path, fps=float(fps), limits=limits, qp=int(crf), device=index, **grid
                 )
             except (RuntimeError, MemoryError) as error:
                 # the writer reports NVENC, CUDA and ffmpeg failures as RuntimeError
@@ -323,8 +318,24 @@ def save_mp4(
                 fallback = f"the Apple Metal writer failed ({error})"
     if backend == "auto" and not _is_pil_frame_sequence(data):
         print(f"save_mp4: {fallback}; writing with the CPU writer, which resizes with Lanczos and draws "
-              "unoutlined labels. Pass backend='cuda' or 'mps' to get an error instead.")
+              "unoutlined labels. Pass device='cuda' or 'mps' to get an error instead.")
     return _write_mp4(_movie_frames(data, **grid, **contrast), path, float(fps), crf=int(crf))
+
+
+def _movie_device(device: int | str) -> tuple[str, int]:
+    """``save_mp4``'s ``device`` as the writer it names, ``"auto"``, ``"cuda"``, ``"mps"`` or ``"cpu"``, and the CUDA
+    device index of the NVENC writer."""
+    if isinstance(device, int) and not isinstance(device, bool):
+        # a GPU number is CUDA device N; 0 on a Mac is its one Apple GPU, as quantem.gpu.device reads it
+        if device == 0 and not cuda.is_available() and mps.is_available():
+            return "mps", 0
+        return "cuda", device
+    name = str(device).strip().lower()
+    if name.startswith("cuda:") and name[5:].isdigit():
+        return "cuda", int(name[5:])
+    if name not in {"auto", "cuda", "mps", "cpu"}:
+        raise ValueError(f"unknown movie device {device!r}; use 'auto', a GPU number, 'cuda:N', 'mps', or 'cpu'")
+    return name, 0
 
 
 def save_movie(

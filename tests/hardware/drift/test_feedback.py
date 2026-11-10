@@ -29,7 +29,7 @@ def crystal():
 
 def test_translation_sign_including_null_and_wrong_correction():
     reference, sampling_A = crystal()
-    images, truth_nm = simulate_drift(reference, sampling_A=sampling_A, num_scans=2)
+    images, truth_nm = simulate_drift(reference, sampling_A=sampling_A, scans=2)
     for image, expected_nm in zip(images, truth_nm):
         found = register(reference, image, sampling_A=sampling_A)
         np.testing.assert_allclose(
@@ -49,7 +49,7 @@ def test_translation_sign_including_null_and_wrong_correction():
 
 def test_feedback_corrects_crossed_axes_on_the_next_scan():
     reference, sampling_A = crystal()
-    images, truth_nm = simulate_drift(reference, sampling_A=sampling_A, num_scans=6)
+    images, truth_nm = simulate_drift(reference, sampling_A=sampling_A, scans=6)
     matrix = np.array([[0.0, -2.0], [1.0, 0.0]])
     _, report = simulate_feedback(
         images,
@@ -71,7 +71,7 @@ def test_feedback_corrects_crossed_axes_on_the_next_scan():
 @pytest.mark.parametrize("missing", [0.0, np.nan])
 def test_missing_scans_hold_position_and_keep_the_last_valid_reference(missing):
     reference, sampling_A = crystal()
-    images, _ = simulate_drift(reference, sampling_A=sampling_A, num_scans=6)
+    images, _ = simulate_drift(reference, sampling_A=sampling_A, scans=6)
     images[2:5] = missing
     _, report = simulate_feedback(
         images, sampling_A=sampling_A, image_from_piezo=np.eye(2)
@@ -87,7 +87,7 @@ def test_missing_scans_hold_position_and_keep_the_last_valid_reference(missing):
 @pytest.mark.parametrize("noise_ratio", [0.1, 1.0])
 def test_noisy_feedback_requires_both_accuracy_and_match_strength(noise_ratio):
     reference, sampling_A = crystal()
-    images, truth_nm = simulate_drift(reference, sampling_A=sampling_A, num_scans=6)
+    images, truth_nm = simulate_drift(reference, sampling_A=sampling_A, scans=6)
     # Phase-domain noise, not detector dose. The last image is clean to test recovery.
     noise = cp.random.default_rng(21).standard_normal(images.shape, dtype=cp.float32)
     noise[-1] = 0
@@ -117,7 +117,7 @@ def test_noisy_feedback_requires_both_accuracy_and_match_strength(noise_ratio):
 def test_step_limit_cannot_cancel_faster_drift():
     reference, sampling_A = crystal()
     images, truth_nm = simulate_drift(
-        reference, sampling_A=sampling_A, num_scans=6, step_nm=(0.04, -0.03)
+        reference, sampling_A=sampling_A, scans=6, step_nm=(0.04, -0.03)
     )
     _, report = simulate_feedback(
         images,

@@ -18,10 +18,10 @@ scan sampling, reciprocal sampling and voltage. No original file is modified.
 ```python
 from quantem.gpu import io
 
-with io.load("STEM SI.dm4", backend="mps") as acquisition:
+with io.load("STEM SI.dm4", device="mps") as acquisition:
     io.save("acquisition.qem", acquisition, format="quantem", backend="mps")
 
-with io.load("acquisition.qem", backend="mps") as acquisition:
+with io.load("acquisition.qem", device="mps") as acquisition:
     print(acquisition.shape, acquisition.dtype)
 ```
 
@@ -61,7 +61,7 @@ chosen center rather than the automatic disk fit.
 import numpy as np
 from quantem.gpu import detector, io
 
-with io.load("acquisition.qem", backend="mps") as acquisition:
+with io.load("acquisition.qem", device="mps") as acquisition:
     session = detector.prepare(acquisition)
     try:
         row, column = np.indices(acquisition.shape[2:])

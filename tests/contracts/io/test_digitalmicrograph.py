@@ -72,7 +72,7 @@ def test_dm_matches_independent_reader(tmp_path, dtype, version):
     values = np.arange(5 * 7 * 12 * 16).reshape(5, 7, 12, 16).astype(dtype)
     path = write_dm(tmp_path / f"camera.dm{version}", values, version=version)
     info = io.inspect(path)
-    with io.load(path, backend="cpu", representation="dense") as loaded:
+    with io.load(path, device="cpu", representation="dense") as loaded:
         with dm.fileDM(path) as reference:
             expected = reference.getDataset(0)["data"]
         np.testing.assert_array_equal(loaded.data, expected)
@@ -91,10 +91,10 @@ def test_dm_detector_step_reads_the_same_before_and_after_saving(tmp_path):
     from quantem.gpu import io
 
     path = write_dm4(tmp_path / "camera.dm4", np.zeros((5, 7, 12, 16), np.uint16))
-    with io.load(path, backend="cpu", representation="dense") as loaded:
+    with io.load(path, device="cpu", representation="dense") as loaded:
         before = loaded.sampling, loaded.units
         io.save(tmp_path / "camera.qem", loaded, backend="cpu")
-    with io.load(tmp_path / "camera.qem", backend="cpu") as reopened:
+    with io.load(tmp_path / "camera.qem", device="cpu") as reopened:
         assert (reopened.sampling, reopened.units) == before
     assert before == ((2.5, 2.5, 0.025, 0.025), ("angstrom", "angstrom", "1/angstrom", "1/angstrom"))
 
@@ -108,7 +108,7 @@ def test_dm4_ans_reconstructs_tail_and_detector_products(tmp_path, dtype):
     values = np.random.default_rng(20260915).poisson(0.5, (23, 25, 24, 32)).astype(dtype)
     values[0, 0, 3, 7] = np.iinfo(dtype).max
     path = write_dm4(tmp_path / "camera.dm4", values)
-    with io.load(path, backend="cuda") as loaded:
+    with io.load(path, device="cuda") as loaded:
         for first, stop in [(0, 13), (510, 516), (570, 575)]:
             actual = loaded.data.decode_scan_range_device(first, stop).get()
             np.testing.assert_array_equal(actual, values.reshape(-1, 24, 32)[first:stop])
@@ -151,9 +151,9 @@ def test_dm4_rejects_geometry_changes_and_truncated_payload(tmp_path):
     values = np.zeros((5, 7, 12, 16), np.uint8)
     path = write_dm4(tmp_path / "camera.dm4", values)
     with pytest.raises(ValueError, match="disagrees with DM geometry"):
-        io.load(path, backend="cpu", scan_shape=(7, 5))
+        io.load(path, device="cpu", scan_shape=(7, 5))
     with pytest.raises(NotImplementedError, match="complete acquisition"):
-        io.load(path, backend="cuda", scan_region=(0, 2, 0, 2))
+        io.load(path, device="cuda", scan_region=(0, 2, 0, 2))
     path.write_bytes(path.read_bytes()[:-200])
     with pytest.raises((ValueError, OSError)):
         io.inspect(path)
@@ -170,7 +170,7 @@ def test_saved_camera_ans_reopens_without_original_or_encoder(tmp_path, dtype, m
     values[0, 0, 0, 0] = np.iinfo(dtype).max
     path = write_dm4(tmp_path / "camera.dm4", values)
     saved = tmp_path / "camera.qem"
-    with io.load(path, backend="cuda") as original:
+    with io.load(path, device="cuda") as original:
         expected_arrays = [[array.get() for array in chunk.arrays] for chunk in original.data.chunks]
         io.save(saved, original, format="quantem", backend="cuda")
         with pytest.raises(FileExistsError):
@@ -182,7 +182,7 @@ def test_saved_camera_ans_reopens_without_original_or_encoder(tmp_path, dtype, m
 
     monkeypatch.setattr(StreamedCounts, "append", forbidden)
     assert io.inspect(saved).scan_shape == (23, 25)
-    with io.load(saved, backend="cuda") as reopened:
+    with io.load(saved, device="cuda") as reopened:
         assert reopened.metadata["scan_sampling_A"] == [2.5, 2.5]
         for chunk, expected in zip(reopened.data.chunks, expected_arrays):
             for actual, reference in zip(chunk.arrays, expected):
@@ -204,7 +204,7 @@ def test_saved_camera_ans_reopens_without_original_or_encoder(tmp_path, dtype, m
     corrupted[-1] ^= 1
     saved.write_bytes(corrupted)
     with pytest.raises(ValueError, match="checksum mismatch"):
-        io.load(saved, backend="cuda")
+        io.load(saved, device="cuda")
     saved.write_bytes(original_bytes[:-1])
     with pytest.raises(ValueError, match="Incomplete QEM"):
         io.inspect(saved)
@@ -232,7 +232,7 @@ def test_snapshot_retains_multiblock_chunks_and_validity(tmp_path):
     io.save(path, resident, format="quantem", backend="cuda")
     resident.release()
     assert io.inspect(path).pixel_mask[2, 3] == 1
-    with io.load(path, backend="cuda") as loaded:
+    with io.load(path, device="cuda") as loaded:
         np.testing.assert_array_equal(loaded.data.valid_pixels, valid)
         np.testing.assert_array_equal(loaded.data.decode_scan_range_device(0, 1029).get(),
                                       values.reshape(-1, 8, 12))

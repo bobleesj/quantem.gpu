@@ -51,7 +51,7 @@ def test_cuda_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     original = make_precision_fixture()
     source = tmp_path / "shared_oracle.npy"
     np.save(source, original)
-    with io.load(source, dtype=dtype, backend="cuda", verbose=False) as loaded:
+    with io.load(source, dtype=dtype, device="cuda", verbose=False) as loaded:
         report = loaded.metadata["precision"]
         calibration = report["regions"][0] if report.get("version") == 2 else report
         assert report["intensity_min"] == float(original.min())
@@ -309,4 +309,4 @@ def test_changing_saved_precision_reports_restored_source_units(tmp_path):
     path = tmp_path / "display_master.h5"
     io.save(path, values, dtype="scaled_uint16")
     with pytest.raises(NotImplementedError, match="Only dtype=.scaled_uint16. is a stored precision"):
-        io.load(path, dtype="float16", backend="cuda", verbose=False)
+        io.load(path, dtype="float16", device="cuda", verbose=False)

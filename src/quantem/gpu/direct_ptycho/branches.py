@@ -218,7 +218,7 @@ class RotationBranches:
         return self.branches[self.kept].scan_detector_rotation_deg
 
     @property
-    def num_columns(self) -> int:
+    def _column_count(self) -> int:
         """Number of atomic columns located on the dark-field image."""
         return 0 if self.columns is None else len(self.columns)
 
@@ -282,13 +282,13 @@ class RotationBranches:
         if self.decided_by == "columns":
             evidence = (f"atomic columns positive (z {_signed(chosen.column_z, 1)}, effect "
                         f"{_signed(chosen.column_effect, 2)}, {chosen.column_positive_fraction:.0%} of "
-                        f"{self.num_columns} columns); "
+                        f"{self._column_count} columns); "
                         f"{other.scan_detector_rotation_deg:.1f}° "
                         + ("negative" if (other.column_z or 0.0) < 0 else f"z {_signed(other.column_z, 1)}"))
             choice = f"{chosen.scan_detector_rotation_deg:.1f}°: {evidence}"
         else:
             reason = (f"positive columns not decisive (z {_signed(chosen.column_z, 1)}, effect "
-                      f"{_signed(chosen.column_effect, 2)})" if self.num_columns else
+                      f"{_signed(chosen.column_effect, 2)})" if self._column_count else
                       "no atomic columns located on a dark-field image")
             choice = (f"{chosen.scan_detector_rotation_deg:.1f}° by the phase tail "
                       f"(S {_signed(chosen.phase_skewness, 2)} over {_signed(other.phase_skewness, 2)}); {reason}")
@@ -326,7 +326,7 @@ class RotationBranches:
             rows.append(row)
         index = pd.Index([f"{branch.scan_detector_rotation_deg:.2f}°" for branch in self.branches],
                          name=f"Rotation (decided by {'atomic columns' if self.decided_by == 'columns' else 'phase tail'}"
-                              f"{f', {self.num_columns} columns' if self.num_columns else ''})")
+                              f"{f', {self._column_count} columns' if self._column_count else ''})")
         table = pd.DataFrame(rows, index=index)
         return table.round({name: 3 for name in table.columns if name not in ("loss", "kept", "status")}).round({"loss": 7})
 
@@ -435,7 +435,7 @@ class RotationBranches:
         show_2d(displayed, figax=(figure, np.asarray(axes)), title=titles, cmap=cmap, cbar=True,
                 norm={"interval_type": "manual", "vmin": -limit, "vmax": limit}, tight_layout=False, title_fontsize=12,
                 scalebar=None if sampling is None else {"sampling": sampling[1], "units": "Å", "fontsize": 11})
-        if self.num_columns:
+        if self._column_count:
             positions = self.columns.astype(np.float64) * factor - np.array([row, col])
             for axis in axes:
                 limits = axis.get_xlim(), axis.get_ylim()

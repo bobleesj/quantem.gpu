@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.optics.physics import wrap_degrees
 
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
@@ -83,7 +83,7 @@ class ScreeningResult:
 
 
 def prepare(
-    source: str | Path | Dataset4dstemGPU,
+    source: str | Path | Dataset4dstem,
     *,
     backend: str = "auto",
     scan_shape: tuple[int, int] | None = None,
@@ -113,7 +113,7 @@ def prepare(
 
     Parameters
     ----------
-    source : str, Path or Dataset4dstemGPU
+    source : str, Path or Dataset4dstem
         HDF5 master (for example an Arina ``*_master.h5``) or another
         acquisition that ``io.load`` reads into unsigned counts or float32
         intensities. A loaded acquisition is borrowed and stays open. Its flagged pixels count with
@@ -150,7 +150,7 @@ def prepare(
     >>> products = screening.prepare("scan_master.h5")
     >>> products.bright_field.shape, products.bright_field_edge_radius_px
     """
-    loaded = source if isinstance(source, Dataset4dstemGPU) else None
+    loaded = source if isinstance(source, Dataset4dstem) else None
     if loaded is not None:
         recorded_path = loaded.metadata.get("source_path")
         if not recorded_path:
@@ -225,7 +225,7 @@ def _build_products(
     backend: str,
     scan_shape: tuple[int, int] | None,
     verbose: bool,
-    loaded: Dataset4dstemGPU | None = None,
+    loaded: Dataset4dstem | None = None,
 ) -> ScreeningResult:
     """Derive every screening product from the encoded resident ``io.load`` returns.
 
@@ -246,7 +246,7 @@ def _build_products(
     borrowed = loaded is not None
     owner = nullcontext(loaded) if borrowed else load(
         str(master),
-        backend=backend,
+        device=backend,
         scan_shape=scan_shape,
         verbose=verbose,
     )

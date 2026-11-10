@@ -29,7 +29,7 @@ def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     )
     source = tmp_path / "source.npy"
     np.save(source, values)
-    loaded = io.load(source, dtype=dtype, backend="mps", verbose=False)
+    loaded = io.load(source, dtype=dtype, device="mps", verbose=False)
     report = loaded.metadata["precision"]
     calibration = report["regions"][0] if report.get("version") == 2 else report
     expected = (
@@ -45,7 +45,7 @@ def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     assert report["range_scope"] == ("automatic regions" if report.get("version") == 2 else "complete source")
     copied = tmp_path / "copy_master.h5"
     io.save(copied, loaded, backend="mps", verbose=False, wait=True)
-    reopened = io.load(copied, backend="mps", verbose=False)
+    reopened = io.load(copied, device="mps", verbose=False)
     np.testing.assert_allclose(
         prepare(reopened).reduce_frames([0], "mean"),
         expected[0, 0],
@@ -66,7 +66,7 @@ def test_mps_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     original = make_precision_fixture()
     source = tmp_path / "shared_oracle.npy"
     np.save(source, original)
-    with io.load(source, dtype=dtype, backend="mps", verbose=False) as loaded:
+    with io.load(source, dtype=dtype, device="mps", verbose=False) as loaded:
         report = loaded.metadata["precision"]
         calibration = report["regions"][0] if report.get("version") == 2 else report
         assert report["intensity_min"] == float(original.min())
@@ -140,7 +140,7 @@ def test_mps_direct_tensor_conversion_stays_on_device(tmp_path):
     output = tmp_path / "tensor_master.h5"
     io.save(output, values, dtype="scaled_uint16", backend="mps", verbose=False, wait=True)
     assert output.is_file()
-    with io.load(output, backend="mps", verbose=False) as loaded:
+    with io.load(output, device="mps", verbose=False) as loaded:
         assert loaded.metadata["precision"]["values"] == values.numel()
         assert loaded.data.device.type == "mps"
 
@@ -257,7 +257,7 @@ def test_direct_ans_mean_keeps_its_frozen_compensated_order():
     ], dtype=np.uint32).view(np.float32)
     values = torch.arange(17 * 513 * 4 * 8, device="mps").reshape(17, 513, 4, 8)
     values = ((values * 17) % 787).float() / 13 - 7
-    with io.load(values, backend="mps", dtype="scaled_uint16", verbose=False) as loaded:
+    with io.load(values, device="mps", dtype="scaled_uint16", verbose=False) as loaded:
         actual = loaded.data.mean_pattern()
         try:
             np.testing.assert_array_equal(actual.get(), frozen)
@@ -273,7 +273,7 @@ def test_count_and_precision_results_are_one_metal_array_type():
     from quantem.gpu.resident.mps.arrays import MetalArray
 
     values = (torch.arange(4 * 4 * 8 * 8, device="mps").reshape(4, 4, 8, 8) % 23).float() / 3
-    with io.load(values, backend="mps", dtype="scaled_uint16", verbose=False) as loaded:
+    with io.load(values, device="mps", dtype="scaled_uint16", verbose=False) as loaded:
         mean = loaded.data.mean_pattern()
         codes = loaded.data.parts[0].owner.detector_total_device()
         try:
@@ -305,7 +305,7 @@ def test_mps_precision_releases_its_metal_temporaries(tmp_path, monkeypatch):
     values = (np.sin(np.arange(8 * 8 * 16 * 16, dtype=np.float32)) * 1000).reshape(8, 8, 16, 16)
     source = tmp_path / "source.npy"
     np.save(source, values)
-    loaded = io.load(source, dtype="scaled_uint16", backend="mps", verbose=False)
+    loaded = io.load(source, dtype="scaled_uint16", device="mps", verbose=False)
     session = prepare(loaded)
     block = metal.upload(values[0, 0])
     monkeypatch.setattr(arrays.MetalArray, "__init__", recorded)

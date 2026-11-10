@@ -17,7 +17,7 @@ import pytest
 import torch
 
 from quantem.gpu import detector, io
-from quantem.gpu.io import Dataset4dstemGPU
+from quantem.gpu.io import Dataset4dstem
 from tests.hardware.test_encoded_detector_moments import DETECTOR_SHAPE, FLAGGED, SCAN_SHAPE, _counts, _load, _valid
 from tests.hardware.test_screening_products import write_master
 
@@ -33,7 +33,7 @@ class View:
         row_start, row_stop, col_start, col_stop = region
         self.shape = (row_stop - row_start, col_stop - col_start, *source.shape[2:])
         self.device = torch.device(source.device)
-        if valid is None and isinstance(source, Dataset4dstemGPU) and source.representation == "encoded":
+        if valid is None and isinstance(source, Dataset4dstem) and source.representation == "encoded":
             valid = source.data.valid_pixels
         self.valid = None if valid is None else torch.as_tensor(np.asarray(valid, dtype=bool), device=self.device).reshape(self.shape[2:])
         self.reads = 0
@@ -123,7 +123,7 @@ def test_float32_intensities(tmp_path, region, masked):
     valid = np.ones((12, 10), bool)
     if masked:
         valid[3, 4] = valid[8, 1] = False
-    with io.load(tmp_path / "intensities.npy", backend=backend) as loaded:
+    with io.load(tmp_path / "intensities.npy", device=backend) as loaded:
         assert loaded.dtype == np.float32
         _assert_session_reductions(View(loaded, region, valid), intensities)
 
@@ -136,7 +136,7 @@ def test_scaled_precision_intensities(tmp_path, region):
     path = tmp_path / "merged_master.h5"
     io.save(path, intensities, dtype="scaled_uint16", backend=backend, verbose=False)
     row_start, row_stop, col_start, col_stop = region
-    with io.load(path, backend=backend, verbose=False) as loaded:
+    with io.load(path, device=backend, verbose=False) as loaded:
         restored = loaded.read().cpu().numpy()[row_start:row_stop, col_start:col_stop].reshape(-1, 12, 10).astype(np.float64)
         view = View(loaded, region)
         session = detector.prepare(view)
@@ -172,7 +172,7 @@ def test_dense_tensors(dtype, region, held):
         source = values_t
     else:
         # an acquisition holds a Torch tensor or, for algorithm results on CUDA, a CuPy array
-        source = Dataset4dstemGPU(values_t if held == "torch acquisition" else __import__("cupy").asarray(values), {"name": "preview"})
+        source = Dataset4dstem(values_t if held == "torch acquisition" else __import__("cupy").asarray(values), {"name": "preview"})
     valid = np.ones(DETECTOR_SHAPE, bool)
     valid[FLAGGED] = False
     # A float virtual image is a float32 sum over the mask pixels; integers stay exact.

@@ -100,7 +100,7 @@ def test_selective_scan_loading_contract_is_explicit_and_fail_closed() -> None:
     )
 
     assert selective["contract_version"] == "quantem-gpu-selective-scan/v2"
-    assert selective["public_owner"] == "quantem.gpu.io.Dataset4dstemGPU.read"
+    assert selective["public_owner"] == "quantem.gpu.io.Dataset4dstem.read"
     selectors = selective["selectors"]
     assert set(selectors) == {"scan_region"}
     assert selectors["scan_region"] == {

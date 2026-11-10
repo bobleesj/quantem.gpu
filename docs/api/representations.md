@@ -54,7 +54,7 @@ Acquisition loading uses **ANS residency** on CUDA and MPS. Original supported
 files are ingested in bounded blocks, and `.qem` copies reopen compressed.
 Dense overrides are rejected by the public GPU loader; use bounded reads from
 the encoded acquisition instead. Explicit
-`io.load(..., backend="cuda", representation="encoded", apply_mask=False)`
+`io.load(..., device="cuda", representation="encoded", apply_mask=False)`
 streams complete uint8/uint16 H5 acquisitions into a runtime encoded resident with
 exact spatial indexes. Use `io.save` for the supported `.qem` round trip.
 `representation="paired"` is the second opt-in CUDA layout for complete uint16
@@ -104,7 +104,7 @@ still needs paired real-fixture, peak-memory, load, and interaction evidence.
 | MPS / Python | Explicit arrays and bounded reads, not acquisition loading | Public acquisition loading |
 | Swift / Metal | Native indexed and resident loaders | Native encoded sources; native packed loader and producer |
 | WebGPU | Local-file HDF5 loader in `io/hdf5/webgpu/local-h5.ts` | Browser `.qem` count acquisitions (`RansResidentSet.loadQemFiles`) |
-| CPU reference | `io.load(..., backend="cpu", representation="dense")` | Explicit `.qem` reference decoder |
+| CPU reference | `io.load(..., device="cpu", representation="dense")` | Explicit `.qem` reference decoder |
 
 Python detector calls reuse the resident kernels of the loaded source:
 

@@ -110,7 +110,7 @@ def test_full_uint16_file_switching_preserves_counts_above_float32(
         paths.append(master)
     for index in (0, 1, 0):
         with io.load(
-            paths[index], backend="cpu", representation="dense",
+            paths[index], device="cpu", representation="dense",
             scan_shape=(1, 2), dtype="native", verbose=False,
         ) as loaded:
             result = detector.prepare(loaded).masked_sum_exact(

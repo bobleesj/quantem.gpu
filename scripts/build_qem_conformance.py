@@ -62,7 +62,7 @@ def main() -> None:
         io.save(path, data, metadata=metadata, backend="cpu", batch_size=batch)
         np.save(args.output / f"{name}.npy", data)
         header, _ = read_envelope(path)
-        with io.load(path, backend="cpu") as reopened:
+        with io.load(path, device="cpu") as reopened:
             assert reopened.data.tobytes() == data.tobytes()
         records.append(
             dict(

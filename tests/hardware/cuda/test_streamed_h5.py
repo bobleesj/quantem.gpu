@@ -52,7 +52,7 @@ def test_index_sum_preserves_uint64_bound(tmp_path):
     path = tmp_path / "high-counts.h5"
     with h5py.File(path, "w") as handle:
         handle["entry/data/data"] = raw
-    loaded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
+    loaded = io.load(path, device="cuda", representation="encoded", apply_mask=False)
     session = detector.prepare(loaded)
     output = session.masked_sum(np.ones((257, 257), bool), output="native")
     assert output.dtype == np.uint64
@@ -79,7 +79,7 @@ def test_h5_explicit_gpu_median_hot_pixel_correction(
 
     loaded = io.load(
         path,
-        backend="cuda",
+        device="cuda",
         representation=representation,
         hot_pixel_correction="median",
         apply_mask=False,
@@ -126,7 +126,7 @@ def test_h5_ans_hot_pixel_correction_overrides(tmp_path, method):
 
     loaded = io.load(
         path,
-        backend="cuda",
+        device="cuda",
         representation="encoded",
         apply_mask=False,
         hot_pixel_correction=method,
@@ -154,7 +154,7 @@ def test_two_streamed_h5_sources_share_a_joint_query(tmp_path):
         path = tmp_path / f"{name}.h5"
         with h5py.File(path, "w") as handle:
             handle["entry/data/data"] = values
-        loaded.append(io.load(path, backend="cuda", apply_mask=False))
+        loaded.append(io.load(path, device="cuda", apply_mask=False))
     session = detector.prepare(loaded)
     try:
         for index in (0, 7, 31):
@@ -177,7 +177,7 @@ def test_one_wide_scan_uses_actual_length_encoding_scratch(tmp_path):
     path = tmp_path / "wide.h5"
     with h5py.File(path, "w") as handle:
         handle["entry/data/data"] = raw
-    loaded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
+    loaded = io.load(path, device="cuda", representation="encoded", apply_mask=False)
     np.testing.assert_array_equal(
         loaded.data.decode_scan_range_device(0, 1).get(), raw.reshape(1, 2048, 2048)
     )
@@ -194,7 +194,7 @@ def test_sparse_events_and_rare_counts_reconstruct_every_scan(tmp_path):
     path = tmp_path / "sparse-rare.h5"
     with h5py.File(path, "w") as handle:
         handle["entry/data/data"] = raw
-    loaded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
+    loaded = io.load(path, device="cuda", representation="encoded", apply_mask=False)
     decoded = loaded.data.decode_scan_range_device(0, 1025).get()
     np.testing.assert_array_equal(decoded.reshape(raw.shape), raw)
     session = detector.prepare(loaded)
@@ -232,7 +232,7 @@ def test_uint32_master_sentinels_are_corrected_before_encoding(tmp_path, method)
                               chunks=(1, 8, 8), **hdf5plugin.Bitshuffle())
         handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
     with io.load(
-        path, backend="cuda", representation="encoded", scan_shape=(2, 5),
+        path, device="cuda", representation="encoded", scan_shape=(2, 5),
         apply_mask=False, hot_pixel_correction=method, verbose=False,
     ) as loaded:
         session = detector.prepare(loaded)
@@ -253,7 +253,7 @@ def test_uint32_master_sentinels_are_corrected_before_encoding(tmp_path, method)
     # A genuine over-range count at a valid pixel must never be clipped.
     with h5py.File(path, "r+") as handle:
         handle["entry/data/data_000001"][0, 1, 1] = 70000
-    with io.load(path, backend="cuda", representation="encoded", scan_shape=(2, 5),
+    with io.load(path, device="cuda", representation="encoded", scan_shape=(2, 5),
                  apply_mask=False, hot_pixel_correction=method, verbose=False) as loaded:
         assert loaded.dtype == np.dtype("uint32")
         assert loaded[0, 0][1, 1].item() == 70000

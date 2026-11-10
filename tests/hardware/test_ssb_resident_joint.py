@@ -254,7 +254,7 @@ def test_resident_region_matches_reopened_counts_and_keeps_parent(
                 )
                 with (
                     io.load(
-                        str(source), backend=device.backend, verbose=False
+                        str(source), device=device.backend, verbose=False
                     ) as acquisition,
                     DirectPtycho(
                         acquisition,
@@ -284,7 +284,7 @@ def test_loaded_metadata_and_explicit_ssb_overrides_keep_counts(device, tmp_path
     counts = np.random.default_rng(17).poisson(4, (128, 128, 24, 24)).astype(np.uint16)
     source = tmp_path / "scan.npy"
     np.save(source, counts)
-    with io.load(source, backend=device.backend, verbose=False) as data:
+    with io.load(source, device=device.backend, verbose=False) as data:
         data.metadata.update(
             voltage_kV=200.0,
             semiangle_mrad=25.0,
@@ -351,7 +351,7 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
     }
     metadata = {**effective_metadata(metadata, scientific), "scientific_metadata": scientific}
     original = copy.deepcopy(metadata)
-    data = io.Dataset4dstemGPU(counts, metadata)
+    data = io.Dataset4dstem(counts, metadata)
     geometry = {"backend": device.backend, "bright_field_center_px": (12., 12.),
                 "bright_field_radius_px": 6.5}
     with DirectPtycho(data, **geometry) as ssb:

@@ -36,7 +36,7 @@ def test_save_gif_accepts_single_stack(tmp_path: Path) -> None:
 def test_save_gif_accepts_four_dimensional_data(tmp_path: Path) -> None:
     data = np.stack([_stack(0), _stack(100)], axis=0)
 
-    out = movie.save_gif(data, tmp_path / "grid.gif", labels=["raw", "tv"], cols=2, gap=2, label_height=0)
+    out = movie.save_gif(data, tmp_path / "grid.gif", labels=["raw", "tv"], columns=2, gap=2, label_height=0)
 
     assert out.exists()
     with Image.open(out) as img:
@@ -70,7 +70,7 @@ def test_save_movie_dispatches_by_suffix(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(export, "_write_mp4", fake_write_mp4)
 
-    out = movie.save_movie(_stack(), tmp_path / "movie.mp4", fps=7, crf=21, backend="cpu")
+    out = movie.save_movie(_stack(), tmp_path / "movie.mp4", fps=7, crf=21, device="cpu")
 
     assert out.read_bytes() == b"mp4"
     assert captured == {"frames": 3, "fps": 7.0, "crf": 21}
@@ -94,11 +94,11 @@ def test_save_mp4_accepts_rendered_pil_frames(tmp_path: Path, monkeypatch) -> No
     assert captured["sizes"] == [(11, 9), (11, 9)]
 
 
-def test_save_mp4_rejects_unknown_backend(tmp_path: Path) -> None:
+def test_save_mp4_rejects_unknown_device(tmp_path: Path) -> None:
     try:
-        movie.save_mp4(_stack(), tmp_path / "bad.mp4", backend="bad")
+        movie.save_mp4(_stack(), tmp_path / "bad.mp4", device="bad")
     except ValueError as exc:
-        assert "unknown movie backend" in str(exc)
+        assert "unknown movie device" in str(exc)
         assert "mps" in str(exc)
     else:
         raise AssertionError("save_mp4 should reject unavailable backends")
@@ -157,7 +157,7 @@ def test_save_mp4_auto_announces_the_cpu_writer_when_no_gpu_writer_exists(tmp_pa
     printed = capsys.readouterr().out.splitlines()
     assert printed == [
         "save_mp4: no CUDA/NVENC or Apple Metal movie writer is available; writing with the CPU writer, which "
-        "resizes with Lanczos and draws unoutlined labels. Pass backend='cuda' or 'mps' to get an error instead."
+        "resizes with Lanczos and draws unoutlined labels. Pass device='cuda' or 'mps' to get an error instead."
     ]
 
 
@@ -165,7 +165,7 @@ def test_cuda_backend_rejects_rendered_frames(tmp_path: Path) -> None:
     frames = [Image.new("RGB", (11, 9), (idx, idx, idx)) for idx in range(2)]
 
     try:
-        movie.save_mp4(frames, tmp_path / "frames.mp4", backend="cuda")
+        movie.save_mp4(frames, tmp_path / "frames.mp4", device="cuda")
     except ValueError as exc:
         assert "requires array movie data" in str(exc)
     else:
@@ -186,7 +186,7 @@ def test_cuda_movie_preserves_frame_count_and_order(tmp_path: Path) -> None:
     path = movie.save_mp4(
         source,
         tmp_path / "ordered.mp4",
-        backend="cuda",
+        device="cuda",
         shared_contrast=False,
         percentile=(0, 100),
         label_height=0,
@@ -241,7 +241,7 @@ def test_cuda_movie_encodes_each_frame_after_it_is_rendered(tmp_path: Path, monk
     monkeypatch.setattr(cuda, "_kernels", delayed_kernels)
     source = np.stack([np.full((256, 256), value, dtype=np.float32) for value in range(8)])
     path = movie.save_mp4(
-        source, tmp_path / "ordered.mp4", backend="cuda",
+        source, tmp_path / "ordered.mp4", device="cuda",
         shared_contrast=False, percentile=(0, 100), label_height=0,
     )
     capture = cv2.VideoCapture(str(path))
@@ -265,7 +265,7 @@ def test_cuda_movie_reports_an_unencodable_frame_size_as_runtime_error(tmp_path:
     """NVENC refuses tiny frames; the writer says so as a RuntimeError, not PyNvVideoCodec's own type."""
     with pytest.raises(RuntimeError, match="NVENC could not start"):
         movie.save_mp4(
-            _stack(), tmp_path / "tiny.mp4", backend="cuda", label_height=0, max_width=None
+            _stack(), tmp_path / "tiny.mp4", device="cuda", label_height=0, max_width=None
         )
 
 
@@ -332,7 +332,7 @@ def test_movie_labels_have_one_size_on_every_backend(
     if backend == "cpu":
         movie.save_gif(_nvenc_stack(), tmp_path / "labels.gif", labels=["raw"])
     else:
-        movie.save_mp4(_nvenc_stack(), tmp_path / "labels.mp4", labels=["raw"], backend=backend)
+        movie.save_mp4(_nvenc_stack(), tmp_path / "labels.mp4", labels=["raw"], device=backend)
 
     # The default 28-pixel label row fits one line of 24-point text.
     assert sizes
@@ -376,7 +376,7 @@ def test_mps_backend_rejects_rendered_frames(tmp_path: Path) -> None:
     frames = [Image.new("RGB", (11, 9), (idx, idx, idx)) for idx in range(2)]
 
     try:
-        movie.save_mp4(frames, tmp_path / "frames.mp4", backend="mps")
+        movie.save_mp4(frames, tmp_path / "frames.mp4", device="mps")
     except ValueError as exc:
         assert "requires array movie data" in str(exc)
     else:
@@ -427,7 +427,7 @@ def test_cuda_movie_removes_its_elementary_stream_when_encoding_fails(tmp_path: 
     with pytest.raises(RuntimeError, match="encoder failed on frame 1"):
         cuda.save_mp4(
             [_nvenc_stack()], tmp_path / "failed.mp4", labels=None, fps=4, gap=0, label_height=0,
-            max_width=None, cols=None, limits=[(0.0, 600.0)],
+            max_width=None, columns=None, limits=[(0.0, 600.0)],
         )
     assert set(Path(tempfile.gettempdir()).glob("*.h264")) == before
     assert cp.cuda.Device().id == current
@@ -438,7 +438,7 @@ def test_cuda_movie_removes_its_elementary_stream_when_encoding_fails(tmp_path: 
     reason="CUDA/NVENC movie export is unavailable",
 )
 def test_cuda_movie_on_another_gpu_restores_the_current_device(tmp_path: Path) -> None:
-    """gpu_id selects the encoding device for this call only; Device.use() used to leave it current."""
+    """device selects the encoding device for this call only; Device.use() used to leave it current."""
     import cupy as cp
 
     from quantem.gpu.movie import cuda
@@ -448,7 +448,7 @@ def test_cuda_movie_on_another_gpu_restores_the_current_device(tmp_path: Path) -
     with cp.cuda.Device(0):
         cuda.save_mp4(
             [_nvenc_stack()], tmp_path / "other.mp4", labels=None, fps=4, gap=0, label_height=0,
-            max_width=None, cols=None, limits=[(0.0, 600.0)], gpu_id=1,
+            max_width=None, columns=None, limits=[(0.0, 600.0)], device=1,
         )
         assert cp.cuda.Device().id == 0
 
@@ -486,7 +486,7 @@ def test_mps_movie_releases_every_metal_buffer(tmp_path: Path, monkeypatch, fail
 
         monkeypatch.setattr(mps, "_encode_nv12", failing_encode)
     before = set(Path(tempfile.gettempdir()).glob("*.nv12"))
-    arguments = dict(labels=["a", "b"], fps=4, gap=2, label_height=16, max_width=None, cols=None,
+    arguments = dict(labels=["a", "b"], fps=4, gap=2, label_height=16, max_width=None, columns=None,
                      limits=[(0.0, 600.0), (0.0, 600.0)])
     if fail:
         with pytest.raises(RuntimeError, match="encode failed"):
@@ -508,10 +508,10 @@ def test_cpu_movie_frames_use_the_gpu_writers_grid(width: int, panels: int, max_
 
     stacks = [np.full((2, 9, width), 100.0 * (index + 1), np.float32) for index in range(panels)]
     frames = export._movie_frames(
-        stacks, labels=None, gap=3, label_height=0, max_width=max_width, cols=None,
+        stacks, labels=None, gap=3, label_height=0, max_width=max_width, columns=None,
         shared_contrast=True, ref_stacks=[np.array([0.0, 100.0 * (panels + 1)], np.float32)], percentile=(0.0, 100.0),
     )
-    layout = grid_layout(panels, 9, width, cols=None, gap=3, label_height=0, max_width=max_width)
+    layout = grid_layout(panels, 9, width, columns=None, gap=3, label_height=0, max_width=max_width)
     assert frames[0].size == (layout.width, layout.height)
     pixels = np.asarray(frames[0])[..., 0]
     for index in range(panels):
@@ -523,7 +523,7 @@ def test_cpu_movie_frames_use_the_gpu_writers_grid(width: int, panels: int, max_
 
 
 def test_mps_movie_without_ffmpeg_raises_the_error_auto_falls_back_on(tmp_path, monkeypatch):
-    """No ffmpeg on PATH and no imageio-ffmpeg: a RuntimeError naming the fix, so backend="auto" uses the CPU writer."""
+    """No ffmpeg on PATH and no imageio-ffmpeg: a RuntimeError naming the fix, so device="auto" uses the CPU writer."""
     from quantem.gpu.movie import mps
 
     monkeypatch.setenv("PATH", str(tmp_path))

@@ -12,7 +12,7 @@ import numpy as np
 import torch
 
 from quantem.gpu.device.cuda_runtime import cp
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 
 # Decoded frames held at once per output band, and again per source read, while
@@ -66,7 +66,7 @@ def rotate_array(
 
 
 def gather_scan_positions(
-    dataset: Dataset4dstemGPU,
+    dataset: Dataset4dstem,
     index_map: np.ndarray,
     fill_value: int,
 ) -> StreamedCounts:

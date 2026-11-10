@@ -12,7 +12,7 @@ import numpy as np
 
 from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
 from quantem.gpu.device.cuda_runtime import cp
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.resident.cuda.paired import (
     QUERY_ABI,
     PairedCounts,
@@ -34,7 +34,7 @@ class PairedSeriesCompute(StreamedSeriesCompute):
     """
 
     def __init__(self, acquisitions):
-        sources = [item.data if isinstance(item, Dataset4dstemGPU) else item for item in acquisitions]
+        sources = [item.data if isinstance(item, Dataset4dstem) else item for item in acquisitions]
         if not sources or not all(isinstance(source, PairedCounts) for source in sources):
             raise TypeError("Paired queries need paired-layout sources only; mix nothing else into the series.")
         super().__init__(acquisitions)

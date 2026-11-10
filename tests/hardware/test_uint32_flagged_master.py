@@ -82,7 +82,7 @@ def test_flagged_uint32_master_preserves_dtype_with_explicit_correction(tmp_path
     master = _write_master(tmp_path, counts, pixel_mask)
     expected = _corrected(counts, pixel_mask, method)
 
-    with io.load(master, backend=backend, scan_shape=scan_shape, hot_pixel_correction=method, verbose=False) as loaded:
+    with io.load(master, device=backend, scan_shape=scan_shape, hot_pixel_correction=method, verbose=False) as loaded:
         # The corrected counts fit 16 bits; the CUDA loader keeps uint32 storage.
         assert loaded.dtype == (np.uint16 if backend == "mps" else np.uint32)
         assert loaded.metadata["source_dtype"] == "uint32"
@@ -111,7 +111,7 @@ def test_flagged_uint32_master_retains_all_original_counts(tmp_path, capsys):
     counts, pixel_mask = _flagged_counts(1024, (48, 48))
     counts[700, 10, 10] = 70000
     master = _write_master(tmp_path, counts, pixel_mask)
-    with io.load(master, backend=backend, scan_shape=(32, 32), hot_pixel_correction="none",
+    with io.load(master, device=backend, scan_shape=(32, 32), hot_pixel_correction="none",
                  apply_mask=False, verbose=True) as loaded:
         assert '4 bad pixels left as recorded (hot_pixel_correction="median" replaces them' in capsys.readouterr().out
         assert loaded.dtype == np.uint32
@@ -145,7 +145,7 @@ def test_failed_uint32_load_releases_the_partial_resident(tmp_path, monkeypatch)
 
     monkeypatch.setattr(BitANSResident, "append_device", fail_later)
     with pytest.raises(ValueError, match="injected encoder failure"):
-        io.load(str(master), scan_shape=(1700, 1), backend=backend, verbose=False)
+        io.load(str(master), scan_shape=(1700, 1), device=backend, verbose=False)
     assert partial and all(source.is_released and source._lanes is None for source in partial)
 
 
@@ -162,7 +162,7 @@ def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(
         handle["data"] = counts.reshape(6, 8, 48, 48)
         handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = pixel_mask
     expected = _corrected(counts, pixel_mask, "median") if method == "median" else counts.copy()
-    with io.load(path, backend=backend, hot_pixel_correction=method, apply_mask=False, verbose=False) as loaded:
+    with io.load(path, device=backend, hot_pixel_correction=method, apply_mask=False, verbose=False) as loaded:
         assert loaded.dtype == np.uint32
         np.testing.assert_array_equal(loaded.read().cpu().numpy(), expected.reshape(6, 8, 48, 48))
         if method == "none":

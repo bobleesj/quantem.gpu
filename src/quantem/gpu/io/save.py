@@ -15,7 +15,7 @@ from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE
 from quantem.gpu.formats.qem.metadata import HOT_PIXEL_SCHEMA, MAPED_RECORDS, json_metadata
 from quantem.gpu.formats.qem.reference import save_array
 from quantem.gpu.io import qem
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.io.hdf5.write import (
     _DEFAULT_BATCH_SIZE,
     H5Writer,
@@ -246,7 +246,7 @@ def save(
     if isinstance(data, torch.Tensor) and data.is_cuda:
         data = cp.from_dlpack(data.detach())
 
-    if precision_name(dtype) or (isinstance(data, Dataset4dstemGPU) and "precision" in data.metadata):
+    if precision_name(dtype) or (isinstance(data, Dataset4dstem) and "precision" in data.metadata):
         if Path(filepath).suffix.lower() == ".qem":
             raise NotImplementedError(
                 "QEM precision codecs are not implemented. Save this scaled/quantized "
@@ -280,7 +280,7 @@ def save(
                 f"format='quantem' does not support compression={compression!r}; "
                 "use compression='ans', or format='arina' for bitshuffle/LZ4."
             )
-        if isinstance(data, Dataset4dstemGPU):
+        if isinstance(data, Dataset4dstem):
             metadata = dict(data.metadata) | (metadata or {})
             data = data.data
             if isinstance(data, torch.Tensor) and data.is_cuda:
@@ -323,7 +323,7 @@ def save(
             f"format='arina' writes bitshuffle/LZ4; got compression={compression!r}. "
             "Use compression='lz4' (or 'auto')."
         )
-    if isinstance(data, Dataset4dstemGPU) and data.representation.value == "dense":
+    if isinstance(data, Dataset4dstem) and data.representation.value == "dense":
         metadata = dict(data.metadata if metadata is None else metadata)
         for key, attribute in MAPED_RECORDS.items():
             if isinstance(metadata.get(key), dict):
@@ -331,7 +331,7 @@ def save(
         data = data.data
         if isinstance(data, torch.Tensor) and data.is_cuda:
             data = cp.from_dlpack(data.detach())
-    elif isinstance(data, Dataset4dstemGPU) and isinstance(data.data, StreamedCounts):
+    elif isinstance(data, Dataset4dstem) and isinstance(data.data, StreamedCounts):
         data = _CountBlocks(data, batch_size)
     normalized_backend = str(backend).lower()
     if normalized_backend not in {"auto", "cuda", "mps", "cpu"}:

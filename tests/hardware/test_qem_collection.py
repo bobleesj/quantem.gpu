@@ -71,7 +71,7 @@ def test_default_conversion_skips_checks_and_reopens_exactly(tmp_path, backend, 
         {"name": path.name, "bytes": path.stat().st_size}
         for path in (master, tmp_path / "detector.h5")
     ]
-    with io.load(destination, backend=backend, apply_mask=False, verbose=False) as loaded:
+    with io.load(destination, device=backend, apply_mask=False, verbose=False) as loaded:
         np.testing.assert_array_equal(loaded.read().cpu().numpy().reshape(expected.shape), expected)
     restored = convert.restore_master(destination, tmp_path / "restored.h5")
     assert restored.read_bytes() == original_master
@@ -122,7 +122,7 @@ def test_collection_warns_of_master_calibration_it_does_not_read(tmp_path, backe
     with pytest.warns(UserWarning, match="Calibration not read: scan_master.h5 holds detector_sampling, detector_sampling_unit") as caught:
         result = convert.convert(master, tmp_path / "earlier.qem", backend=backend, verify=True, source_hashes=True)
     assert len(caught) == 1 and result.verified is True
-    with io.load(tmp_path / "earlier.qem", backend=backend, verbose=False) as copy:
+    with io.load(tmp_path / "earlier.qem", device=backend, verbose=False) as copy:
         assert copy.sampling == (0.4, 0.6, None, None)
         assert copy.units == ("angstrom", "angstrom", None, None)
 
@@ -152,7 +152,7 @@ def test_uint32_flagged_markers_and_wide_counts_survive_conversion(tmp_path, bac
     assert header["metadata"]["file_counts_exact"] is True
     operations = {record["operation"] for record in header["scientific_metadata"]["processing"]}
     assert "flagged_marker_zeroing" not in operations
-    with io.load(tmp_path / "markers.qem", backend=backend, apply_mask=False, verbose=False) as loaded:
+    with io.load(tmp_path / "markers.qem", device=backend, apply_mask=False, verbose=False) as loaded:
         counts = loaded.read().cpu().numpy().reshape(source.shape)
         np.testing.assert_array_equal(np.asarray(loaded.metadata["pixel_mask"]), mask)
     valid = mask == 0
@@ -164,7 +164,7 @@ def test_uint32_flagged_markers_and_wide_counts_survive_conversion(tmp_path, bac
         handle["entry/data/data"][0, 1, 1] = 70000
     wider = convert.convert(master, tmp_path / "wide.qem", backend=backend, verify=True, source_hashes=True)
     assert wider.verified is True
-    with io.load(tmp_path / "wide.qem", backend=backend, verbose=False) as loaded:
+    with io.load(tmp_path / "wide.qem", device=backend, verbose=False) as loaded:
         assert loaded.dtype == np.uint32
         assert int(loaded[0, 0, 1, 1]) == 70000
 
@@ -187,10 +187,10 @@ def test_conversion_stores_the_narrowest_exact_type(tmp_path, backend, largest, 
     assert header["dtype"] == (stored if narrow else "uint32")
     assert header["metadata"]["source_dtype"] == "uint32"
     assert header["codec"] == (INTEGER_CODEC if narrow else header["codec"])
-    with io.load(tmp_path / "archive.qem", backend=backend, apply_mask=False, verbose=False) as loaded:
+    with io.load(tmp_path / "archive.qem", device=backend, apply_mask=False, verbose=False) as loaded:
         assert loaded.dtype == np.dtype(header["dtype"])
         np.testing.assert_array_equal(loaded.read().cpu().numpy().reshape(source.shape), source)
-    with io.load(tmp_path / "archive.qem", backend=backend, apply_mask=False, dtype="native",
+    with io.load(tmp_path / "archive.qem", device=backend, apply_mask=False, dtype="native",
                  verbose=False) as native:
         assert native.dtype == np.uint32
         counts = native.read().cpu().numpy()
@@ -198,13 +198,13 @@ def test_conversion_stores_the_narrowest_exact_type(tmp_path, backend, largest, 
         np.testing.assert_array_equal(counts.reshape(source.shape), source)
 
     # io.save of the loaded acquisition writes the same narrow type and reloads equal to the file.
-    with io.load(master, backend=backend, scan_shape=(32, 32), hot_pixel_correction="none",
+    with io.load(master, device=backend, scan_shape=(32, 32), hot_pixel_correction="none",
                  verbose=False) as loaded:
         assert loaded.dtype == np.dtype(header["dtype"])
         io.save(tmp_path / "analysis.qem", loaded)
     saved, _ = read_header(tmp_path / "analysis.qem")
     assert (saved["dtype"], saved["metadata"]["source_dtype"]) == (header["dtype"], "uint32")
-    with io.load(tmp_path / "analysis.qem", backend=backend, apply_mask=False, verbose=False) as reloaded:
+    with io.load(tmp_path / "analysis.qem", device=backend, apply_mask=False, verbose=False) as reloaded:
         np.testing.assert_array_equal(reloaded.read().cpu().numpy().reshape(source.shape), source)
 
 
@@ -226,12 +226,12 @@ def test_convert_command_writes_a_qem_copy_with_the_source_counts(tmp_path, back
     with h5py.File(tmp_path / "detector.h5", "r") as handle:
         expected = handle["entry/data/data"][()]
     out = tmp_path / "copies"
-    assert main(["convert", str(master), "--out", str(out), "--backend", backend, "--verify", "--source-hashes"]) == 0
+    assert main(["convert", str(master), "--save-dir", str(out), "--backend", backend, "--verify", "--source-hashes"]) == 0
     printed = capsys.readouterr().out
     assert f"verified: {1024 * 16 * 16:,} values identical" in printed
     assert "1 flagged pixels also verified" in printed
     copy = out / "scan.qem"
-    with io.load(copy, backend=backend, apply_mask=False, verbose=False) as loaded:
+    with io.load(copy, device=backend, apply_mask=False, verbose=False) as loaded:
         counts = loaded.read().cpu().numpy()
     np.testing.assert_array_equal(counts.reshape(expected.shape), expected)
 
@@ -253,7 +253,7 @@ def test_command_calibrates_and_repairs_one_acquisition(tmp_path, backend, capsy
         )
     out = tmp_path / "copies"
     assert main([
-        "convert", str(master), "--out", str(out), "--backend", backend, "--verify", "--source-hashes",
+        "convert", str(master), "--save-dir", str(out), "--backend", backend, "--verify", "--source-hashes",
         "--voltage-kv", "300", "--semiangle-mrad", "30",
         "--scan-sampling-a", "0.5", "--detector-sampling-mrad", "0.8", "0.9",
         "--hot-pixel-correction", "median",
@@ -265,7 +265,7 @@ def test_command_calibrates_and_repairs_one_acquisition(tmp_path, backend, capsy
     neighbors = [(r, c) for r in range(1, 4) for c in range(2, 5) if (r, c) != (2, 3)]
     # np.round rounds a .5 median half to even, as the fill does
     expected[:, 2, 3] = np.round(np.median(np.stack([original[:, r, c] for r, c in neighbors], axis=1), axis=1))
-    with io.load(out / "scan.qem", backend=backend, verbose=False) as data:
+    with io.load(out / "scan.qem", device=backend, verbose=False) as data:
         assert data.sampling == pytest.approx((0.5, 0.5, 0.8, 0.9))
         assert data.metadata["voltage_kV"] == 300 and data.metadata["semiangle_mrad"] == 30
         assert data.metadata["hot_pixel_correction"]["coordinates_row_col"] == [[2, 3]]
@@ -289,7 +289,7 @@ def test_conversion_retains_session_detector_sampling_without_cli_values(tmp_pat
     result = convert.convert(master, destination, backend=backend, verify=True, source_hashes=True)
     assert result.verified is True
     assert all("dataset.yml sha256:" in value["evidence"] for value in result.session_calibration.values())
-    with io.load(destination, backend=backend, verbose=False) as data:
+    with io.load(destination, device=backend, verbose=False) as data:
         assert data.sampling == pytest.approx((0.5, 0.6, 0.8, 0.8))
         assert data.metadata["voltage_kV"] == 200  # source value, no session or CLI override
         assert data.metadata["semiangle_mrad"] == 30
@@ -329,7 +329,7 @@ def test_requested_mask_correction_keeps_wide_valid_counts(tmp_path, backend, me
                              hot_pixel_correction=method)
     assert result.verified is True and not result.failed
     assert result.verification["corrected_values_compared"] == 1024 * int(np.count_nonzero(mask))
-    with io.load(destination, backend=backend, apply_mask=False, verbose=False) as reopened:
+    with io.load(destination, device=backend, apply_mask=False, verbose=False) as reopened:
         decoded = reopened.read().cpu().numpy().reshape(expected.shape)
     np.testing.assert_array_equal(decoded, expected)
     with h5py.File(tmp_path / "detector.h5", "r") as handle:

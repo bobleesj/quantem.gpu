@@ -27,13 +27,13 @@ def _acquisition(tmp_path, name, seed):
 def test_original_h5_streams_into_exact_paired_sources(tmp_path):
     first, counts = _acquisition(tmp_path, "first", 1)
     second, other = _acquisition(tmp_path, "second", 2)
-    loaded = io.load(first, backend="cuda", representation="paired", dtype="native", apply_mask=False, verbose=False)
+    loaded = io.load(first, device="cuda", representation="paired", dtype="native", apply_mask=False, verbose=False)
     assert isinstance(loaded.data, PairedCounts)
     assert loaded.metadata["representation"] == "paired"
     assert loaded.metadata["resident_profile"] == "paired-polar-counts-v1"
     assert loaded.metadata["load_timings"]["shards"] == 4
     assert bool(cp.array_equal(loaded.data.decode_scan_range_device(0, 1024), cp.asarray(counts.reshape(1024, 24, 24))).get())
-    series = io.load([first, second], backend="cuda", representation="paired", dtype="native", apply_mask=False, verbose=False)
+    series = io.load([first, second], device="cuda", representation="paired", dtype="native", apply_mask=False, verbose=False)
     assert [item.metadata["shape"] if "shape" in item.metadata else item.data.shape for item in series] == [(32, 32, 24, 24)] * 2
     session = detector.prepare([item.data for item in series])
     mask = detector.detector_mask((12.25, 11.75), 2.5, 9.0, (24, 24), dtype=np.float64)
@@ -44,11 +44,11 @@ def test_original_h5_streams_into_exact_paired_sources(tmp_path):
 
 def test_saved_form_is_detected_and_reopens_without_decoding(tmp_path):
     master, counts = _acquisition(tmp_path, "saved", 3)
-    loaded = io.load(master, backend="cuda", representation="paired", dtype="native", apply_mask=False, verbose=False)
+    loaded = io.load(master, device="cuda", representation="paired", dtype="native", apply_mask=False, verbose=False)
     saved = tmp_path / "saved.paired"
     loaded.data.save(saved)
     assert io.DataRepresentation.detect_source(saved) is io.DataRepresentation.PAIRED
-    reopened = io.load(saved, backend="cuda", dtype="native", apply_mask=False, verbose=False)
+    reopened = io.load(saved, device="cuda", dtype="native", apply_mask=False, verbose=False)
     assert reopened.metadata["representation"] == "paired"
     for before, after in zip(loaded.data.chunks[0].arrays, reopened.data.chunks[0].arrays):
         assert bool(cp.array_equal(before, after).get())
@@ -56,7 +56,7 @@ def test_saved_form_is_detected_and_reopens_without_decoding(tmp_path):
     np.testing.assert_array_equal(reopened.data.detector_total_device().get(),
                                   counts.sum(axis=(0, 1), dtype=np.uint64))
     with pytest.raises(NotImplementedError, match="must remain ANS encoded"):
-        io.load(saved, backend="cuda", representation="dense")
+        io.load(saved, device="cuda", representation="dense")
 
 
 def test_lean_loader_admits_a_series_with_few_slots(tmp_path):
@@ -112,7 +112,7 @@ def test_corrected_series_and_scan_selection_match_stored_counts(tmp_path, metho
             corrected[..., 5, 5] = 0
         masters.append(master)
         expected.append(corrected)
-    loaded = io.load(masters, backend="cuda", representation="paired",
+    loaded = io.load(masters, device="cuda", representation="paired",
                      hot_pixel_correction=method, apply_mask=False, verbose=False)
     for index, (item, counts) in enumerate(zip(loaded, expected)):
         np.testing.assert_array_equal(item.data.decode_scan_range_device(7, 997).get(),
@@ -120,7 +120,7 @@ def test_corrected_series_and_scan_selection_match_stored_counts(tmp_path, metho
         assert item.metadata["file_counts_exact"] == (method == "none")
         saved = tmp_path / f"{method}-{index}.paired"
         item.data.save(saved)
-        with io.load(saved, backend="cuda", apply_mask=False, verbose=False) as reopened:
+        with io.load(saved, device="cuda", apply_mask=False, verbose=False) as reopened:
             assert reopened.metadata["hot_pixel_correction"] == item.metadata["hot_pixel_correction"]
             assert reopened.metadata["file_counts_exact"] == (method == "none")
         if method == "none":

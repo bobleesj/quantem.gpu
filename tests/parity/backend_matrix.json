@@ -151,7 +151,7 @@
     {
       "id": "io.selective-scan-loading",
       "contract_version": "quantem-gpu-selective-scan/v2",
-      "public_owner": "quantem.gpu.io.Dataset4dstemGPU.read",
+      "public_owner": "quantem.gpu.io.Dataset4dstem.read",
       "parity": "Exact selected detector evidence for half-open row/column scan and detector rectangles, with dtype, shape, failure behavior, and provenance.",
       "selectors": {
         "scan_region": {

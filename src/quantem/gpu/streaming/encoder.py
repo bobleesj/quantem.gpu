@@ -5,7 +5,7 @@ uncompressed diffraction patterns that are already on the GPU, each labelled by 
 first pattern. ``LiveEncoder`` treats each batch exactly as ``io.load`` treats a block read from an HDF5 file:
 the detector's flagged pixels are corrected by the same CUDA corrector and the
 counts are appended to the same lossless resident store. ``finish`` returns the
-``Dataset4dstemGPU`` that ``io.load`` would have returned for the same counts, so
+``Dataset4dstem`` that ``io.load`` would have returned for the same counts, so
 every downstream algorithm (DirectPtycho, detector products) sees no difference
 between a live acquisition and a recorded one.
 
@@ -24,7 +24,7 @@ import numpy as np
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
 from quantem.gpu.io import arrays
-from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
+from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.cuda.hot_pixels import CUDAHotPixelCorrector
 from quantem.gpu.resident.hot_pixels import normalize_hot_pixel_correction
@@ -184,7 +184,7 @@ class LiveEncoder:
         # append only queues work on this stream; a new buffer keeps the queued encode's input intact
         self.staging, self.staged = None, 0
 
-    def finish(self) -> Dataset4dstemGPU:
+    def finish(self) -> Dataset4dstem:
         """Return the completed acquisition as the dataset ``io.load`` returns for the same counts."""
         if not self.complete:
             raise IncompleteAcquisition(
@@ -203,7 +203,7 @@ class LiveEncoder:
             **arrays.correction_metadata(self.corrector.record),
             load_timings={"resident_ready_seconds": time.perf_counter() - self.started},
         )
-        return Dataset4dstemGPU(self.source, metadata)
+        return Dataset4dstem(self.source, metadata)
 
     def detector_session(self):
         """Query arrived positions while the acquisition is still receiving.

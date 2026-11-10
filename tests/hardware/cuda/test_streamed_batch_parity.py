@@ -30,10 +30,10 @@ def test_full_acquisition_batch_parity(monkeypatch):
         patch.setattr(encoded, "_CUDA_MAX_STAGING_SCANS", 2048)
         patch.setattr(reads, "_HDF5_READ_TASK_BYTES", 2**63 - 1)
         patch.setattr(reads, "parse_headers", lambda *args, **kwargs: frames._parse_headers(*args))
-        old = io.load(path, backend="cuda", representation="encoded", verbose=False)
+        old = io.load(path, device="cuda", representation="encoded", verbose=False)
     try:
         frames._MASTER_FRAME_SOURCE_CACHE.clear()
-        new = io.load(path, backend="cuda", representation="encoded", verbose=False)
+        new = io.load(path, device="cuda", representation="encoded", verbose=False)
         try:
             assert new.shape == old.shape
             assert new.dtype == old.dtype

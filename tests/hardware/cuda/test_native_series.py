@@ -75,7 +75,7 @@ def test_original_h5_joint_queries_preserve_raw_counts(tmp_path):
     file = tmp_path / "original.h5"
     with h5py.File(file, "w") as handle:
         handle["entry/data/data"] = raw.reshape(4, 8, 2, 3)
-    loaded = io.load(file, backend="cuda", apply_mask=False)
+    loaded = io.load(file, device="cuda", apply_mask=False)
     session = detector.prepare([loaded, loaded])
     for index in (0, 7, 31):
         np.testing.assert_array_equal(

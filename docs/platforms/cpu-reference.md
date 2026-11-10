@@ -1,6 +1,6 @@
 # CPU reference
 
-For QEM archival portability, `io.load("acquisition.qem", backend="cpu")`
+For QEM archival portability, `io.load("acquisition.qem", device="cpu")`
 explicitly decodes original measurements. `io.save("copy.qem", array,
 backend="cpu")` accepts supported 4D NumPy data. The readable implementation in
 `src/quantem/gpu/formats/qem/reference.py` imports no accelerated codec code and uses
@@ -15,7 +15,7 @@ from quantem.gpu import io
 
 reference = io.load(
     "small_master.h5",
-    backend="cpu",
+    device="cpu",
     representation="dense",
 )
 ```
@@ -24,7 +24,7 @@ reference = io.load(
 
 | Layer | CPU/reference source | Responsibility |
 |---|---|---|
-| Explicit selection | `src/quantem/gpu/device/select.py` | accept `backend="cpu"`; automatic accelerator selection never chooses it |
+| Explicit selection | `src/quantem/gpu/device/select.py` | accept `device="cpu"` (`io.load`) and `backend="cpu"` (`io.save`); automatic accelerator selection never chooses it |
 | IO implementation | `src/quantem/gpu/io/hdf5/cpu.py` | h5py/hdf5plugin decode of complete acquisitions and bad-pixel zeroing |
 | Array detector reference | `src/quantem/gpu/detector/tensors.py::ArrayBackend` | NumPy mean diffraction, masks, exact sums, and CoM in uint64/float64 |
 | DPC/iDPC reference | `src/quantem/gpu/dpc/workflow.py` | NumPy rotation, curl objective, and FFT integration |
@@ -33,10 +33,10 @@ reference = io.load(
 The reference call path is:
 
 ```text
-io.load(..., backend="cpu")
+io.load(..., device="cpu")
   → explicit CPU route in io.load
   → h5py + hdf5plugin decompression
-  → NumPy array + shared Dataset4dstemGPU metadata
+  → NumPy array + shared Dataset4dstem metadata
   → NumPy detector/DPC reference operations
 ```
 

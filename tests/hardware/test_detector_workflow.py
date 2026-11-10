@@ -31,7 +31,7 @@ def test_fit_once_for_encoded_detector_images(tmp_path, dtype, monkeypatch):
 
     monkeypatch.setattr(detector.workflow, "mean", record_mean)
     for path in (original, saved):
-        with io.load(path, backend=backend, verbose=False) as data:
+        with io.load(path, device=backend, verbose=False) as data:
             mean_pattern = detector.mean(data)
             np.testing.assert_allclose(mean_pattern, values.mean(axis=(0, 1)), rtol=1e-6)
             center, radius = detector.workflow._equal_area_disk(mean_pattern)
@@ -86,7 +86,7 @@ def test_show_detector_images_and_save_without_changing_intensities(tmp_path):
     counts = (np.arange(1, 21).reshape(4, 5, 1, 1) * pattern).astype(np.uint16)
     source = tmp_path / "input.npy"
     np.save(source, counts)
-    with io.load(source, backend=backend, verbose=False) as data:
+    with io.load(source, device=backend, verbose=False) as data:
         expected = [detector.bf(data), detector.df(data), detector.adf(data),
                     detector.mean(data)]
         for cmap in ("inferno", "gray"):

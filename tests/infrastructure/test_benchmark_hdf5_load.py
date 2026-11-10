@@ -52,10 +52,10 @@ def test_output_parity_hashes_full_array_and_checks_dtype_and_shape() -> None:
 
 
 def test_native_reads_report_scientific_dtype_separately_from_storage() -> None:
-    from quantem.gpu.io.dataset import Dataset4dstemGPU
+    from quantem.gpu.io.dataset import Dataset4dstem
 
     stored = np.arange(24, dtype=np.uint8).reshape(2, 1, 3, 4)
-    acquisition = Dataset4dstemGPU(stored, {
+    acquisition = Dataset4dstem(stored, {
         "scan_shape": (2, 1), "detector_shape": (3, 4),
         "source_dtype": "uint16", "dtype": "uint8",
         "working_dtype": "uint16", "detector_bin": 1,

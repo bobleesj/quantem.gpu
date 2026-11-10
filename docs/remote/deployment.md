@@ -41,7 +41,7 @@ provenance.
 
 ```bash
 conda run -n quantem-gpu-remote \
-  quantem-gpu serve /data/4dstem --gpus auto --port 8780 \
+  quantem-gpu serve /data/4dstem --devices auto --port 8780 \
   --implementation-revision <exact-git-sha>
 ```
 
@@ -51,7 +51,7 @@ Port 8780 is the default; if another local service already listens there
 `--implementation-revision` is the revision reported to clients in the
 capabilities response. Without it the service reports the
 installed package version; pass the exact Git commit for a recorded
-deployment. `--gpus auto` makes every visible CUDA device eligible. Use an
+deployment. `--devices auto` makes every visible CUDA device eligible. Use an
 explicit list when the host is shared and QuantEM.GPU owns only selected
 devices. Dataset placement and fit are explained in
 [GPU admission and residency](admission.md).

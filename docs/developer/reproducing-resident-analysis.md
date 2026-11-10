@@ -17,8 +17,8 @@ justifies combining them.
 
 | Input and purpose | Entry point | Retained implementation | Boundary |
 |---|---|---|---|
-| Ordinary complete uint8/uint16 H5 into an indexed resident | `io.load(path, backend="cuda", representation="encoded", apply_mask=False)` | Runtime encoded streams in `resident/cuda/counts.py`; H5 loading in `io/encoded.py` | Save portable `.qem` with `io.save`; native format/backend acceptance remains separately gated |
-| Portable QuantEM/ANS file | `io.load(path, backend="cuda")` | Container reader in `io/qem.py`, CUDA decoder in `resident/cuda/counts.py`, Metal decoder in `resident/mps/counts.py` | Different format/model from historical storage experiments; MPS also supports its documented subset |
+| Ordinary complete uint8/uint16 H5 into an indexed resident | `io.load(path, device="cuda", representation="encoded", apply_mask=False)` | Runtime encoded streams in `resident/cuda/counts.py`; H5 loading in `io/encoded.py` | Save portable `.qem` with `io.save`; native format/backend acceptance remains separately gated |
+| Portable QuantEM/ANS file | `io.load(path, device="cuda")` | Container reader in `io/qem.py`, CUDA decoder in `resident/cuda/counts.py`, Metal decoder in `resident/mps/counts.py` | Different format/model from historical storage experiments; MPS also supports its documented subset |
 | Older prepared packed source or prepared series folder | Re-export the original acquisition as `.qem` | None; these readers were removed | `io.load` does not open them |
 | Original HDF5 into native Metal integer packing | Native Swift `MetalCompactH5Loader.load` (see [original HDF5 packed loading](../api/original-hdf5-metal-packing.md)) | Swift/Metal sources in the same package repository | Separate native lifecycle; not an automatic Python H5-to-packed conversion |
 
@@ -47,7 +47,7 @@ paths = ["acquisition-0.h5", "acquisition-1.h5"]
 with ExitStack() as owners:
     acquisitions = [
         owners.enter_context(io.load(
-            path, backend="cuda", representation="encoded", apply_mask=False,
+            path, representation="encoded", apply_mask=False,
             dtype="native", device=0,
         ))
         for path in paths

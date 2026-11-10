@@ -36,7 +36,7 @@ standalone parity checks, see [Metal image statistics](metal-image-statistics.md
 from quantem.gpu import movie
 
 movie.save_gif(stack, "preview.gif", fps=8)
-movie.save_mp4(stack, "preview.mp4", fps=24, backend="auto")
+movie.save_mp4(stack, "preview.mp4", fps=24, device="auto")
 ```
 
 Stacks use `(frame, row, column) ≡ (frame, r, c)`. Multi-panel stacks add a

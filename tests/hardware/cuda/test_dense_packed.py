@@ -43,6 +43,6 @@ def test_full_acquisition_overrides_fail_before_opening(tmp_path, representation
     """File-backed acquisitions stay ANS encoded; obsolete modes fail early."""
     with pytest.raises(NotImplementedError, match="must remain ANS encoded"):
         io.load(
-            tmp_path / "not-opened.h5", backend="cuda",
+            tmp_path / "not-opened.h5", device="cuda",
             representation=representation, verbose=False,
         )

@@ -27,8 +27,8 @@ def test_encoded_indexing(tmp_path, dtype):
         (slice(3, 1), slice(None)), (slice(20, 30), 1),
         (np.int64(-1), np.int32(2)),
     ]
-    with io.load(path, backend=backend, verbose=False) as data:
-        assert isinstance(data, io.Dataset4dstemGPU)
+    with io.load(path, device=backend, verbose=False) as data:
+        assert isinstance(data, io.Dataset4dstem)
         pattern = data[1, 2]
         assert type(pattern) is torch.Tensor
         assert pattern.float().device.type == backend
@@ -66,7 +66,7 @@ def test_encoded_indexing(tmp_path, dtype):
         # the detector step is stated in mrad, so the origin recorded in rad reads in mrad before and after saving
         assert data.origin == (15.0, -20.0, -10.0, -20.0)
         io.save(saved, data)
-    series = io.load([saved, saved], backend=backend, stack=False, verbose=False)
+    series = io.load([saved, saved], device=backend, stack=False, verbose=False)
     try:
         np.testing.assert_array_equal(series[1][1, 2].cpu().numpy(), values[1, 2])
         assert isinstance(series[1].metadata, dict)
@@ -88,7 +88,7 @@ def test_detector_pixels_across_ans_intervals(tmp_path, dtype):
     )
     path = tmp_path / "intervals.npy"
     np.save(path, values)
-    with io.load(path, backend="cuda", verbose=False) as data:
+    with io.load(path, device="cuda", verbose=False) as data:
         for key in [
             (slice(None), slice(None), 3, 6),
             (slice(None), slice(None), slice(2, 7), slice(4, 9)),
@@ -122,7 +122,7 @@ def test_indexing_preserves_uncorrected_flagged_counts(tmp_path, apply_mask):
         handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
 
     with io.load(
-        original, backend=backend, apply_mask=apply_mask,
+        original, device=backend, apply_mask=apply_mask,
         hot_pixel_correction="none", verbose=False,
     ) as loaded:
         assert loaded.lossless
@@ -131,7 +131,7 @@ def test_indexing_preserves_uncorrected_flagged_counts(tmp_path, apply_mask):
             loaded[:, :, 3, 4].cpu().numpy(), values[:, :, 3, 4]
         )
         io.save(saved, loaded)
-    with io.load(saved, backend=backend, verbose=False) as reopened:
+    with io.load(saved, device=backend, verbose=False) as reopened:
         np.testing.assert_array_equal(
             reopened[:, :, 2:5, 3:6].cpu().numpy(), values[:, :, 2:5, 3:6]
         )
@@ -150,7 +150,7 @@ def test_float_reads_split_at_decoder_byte_limit(tmp_path, scan_shape):
     path = tmp_path / "float.npy"
     np.save(path, values)
     assert values.nbytes > MAX_DECODE_BYTES
-    with io.load(path, backend=backend, verbose=False) as loaded:
+    with io.load(path, device=backend, verbose=False) as loaded:
         for key in (
             (slice(None), slice(None), 5, 7),
             (Ellipsis, slice(32, 40), slice(45, 52)),

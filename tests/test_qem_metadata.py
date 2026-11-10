@@ -264,7 +264,7 @@ def test_copy_of_a_qem_keeps_the_evidence_of_its_original_acquisition(tmp_path, 
     io.save(original, counts, backend="cpu", verbose=False, metadata=evidence)
     stored = read_envelope(original)[0]["metadata"]
     assert {key: stored[key] for key in evidence} == evidence
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         assert {key: loaded.metadata[key] for key in evidence} == evidence
         io.save(copy_path, loaded, backend=backend, verbose=False)
     copied = read_envelope(copy_path)[0]["metadata"]
@@ -272,7 +272,7 @@ def test_copy_of_a_qem_keeps_the_evidence_of_its_original_acquisition(tmp_path, 
     # a header that states none of them gains none on the way through a reader
     plain, plain_copy = tmp_path / "plain.qem", tmp_path / "plain-copy.qem"
     io.save(plain, counts, backend="cpu", verbose=False)
-    with io.load(plain, backend=backend, verbose=False) as loaded:
+    with io.load(plain, device=backend, verbose=False) as loaded:
         io.save(plain_copy, loaded, backend=backend, verbose=False)
     for key in ("source_dtype", "file_counts_exact", "working_counts_exact"):
         assert key not in read_envelope(plain)[0]["metadata"] and key not in read_envelope(plain_copy)[0]["metadata"]

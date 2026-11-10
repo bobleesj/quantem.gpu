@@ -74,7 +74,7 @@ def test_original_dtype_and_bits_survive_move(tmp_path, backend, kind, extension
             handle.create_dataset("entry/data/data", data=values)
     copy = tmp_path / "saved.qem"
     with io.load(
-        original, backend=backend, hot_pixel_correction="none", verbose=False
+        original, device=backend, hot_pixel_correction="none", verbose=False
     ) as loaded:
         assert loaded.dtype == values.dtype
         assert raw_read(loaded.data).tobytes() == values.tobytes()
@@ -93,7 +93,7 @@ def test_original_dtype_and_bits_survive_move(tmp_path, backend, kind, extension
     moved = tmp_path / "moved" / copy.name
     moved.parent.mkdir()
     copy.rename(moved)
-    with io.load(moved, backend=backend, verbose=False) as loaded:
+    with io.load(moved, device=backend, verbose=False) as loaded:
         assert loaded.dtype == values.dtype
         assert raw_read(loaded.data).tobytes() == values.tobytes()
         if kind == "float64" and backend == "mps":
@@ -129,7 +129,7 @@ def test_integer_virtual_images_are_exact_and_checked(tmp_path, backend, kind):
         values[..., 0, :2] = [np.iinfo(dtype).max, np.iinfo(dtype).min]
     path = tmp_path / "counts.npy"
     np.save(path, values)
-    with io.load(path, backend=backend, verbose=False) as loaded:
+    with io.load(path, device=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
         mask = np.ones((2, 4), bool)
         result = session.masked_sum_exact(mask)
@@ -144,7 +144,7 @@ def test_integer_virtual_images_are_exact_and_checked(tmp_path, backend, kind):
     if dtype.itemsize == 8:
         values[..., 0, 1] = 1
         np.save(path, values)
-        with io.load(path, backend=backend, verbose=False) as loaded:
+        with io.load(path, device=backend, verbose=False) as loaded:
             with pytest.raises(OverflowError, match="64-bit"):
                 detector.prepare(loaded).masked_sum_exact(mask)
 
@@ -153,7 +153,7 @@ def test_calibration_override_survives_save_move_and_resave(tmp_path, backend):
     original = tmp_path / "source.npy"
     np.save(original, np.arange(24, dtype=np.uint32).reshape(2, 3, 2, 2))
     saved = tmp_path / "calibrated.qem"
-    with io.load(original, backend=backend, verbose=False) as data:
+    with io.load(original, device=backend, verbose=False) as data:
         data.calibration.voltage_kV = 300
         data.calibration.semiangle_mrad = 30
         data.calibration.scan_sampling_A = (0.4, 0.5)
@@ -163,12 +163,12 @@ def test_calibration_override_survives_save_move_and_resave(tmp_path, backend):
     original.unlink()
     moved = tmp_path / "moved.qem"
     saved.rename(moved)
-    with io.load(moved, backend=backend, verbose=False) as data:
+    with io.load(moved, device=backend, verbose=False) as data:
         assert data.calibration.table().equals(summary)
         assert data.sampling == (0.4, 0.5, 0.2, 0.3)
         data.calibration.semiangle_mrad = 25
         io.save(tmp_path / "updated.qem", data, verbose=False)
-    with io.load(tmp_path / "updated.qem", backend=backend, verbose=False) as data:
+    with io.load(tmp_path / "updated.qem", device=backend, verbose=False) as data:
         assert data.metadata["semiangle_mrad"] == 25
         assert data.metadata["voltage_kV"] == 300
 
@@ -186,7 +186,7 @@ def test_selected_patterns_retain_integer_precision(tmp_path, backend, kind):
         frames[selected, 1, 1] = [np.iinfo(kind).min, maximum, -1]
     original = tmp_path / "wide.npy"
     np.save(original, values)
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
         expected = frames[selected].astype(object).sum(axis=0)
         total = session.reduce_frames_exact(selected)
@@ -210,7 +210,7 @@ def test_foreign_byte_order_preserves_measurements(tmp_path, backend, kind):
     values = original_values(dtype.newbyteorder("=")).byteswap().view(dtype)
     original = tmp_path / "foreign.npy"
     np.save(original, values)
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         assert loaded.dtype == dtype.newbyteorder("=")
         expected = values.byteswap().view(dtype.newbyteorder("="))
         assert raw_read(loaded.data).tobytes() == expected.tobytes()
@@ -236,7 +236,7 @@ def test_float64_display_rounds_without_changing_storage(tmp_path, backend):
     values.flat[: len(special)] = special
     path = tmp_path / "double.npy"
     np.save(path, values)
-    with io.load(path, backend=backend, verbose=False) as loaded:
+    with io.load(path, device=backend, verbose=False) as loaded:
         if backend == "mps":
             from quantem.gpu.resident.mps.float64_display import float32_view
 
@@ -298,11 +298,11 @@ def test_fixed_ssb_survives_typed_save_reopen(tmp_path, backend, kind):
             return result
 
     saved = tmp_path / "copy.qem"
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         before = phases(loaded)
         io.save(saved, loaded, verbose=False)
     original.unlink()
-    with io.load(saved, backend=backend, verbose=False) as loaded:
+    with io.load(saved, device=backend, verbose=False) as loaded:
         after = phases(loaded)
         for first, second in zip(before, after, strict=True):
             np.testing.assert_array_equal(first, second)
@@ -315,9 +315,9 @@ def test_zero_payload_keeps_all_original_bits(tmp_path, backend, kind):
     original = tmp_path / "zero.npy"
     saved = tmp_path / "zero.qem"
     np.save(original, values)
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         io.save(saved, loaded)
-    with io.load(saved, backend=backend, verbose=False) as reopened:
+    with io.load(saved, device=backend, verbose=False) as reopened:
         actual = raw_read(reopened.data)
         assert actual.dtype == values.dtype
         np.testing.assert_array_equal(actual.view(np.uint8), values.view(np.uint8))

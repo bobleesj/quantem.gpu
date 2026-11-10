@@ -9,7 +9,7 @@ cp = pytest.importorskip("cupy")
 pytestmark = pytest.mark.slow
 
 from quantem.gpu import DirectPtycho
-from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
+from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.direct_ptycho.cuda.streamed import StreamedSSB
 from quantem.gpu.direct_ptycho.units import aberrations_to_engine
@@ -37,7 +37,7 @@ def _encoded(values, chunk_scans=1777):
     frames = values.reshape(-1, *values.shape[-2:])
     for first in range(0, frames.shape[0], chunk_scans):
         source.append(cp.ascontiguousarray(frames[first:first + chunk_scans]))
-    return Dataset4dstemGPU(source, resident_metadata(values.shape, values.dtype, source.nbytes, backend="cuda"))
+    return Dataset4dstem(source, resident_metadata(values.shape, values.dtype, source.nbytes, backend="cuda"))
 
 
 @pytest.mark.parametrize("scan_shape, dtype", [((130, 258), cp.uint16), ((128, 128), cp.uint8)])
@@ -130,7 +130,7 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
             original_rows = backend.bf_inds_col + session._crop_origin[0]
             original_cols = backend.bf_inds_row + session._crop_origin[1]
             expected_counts = values[..., original_rows, original_cols]
-            with io.load(exported, backend="cuda") as reopened:
+            with io.load(exported, device="cuda") as reopened:
                 actual_counts = cp.from_dlpack(reopened.read())
                 cp.testing.assert_array_equal(actual_counts[..., 0, :], expected_counts)
             # the phase-variance loss still reads the full Fourier stack at 1024
@@ -156,7 +156,7 @@ def test_global_large_scan_matches_periodic_native_reference(scan_shape):
     # Build independent encoded scan rows without holding the dense large cube.
     for row in range(0, scan_shape[0], 128):
         source.append(cp.tile(tile, (1, scan_shape[1] // 128, 1, 1)).reshape(-1, 8, 8))
-    with Dataset4dstemGPU(source, resident_metadata(shape, np.uint16, source.nbytes, backend="cuda")) as data:
+    with Dataset4dstem(source, resident_metadata(shape, np.uint16, source.nbytes, backend="cuda")) as data:
         tile[..., 2, 3] = 0
         with DirectPtycho(tile, **SETTINGS) as reference:
             expected, _ = reference.preview(ABERRATIONS, compute_loss=False, output="native",

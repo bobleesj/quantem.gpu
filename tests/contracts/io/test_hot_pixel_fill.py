@@ -67,11 +67,11 @@ def test_median_is_the_default_and_the_cpu_reference_applies_it(tmp_path, capsys
         handle["entry/data/data_000001"] = h5py.ExternalLink(str(data), "/entry/data/data")
         handle["entry/instrument/detector/detectorSpecific/ntrigger"] = np.uint32(len(counts))
         handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
-    loaded = io.load(master, backend="cpu", representation="dense", scan_shape=(3, 4))
+    loaded = io.load(master, device="cpu", representation="dense", scan_shape=(3, 4))
     record = loaded.metadata["hot_pixel_correction"]
     assert (record["method"], record["applied"], record["pixel_count"], record["largest_window_px"]) == ("median", True, 11, 5)
     assert "11 bad pixels replaced by neighbor median, windows up to 5 x 5" in capsys.readouterr().out
     expected = fill_flagged(counts.copy(), median_plan(mask), "median")
     np.testing.assert_array_equal(np.asarray(loaded.data).reshape(counts.shape), expected)
-    raw = io.load(master, backend="cpu", representation="dense", scan_shape=(3, 4), hot_pixel_correction="none")
+    raw = io.load(master, device="cpu", representation="dense", scan_shape=(3, 4), hot_pixel_correction="none")
     np.testing.assert_array_equal(np.asarray(raw.data).reshape(counts.shape), counts)

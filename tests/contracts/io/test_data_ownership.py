@@ -2,7 +2,7 @@
 
 import pytest
 
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 
 
 def test_acquisition_summary_does_not_materialize_storage(tmp_path):
@@ -26,7 +26,7 @@ def test_acquisition_summary_does_not_materialize_storage(tmp_path):
         "representation": "encoded", "resident_profile": "runtime-column-rans-spatial-v2",
         "physical_resident_bytes": 3_109_470_478, "source_path": str(source),
     }
-    data = Dataset4dstemGPU(storage, metadata)
+    data = Dataset4dstem(storage, metadata)
     assert data.data is storage
     assert data.metadata == metadata
     assert not isinstance(data, tuple)
@@ -56,13 +56,13 @@ def test_iteration_selects_rows_lazily(monkeypatch):
 
     calls = []
     values = np.arange(3 * 4 * 2 * 2).reshape(3, 4, 2, 2)
-    data = Dataset4dstemGPU(values, {})
+    data = Dataset4dstem(values, {})
 
     def read_row(self, row):
         calls.append(row)
         return values[row]
 
-    monkeypatch.setattr(Dataset4dstemGPU, "__getitem__", read_row)
+    monkeypatch.setattr(Dataset4dstem, "__getitem__", read_row)
     iterator = iter(data)
     assert calls == []
     np.testing.assert_array_equal(next(iterator), values[0])
@@ -82,7 +82,7 @@ def test_dataset_means_preserve_counts_and_fractional_intensities():
 
     counts = np.linspace(0, 65535, 24 * 8 * 4 * 4).reshape(24, 8, 4, 4).astype(np.uint16)
     for values in (counts, counts.astype(np.float32) * 1.25 - 0.125):
-        acquisition = Dataset4dstemGPU(values, {})
+        acquisition = Dataset4dstem(values, {})
         for dim in ((0, 1), (2, 3)):
             expected_t = torch.from_numpy(values).double().mean(dim=dim).float()
             assert torch.equal(acquisition.mean(dim=dim), expected_t)

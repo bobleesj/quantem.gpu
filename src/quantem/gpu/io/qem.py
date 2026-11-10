@@ -43,7 +43,7 @@ from quantem.gpu.formats.qem.snapshot import (
     read_header_with_digest,
     write_envelope,
 )
-from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
+from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
 from quantem.gpu.io.hdf5.cpu import record_dense_representation
 from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts
@@ -138,7 +138,7 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
         data, metadata = load_array(path)
         if scan_shape is not None and tuple(scan_shape) != data.shape[:2]:
             raise ValueError("scan_shape disagrees with the saved QEM file.")
-        return record_dense_representation(Dataset4dstemGPU(data, metadata))
+        return record_dense_representation(Dataset4dstem(data, metadata))
     selected_backend = resolve_backend(backend)
     if selected_backend not in ("cuda", "mps") or representation not in (None, "encoded"):
         raise NotImplementedError("ANS snapshots reopen as encoded counts; choose backend='cuda' or 'mps'.")
@@ -172,7 +172,7 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
     return dataset
 
 
-def mps_counts_dataset(resident: MPSStreamedCounts, metadata: dict, started: float, verbose: bool) -> Dataset4dstemGPU:
+def mps_counts_dataset(resident: MPSStreamedCounts, metadata: dict, started: float, verbose: bool) -> Dataset4dstem:
     """Wrap an exact native-count Metal resident with the common loaded-data metadata.
 
     Saved ``.qem`` copies and native DigitalMicrograph cameras both end here,
@@ -196,7 +196,7 @@ def mps_counts_dataset(resident: MPSStreamedCounts, metadata: dict, started: flo
         print(
             f"Loaded exact native camera ANS on Metal in {time.perf_counter() - started:.3f} s."
         )
-    return Dataset4dstemGPU(resident, record)
+    return Dataset4dstem(resident, record)
 
 
 def _staged(spans):
@@ -382,7 +382,7 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
                     f"{metadata['working_logical_tensor_bytes'] / 1e9:.2f} GB uncompressed "
                     f"to {metadata['physical_resident_bytes'] / 1e9:.2f} GB resident on GPU."
                 )
-            return Dataset4dstemGPU(source, metadata)
+            return Dataset4dstem(source, metadata)
         except BaseException:
             stream.synchronize()
             source.release()
@@ -501,7 +501,7 @@ def _load_scaled_mps(path, header, start, verbose):
             f"Loaded scaled uint16 ANS on Metal in {time.perf_counter() - started:.3f} s "
             f"(RMSE {report['rmse']:.3g}, max error {report['max_abs_error']:.3g})."
         )
-    return Dataset4dstemGPU(source, metadata)
+    return Dataset4dstem(source, metadata)
 
 
 def _read_verified(path, header, start, spans):
@@ -641,7 +641,7 @@ def _load_bits(path, header, start, backend, device):
                 "verified_encoded_bytes": header["bytes"],
             },
         )
-        return Dataset4dstemGPU(source, metadata)
+        return Dataset4dstem(source, metadata)
     except BaseException:
         if backend == "mps":
             for buffer in arrays:

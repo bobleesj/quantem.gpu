@@ -25,7 +25,7 @@ def acquisition(tmp_path, monkeypatch, request):
     original = tmp_path / "original.npy"
     saved = tmp_path / "acquisition.qem"
     np.save(original, values)
-    with io.load(original, backend="mps", verbose=False) as source:
+    with io.load(original, device="mps", verbose=False) as source:
         io.save(saved, source)
     header, start = snapshot.read_header(saved)
     return saved, values, header, start
@@ -37,7 +37,7 @@ def test_parallel_roundtrip_preserves_counts_and_indexed_products(acquisition):
     mask = np.zeros(values.shape[-2:], dtype=bool)
     mask[::2, ::2] = True
     for _ in range(3):
-        with io.load(path, backend="mps", verbose=False) as loaded:
+        with io.load(path, device="mps", verbose=False) as loaded:
             actual = loaded.data.decode_scan_range_torch(0, 1024).cpu().numpy()
             np.testing.assert_array_equal(actual.reshape(values.shape), values)
             np.testing.assert_array_equal(
@@ -70,12 +70,12 @@ def test_corruption_releases_resident_and_allows_retry(acquisition, monkeypatch,
 
     monkeypatch.setattr(qem.MPSStreamedCounts, "release", release)
     with pytest.raises(ValueError, match=f"checksum mismatch in block {block}"):
-        io.load(path, backend="mps", verbose=False)
+        io.load(path, device="mps", verbose=False)
     assert len(released) == 1
     assert released[0].is_released and not released[0].chunks
     with path.open("r+b") as handle:
         handle.seek(offset)
         handle.write(original)
-    with io.load(path, backend="mps", verbose=False) as loaded:
+    with io.load(path, device="mps", verbose=False) as loaded:
         actual = loaded.data.decode_scan_range_torch(0, 1024).cpu().numpy()
         np.testing.assert_array_equal(actual.reshape(values.shape), values)

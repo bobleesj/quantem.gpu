@@ -95,7 +95,7 @@ independently assembled native or browser product set as a
 ```python
 from quantem.gpu import io, parallax
 
-data = io.load("scan_master.h5", backend="cuda")
+data = io.load("scan_master.h5", device="cuda")
 result = parallax.run(data, aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
 ```
 

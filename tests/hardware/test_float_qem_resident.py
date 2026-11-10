@@ -61,7 +61,7 @@ def test_float_qem_preserves_bits_and_metadata_without_dense_residency(tmp_path)
         batch_size=3,
         metadata={"source_documents": [document], "voltage_kV": 200},
     )
-    with io.load(path, backend=backend) as loaded:
+    with io.load(path, device=backend) as loaded:
         assert loaded.metadata["representation"] == "encoded"
         assert loaded.metadata["resident_profile"] == "float32-bit-lanes-rans-v1"
         assert loaded.dtype == np.dtype("float32")
@@ -73,13 +73,13 @@ def test_float_qem_preserves_bits_and_metadata_without_dense_residency(tmp_path)
         with pytest.raises(TypeError, match="stays encoded"):
             np.asarray(loaded.data)
         with pytest.raises(NotImplementedError, match="encoded"):
-            io.load(path, backend=backend, representation="dense")
+            io.load(path, device=backend, representation="dense")
         path.unlink()  # Saving must not depend on retaining or rereading the source.
         copied = tmp_path / "copied.qem"
         io.save(copied, loaded)
         assert loaded.data.peak_decode_bytes <= MAX_DECODE_BYTES
     assert validate_qem(copied)["integrity"] == "verified"
-    with io.load(copied, backend=backend) as loaded:
+    with io.load(copied, device=backend) as loaded:
         assert loaded.metadata["scientific_metadata"]["source_documents"] == [document]
         for index in range(8):
             np.testing.assert_array_equal(
@@ -100,7 +100,7 @@ def test_float_products_and_selected_mean_stay_on_device(tmp_path):
     io.save(path, raw, backend="cpu", batch_size=3)
     mask = np.zeros((128, 128), bool)
     mask[19:40, 17:90] = True
-    with io.load(path, backend=backend) as loaded:
+    with io.load(path, device=backend) as loaded:
         session = detector.prepare(loaded)
         np.testing.assert_array_equal(session.frame(4), raw[1, 0])
         np.testing.assert_allclose(
@@ -159,7 +159,7 @@ def test_float_background_is_applied_once_and_survives_export(tmp_path):
     io.save(path, raw, backend="cpu", batch_size=2, metadata={"qem_empad": empad})
     copied = tmp_path / "copy.qem"
     for saved in (path, copied):
-        with io.load(saved, backend=backend) as loaded:
+        with io.load(saved, device=backend) as loaded:
             session = detector.prepare(loaded)
             np.testing.assert_array_equal(
                 _host(loaded.data.extract_diffraction_device(0, 0)), raw[0, 0]
@@ -185,7 +185,7 @@ def test_float_reductions_keep_cancellation_and_nonfinite_semantics(tmp_path):
     io.save(path, raw, backend="cpu", batch_size=2)
     mask = np.zeros((128, 128), bool)
     mask[0, :3] = True
-    with io.load(path, backend=backend) as loaded:
+    with io.load(path, device=backend) as loaded:
         session = detector.prepare(loaded)
         np.testing.assert_array_equal(session.masked_sum(mask), [[1] * 4])
         mask[1, 0] = True
@@ -208,7 +208,7 @@ def test_float_com_does_not_overflow_or_hide_invalid_frames(tmp_path):
     raw[0, 3, 2, 3] = np.inf
     path = tmp_path / "moments.qem"
     io.save(path, raw, backend="cpu", batch_size=2)
-    with io.load(path, backend=backend) as loaded:
+    with io.load(path, device=backend) as loaded:
         row, column = detector.prepare(loaded).center_of_mass()
         np.testing.assert_array_equal(row[0, :3], [10, 30, 0])
         np.testing.assert_array_equal(column[0, :3], [20, 40, 0])
@@ -239,7 +239,7 @@ def test_corrupt_upload_releases_partial_resident(tmp_path, monkeypatch):
 
     monkeypatch.setattr(FloatANSResident, "release", release)
     with pytest.raises(ValueError, match="checksum"):
-        io.load(path, backend=backend)
+        io.load(path, device=backend)
     assert len(released) == 1 and released[0].nbytes == 0
 
 
@@ -252,7 +252,7 @@ def test_cuda_resident_survives_client_device_switch(tmp_path):
         pytest.skip("Requires two CUDA devices")
     path = tmp_path / "device.qem"
     io.save(path, np.ones((1, 2, 128, 128), np.float32), backend="cpu")
-    with io.load(path, backend="cuda", device=0) as loaded:
+    with io.load(path, device=0) as loaded:
         with cp.cuda.Device(1):
             # No scientific work is submitted on device 1.
             session = detector.prepare(loaded)
@@ -277,7 +277,7 @@ def test_cuda_float_decode_reports_failures_into_the_callers_flags(tmp_path):
     words[..., :64, :] = np.random.default_rng(1).integers(0, 3, (4, 32, 64, 128))
     path = tmp_path / "entropy.qem"
     io.save(path, words.view(np.float32), backend="cpu", batch_size=128)
-    with io.load(path, backend="cuda") as loaded:
+    with io.load(path, device="cuda") as loaded:
         lanes = loaded.data._lanes
         chunk = lanes.chunks[0]
         clean = cp.zeros(1, cp.uint32)
@@ -299,7 +299,7 @@ def test_float_resident_frees_rows_already_read(tmp_path):
     values = (np.arange(4 * 512 * 8 * 8, dtype=np.float32).reshape(4, 512, 8, 8) % 97) / 4
     source = tmp_path / "float.npy"
     np.save(source, values)
-    with io.load(source, backend=backend, verbose=False) as loaded:
+    with io.load(source, device=backend, verbose=False) as loaded:
         before = loaded.data.nbytes
         loaded.release_rows_before(2)
         assert loaded.data.nbytes < before

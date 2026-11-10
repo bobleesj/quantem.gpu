@@ -70,7 +70,7 @@ def test_published_acquisition_roundtrip(path, tmp_path, record_property):
 
         saved = Path(scratch) / "copy.qem"
         started = time.perf_counter()
-        with io.load(path, backend=backend, verbose=False) as loaded:
+        with io.load(path, device=backend, verbose=False) as loaded:
             record_property("load_seconds", time.perf_counter() - started)
             assert loaded.representation.value == "encoded"
             assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= 32 << 20
@@ -96,7 +96,7 @@ def test_published_acquisition_roundtrip(path, tmp_path, record_property):
             io.save(saved, loaded)
             del session, mean, image
         assert validate_qem(saved)["integrity"] == "verified"
-        with io.load(saved, backend=backend, verbose=False) as restored:
+        with io.load(saved, device=backend, verbose=False) as restored:
             for row in range(rows):
                 native = restored.read(scan_region=(row, row + 1, 0, columns), output="native")
                 try:

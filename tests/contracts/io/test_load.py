@@ -22,7 +22,7 @@ def test_cpu_reference_records_source_and_actual_mask_policy(tmp_path, apply_mas
     mask[2, 4] = 16
     with h5py.File(master, "r+") as handle:
         handle.create_dataset("entry/instrument/detector/detectorSpecific/pixel_mask", data=mask)
-    with io.load(master, backend="cpu", apply_mask=apply_mask, verbose=False) as loaded:
+    with io.load(master, device="cpu", apply_mask=apply_mask, verbose=False) as loaded:
         assert loaded.metadata["source_path"] == str(master)
         correction = loaded.metadata["hot_pixel_correction"]
         assert correction["backend"] == "cpu"
@@ -78,7 +78,7 @@ def test_qem_of_a_master_holds_no_hdf5_layout_attributes(tmp_path) -> None:
     with h5py.File(master, "r") as handle:
         assert layout <= set(handle["entry/data"].attrs)
     assert not layout & set(get_metadata(str(master)))
-    with io.load(master, backend="cpu", verbose=False) as loaded:
+    with io.load(master, device="cpu", verbose=False) as loaded:
         io.save(tmp_path / "scan.qem", loaded, backend="cpu", verbose=False)
     assert not layout & set(read_envelope(tmp_path / "scan.qem")[0]["metadata"])
 
@@ -104,14 +104,14 @@ def test_load_names_master_calibration_attributes_it_does_not_read(tmp_path) -> 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         for verbose in (False, True):
-            with io.load(master, backend="cpu", verbose=verbose) as current:
+            with io.load(master, device="cpu", verbose=verbose) as current:
                 assert current.sampling == (None, None, 0.02, 0.03)
     with h5py.File(master, "r+") as handle:
         handle.attrs["scan_sampling_A"] = 0.264
         handle.attrs["detector_sampling"] = [0.2, 0.3]
         handle.attrs["detector_sampling_unit"] = "mrad"
     for verbose in (False, True):
-        with pytest.warns(UserWarning, match="Calibration not read") as caught, io.load(master, backend="cpu", verbose=verbose) as loaded:
+        with pytest.warns(UserWarning, match="Calibration not read") as caught, io.load(master, device="cpu", verbose=verbose) as loaded:
             # nothing is converted: the scan axes are uncalibrated, and the pair this version reads is kept
             assert loaded.sampling == (None, None, 0.02, 0.03)
             assert not {"scan_sampling_A", "detector_sampling", "detector_sampling_unit"} & set(loaded.metadata)
@@ -120,7 +120,7 @@ def test_load_names_master_calibration_attributes_it_does_not_read(tmp_path) -> 
         assert len(caught) == 1
         for name in ("scan_master.h5", "scan_sampling_A (not a [row, col] pair)", "detector_sampling,", "detector_sampling_unit"):
             assert name in str(caught[0].message)
-    with io.load(tmp_path / "copy.qem", backend="cpu", verbose=False) as copy:
+    with io.load(tmp_path / "copy.qem", device="cpu", verbose=False) as copy:
         assert copy.sampling == (None, None, 0.02, 0.03)
         np.testing.assert_array_equal(copy.data, counts)
 
@@ -169,7 +169,7 @@ def test_selective_scan_loading_rejects_cpu_backend(monkeypatch, selector) -> No
     with pytest.raises(RuntimeError, match="CUDA and MPS"):
         load_module.load(
             "scan_master.h5", representation="dense",
-            backend="cpu",
+            device="cpu",
             scan_shape=(1, 1),
             verbose=False,
             **selector,

@@ -237,7 +237,7 @@ def main():
         for number, path in enumerate(args.sources):
             started = time.perf_counter()
             source = io.load(
-                path, backend="cuda", representation="encoded", verbose=False
+                path, device="cuda", representation="encoded", verbose=False
             )
             sources.append(source)
             if type(source.data) is not counts.StreamedCounts:

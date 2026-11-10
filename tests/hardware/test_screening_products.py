@@ -90,7 +90,7 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
         "dpc_phase": _dpc_phase(com_row, com_col, rotation_deg, transposed),
     }
     reopened = screening.prepare(master, backend=backend, cache_dir=tmp_path / "cache")
-    with io.load(master, backend=backend, hot_pixel_correction="median", verbose=False) as loaded:
+    with io.load(master, device=backend, hot_pixel_correction="median", verbose=False) as loaded:
         borrowed = screening.prepare(loaded)
         assert borrowed.cache_path is None and not borrowed.from_cache
         # Screening leaves the median-corrected source alive for SSB.

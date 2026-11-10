@@ -22,7 +22,7 @@ def test_float_screening_keeps_negative_fractional_intensities(tmp_path):
     ).astype(np.float32)
     source, saved = tmp_path / "scan.npy", tmp_path / "scan.qem"
     np.save(source, values)
-    with io.load(source, backend=backend, verbose=False) as data:
+    with io.load(source, device=backend, verbose=False) as data:
         io.save(saved, data)
     result = screening.prepare(saved, backend=backend)
     cached = screening.prepare(saved, backend=backend)
@@ -45,7 +45,7 @@ def test_float_screening_keeps_negative_fractional_intensities(tmp_path):
     replacement = tmp_path / "replacement.qem"
     values += np.float32(1)
     np.save(source, values)
-    with io.load(source, backend=backend, verbose=False) as data:
+    with io.load(source, device=backend, verbose=False) as data:
         io.save(replacement, data)
     replacement.replace(saved)
     changed = screening.prepare(saved, backend=backend)

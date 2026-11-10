@@ -1,6 +1,6 @@
 """Metal tests for corrected ANS residency and bounded public reads."""
 
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 
 import h5py
 import hdf5plugin
@@ -65,7 +65,7 @@ def test_h5_ans_explicit_gpu_median_hot_pixel_correction(tmp_path):
 
     loaded = io.load(
         path,
-        backend="mps",
+        device="mps",
         hot_pixel_correction="median",
         scan_shape=(2, 5),
         apply_mask=False,
@@ -98,7 +98,7 @@ def test_resident_read_matches_numpy_region():
     raw = upload(values.reshape(-1, *shape[2:]))
     try:
         source.append(shared_array(raw._mtl, raw.dtype, raw.shape))
-        loaded = Dataset4dstemGPU(
+        loaded = Dataset4dstem(
             source,
             {
                 "working_shape": shape,
@@ -197,7 +197,7 @@ def test_h5_ans_resident_carries_spatial_index_and_reopens(tmp_path):
         detector_specific["y_pixels_in_detector"] = 6
         detector_specific["x_pixels_in_detector"] = 8
 
-    loaded = io.load(path, backend="mps", scan_shape=(2, 5), verbose=False)
+    loaded = io.load(path, device="mps", scan_shape=(2, 5), verbose=False)
     saved = tmp_path / "indexed.qem"
     try:
         source = loaded.data
@@ -210,7 +210,7 @@ def test_h5_ans_resident_carries_spatial_index_and_reopens(tmp_path):
     mask = np.zeros((6, 8), np.float32)
     mask[1:5, 2:6] = 1.0
     expected = (raw * mask).sum(axis=(2, 3), dtype=np.uint64)
-    reopened = io.load(saved, backend="mps", verbose=False)
+    reopened = io.load(saved, device="mps", verbose=False)
     try:
         assert len(reopened.data.spatial_chunks) == len(reopened.data.chunks)
         decoded = reopened.data.decode_scan_range_device(0, 10)
@@ -273,7 +273,7 @@ def test_direct_region_reads_across_codec_blocks(dtype, scan_region, detector_re
                 source.append(shared_array(staged._mtl, staged.dtype, staged.shape))
             finally:
                 staged.release()
-        loaded = Dataset4dstemGPU(
+        loaded = Dataset4dstem(
             source, {"working_shape": shape, "working_dtype": np.dtype(dtype).name,
                      "representation": "encoded"}
         )

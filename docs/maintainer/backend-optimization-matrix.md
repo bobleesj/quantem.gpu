@@ -136,7 +136,7 @@ Implementation checklist:
 
 | Item | Status | Evidence / next action |
 | --- | --- | --- |
-| Public load entry point | Done | `quantem.gpu.io.load(..., backend="auto")` selects CUDA or MPS; CPU is an explicit reference path. |
+| Public load entry point | Done | `quantem.gpu.io.load(...)` selects CUDA or MPS; CPU is an explicit reference path. |
 | Public save entry point | Done | `quantem.gpu.io.save(..., backend="auto", dtype=...)` dispatches only from a CUDA/MPS-resident input; CPU is explicit. |
 | One public compression method | Done | User-facing docs present Bitshuffle/LZ4 only; the Arina writer has no other codec. |
 | MPS exact `uint16` compressed save | Done | Native Metal chunk-backed path, full no-bin save `1.69-1.96 s`, exact decoded sample agreement. |

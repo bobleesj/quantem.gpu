@@ -5,8 +5,8 @@
 - `quantem.gpu.remote` owns the versioned native-viewer protocol, CUDA-resident
   master cache, exact detector products, selected diffraction, and acquisition
   readiness polling.
-- `quantem-gpu serve DATA_FOLDER --gpus auto --port P` binds to loopback only.
-  `--gpu N` remains the explicit single-device form. SSH
+- `quantem-gpu serve DATA_FOLDER --devices auto --port P` binds to loopback only.
+  `--device N` is the explicit single-device form. SSH
   owns authentication and encryption; the HTTP service must never listen on a
   public interface by default.
 - One resident 4D volume belongs to exactly one CUDA GPU. New datasets are
@@ -296,7 +296,7 @@ uses the detector index already owned by each unshuffle lane to apply the same
 mask before writing `min(value, 255)` directly to uint8. The unmasked pipeline
 remains separate and has no added mask read or branch.
 
-Warm public `quantem.gpu.io.load(..., backend="mps", dtype="u8")` calls fell
+Warm public `quantem.gpu.io.load(..., device="mps", dtype="u8")` calls fell
 from `1.795 s` to `1.544-1.556 s` on the real `512x512x192x192` master. The
 result is still a seven-buffer, 9.66 GB zero-copy `MPSChunked4DSTEM`; public
 metadata setup costs only `2-5 ms`. A direct-HDF5 gate checked 1,012 positions,

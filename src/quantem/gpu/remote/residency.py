@@ -23,7 +23,7 @@ from fastapi import HTTPException
 from quantem.gpu import detector, io
 from quantem.gpu.detector import DetectorSession
 from quantem.gpu.device.cuda_runtime import cp
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.remote.catalog import Catalog, file_signature, format_size
 from quantem.gpu.remote.plan import BrowsePlan
 
@@ -53,15 +53,15 @@ class Gpu:
 class ResidentAcquisition:
     """One acquisition held encoded on one GPU, read by every plan of it.
 
-    ``pins`` counts requests computing on it; eviction waits for zero.
+    ``device`` is the CUDA device index it is held on. ``pins`` counts requests computing on it; eviction waits for zero.
     ``derived`` caches what a plan derives from the resident, the fitted
     bright-field geometry and the centre-of-mass maps, so repeated images skip
     that work.
     """
 
     key: str
-    gpu: int
-    loaded: Dataset4dstemGPU
+    device: int
+    loaded: Dataset4dstem
     session: DetectorSession
     resident_bytes: int
     source_signature: tuple[tuple[str, int, int], ...]
@@ -202,7 +202,7 @@ class Residency:
                     "other GPU work or serve it from a GPU with more memory.",
                 )
             with self._lock:
-                self._evict_for(loaded.gpu, loaded.resident_bytes, preserve=preserve_key)
+                self._evict_for(loaded.device, loaded.resident_bytes, preserve=preserve_key)
                 self._entries[loaded.key] = loaded
                 self._entries.move_to_end(loaded.key)
                 if reserve:
@@ -251,7 +251,7 @@ class Residency:
                     409,
                     "This acquisition is no longer resident; load a virtual image first.",
                 )
-            with self.gpus[entry.gpu].device:
+            with self.gpus[entry.device].device:
                 yield entry
         finally:
             lock.release()
@@ -312,7 +312,7 @@ class Residency:
         budget = self.gpus[gpu].cache_budget_bytes
         resident = self._resident_bytes(gpu)
         active = self._entries.get(self._active_key) if preserve_active else None
-        active_resident = active.resident_bytes if active is not None and active.gpu == gpu else 0
+        active_resident = active.resident_bytes if active is not None and active.device == gpu else 0
         evictable = max(0, resident - active_resident)
         free = self._free_bytes(gpu)
         return {
@@ -400,11 +400,11 @@ class Residency:
         # Taken before reading so a file rewritten during the load reads as stale.
         signature = file_signature(path)
         with self.gpus[gpu].device:
-            loaded = io.load(path, backend="cuda", device=gpu, verbose=False)
+            loaded = io.load(path, device=gpu, verbose=False)
             session = detector.prepare(loaded)
         return ResidentAcquisition(
             key=str(path),
-            gpu=gpu,
+            device=gpu,
             loaded=loaded,
             session=session,
             resident_bytes=int(loaded.resident_bytes),
@@ -457,7 +457,7 @@ class Residency:
             freed = self._evict_one(gpu, preserve=preserve)
             if freed is None:
                 pinned_victim = any(
-                    key != preserve and entry.gpu == gpu and entry.pins > 0
+                    key != preserve and entry.device == gpu and entry.pins > 0
                     for key, entry in self._entries.items()
                 )
                 if pinned_victim:
@@ -475,7 +475,7 @@ class Residency:
             (
                 key
                 for key, entry in self._entries.items()
-                if key != preserve and entry.gpu == gpu and entry.pins == 0
+                if key != preserve and entry.device == gpu and entry.pins == 0
             ),
             None,
         )
@@ -494,7 +494,7 @@ class Residency:
         loaded acquisition both let go here; otherwise any reference left to
         either one would keep the whole resident on the GPU.
         """
-        with self._entry_lock(entry.key), self.gpus[entry.gpu].device:
+        with self._entry_lock(entry.key), self.gpus[entry.device].device:
             entry.session.close()
             entry.loaded.close()
             entry.closed = True
@@ -510,10 +510,10 @@ class Residency:
             return self._compute_locks.setdefault(key, threading.Lock())
 
     def _resident_bytes(self, gpu: int) -> int:
-        return sum(entry.resident_bytes for entry in self._entries.values() if entry.gpu == gpu)
+        return sum(entry.resident_bytes for entry in self._entries.values() if entry.device == gpu)
 
     def _resident_entries(self, gpu: int) -> int:
-        return sum(entry.gpu == gpu for entry in self._entries.values())
+        return sum(entry.device == gpu for entry in self._entries.values())
 
     def _free_bytes(self, gpu: int) -> int | None:
         """Return the GPU's free bytes, or None when the CUDA runtime cannot report them."""

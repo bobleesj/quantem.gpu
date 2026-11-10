@@ -114,7 +114,7 @@ def run(arguments, stages) -> None:
         return ssb
 
     for master in arguments.masters:
-        data, seconds = timed(lambda: io.load(master, backend="cuda", verbose=False))
+        data, seconds = timed(lambda: io.load(master, device="cuda", verbose=False))
         print(f"{Path(master).name}: {tuple(data.shape)} {data.dtype}, encoded load {seconds:.2f} s")
         if "session" in stages:
             times, hashes = [], []

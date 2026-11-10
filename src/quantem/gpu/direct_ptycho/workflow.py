@@ -24,7 +24,7 @@ from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.geometry.frames import opposite_rotation_deg
 from quantem.gpu.formats.qem.metadata import BRIGHT_FIELD_DISK_KEY
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.io import metadata_display as labels
 from quantem.gpu.io.metadata_display import calibration_rows
 from quantem.gpu.io.representation import DataRepresentation
@@ -80,7 +80,7 @@ MAP_OPPOSITE_BRANCH = True
 
 def _browser_qem_source(data: object) -> dict[str, object] | None:
     """Retain the identity of an unchanged, native-count QEM acquisition."""
-    if not isinstance(data, Dataset4dstemGPU):
+    if not isinstance(data, Dataset4dstem):
         return None
     metadata = data.metadata
     if (data.ndim != 4 or data.representation is DataRepresentation.DENSE
@@ -332,7 +332,7 @@ if TYPE_CHECKING:
     from quantem.gpu.direct_ptycho.rotation_defocus import RotationDefocusComparison
     import pandas as pd
 
-def _keeps_crop_encoded(data: Dataset4dstemGPU, backend: str) -> bool:
+def _keeps_crop_encoded(data: Dataset4dstem, backend: str) -> bool:
     """Whether an MPS session keeps this acquisition's bright-field crop encoded (``EncodedBrightFieldCrop``).
 
     Integer counts are read exactly from the encoded source while G(q, k) is built; float sources keep the decoded
@@ -343,7 +343,7 @@ def _keeps_crop_encoded(data: Dataset4dstemGPU, backend: str) -> bool:
     return backend == "mps" and not is_float8(data.dtype) and np.dtype(data.dtype).kind == "u"
 
 
-def _streams_scan(data: Dataset4dstemGPU, backend: str) -> bool:
+def _streams_scan(data: Dataset4dstem, backend: str) -> bool:
     """Select large integer ANS scans without changing smaller/float workflows."""
     if backend != "cuda":
         return False
@@ -476,7 +476,7 @@ class DirectPtycho:
             "scan_detector_rotation_deg": scan_detector_rotation_deg,
         }
         self.backend = resolve(backend)
-        source_dataset = data if isinstance(data, Dataset4dstemGPU) else None
+        source_dataset = data if isinstance(data, Dataset4dstem) else None
         self._browser_qem = _browser_qem_source(source_dataset)
         metadata = {} if source_dataset is None else source_dataset.metadata
         voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
@@ -510,13 +510,13 @@ class DirectPtycho:
         self._owned_dataset = None
         # the full-detector acquisition the caller passed: series and listen open sessions on frames like it, and
         # a session on _data would see only the bright-field crop decoded below
-        self._input_dataset = data if isinstance(data, Dataset4dstemGPU) else None
+        self._input_dataset = data if isinstance(data, Dataset4dstem) else None
         # first detector (row, col) of the data the session holds: nonzero when only the bright-field crop was decoded
         self._crop_origin = (0, 0)
         self.scan_region = None if scan_region is None else tuple(int(value) for value in scan_region)
         # what a saved result of a session on an encoded dataset is filed under: the data themselves, there is no file
         self.resident_identity: dict[str, object] | None = None
-        if isinstance(data, Dataset4dstemGPU):
+        if isinstance(data, Dataset4dstem):
             if data.ndim != 4:
                 raise ValueError("SSB needs one 4D acquisition; select a dataset from the series first.")
             if data.representation is not DataRepresentation.DENSE:
@@ -607,7 +607,7 @@ class DirectPtycho:
         self.source_storage_path = source_path
         self.source_kind: Literal["array", "resident", "detector", "bf_columns"] = "array" if self.resident_identity is None else "resident"
         self.source_dtype = str(data.dtype)
-        self.source_bytes = int(data.logical_bytes if isinstance(data, Dataset4dstemGPU) else data.nbytes)
+        self.source_bytes = int(data.logical_bytes if isinstance(data, Dataset4dstem) else data.nbytes)
         self.source_detector_bin = 1
         self.source_provenance: dict[str, object] | None = None
         self.source_load_seconds: float | None = None
@@ -880,7 +880,7 @@ class DirectPtycho:
             load_started = time.perf_counter()
             loaded = io.load(
                 source,
-                backend=selected,
+                device=selected,
                 scan_shape=scan_shape,
                 dtype=dtype,
                 verbose=verbose,
@@ -1086,7 +1086,7 @@ class DirectPtycho:
         else:
             if not self.source_path:
                 raise ValueError("These detector columns have no original acquisition. Open the original file with DirectPtycho.open() to fit regions.")
-            with io.load(self.source_path, backend=self.backend, verbose=False) as acquisition:
+            with io.load(self.source_path, device=self.backend, verbose=False) as acquisition:
                 regional = type(self)(acquisition, scan_region=scan_region, **options)
         origin = self.scan_region or (0, 0, 0, 0)
         regional.scan_region = (row_start + origin[0], row_stop + origin[0],
@@ -1241,13 +1241,13 @@ class DirectPtycho:
             elif getattr(getattr(source, "data", None), "is_released", False):
                 image = None
             elif isinstance(source, Path):
-                with io.load(source, backend=self.backend, scan_shape=self._scan_shape, verbose=False) as acquisition:
+                with io.load(source, device=self.backend, scan_shape=self._scan_shape, verbose=False) as acquisition:
                     image = _dark_field_of(acquisition, self.semiangle_mrad, self.detector_sampling_mrad,
                                            self.bright_field_center_px)
             else:
                 image = _dark_field_of(source, self.semiangle_mrad, self.detector_sampling_mrad,
                                        self.bright_field_center_px)
-                if self.scan_region is not None and isinstance(source, Dataset4dstemGPU):
+                if self.scan_region is not None and isinstance(source, Dataset4dstem):
                     row_start, row_stop, col_start, col_stop = self.scan_region
                     image = image[row_start:row_stop, col_start:col_stop]
             self._dark_field = image

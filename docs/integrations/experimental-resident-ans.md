@@ -44,7 +44,7 @@ from quantem.gpu import detector, io
 # resident: an encoded acquisition from io.load, native uint8/uint16 counts,
 # (scan_row, scan_col, detector_row, detector_col)
 io.save("acquisition.qem", resident)
-with io.load("acquisition.qem", backend="cuda", device=0) as loaded:
+with io.load("acquisition.qem", device=0) as loaded:
     session = detector.prepare(loaded)
     pattern = session.frame(0, output="native")
     image = session.masked_sum_exact(binary_detector_mask, output="native")
@@ -63,7 +63,7 @@ as one detector session without dense stacking:
 ```python
 from quantem.gpu import detector, io
 
-loaded = io.load(paths, backend="mps", stack=False)
+loaded = io.load(paths, device="mps", stack=False)
 session = detector.prepare(loaded)
 patterns = session.frame(scan_row * scan_columns + scan_column)
 images = session.masked_sums_exact(masks)  # (mask, acquisition, scan_row, scan_column)
@@ -73,7 +73,7 @@ All files must declare the same complete scan and detector geometry. The series
 adapter runs each query on each acquisition in turn and stacks the results along
 the acquisition axis, so every value equals the result of preparing that
 acquisition alone; it returns only the requested point patterns or detector
-products. Each `Dataset4dstemGPU` owner remains caller-owned and must be closed
+products. Each `Dataset4dstem` owner remains caller-owned and must be closed
 after the session is finished. This is the supported
 multi-file ANS API, not a claim that arbitrary HDF5 folders are encoded as ANS
 automatically.

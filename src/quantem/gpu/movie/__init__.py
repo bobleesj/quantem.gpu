@@ -6,7 +6,7 @@ The public API is intentionally small:
 
 ``data`` may be one stack with shape ``(frame, row, col)``, several stacks as
 ``(movie, frame, row, col)``, a list of stacks, or a list of pre-rendered PIL
-frames from a widget method. ``backend="auto"`` uses CUDA MP4 when available,
+frames from a widget method. ``device="auto"`` uses CUDA MP4 when available,
 then Apple Metal/MPS when available; otherwise it prints one line saying why and
 uses the portable CPU writer, whose frames differ from the GPU writers'.
 """

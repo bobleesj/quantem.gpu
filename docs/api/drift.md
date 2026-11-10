@@ -57,7 +57,7 @@ import numpy as np
 from quantem.gpu.drift import simulate_drift, simulate_feedback
 
 images, displacement_nm = simulate_drift(
-    reference, sampling_A=(0.2, 0.2), num_scans=11, step_nm=(0.02, -0.015),
+    reference, sampling_A=(0.2, 0.2), scans=11, step_nm=(0.02, -0.015),
 )
 observed, feedback = simulate_feedback(
     images, sampling_A=(0.2, 0.2), image_from_piezo=np.eye(2),

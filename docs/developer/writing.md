@@ -55,7 +55,7 @@ Start with the current short workflow: `io.load(path)`, array indexing,
 first, then pixel-radius and center overrides. Keep `detector.prepare` in
 advanced integration examples that need its exact/native output contract.
 
-Use `Dataset4dstemGPU` for the acquisition handle. Describe what returns a
+Use `Dataset4dstem` for the acquisition handle. Describe what returns a
 Torch tensor and what returns a NumPy product. Show `.sampling`, `.units`,
 `.origin` and `.metadata`; missing physical calibration stays explicit.
 

@@ -205,7 +205,7 @@ and native Metal use the same definition.
 ## Inputs and outputs
 
 `DirectPtycho.open(path, ...)` loads a supported detector source. `DirectPtycho(data, ...)`
-accepts an existing `Dataset4dstemGPU` or supported array. Prefer loading once
+accepts an existing `Dataset4dstem` or supported array. Prefer loading once
 and inspecting the acquisition before constructing the algorithm:
 
 ```python
@@ -300,8 +300,8 @@ the two 180-degree branches records them as `rotation_branches` (a
 `RotationBranches`); `run()` keeps it on its result whenever it applies
 that fit's coefficients, so `report()` shows the suggested rotation and
 `result.show("rotation")` draws the evidence. Saved results (`save_dir`) are
-`quantem.ssb-result/13` records; a record of another version is computed again
-(`scripts/rewrite_saved_records.py` carries a `/12` folder over once). A record
+`quantem.ssb-result/14` records; a record of another version is computed again
+(`scripts/rewrite_saved_records.py` carries a `/12` or `/13` folder over once). A record
 holds no absolute path: it names its source by file name (and its path
 relative to the results folder when the data lives under it), and it is reused
 when the acquisition's portable identity matches
@@ -362,7 +362,7 @@ scratch, FFT workspace and the full output arrays before reconstruction.
 ```python
 from quantem.gpu import DirectPtycho, io
 
-with io.load("acquisition.qem", backend="cuda") as data:
+with io.load("acquisition.qem", device="cuda") as data:
     with DirectPtycho(
         data,
         voltage_kV=300,

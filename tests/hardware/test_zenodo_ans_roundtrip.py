@@ -82,7 +82,7 @@ def test_original_ans_qem_full_value_parity(
         ) as directory:
             saved = Path(directory) / "copy.qem"
             started = time.perf_counter()
-            with io.load(path, backend=backend, verbose=False) as loaded:
+            with io.load(path, device=backend, verbose=False) as loaded:
                 record_property("load_seconds", time.perf_counter() - started)
                 assert loaded.representation.value == "encoded"
                 assert loaded.metadata["backend"] == backend
@@ -127,7 +127,7 @@ def test_original_ans_qem_full_value_parity(
             validation = validate_qem(saved)
             assert validation["integrity"] == validation["codec_layout"] == "verified"
             record_property("qem_bytes", saved.stat().st_size)
-            with io.load(saved, backend=backend, verbose=False) as restored:
+            with io.load(saved, device=backend, verbose=False) as restored:
                 assert restored.representation.value == "encoded"
                 assert restored.metadata["backend"] == backend
                 source_metadata = restored.metadata["scientific_metadata"][

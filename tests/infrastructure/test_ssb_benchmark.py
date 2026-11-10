@@ -54,7 +54,7 @@ def test_cli_records_portable_report_and_scalar_calibration(tmp_path, monkeypatc
             [
                 "benchmark-ssb",
                 "scan.qem",
-                "--out",
+                "--output",
                 str(output),
                 "--runs",
                 "2",

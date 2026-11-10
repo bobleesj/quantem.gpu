@@ -640,7 +640,7 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
 
         differing = compared = 0
         step = min(512, max(1, (32 << 20) // (pixels * max(2, np.dtype(header["dtype"]).itemsize))))
-        with load(qem, backend=backend, representation="encoded", verbose=False) as saved:
+        with load(qem, device=backend, representation="encoded", verbose=False) as saved:
             # Compare stored values, including flagged pixels, using bounded
             # raw decode. Detector-product masking is a separate operation.
             if isinstance(saved.data, MPSStreamedCounts):
@@ -820,7 +820,7 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
                 stack.callback(stop.set)
                 fingerprints = workers.submit(_source_files, paths, stop=stop)
             acquisition = stack.enter_context(load(
-                master, backend=backend, representation="encoded", verbose=False,
+                master, device=backend, representation="encoded", verbose=False,
                 hot_pixel_correction=hot_pixel_correction,
             ))
             result.hot_pixel_correction = dict(acquisition.metadata.get("hot_pixel_correction", {}))

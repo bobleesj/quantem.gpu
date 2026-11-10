@@ -147,7 +147,7 @@ io.save("example.qem", counts, backend="cpu", metadata={
     "source_metadata": {"data_origin": "synthetic example"},
 })
 
-with io.load("example.qem", backend="cpu") as acquisition:
+with io.load("example.qem", device="cpu") as acquisition:
     np.testing.assert_array_equal(acquisition.data, counts)
     print(acquisition.metadata["scientific_metadata"])
 ```
@@ -194,7 +194,7 @@ needed to decode the saved measurements.
 ### Export measurements again
 
 ```python
-with io.load("example.qem", backend="cpu") as acquisition:
+with io.load("example.qem", device="cpu") as acquisition:
     np.save("restored.npy", acquisition.data)
 ```
 

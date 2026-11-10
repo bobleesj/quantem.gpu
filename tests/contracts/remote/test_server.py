@@ -123,7 +123,7 @@ def _resident(
     """Build a resident entry whose recorded files match ``path`` on disk."""
     return ResidentAcquisition(
         key=str(path),
-        gpu=gpu,
+        device=gpu,
         loaded=_Closable(),
         session=_Closable() if session is None else session,
         resident_bytes=resident_bytes,
@@ -254,8 +254,8 @@ def test_multi_gpu_cache_places_whole_datasets_and_reuses_hits(tmp_path, monkeyp
     second_entry = service.residency.entry(second)
     hit_entry = service.residency.entry(first)
 
-    assert first_entry.gpu == 0
-    assert second_entry.gpu == 1
+    assert first_entry.device == 0
+    assert second_entry.device == 1
     assert hit_entry is first_entry
     assert first_entry.key != second_entry.key
     assert loads == [(first.name, 0), (second.name, 1)]
@@ -348,7 +348,7 @@ def test_multi_gpu_lru_evicts_only_the_selected_device(tmp_path, monkeypatch):
 
     entries = [service.residency.entry(path) for path in files]
 
-    assert [entry.gpu for entry in entries] == [0, 1, 0]
+    assert [entry.device for entry in entries] == [0, 1, 0]
     assert entries[0].key not in service.residency._entries
     assert entries[1].key in service.residency._entries
     assert entries[2].key in service.residency._entries
@@ -370,8 +370,8 @@ def test_multi_gpu_cache_preserves_the_active_dataset(tmp_path, monkeypatch):
     assert first.key in service.residency._entries
     assert second.key not in service.residency._entries
     assert third.key in service.residency._entries
-    assert service.residency._entries[first.key].gpu == 0
-    assert service.residency._entries[third.key].gpu == 1
+    assert service.residency._entries[first.key].device == 0
+    assert service.residency._entries[third.key].device == 1
 
 
 @requires_cuda
@@ -1157,13 +1157,13 @@ def test_server_source_has_no_quantem_live_dependency():
         assert "quantem.live" not in source.read_text(), source.name
 
 
-def test_cli_rejects_negative_gpu_before_launching():
-    with pytest.raises(SystemExit, match="--gpu must be zero or greater"):
+def test_cli_rejects_a_negative_device_before_launching():
+    with pytest.raises(SystemExit, match="--device must be zero or greater"):
         main(
             [
                 "serve",
                 "/data",
-                "--gpu",
+                "--device",
                 "-1",
                 "--implementation-revision",
                 "test",
@@ -1171,13 +1171,13 @@ def test_cli_rejects_negative_gpu_before_launching():
         )
 
 
-def test_cli_rejects_invalid_gpu_pool_before_launching():
+def test_cli_rejects_an_invalid_device_pool_before_launching():
     with pytest.raises(SystemExit, match="comma-separated CUDA indices"):
         main(
             [
                 "serve",
                 "/data",
-                "--gpus",
+                "--devices",
                 "0,nope",
                 "--implementation-revision",
                 "test",
@@ -1193,7 +1193,7 @@ def test_cli_serve_help_says_the_default_port_may_be_taken(capsys):
 
 
 def test_cli_serves_without_an_explicit_implementation_revision():
-    arguments = _parser().parse_args(["serve", "/data", "--gpus", "auto", "--port", "8780"])
+    arguments = _parser().parse_args(["serve", "/data", "--devices", "auto", "--port", "8780"])
 
     assert arguments.implementation_revision == __version__
     assert _parser().parse_args(

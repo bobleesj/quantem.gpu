@@ -9,7 +9,7 @@ import pytest
 def test_io_exports_only_scientist_workflows() -> None:
     import quantem.gpu as gpu
 
-    assert gpu.io.__all__ == ["DataRepresentation", "Dataset4dstemGPU", "PairedLoader", "discover", "load", "newest", "report", "save"]
+    assert gpu.io.__all__ == ["DataRepresentation", "Dataset4dstem", "PairedLoader", "discover", "load", "newest", "report", "save"]
     assert all(callable(getattr(gpu.io, name)) for name in gpu.io.__all__)
     load_parameters = python_inspect.signature(gpu.io.load).parameters
     assert all(

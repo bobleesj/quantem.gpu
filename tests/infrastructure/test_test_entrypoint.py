@@ -49,8 +49,8 @@ def test_runner_tests_checkout_with_stale_installed_gpu(tmp_path):
         "def test_checkout():\n"
         "    from pathlib import Path\n"
         "    import quantem.gpu\n"
-        "    from quantem.gpu.io.dataset import Dataset4dstemGPU\n"
-        "    assert quantem.gpu.io.Dataset4dstemGPU is Dataset4dstemGPU\n"
+        "    from quantem.gpu.io.dataset import Dataset4dstem\n"
+        "    assert quantem.gpu.io.Dataset4dstem is Dataset4dstem\n"
         f"    assert Path(quantem.gpu.__file__).resolve().is_relative_to({str(ROOT / 'src')!r})\n"
     )
     result = subprocess.run(

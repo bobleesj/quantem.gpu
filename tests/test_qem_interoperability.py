@@ -43,7 +43,7 @@ def test_counts_and_metadata_across_writers(name, tmp_path):
     expected = np.load(REFERENCES / f"{name}.npy")
     manifest = json.loads((REFERENCES / "manifest.json").read_text())
     entry = next(item for item in manifest["entries"] if item["name"] == name)
-    original = io.load(REFERENCES / f"{name}.qem", backend=BACKEND, verbose=False)
+    original = io.load(REFERENCES / f"{name}.qem", device=BACKEND, verbose=False)
     try:
         assert original.metadata["backend"] == BACKEND
         np.testing.assert_array_equal(_counts(original.data), expected)
@@ -57,7 +57,7 @@ def test_counts_and_metadata_across_writers(name, tmp_path):
     moved.mkdir()
     saved = saved.rename(moved / saved.name)
     assert validate_qem(saved)["integrity"] == "verified"
-    restored = io.load(saved, backend=BACKEND, verbose=False)
+    restored = io.load(saved, device=BACKEND, verbose=False)
     try:
         np.testing.assert_array_equal(_counts(restored.data), expected)
         assert restored.metadata["scientific_metadata"] == entry["scientific_metadata"]

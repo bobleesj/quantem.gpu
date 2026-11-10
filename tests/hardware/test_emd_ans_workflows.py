@@ -54,7 +54,7 @@ def test_emd_calibration_and_multiple_acquisitions(tmp_path, metadata_location):
     info = io.inspect(original, dataset_path=selected)
     assert info.ready and info.scan_shape == (3, 5)
     with io.load(
-        original, dataset_path=selected, backend=backend, verbose=False
+        original, dataset_path=selected, device=backend, verbose=False
     ) as loaded:
         assert loaded.representation.value == "encoded"
         np.testing.assert_array_equal(
@@ -62,7 +62,7 @@ def test_emd_calibration_and_multiple_acquisitions(tmp_path, metadata_location):
         )
         io.save(saved, loaded)
     assert validate_qem(saved)["integrity"] == "verified"
-    with io.load(saved, backend=backend, verbose=False) as loaded:
+    with io.load(saved, device=backend, verbose=False) as loaded:
         metadata = loaded.metadata
         source = metadata["scientific_metadata"]["source_metadata"]
         assert source["/experiment/acquisition/dim1"] == [0, 0.2]

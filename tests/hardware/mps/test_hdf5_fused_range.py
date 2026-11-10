@@ -30,7 +30,7 @@ def test_range_flag_preserves_late_and_constant_counts(tmp_path, maximum, batch)
     master = _write_bslz4_master(tmp_path, "fused-range", values, pixel_mask=mask)
     saved = tmp_path / "saved.qem"
     expected = values.reshape(128, 256, 4, 8)
-    with io.load(master, backend="mps", scan_shape=(128, 256),
+    with io.load(master, device="mps", scan_shape=(128, 256),
                  hot_pixel_correction="none", verbose=False) as loaded:
         assert loaded.dtype == np.dtype("uint8" if maximum <= 255 else "uint16")
         assert loaded.metadata["source_dtype"] == "uint16"
@@ -40,12 +40,12 @@ def test_range_flag_preserves_late_and_constant_counts(tmp_path, maximum, batch)
         np.testing.assert_array_equal(_decoded(loaded.data), expected)
         io.save(saved, loaded)
     assert loaded.data.is_released and not loaded.data.chunks
-    with io.load(saved, backend="mps", verbose=False) as reopened:
+    with io.load(saved, device="mps", verbose=False) as reopened:
         np.testing.assert_array_equal(_decoded(reopened.data), expected)
     # A new owner starts with a clear flag after a preceding high-count owner.
     values.fill(255)
     low = _write_bslz4_master(tmp_path, "fresh-low", values)
-    with io.load(low, backend="mps", scan_shape=(128, 256),
+    with io.load(low, device="mps", scan_shape=(128, 256),
                  hot_pixel_correction="none", verbose=False) as fresh:
         assert fresh.dtype == np.dtype("uint8")
         assert fresh.data._encoding_exceeds_uint8 is False

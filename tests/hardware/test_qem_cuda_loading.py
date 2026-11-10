@@ -27,7 +27,7 @@ def acquisition(tmp_path, monkeypatch, request):
     original = tmp_path / "original.npy"
     saved = tmp_path / "acquisition.qem"
     np.save(original, values)
-    with io.load(original, backend="cuda", verbose=False) as source:
+    with io.load(original, device="cuda", verbose=False) as source:
         io.save(saved, source)
     header, start = snapshot.read_header(saved)
     if block_bytes == 8192:
@@ -53,7 +53,7 @@ def test_parallel_restore_reuses_slots_without_changing_counts(
     mask = np.zeros(values.shape[-2:], dtype=bool)
     mask[::2, ::2] = True
     for _ in range(3):
-        with io.load(path, backend="cuda", verbose=False) as loaded:
+        with io.load(path, device="cuda", verbose=False) as loaded:
             actual = loaded.data.decode_scan_range_device(0, 1024).get()
             np.testing.assert_array_equal(actual.reshape(values.shape), values)
             np.testing.assert_array_equal(
@@ -95,12 +95,12 @@ def test_corruption_releases_resident_and_allows_retry(
 
     monkeypatch.setattr(qem.StreamedCounts, "release", release)
     with pytest.raises(ValueError, match=f"checksum mismatch in block {block}"):
-        io.load(path, backend="cuda", verbose=False)
+        io.load(path, device="cuda", verbose=False)
     assert len(released) == 1
     assert released[0].is_released and not released[0].chunks
     with path.open("r+b") as handle:
         handle.seek(offset)
         handle.write(original)
-    with io.load(path, backend="cuda", verbose=False) as loaded:
+    with io.load(path, device="cuda", verbose=False) as loaded:
         actual = loaded.data.decode_scan_range_device(0, 1024).get()
         np.testing.assert_array_equal(actual.reshape(values.shape), values)

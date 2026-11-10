@@ -6,7 +6,7 @@ The examples use one public Python API on supported MPS and CUDA paths.
 
 | Task | Entry point | Returns | Details |
 |---|---|---|---|
-| Load and select measurements | `io.load`, array indexing | `Dataset4dstemGPU`; selections are GPU Torch tensors | [I/O](io.md) |
+| Load and select measurements | `io.load`, array indexing | `Dataset4dstem`; selections are GPU Torch tensors | [I/O](io.md) |
 | Save or report acquisition metadata | `io.save`, `io.report` | Saved acquisition or metadata table | [Save and share](qem-python.md) |
 | Mean diffraction, BF, ADF, DF | `detector.mean`, `bf`, `adf`, `df` | Reduced NumPy images | [Detectors](images_dpc.md) |
 | CoM and integrated DPC | `dpc.run` | `DPCResult` | [DPC](images_dpc.md) |

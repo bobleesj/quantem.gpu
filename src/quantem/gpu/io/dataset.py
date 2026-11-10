@@ -60,7 +60,7 @@ class Calibration:
         "bright_field_edge_radius_px": ("px", False),
     }
 
-    def __init__(self, dataset: "Dataset4dstemGPU") -> None:
+    def __init__(self, dataset: "Dataset4dstem") -> None:
         object.__setattr__(self, "_dataset", dataset)
 
     def __getattr__(self, name: str):
@@ -168,7 +168,7 @@ class _Metadata(dict):
 
 
 @dataclass(eq=False, frozen=True, slots=True, weakref_slot=True)
-class Dataset4dstemGPU:
+class Dataset4dstem:
     """Loaded acquisition with metadata and GPU tensor indexing.
 
     Owns the resident storage and decoder. Selecting scan/detector regions
@@ -253,9 +253,9 @@ class Dataset4dstemGPU:
     @classmethod
     def from_blocks(
         cls, source, *, dtype: str = "float32",
-        device: str | torch.device | None = None, save_to: str | Path | None = None,
+        device: str | torch.device | None = None, path: str | Path | None = None,
         verbose: bool = False,
-    ) -> "Dataset4dstemGPU":
+    ) -> "Dataset4dstem":
         """Store ordered scientific results without a complete decoded copy.
 
         Algorithms can construct an output through their supplied dataset's
@@ -272,14 +272,14 @@ class Dataset4dstemGPU:
             explicitly accepts calibrated rounding with a precision report.
         device : str or torch.device, optional
             Destination device. Defaults to ``source.device``.
-        save_to : str or pathlib.Path, optional
-            Write bounded blocks to HDF5 and reopen the saved acquisition.
+        path : str or pathlib.Path, optional
+            Write bounded blocks to this HDF5 file and reopen the saved acquisition.
         verbose : bool
             Show frame progress and finalization while writing.
 
         Returns
         -------
-        Dataset4dstemGPU
+        Dataset4dstem
             Encoded result on the chosen device.
 
         Examples
@@ -290,11 +290,11 @@ class Dataset4dstemGPU:
         from quantem.gpu.io.save import save
 
         device = str(source.device if device is None else device)
-        if save_to is None:
+        if path is None:
             return load(source, dtype=dtype, device=device, verbose=False)
-        save(save_to, source, dtype=dtype, backend=device.split(":")[0], verbose=verbose)
+        save(path, source, dtype=dtype, backend=device.split(":")[0], verbose=verbose)
         return load(
-            save_to, dtype="native" if dtype == "float32" else dtype,
+            path, dtype="native" if dtype == "float32" else dtype,
             device=device, verbose=False,
         )
 
@@ -658,7 +658,7 @@ class Dataset4dstemGPU:
 
         Examples
         --------
-        >>> loaded = load("scan-lossless.h5", backend="mps")
+        >>> loaded = load("scan-lossless.h5", device="mps")
         >>> loaded.close()
         """
         # Encoded residents and callers' own owners name it release; plain arrays
@@ -797,7 +797,7 @@ class Dataset4dstemGPU:
 def resident_metadata(shape, dtype, resident_bytes: int, *, backend: str, representation: str = "encoded") -> dict:
     """Return the metadata fields every resident loader records about what it holds.
 
-    ``Dataset4dstemGPU`` answers ``shape``, ``dtype`` and ``resident_bytes``
+    ``Dataset4dstem`` answers ``shape``, ``dtype`` and ``resident_bytes``
     from these fields without decoding, so every loading route must report
     them with the same keys and meaning. A complete acquisition is held: the
     working shape is the source shape, without binning or cropping.

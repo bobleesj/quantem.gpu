@@ -117,13 +117,13 @@ def _output_parity(
     """Check the loaded values against the expected hash, dtype and shape.
 
     ``acquisition`` is the loaded result that owns ``data``. An encoded
-    ``Dataset4dstemGPU`` has no host array, so its logical pixels are hashed
+    ``Dataset4dstem`` has no host array, so its logical pixels are hashed
     through bounded reads of the acquisition.
     """
-    from quantem.gpu.io.dataset import Dataset4dstemGPU
+    from quantem.gpu.io.dataset import Dataset4dstem
 
     description = _array_description(data)
-    if isinstance(acquisition, Dataset4dstemGPU):
+    if isinstance(acquisition, Dataset4dstem):
         # The encoded payload may be narrower than native-dtype public reads.
         description.update(
             shape=list(acquisition.shape),
@@ -135,7 +135,7 @@ def _output_parity(
     if args.expected_output_sha256 is not None or args.require_full_output_parity:
         t0 = time.perf_counter()
         encoded = (
-            isinstance(acquisition, Dataset4dstemGPU)
+            isinstance(acquisition, Dataset4dstem)
             and acquisition.representation != "dense"
         )
         output_sha256 = _resident_sha256(acquisition) if encoded else _array_sha256(data)

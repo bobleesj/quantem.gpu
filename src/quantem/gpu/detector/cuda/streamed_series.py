@@ -8,7 +8,7 @@ import numpy as np
 
 from quantem.gpu.detector.cuda.mask_plan import CudaMaskPlanner
 from quantem.gpu.device.cuda_runtime import cp
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.resident.cuda.counts import StreamedCounts, field_count, kernels
 from quantem.gpu.resident.queries import DetectorQueries, weight_digits
 
@@ -53,7 +53,7 @@ class StreamedSeriesCompute(DetectorQueries):
     def __init__(self, acquisitions):
         self.owners = tuple(acquisitions)
         sources = [
-            item.data if isinstance(item, Dataset4dstemGPU) else item
+            item.data if isinstance(item, Dataset4dstem) else item
             for item in acquisitions
         ]
         self.index_owners = tuple(sources)

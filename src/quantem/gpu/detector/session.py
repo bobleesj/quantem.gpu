@@ -21,7 +21,7 @@ from quantem.gpu.detector.cuda.paired_series import PairedSeriesCompute
 from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
 from quantem.gpu.detector.mps.dense import MetalRawBackend
 from quantem.gpu.detector.tensors import ArrayBackend, TorchBackend
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.cuda.paired import PairedCounts
@@ -381,7 +381,7 @@ def resolve_backend(data, *, immutable: bool = False):
     if getattr(data, "_bounded_detector_source", False):
         return BoundedDetectorCompute(data, DetectorSession(data._detector_source, immutable=immutable))
     if isinstance(data, list):
-        sources = [item.data if isinstance(item, Dataset4dstemGPU) else item for item in data]
+        sources = [item.data if isinstance(item, Dataset4dstem) else item for item in data]
         if sources and all(isinstance(source, MPSStreamedCounts) for source in sources):
             return CountSeriesCompute(sources)
         if sources and all(isinstance(source, PairedCounts) for source in sources):
@@ -416,12 +416,12 @@ def resolve_backend(data, *, immutable: bool = False):
 
 
 def _unwrap_core_4dstem(data):
-    """Return the numeric data of a Dataset4dstemGPU or a quantem.core Dataset4dstem.
+    """Return the numeric data of a quantem.gpu or a quantem.core Dataset4dstem.
 
     quantem.core is optional, so its dataset is recognized by the attributes
     that hold its array rather than by importing the class.
     """
-    if isinstance(data, Dataset4dstemGPU):
+    if isinstance(data, Dataset4dstem):
         return data.data
     if isinstance(data, (np.ndarray, torch.Tensor)) or _is_loaded_instance(data, "cupy", "ndarray"):
         return data

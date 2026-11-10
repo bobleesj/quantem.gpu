@@ -33,7 +33,7 @@ def _counts():
 
 def _resident(counts, valid):
     from quantem.gpu.device.metal_runtime import shared_array
-    from quantem.gpu.io.dataset import Dataset4dstemGPU
+    from quantem.gpu.io.dataset import Dataset4dstem
     from quantem.gpu.resident.mps.counts import MPSStreamedCounts
     from quantem.gpu.resident.mps.precision import upload
 
@@ -43,7 +43,7 @@ def _resident(counts, valid):
         staged = upload(np.ascontiguousarray(flat[first:first + 512]))
         source.append(shared_array(staged._mtl, staged.dtype, staged.shape))
         staged.release()
-    return Dataset4dstemGPU(source, {"working_shape": counts.shape, "working_dtype": "uint16",
+    return Dataset4dstem(source, {"working_shape": counts.shape, "working_dtype": "uint16",
                                      "representation": "encoded"})
 
 

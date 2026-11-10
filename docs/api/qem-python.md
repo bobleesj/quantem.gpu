@@ -12,7 +12,7 @@ Git revision.
 Keep the ARINA master beside all its detector files, then run:
 
 ```bash
-quantem-gpu convert scan_master.h5 --out ./qem
+quantem-gpu convert scan_master.h5 --save-dir ./qem
 ```
 
 This writes `qem/scan.qem` with QEM checksums and disk synchronization, and keeps the
@@ -24,13 +24,13 @@ Full source comparison and source-file SHA-256 hashing are **off by default**.
 Request either check independently when needed, or both for validation:
 
 ```bash
-quantem-gpu convert scan_master.h5 --out ./qem --verify --source-hashes
+quantem-gpu convert scan_master.h5 --save-dir ./qem --verify --source-hashes
 ```
 
 No session file is required. Supply any missing calibration directly:
 
 ```bash
-quantem-gpu convert scan_master.h5 --out ./qem \
+quantem-gpu convert scan_master.h5 --save-dir ./qem \
   --voltage-kv 300 --semiangle-mrad 30 \
   --scan-sampling-a 0.5 --detector-sampling-mrad 0.8
 ```
@@ -53,7 +53,7 @@ Conversion is unfiltered by default. To repair only pixels identified by the
 detector's stored mask:
 
 ```bash
-quantem-gpu convert scan_master.h5 --out ./qem --hot-pixel-correction median
+quantem-gpu convert scan_master.h5 --save-dir ./qem --hot-pixel-correction median
 ```
 
 Median correction uses valid neighbors in a 3 × 3 detector neighborhood, excludes

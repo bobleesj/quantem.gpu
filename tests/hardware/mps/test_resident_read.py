@@ -21,7 +21,7 @@ def test_encoded_regions_remain_exact_after_repeated_reads_and_close(tmp_path, m
     expected_t = ((indices_t * 73 + 19) % modulus).to(torch.uint16)
     path = tmp_path / "counts_master.h5"
     io.save(path, expected_t, backend="mps", dtype="uint16", verbose=False, wait=True)
-    with io.load(path, backend="mps", representation="encoded", dtype="native", verbose=False) as source:
+    with io.load(path, device="mps", representation="encoded", dtype="native", verbose=False) as source:
         retained = []
         regions = [(0, 2, 0, 33), (7, 10, 0, 33), (30, 33, 28, 33), (32, 33, 32, 33)]
         for _ in range(3):

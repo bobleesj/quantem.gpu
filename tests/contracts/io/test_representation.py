@@ -1,6 +1,6 @@
 """Scientist-facing dense and encoded loading workflows."""
 
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 
 from importlib import import_module
 
@@ -22,7 +22,7 @@ def test_original_acquisition_defaults_to_ans(monkeypatch, tmp_path, backend) ->
     with h5py.File(source, "w") as handle:
         handle.create_dataset("data", data=np.zeros((2, 3, 4, 5), np.uint16))
     # what a loader returns: io.load reads its metadata before handing it on
-    expected = Dataset4dstemGPU(None, {})
+    expected = Dataset4dstem(None, {})
     calls = []
 
     def encoded(path, **options):
@@ -48,18 +48,18 @@ def test_dense_representation_is_explicit_and_reports_memory(monkeypatch) -> Non
         cpu,
         "load_reference",
         lambda *args, **kwargs: cpu.record_dense_representation(
-            Dataset4dstemGPU(values, {"backend": "cpu", "source_dtype": "uint16"})
+            Dataset4dstem(values, {"backend": "cpu", "source_dtype": "uint16"})
         ),
     )
 
     loaded = io.load(
         "ordinary-master.h5",
-        backend="cpu",
+        device="cpu",
         representation="dense",
         verbose=False,
     )
 
-    assert isinstance(loaded, io.Dataset4dstemGPU)
+    assert isinstance(loaded, io.Dataset4dstem)
     assert loaded.representation == io.DataRepresentation.DENSE
     assert loaded.shape == (2, 3, 4, 5)
     assert loaded.dtype == np.dtype("uint16")
@@ -80,7 +80,7 @@ def test_representation_values_do_not_encode_dtype() -> None:
 def test_narrowed_dense_result_does_not_claim_unproven_losslessness() -> None:
     cpu = import_module("quantem.gpu.io.hdf5.cpu")
     loaded = cpu.record_dense_representation(
-        Dataset4dstemGPU(
+        Dataset4dstem(
             np.asarray([255], dtype=np.uint8),
             {"source_dtype": "uint16", "backend": "cpu"},
         )
@@ -92,7 +92,7 @@ def test_narrowed_dense_result_does_not_claim_unproven_losslessness() -> None:
 def test_float64_result_does_not_claim_exact_uint64_counts() -> None:
     cpu = import_module("quantem.gpu.io.hdf5.cpu")
     loaded = cpu.record_dense_representation(
-        Dataset4dstemGPU(
+        Dataset4dstem(
             np.asarray([2**60 + 1], dtype=np.float64),
             {"source_dtype": "uint64", "backend": "cpu"},
         )
@@ -110,7 +110,7 @@ def test_gpu_acquisitions_reject_expansion_before_opening(
     backends = import_module("quantem.gpu.device.select")
     monkeypatch.setattr(backends, "resolve_backend", lambda requested: backend)
     with pytest.raises(NotImplementedError, match="must remain ANS encoded"):
-        io.load(f"not-opened.{extension}", backend=backend, representation=representation)
+        io.load(f"not-opened.{extension}", device=backend, representation=representation)
 
 
 def test_dense_cpu_load_and_inspect_preserve_real_hdf5_counts(tmp_path) -> None:
@@ -130,7 +130,7 @@ def test_dense_cpu_load_and_inspect_preserve_real_hdf5_counts(tmp_path) -> None:
     report = io.inspect(source, scan_shape=(2, 3))
     assert report.ready
     assert report.metadata["representation"] == "dense"
-    loaded = io.load(source, backend="cpu", representation="dense",
+    loaded = io.load(source, device="cpu", representation="dense",
                      scan_shape=(2, 3), dtype="native", verbose=False)
     np.testing.assert_array_equal(loaded.data, counts.reshape(2, 3, 4, 5))
     assert loaded.dtype == np.dtype("uint16")

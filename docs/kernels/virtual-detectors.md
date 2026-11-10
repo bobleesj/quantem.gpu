@@ -54,8 +54,8 @@ the automatic fit. Reopening an acquisition gets a fresh fit. Array selections
 and mutable array inputs are fitted independently, so changes to measurements
 or detector coordinates cannot reuse an acquisition's old geometry.
 
-For diagnostics, `detector.fit_probe(detector.mean(data))` returns the fitted
-center and radius. It estimates disk geometry from a thresholded mean
+For diagnostics, `detector.bright_field_disk(detector.mean(data))` returns the fitted
+center and radii. It estimates disk geometry from a thresholded mean
 pattern, not probe phase or aberrations. The cached geometry is private runtime
 state; it does not modify acquisition metadata or enter saved QEM files.
 

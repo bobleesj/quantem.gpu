@@ -128,7 +128,7 @@ def test_unresolved_columns_leave_the_choice_to_the_phase_tail(estimate_180_degr
         checked = session.aberrations(search="primary", trials=40, verbose=False)
     branches = checked.rotation_branches
     assert branches.decided_by == "phase_tail" and checked.scan_detector_rotation_deg == 0.0
-    assert branches.num_columns == 0 and "no atomic columns located" in branches.summary
+    assert not branches.columns and "no atomic columns located" in branches.summary
     assert branches.branches[1].phase_skewness == pytest.approx(phase_skewness(checked.phase), abs=1e-6)
     assert branches.branches[0].phase_skewness < 0.0 < 1.0 < branches.branches[1].phase_skewness
     assert checked.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.15)

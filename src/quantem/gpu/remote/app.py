@@ -31,7 +31,7 @@ from quantem.gpu.remote.saved_ssb import SavedSSBResults
 def create_app(
     data_folder: str | os.PathLike[str],
     *,
-    gpus: Sequence[int] | str = (0,),
+    devices: Sequence[int] | str = (0,),
     implementation_revision: str = version("quantem.gpu"),
 ) -> FastAPI:
     """Create the loopback remote-viewer application.
@@ -44,7 +44,7 @@ def create_app(
     ----------
     data_folder : str or os.PathLike
         Root of the served acquisitions.
-    gpus : sequence of int or "auto"
+    devices : sequence of int or "auto"
         CUDA devices of the pool; ``"auto"`` uses every visible device.
     implementation_revision : str, optional
         quantem.gpu revision reported to clients; defaults to the installed
@@ -59,10 +59,10 @@ def create_app(
     Examples
     --------
     >>> import uvicorn
-    >>> app = create_app("/data", gpus="auto", implementation_revision=revision)
+    >>> app = create_app("/data", devices="auto", implementation_revision=revision)
     >>> uvicorn.run(app, host="127.0.0.1", port=8765)
     """
-    browse = BrowseService(data_folder, gpus=gpus)
+    browse = BrowseService(data_folder, devices=devices)
     saved_ssb = SavedSSBResults(Path(data_folder))
 
     @asynccontextmanager

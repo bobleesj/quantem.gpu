@@ -801,7 +801,7 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
     result = retained_metadata(metadata)
     if result.get("origin") is not None:
         # Preserve the origin's recorded units before resolving calibration.
-        # Dataset4dstemGPU converts these coordinates to the effective units.
+        # Dataset4dstem converts these coordinates to the effective units.
         # The step was converted to the stored unit when it was recorded and the origin was
         # kept as supplied: read with the stored unit, an origin in rad is 1000 times too small.
         detector_unit = metadata.get("detector_sampling_unit") or next(

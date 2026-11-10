@@ -34,7 +34,7 @@ def test_original_hdf5_default_ans_roundtrip(tmp_path, backend):
         )
         handle["entry/instrument/detector/detectorSpecific/ntrigger"] = 1024
         handle["entry/instrument/detector/count_time"] = 0.00005
-    with io.load(original, backend=backend, apply_mask=False, verbose=False) as loaded:
+    with io.load(original, device=backend, apply_mask=False, verbose=False) as loaded:
         assert loaded.representation.value == "encoded"
         assert loaded.metadata["backend"] == backend
         session = detector.prepare(loaded)
@@ -44,7 +44,7 @@ def test_original_hdf5_default_ans_roundtrip(tmp_path, backend):
             session.masked_sum(np.ones((8, 12), bool)), values.sum((2, 3))
         )
         io.save(saved, loaded)
-    with io.load(saved, backend=backend, verbose=False) as reopened:
+    with io.load(saved, device=backend, verbose=False) as reopened:
         assert reopened.representation.value == "encoded"
         np.testing.assert_array_equal(
             detector.prepare(reopened).frame(1023), values[-1, -1]
@@ -68,7 +68,7 @@ def test_release_rows_before_frees_rows_already_read(tmp_path, backend):
             chunks=(1, 4, 4),
             **hdf5plugin.Bitshuffle(nelems=0, cname="lz4"),
         )
-    with io.load(original, backend=backend, apply_mask=False, verbose=False) as loaded:
+    with io.load(original, device=backend, apply_mask=False, verbose=False) as loaded:
         loaded.release_rows_before(128)
         # whole stored chunks are freed, never a row at or below the requested one
         assert 0 < loaded.data.released_scans <= 128 * 256
@@ -98,7 +98,7 @@ def test_multiple_acquisitions_load_without_requesting_a_stack(tmp_path, backend
                     chunks=(1, 8, 12), **hdf5plugin.Bitshuffle(nelems=0, cname="lz4"),
                 )
                 handle["entry/instrument/detector/detectorSpecific/ntrigger"] = 1024
-    acquisitions = io.load(paths, backend=backend, verbose=False)
+    acquisitions = io.load(paths, device=backend, verbose=False)
     try:
         assert isinstance(acquisitions, list) and len(acquisitions) == 2
         for acquisition, original in zip(acquisitions, originals):
@@ -168,7 +168,7 @@ def test_default_array_ingestion_is_bounded_ans_only(
         return append(self, block, *args, **kwargs)
 
     monkeypatch.setattr(resident_type, "append", bounded_append)
-    with io.load(original, backend=backend, verbose=False) as loaded:
+    with io.load(original, device=backend, verbose=False) as loaded:
         assert loaded.representation.value == "encoded"
         assert loaded.metadata["backend"] == backend
         assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= limit
@@ -179,7 +179,7 @@ def test_default_array_ingestion_is_bounded_ans_only(
     assert len(transfers) > 1
     count = len(uploads)
     with pytest.raises(NotImplementedError, match="encoded|ANS"):
-        io.load(original, backend=backend, representation="dense", verbose=False)
+        io.load(original, device=backend, representation="dense", verbose=False)
     assert (
         len(uploads) == count
     ), "Unsupported residency must fail before uploading measurements."

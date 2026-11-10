@@ -36,7 +36,7 @@ def test_host_qem_save_reports_time_and_sizes(tmp_path, dtype):
     for label in ("Saved", "Save time", "Uncompressed array", "Lossless QEM", megabytes):
         assert label in text and label in html
     assert "<table" in html
-    with io.load(path, backend="cpu") as reopened:
+    with io.load(path, device="cpu") as reopened:
         assert reopened.data.tobytes() == values.tobytes()
 
 
@@ -61,12 +61,12 @@ def test_encoded_resident_save_reports_time_and_sizes(tmp_path, dtype):
     values = _measurements(dtype)
     np.save(tmp_path / "measurements.npy", values)
     path = tmp_path / "measurements.qem"
-    with io.load(tmp_path / "measurements.npy", backend=backend) as loaded:
+    with io.load(tmp_path / "measurements.npy", device=backend) as loaded:
         result = io.save(path, loaded)
     assert (result.complete, result.backend) == (True, backend)
     assert result.logical_bytes == values.nbytes
     assert result.file_bytes == path.stat().st_size
     assert "Lossless QEM" in repr(result)
-    with io.load(path, backend=backend) as reopened:
+    with io.load(path, device=backend) as reopened:
         restored = reopened.read().cpu().numpy()
     assert restored.dtype == values.dtype and restored.tobytes() == values.tobytes()

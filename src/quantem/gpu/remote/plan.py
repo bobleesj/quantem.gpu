@@ -52,8 +52,8 @@ class BrowsePlan:
         rows, cols = self.source_detector_shape
         return rows // self.detector_bin, cols // self.detector_bin
 
-    def positions(self, row: int, col: int, rows: int = 1, cols: int = 1) -> np.ndarray:
-        """Flat source scan indices binned into view rows ``[row, row + rows)`` and columns ``[col, col + cols)``."""
+    def positions(self, row: int, col: int, rows: int = 1, columns: int = 1) -> np.ndarray:
+        """Flat source scan indices binned into view rows ``[row, row + rows)`` and columns ``[col, col + columns)``."""
         row_start, row_stop, col_start, col_stop = self.region
         source_rows = np.arange(
             row_start + row * self.scan_bin,
@@ -61,7 +61,7 @@ class BrowsePlan:
         )
         source_cols = np.arange(
             col_start + col * self.scan_bin,
-            min(col_start + (col + cols) * self.scan_bin, col_stop),
+            min(col_start + (col + columns) * self.scan_bin, col_stop),
         )
         return (source_rows[:, None] * self.source_scan_shape[1] + source_cols).ravel()
 

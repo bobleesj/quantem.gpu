@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from quantem.gpu import geometry
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 
 
 def _scan_rotation_gold() -> tuple[np.ndarray, list[dict]]:
@@ -70,7 +70,7 @@ def _bilinear_reference(
 def test_rotate_scan_orients_a_loaded_90_degree_acquisition() -> None:
     raw, cases = _scan_rotation_gold()
     case = cases[0]
-    loaded = Dataset4dstemGPU(
+    loaded = Dataset4dstem(
         raw,
         {
             "scan_shape": raw.shape[:2],
@@ -203,13 +203,13 @@ def test_rotated_qem_preserves_shape_and_calibration(tmp_path):
     values = np.arange(2 * 3 * 4 * 4, dtype=np.uint16).reshape(2, 3, 4, 4)
     source_path, target_path = tmp_path / "source.qem", tmp_path / "rotated.qem"
     io.save(source_path, values, backend="cpu", metadata={"scan_sampling_A": [0.4, 0.6]})
-    with io.load(source_path, backend="cpu", representation="dense", verbose=False) as source:
+    with io.load(source_path, device="cpu", representation="dense", verbose=False) as source:
         original = deepcopy(source.metadata)
         rotated = geometry.rotate_scan(source, 90)
         io.save(target_path, rotated, backend="cpu")
         assert source.metadata["scientific_metadata"] == original["scientific_metadata"]
         np.testing.assert_array_equal(source.metadata["scan_sampling_A"], original["scan_sampling_A"])
-    with io.load(target_path, backend="cpu", representation="dense", verbose=False) as loaded:
+    with io.load(target_path, device="cpu", representation="dense", verbose=False) as loaded:
         np.testing.assert_array_equal(loaded.data, np.rot90(values, axes=(0, 1)))
         assert loaded.metadata["scan_sampling_A"] == pytest.approx([0.6, 0.4])
         assert [axis["size"] for axis in loaded.metadata["scientific_metadata"]["axes"]] == list(loaded.shape)
@@ -224,7 +224,7 @@ def test_rotate_scan_rotates_an_encoded_acquisition_exactly(tmp_path) -> None:
     cases = [(angle, shape, "auto", 0) for angle in (90, -90, 180) for shape in ("full", "same")]
     cases += [(30.0, "full", "nearest", 7), (-45.0, "same", "nearest", 0)]
     with io.load(
-        _write_master(tmp_path, counts), backend="cuda", scan_shape=(13, 21), verbose=False
+        _write_master(tmp_path, counts), device="cuda", scan_shape=(13, 21), verbose=False
     ) as loaded:
         for angle, output_shape, interpolation, fill_value in cases:
             options = {
@@ -250,7 +250,7 @@ def test_rotate_scan_rotates_an_encoded_acquisition_exactly(tmp_path) -> None:
         )
         io.save(tmp_path / "rotated.qem", rotated)
         rotated.close()
-        with io.load(tmp_path / "rotated.qem", backend="cuda", verbose=False) as reopened:
+        with io.load(tmp_path / "rotated.qem", device="cuda", verbose=False) as reopened:
             np.testing.assert_array_equal(reopened.read().cpu().numpy(), oriented)
             assert reopened.metadata["scan_rotation_history"][-1]["display_rotation_deg"] == -90.0
         np.testing.assert_array_equal(loaded.read().cpu().numpy(), counts)
@@ -262,7 +262,7 @@ def test_rotate_scan_never_interpolates_encoded_counts(tmp_path) -> None:
     _cuda()
     counts = np.ones((4, 6, 8, 8), np.uint16)
     with io.load(
-        _write_master(tmp_path, counts), backend="cuda", scan_shape=(4, 6), verbose=False
+        _write_master(tmp_path, counts), device="cuda", scan_shape=(4, 6), verbose=False
     ) as loaded:
         for interpolation in ("auto", "bilinear"):
             with pytest.raises(NotImplementedError, match="float32"):
@@ -281,7 +281,7 @@ def test_rotate_scan_reports_that_apple_gpus_cannot_rotate_encoded_data(tmp_path
     counts = np.ones((4, 6, 8, 8), np.uint16)
     with (
         io.load(
-            _write_master(tmp_path, counts), backend="mps", scan_shape=(4, 6), verbose=False
+            _write_master(tmp_path, counts), device="mps", scan_shape=(4, 6), verbose=False
         ) as loaded,
         pytest.raises(NotImplementedError, match=r"Apple GPU \(MPS\)"),
     ):

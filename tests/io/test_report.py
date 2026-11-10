@@ -31,7 +31,7 @@ def test_file_report_reads_headers_and_returns_selectable_columns(tmp_path, monk
 
 
 def test_loaded_report_preserves_metadata_and_rejects_file_selectors():
-    data = io.Dataset4dstemGPU(np.zeros((2, 3, 4, 4), dtype=np.uint16), {"voltage_kV": 300})
+    data = io.Dataset4dstem(np.zeros((2, 3, 4, 4), dtype=np.uint16), {"voltage_kV": 300})
     pd.testing.assert_frame_equal(io.report(data), data.metadata_table())
     assert io.report(data).loc["Accelerating voltage", "Value"] == 300
     for options in ({"scan_shape": (2, 3)}, {"dataset_path": "/measurements"}):

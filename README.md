@@ -86,7 +86,7 @@ data.origin    # first-pixel coordinates, where recorded
 data.metadata  # calibration, units, source and recorded corrections
 ```
 
-`io.load` returns a `Dataset4dstemGPU` acquisition handle owned by QuantEM.GPU.
+`io.load` returns a `Dataset4dstem` acquisition handle owned by QuantEM.GPU.
 It manages encoded storage and metadata without changing QuantEM's core data
 classes. Indexing decodes only the requested region into a PyTorch tensor.
 
@@ -161,14 +161,15 @@ scale. Outlines and shading only affect the figure.
 Continue with the loaded `data` above. The explicit fit here gives the plot
 its circle coordinates; passing those same values to both calculations keeps
 the outlines and images consistent. Ordinary BF/ADF calls still fit
-automatically. `fit_probe` estimates disk geometry, not probe phase or
+automatically. `bright_field_disk` measures disk geometry, not probe phase or
 aberrations.
 
 ```python
 from matplotlib.patches import Circle
 
 mean_pattern = detector.mean(data)
-center, radius = detector.fit_probe(mean_pattern)
+disk = detector.bright_field_disk(mean_pattern)
+center, radius = disk.bright_field_center_px, disk.bright_field_radius_px
 bf = detector.bf(data, bright_field_center_px=center, bright_field_radius_px=radius)
 adf = detector.adf(data, bright_field_center_px=center, bright_field_edge_radius_px=radius)
 
@@ -215,11 +216,11 @@ angles when convergence semi-angle calibration is available in `data.metadata`.
 
 ```python
 mean_pattern = detector.mean(data)
-center, radius = detector.fit_probe(mean_pattern)
+disk = detector.bright_field_disk(mean_pattern)
 show_2d(mean_pattern, norm="power_sqrt", cmap="inferno")
 ```
 
-`fit_probe` estimates the bright-field disk geometry, not probe phase or
+`bright_field_disk` measures the bright-field disk geometry, not probe phase or
 aberrations. This diagnostic step is optional for BF, ADF and DF images.
 
 </details>
@@ -326,7 +327,7 @@ It is an evolving format, not an established industry standard.
 
 ### What does a `.qem` file contain?
 
-Convert an ARINA acquisition with `quantem-gpu convert scan_master.h5 --out ./qem`.
+Convert an ARINA acquisition with `quantem-gpu convert scan_master.h5 --save-dir ./qem`.
 For a whole session with full verification, agents follow [`skills/h5-to-qem`](skills/h5-to-qem/SKILL.md).
 See [single-file conversion, manual calibration, and median correction](docs/api/qem-python.md#convert-one-hdf5-acquisition).
 

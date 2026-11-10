@@ -91,7 +91,7 @@ def test_prefetch_failure_releases_all_staging_and_allows_retry(
         monkeypatch.setattr(encoded.StreamedCounts, "append", fail_append)
     try:
         with pytest.raises((ValueError, RuntimeError)):
-            io.load(master, backend="cuda", hot_pixel_correction="none", verbose=False)
+            io.load(master, device="cuda", hot_pixel_correction="none", verbose=False)
     finally:
         if failure == "read":
             with chunk.open("r+b") as handle:
@@ -103,7 +103,7 @@ def test_prefetch_failure_releases_all_staging_and_allows_retry(
     assert active == [0]
     assert allocated == released
 
-    with io.load(master, backend="cuda", hot_pixel_correction="none", verbose=False) as loaded:
+    with io.load(master, device="cuda", hot_pixel_correction="none", verbose=False) as loaded:
         actual = loaded.data.decode_scan_range_device(0, 4096).get()
         np.testing.assert_array_equal(actual, values)
     assert allocated == released

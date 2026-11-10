@@ -33,10 +33,10 @@ def test_fp8_selection_is_refused_and_the_default_fill_has_nothing_to_change():
     """
     data = np.zeros((2, 2, 4, 4), np.uint8).view(FLOAT8_DTYPES["float8_e4m3fn"])
     with pytest.raises(ValueError, match="without conversion"):
-        io.load(data, scan_region=(0, 1, 0, 1), backend="cuda")
+        io.load(data, scan_region=(0, 1, 0, 1), device="cuda")
 
 
 def test_unknown_array_variant_is_rejected_before_upload():
     values = np.zeros((2, 2, 4, 4), ml_dtypes.float8_e4m3)
     with pytest.raises(NotImplementedError, match="supported variants"):
-        io.load(values, backend="cuda")
+        io.load(values, device="cuda")

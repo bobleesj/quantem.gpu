@@ -30,7 +30,7 @@ import numpy as np
 
 from quantem.gpu.detector.session import prepare
 from quantem.gpu.display._layout import panel_inches, resolve_columns, scalebar
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.io.representation import DataRepresentation
 
 if TYPE_CHECKING:
@@ -314,7 +314,6 @@ class BrightFieldDisk:
     def show(
         self, *, size: Literal["small", "medium", "large", "xlarge"] | None = None,
         cmap: str = "gray", save: str | Path | None = None,
-        figsize: tuple[float, float] | None = None,
     ):
         """The mean pattern on a log scale with the fitted disk edge and centre drawn on it.
 
@@ -330,9 +329,6 @@ class BrightFieldDisk:
             Colormap for the mean pattern, gray by default.
         save : str or pathlib.Path, optional
             Export the complete static figure, including the fitted disk.
-        figsize : tuple[float, float], optional
-            Advanced figure dimensions in inches, retained for compatibility.
-            Use either size or figsize, not both.
 
         Returns
         -------
@@ -347,11 +343,8 @@ class BrightFieldDisk:
         from matplotlib.patches import Ellipse
         from quantem.gpu.display._layout import panel_inches
 
-        if size is not None and figsize is not None:
-            raise ValueError("Use size='medium' or figsize=(width, height), not both.")
-        if figsize is None:
-            width = panel_inches("medium" if size is None else size)
-            figsize = (width, width * 4.6 / 5)
+        width = panel_inches("medium" if size is None else size)
+        figsize = (width, width * 4.6 / 5)
 
         rows, cols = self.mean_pattern.shape
         center_row, center_col = self.bright_field_center_px
@@ -573,7 +566,7 @@ def _probe(data, center=None, radius=None):
         return (float(center[0]), float(center[1])), float(radius)
     source = (
         data.data
-        if isinstance(data, Dataset4dstemGPU)
+        if isinstance(data, Dataset4dstem)
         and data.representation is DataRepresentation.ENCODED
         and not data.data.is_released
         else None
@@ -606,7 +599,7 @@ def _bound_px(data, angle_mrad: float | None, radius_px: float | None, edge_radi
         return default_px
     # Loaded data keeps calibration in metadata; quantem.core datasets, which this
     # package cannot import, carry either a metadata dict or a semiangle_mrad attribute.
-    metadata = (data.metadata or {}) if isinstance(data, Dataset4dstemGPU) else getattr(data, "metadata", None)
+    metadata = (data.metadata or {}) if isinstance(data, Dataset4dstem) else getattr(data, "metadata", None)
     if isinstance(metadata, dict):
         semiangle_mrad = metadata.get("semiangle_mrad")
     else:

@@ -36,7 +36,7 @@ such as the mean diffraction pattern has shape
 
 ## Python acquisition and calibration
 
-`io.load(path)` returns `Dataset4dstemGPU`, an acquisition handle for encoded
+`io.load(path)` returns `Dataset4dstem`, an acquisition handle for encoded
 GPU storage. It is independent of QuantEM's core dataset classes. Use ordinary
 indexing to decode the selected working region into a Torch tensor:
 

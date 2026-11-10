@@ -54,17 +54,17 @@ def grid_layout(
     height: int,
     width: int,
     *,
-    cols: int | None,
+    columns: int | None,
     gap: int,
     label_height: int,
     max_width: int | None,
 ) -> GridLayout:
-    """Lay ``panels`` movies of ``height`` x ``width`` pixels in rows of ``cols`` (default up to 3).
+    """Lay ``panels`` movies of ``height`` x ``width`` pixels in rows of ``columns`` (default up to 3).
 
     Each panel has a label row of ``label_height`` above it and ``gap`` pixels
     between panels; the whole grid scales down to ``max_width`` when wider.
     """
-    columns = min(panels, 3) if cols is None else max(1, int(cols))
+    columns = min(panels, 3) if columns is None else max(1, int(columns))
     rows = math.ceil(panels / columns)
     gap = max(0, int(gap))
     label_height = max(0, int(label_height))

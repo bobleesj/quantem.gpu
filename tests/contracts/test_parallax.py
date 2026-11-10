@@ -35,7 +35,7 @@ def test_parallax_reconstructs_encoded_acquisition_from_its_exact_counts(
     monkeypatch.setattr(workflow, "detect_bf_radius", record_detection)
     monkeypatch.setattr(workflow, "align_vbf_stack_multiscale_cp", record_alignment)
     with io.load(
-        _write_master(tmp_path, counts), backend="cuda",
+        _write_master(tmp_path, counts), device="cuda",
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         result = parallax.run(loaded, upsample=1)
@@ -73,7 +73,7 @@ def test_parallax_shifts_each_image_once_and_upsamples_on_the_finer_grid(tmp_pat
     disk = (rows - center[0]) ** 2 + (cols - center[1]) ** 2 <= radius**2
     stack = counts[:, :, disk].transpose(2, 0, 1).astype(np.float64)
     with io.load(
-        _write_master(tmp_path, counts), backend="cuda",
+        _write_master(tmp_path, counts), device="cuda",
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         results = {
@@ -106,7 +106,7 @@ def test_parallax_repeats_bit_identically(tmp_path) -> None:
 
     counts, center, radius = _synthetic_parallax_counts((24, 24), (32, 32), radius=6)
     with io.load(
-        _write_master(tmp_path, counts), backend="cuda",
+        _write_master(tmp_path, counts), device="cuda",
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         first, second = (
@@ -135,7 +135,7 @@ def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
         c10_nm=20.0, c12_nm=3.0, phi12=0.4, rotation_deg=20.0, det_sampling_mrad=1.0
     )
     with io.load(
-        _write_master(tmp_path, counts), backend="cuda",
+        _write_master(tmp_path, counts), device="cuda",
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         result = parallax.run(
@@ -212,7 +212,7 @@ def test_parallax_uses_a_fractional_radius_as_given_and_takes_samplings_as_pairs
     rows, cols = np.indices(counts.shape[2:])
     distance_squared = (rows - center[0]) ** 2 + (cols - center[1]) ** 2
     with io.load(
-        _write_master(tmp_path, counts), backend="cuda",
+        _write_master(tmp_path, counts), device="cuda",
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         selected = {
@@ -234,13 +234,13 @@ def test_parallax_uses_a_fractional_radius_as_given_and_takes_samplings_as_pairs
 
 def test_parallax_rejects_data_it_cannot_run() -> None:
     from quantem.gpu import parallax
-    from quantem.gpu.io.dataset import Dataset4dstemGPU
+    from quantem.gpu.io.dataset import Dataset4dstem
 
     counts = np.zeros((2, 2, 8, 8), np.uint16)
     with pytest.raises(TypeError, match="io.load"):
         parallax.run(counts)
     with pytest.raises(ValueError, match="CUDA GPU"):
-        parallax.run(Dataset4dstemGPU(counts, {}))
+        parallax.run(Dataset4dstem(counts, {}))
 
 
 def test_parallax_reports_that_apple_gpus_are_not_implemented(tmp_path) -> None:
@@ -252,7 +252,7 @@ def test_parallax_reports_that_apple_gpus_are_not_implemented(tmp_path) -> None:
     counts, center, radius = _synthetic_parallax_counts()
     with (
         io.load(
-            _write_master(tmp_path, counts), backend="mps",
+            _write_master(tmp_path, counts), device="mps",
             scan_shape=counts.shape[:2], verbose=False,
         ) as loaded,
         pytest.raises(NotImplementedError, match=r"Apple GPU \(MPS\)"),
@@ -272,7 +272,7 @@ def test_parallax_real_acquisition_recovers_aberrations_when_available() -> None
     if not master.exists():
         pytest.skip(f"{master_env} does not point to an existing file.")
 
-    with io.load(master, backend="cuda", verbose=False) as loaded:
+    with io.load(master, device="cuda", verbose=False) as loaded:
         scan_shape = loaded.shape[:2]
         got = parallax.run(
             loaded,

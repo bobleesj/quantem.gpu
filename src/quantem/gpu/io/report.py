@@ -3,7 +3,7 @@
 from os import PathLike
 from typing import TYPE_CHECKING
 
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.io.inspect import inspect
 
 if TYPE_CHECKING:
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 def report(
-    source: str | PathLike[str] | Dataset4dstemGPU,
+    source: str | PathLike[str] | Dataset4dstem,
     *,
     scan_shape: tuple[int, int] | None = None,
     dataset_path: str | None = None,
@@ -40,7 +40,7 @@ def report(
     >>> io.report("acquisition.qem")  # doctest: +SKIP
     >>> io.report(data)[["Value", "Unit"]]  # doctest: +SKIP
     """
-    if isinstance(source, Dataset4dstemGPU):
+    if isinstance(source, Dataset4dstem):
         if scan_shape is not None or dataset_path is not None:
             raise ValueError("scan_shape and dataset_path select file data; omit them for a loaded acquisition.")
         return source.metadata_table()

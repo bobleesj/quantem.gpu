@@ -344,7 +344,7 @@ the optimized production path. The maintained public workflow is:
 ```python
 from quantem.gpu import dpc, io
 
-loaded = io.load("scan_master.h5", backend="auto")
+loaded = io.load("scan_master.h5")
 result = dpc.run(loaded)
 
 print(result.com_row.shape, result.com_col.shape)

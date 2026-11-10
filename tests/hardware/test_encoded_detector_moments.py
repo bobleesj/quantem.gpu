@@ -45,7 +45,7 @@ def _load(tmp_path, counts, backend):
     pixel_mask[FLAGGED] = 1
     tmp_path.mkdir(parents=True, exist_ok=True)
     master = write_master(tmp_path, counts, pixel_mask)
-    return io.load(master, backend=backend, hot_pixel_correction="none")
+    return io.load(master, device=backend, hot_pixel_correction="none")
 
 
 def _valid(shape=DETECTOR_SHAPE):
@@ -223,7 +223,7 @@ def test_scan_roi_reductions_count_repeats_and_refuse_released_rows(tmp_path):
     scan_rows, scan_cols = np.indices((96, 80))
     circle = np.flatnonzero(np.hypot(scan_rows - 50.0, scan_cols - 41.0) <= 23.5)
     indices = np.concatenate([circle, circle[:40], [7, 7, 7679]])
-    with io.load(tmp_path / "counts.npy", backend=backend, verbose=False) as loaded:
+    with io.load(tmp_path / "counts.npy", device=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
         total = frames[indices].sum(axis=0)
         np.testing.assert_array_equal(session.reduce_frames(indices, "sum"), total)
@@ -243,7 +243,7 @@ def test_mean_pattern_of_released_rows_raises(tmp_path):
     counts = np.random.default_rng(31).integers(0, 65_536, (96, 80, 6, 5)).astype(np.uint16)
     np.save(tmp_path / "counts.npy", counts)
     total = counts.reshape(-1, 6, 5).astype(np.uint64).sum(axis=0)
-    with io.load(tmp_path / "counts.npy", backend=backend, verbose=False) as loaded:
+    with io.load(tmp_path / "counts.npy", device=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
         np.testing.assert_array_equal(session.mean_pattern(), (total / (96 * 80)).astype(np.float32))
         np.testing.assert_array_equal(session.detector_total(), total)
