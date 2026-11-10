@@ -23,7 +23,6 @@ import torch
 
 from quantem.gpu.device import select
 from quantem.gpu.formats import empad, zarr_zip
-from quantem.gpu.formats.float8 import FLOAT8_DTYPES, is_float8
 from quantem.gpu.formats.qem.snapshot import is_qem_file
 from quantem.gpu.io import arrays, digitalmicrograph, encoded, paired, qem
 from quantem.gpu.io.dataset import Dataset4dstem, drop_unread_calibration
@@ -59,12 +58,6 @@ def load(
     headerless EMPAD RAW. CPU reference access is explicit, never a fallback.
     Generic HDF5 layouts use bounded storage reads where the direct compressed
     chunk decoder cannot apply. Saved copies retain calibration and provenance.
-
-    Original FP8 NumPy (``ml_dtypes``) and Torch arrays are accepted directly.
-    HDF5 byte arrays must name their FP8 variant with the dataset attribute
-    ``quantem_dtype``. No FP8 quantization or external scale inference occurs.
-    DP reads retain the original FP8 dtype; detector and SSB calculations use
-    float32 on the selected GPU. See the IO guide for supported variants.
 
     Fractional intensity exports support explicit ``dtype="scaled_uint16"``
     on CUDA and Metal/MPS. They remain ANS encoded and print a measured
@@ -193,28 +186,6 @@ def load(
     single = isinstance(source, (str, os.PathLike)) or not isinstance(source, Sequence)
     sources = [source] if single else list(source)
     precision = precision_name(dtype)
-
-    input_dtype = getattr(source, "dtype", "")
-    if single and str(input_dtype).removeprefix("torch.").startswith("float8_") and not is_float8(input_dtype):
-        raise NotImplementedError(
-            f"Unsupported original FP8 dtype {input_dtype}; supported variants are "
-            + ", ".join(FLOAT8_DTYPES) + ". No conversion or upload occurred."
-        )
-
-    if single and is_float8(getattr(source, "dtype", "")):
-        if (len(source.shape) != 4 or min(source.shape) <= 0
-                or any(value is not None for value in (dataset_path, scan_shape, scan_region, detector_region))
-                or dtype not in (None, "native") or apply_mask):
-            raise ValueError("Load the original 4D FP8 array without conversion or selection options; use read() for a region.")
-        if representation not in (None, "encoded"):
-            raise ValueError("FP8 acquisitions require encoded residency; omit representation.")
-        selected_backend = select.resolve_backend(backend)
-        return arrays.load_array_resident(
-            tuple(source.shape), source.dtype,
-            lambda first, stop: arrays.read_frame_block(source, source.shape, first, stop),
-            {"source_kind": "array", "source_dtype": str(source.dtype).removeprefix("torch.")},
-            backend=selected_backend, device=device, verbose=verbose,
-        )
 
     # NumPy, EMPAD and saved QuantEM Zarr arrays: complete measurements, encoded on the GPU.
     array_sources = [isinstance(path, (str, os.PathLike))

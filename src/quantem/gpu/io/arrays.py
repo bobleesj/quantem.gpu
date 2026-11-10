@@ -22,7 +22,6 @@ import torch
 from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.device.metal_runtime import shared_array
 from quantem.gpu.formats.hdf5.frames import detector_sources
-from quantem.gpu.formats.float8 import hdf5_dtype, is_float8
 from quantem.gpu.formats.qem import metadata as qem_metadata
 from quantem.gpu.formats.qem.snapshot import BIT_CODEC, BIT_DTYPES, FLOAT_CODEC, INTEGER_CODEC, encode_valid
 from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
@@ -155,7 +154,7 @@ def load_array_resident(
                 if backend == "cuda":
                     raw = (
                         cp.from_dlpack(block.view(torch.uint8).to(f"cuda:{selected}"))
-                        if tensor_input else cp.asarray(block.view(np.uint8) if is_float8(dtype) else block)
+                        if tensor_input else cp.asarray(block)
                     )
                     if corrector is not None:
                         corrector.apply(raw)
@@ -170,7 +169,7 @@ def load_array_resident(
                         source.append_device(shared_array(tensor_buffer(block_t), dtype, block_t.shape))
                         del block_t, block
                         continue
-                    raw = metal_precision.upload(block.view(np.uint8) if is_float8(dtype) else block)
+                    raw = metal_precision.upload(block)
                     try:
                         if corrector is not None:
                             corrector.apply(raw)
@@ -330,7 +329,7 @@ def load_hdf5_array_resident(
             if (
                 data.ndim not in (3, 4)
                 or data.shape[-2:] != shape[2:]
-                or hdf5_dtype(data) != np.dtype(info.dtype)
+                or data.dtype != np.dtype(info.dtype)
             ):
                 raise ValueError(
                     "HDF5 detector datasets disagree in geometry or dtype; select one calibrated acquisition."
@@ -384,7 +383,7 @@ def load_hdf5_array_resident(
                         local + end - cursor,
                     )
                 cursor = end
-            return result.view(np.dtype(info.dtype)) if is_float8(info.dtype) else result
+            return result
 
         loaded = load_array_resident(
             shape,

@@ -178,6 +178,11 @@ the first run after this change computes them again, as after any code change; t
 
 ### Removed
 
+- FP8 acquisitions (`float8_e4m3fn`, `float8_e5m2`, `float8_e4m3fnuz`, `float8_e5m2fnuz`, `float8_e8m0fnu`): no
+  detector in use writes them and a scan of every `.qem`, HDF5 and `.npy` file on the lab's data disk found none.
+  Removed `formats/float8.py`, the CUDA and Metal FP8 decode and product kernels, the `quantem_dtype` HDF5 tag, the
+  FP8 branches of `io.load`, `read`, `inspect`, `convert`, the typed QEM codec and SSB, and the `ml_dtypes`
+  dependency. The float32 ANS kernels lose only their FP8 preprocessor branches.
 - `direct_ptycho.torch_agreement` (the float64 plain-torch reference of the fit's agreement and derivatives) moves to
   `tests/parity/torch_agreement.py`: only tests used it.
 - Test-only helpers leave the package: `mps.hardware.exact_pair_row_policy_512`, `mps.prepared.bf_storage_chunk_packs`,

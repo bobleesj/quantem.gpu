@@ -338,9 +338,7 @@ def _keeps_crop_encoded(data: Dataset4dstem, backend: str) -> bool:
     Integer counts are read exactly from the encoded source while G(q, k) is built; float sources keep the decoded
     float32 crop their FFT input needs.
     """
-    from quantem.gpu.formats.float8 import is_float8
-
-    return backend == "mps" and not is_float8(data.dtype) and np.dtype(data.dtype).kind == "u"
+    return backend == "mps" and np.dtype(data.dtype).kind == "u"
 
 
 def _streams_scan(data: Dataset4dstem, backend: str) -> bool:

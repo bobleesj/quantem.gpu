@@ -10,8 +10,6 @@ import numpy as np
 
 from quantem.gpu.formats.emd import dataset_metadata
 from quantem.gpu.formats.empad import load_array_source
-from quantem.gpu.formats.float8 import hdf5_dtype, is_float8
-from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import get_metadata, read_pixel_mask
 from quantem.gpu.formats.hdf5.readiness import inspect_master_readiness
 from quantem.gpu.formats.prepared_stack import prepared_stack_metadata
@@ -216,10 +214,7 @@ def inspect(
         name, shape, dtype = candidates[0]
         with h5py.File(filepath, "r") as source:
             metadata = dataset_metadata(source[name], metadata)
-            dtype = hdf5_dtype(source[name])
-            if is_float8(dtype):
-                metadata["source_storage_dtype"] = source[name].dtype.name
-                metadata["source_dtype"] = dtype.name
+            dtype = source[name].dtype
         if prepared:
             metadata["source_metadata"].update(prepared["source_metadata"])
         matches = scan_shape is None or tuple(scan_shape) == tuple(shape[:2])
@@ -238,16 +233,6 @@ def inspect(
             + ", ".join(name for name, _, _ in candidates)
         )
     dtype = readiness.dtype
-    if readiness.ready:
-        with h5py.File(filepath, "r") as source:
-            datasets = [source[f"entry/data/{item.name}"] for item in detector_sources(source)]
-            logical = [hdf5_dtype(data) for data in datasets]
-            if any(is_float8(value) for value in logical):
-                if len(set(logical)) != 1:
-                    raise ValueError("All detector datasets must declare the same original FP8 variant.")
-                dtype = logical[0]
-                metadata["source_storage_dtype"] = datasets[0].dtype.name
-                metadata["source_dtype"] = dtype.name
     metadata.setdefault("scan_shape", scan_shape)
     metadata["representation"] = DataRepresentation.DENSE.value
     metadata["detector_shape"] = readiness.detector_shape
