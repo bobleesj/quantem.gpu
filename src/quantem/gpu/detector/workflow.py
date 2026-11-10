@@ -68,7 +68,7 @@ def mean(data) -> np.ndarray:
 def show(
     data,
     *,
-    size: Literal["small", "medium", "large", "xlarge"] | int = "medium",
+    size: Literal["small", "medium", "large", "xlarge"] = "medium",
     columns: int | None = None,
     rows: int | None = None,
     cmap: str = "inferno",
@@ -92,10 +92,9 @@ def show(
     data
         One loaded acquisition or array supported by :func:`prepare`, ordered
         as scan row, scan column, detector row, detector column.
-    size : {"small", "medium", "large", "xlarge"} or int, optional
-        Per-panel size, medium by default: 3, 4.5, 6 or 9 inches, or a panel
-        width in pixels at 100 dpi. The presets follow the Show2D/Show3D
-        proportions (300, 450, 600 or 900 pixels at 100 dpi).
+    size : {"small", "medium", "large", "xlarge"}, optional
+        Per-panel size, medium by default: the Show2D/Show3D presets, 300, 450, 600 or 900
+        pixels wide (3, 4.5, 6 or 9 inches at 100 dpi).
         Notebook scaling and the space for titles can affect visible width;
         source array resolution is unchanged.
     columns : int, optional

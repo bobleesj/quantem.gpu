@@ -120,7 +120,7 @@ def test_complex_phase_display_names_both_regularization_strengths():
         assert "phase (rad)" in title
 
 
-@pytest.mark.parametrize("size", ["small", "medium", "large", "xlarge", 750, 900])
+@pytest.mark.parametrize("size", ["small", "medium", "large", "xlarge"])
 @pytest.mark.parametrize("columns", [1, 3])
 def test_comparison_titles_stay_separate_and_inside_figure(size, columns):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -193,7 +193,7 @@ def test_crop_fft_uses_selected_region_and_preserves_relative_signal():
     np.testing.assert_array_equal(result.object_wave, original)
 
 
-@pytest.mark.parametrize("size,width", [("small", 300), ("medium", 450), ("large", 600), ("xlarge", 900), (750, 750), (900, 900)])
+@pytest.mark.parametrize("size,width", [("small", 300), ("medium", 450), ("large", 600), ("xlarge", 900)])
 def test_interactive_phase_comparison_keeps_native_crops_and_shared_fft_scale(size, width):
     pytest.importorskip("ipywidgets")
     pytest.importorskip("quantem.widget")

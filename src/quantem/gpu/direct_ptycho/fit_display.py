@@ -6,7 +6,7 @@ import time
 class FitDisplay:
     """Render only in a live notebook; command-line fitting stays display-free."""
 
-    def __init__(self, ssb, *, enabled: bool, size: str | int = "medium", columns: int = 2,
+    def __init__(self, ssb, *, enabled: bool, size: str = "medium", columns: int = 2,
                  show_convergence: bool = False,
                  scan_region: tuple[int, int, int, int] | None = None):
         from quantem.gpu.display._layout import panel_inches, resolve_columns

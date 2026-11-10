@@ -300,7 +300,7 @@ class NeuralPhaseModel:
         history["Selected"] = history["step"] == self.selected_step
         return history.rename(columns={"step": "Step", "validation_gain": "Validation gain"}).set_index("Step")
 
-    def show(self, *, size: str | int = "medium"):
+    def show(self, *, size: str = "medium"):
         """Plot recorded stage validation gains without fitting again.
 
         U-Net gains are relative to direct phase. Readout and direction gains

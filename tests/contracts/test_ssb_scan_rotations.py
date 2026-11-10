@@ -44,7 +44,7 @@ def test_scan_rotation_report_and_zoom_preserve_four_case_evidence(monkeypatch):
     session.scan_region = None
     session.scan_detector_rotation_deg = 340.
     original = [fit.phase.copy() for fit in review.fits]
-    result = session.scan_rotations(defocus=True, region=(128, 384, 128, 384), zoom=3, size=400)
+    result = session.scan_rotations(defocus=True, region=(128, 384, 128, 384), zoom=3, size="small")
     assert result is review and session.scan_detector_rotation_deg == 340.
     assert calls[0] == {"region": (128, 384, 128, 384), "trials": 200}
     figure, table = displayed
@@ -97,7 +97,7 @@ def test_two_angle_zoom_keeps_full_fields_and_column_markers():
     review._upsampled = ("auto", tuple(fit.phase.repeat(2, 0).repeat(2, 1) for fit in fits))
     review.upsample = 2
     before = [item.phase.copy() for item in review.branches]
-    figure = review.show(zoom=3, size=400)
+    figure = review.show(zoom=3, size="small")
     images = [ax.images[0] for ax in figure.axes if ax.images]
     assert [image.get_array().shape[:2] for image in images] == [(96, 96)] * 2 + [(32, 32)] * 2
     assert len({image.get_clim() for image in images}) == 1

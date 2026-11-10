@@ -331,7 +331,7 @@ class RotationBranches:
         return table.round({name: 3 for name in table.columns if name not in ("loss", "kept", "status")}).round({"loss": 7})
 
     def show(self, *, upsample: int | Literal["auto"] = "auto", panels: bool = True,
-             size: str | int | None = None, zoom: float = 1,
+             size: str | None = None, zoom: float = 1,
              axsize: tuple[float, float] | None = None,
              cmap: str = "inferno", save: str | Path | None = None):
         """Both rotations' phase images above their full-field phase histograms.

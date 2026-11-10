@@ -19,6 +19,7 @@ deprecated keyword or reader of an old saved key remains for them.
 | `num_trials=` (beside `trials=` on `aberrations`, `run_series`, `scan_rotations`; `benchmark.run_ssb`) | `trials=` | keyword |
 | session's known optics mapping `session.aberrations` | `session.known_aberrations` | attribute |
 | `SSB`, `SSBResult` | `DirectPtycho`, `DirectPtychoResult` | classes |
+| `size=750` (a pixel width on any static `show`, `scan_rotations`, `FitDisplay`) | `size="small"`, `"medium"`, `"large"`, `"xlarge"` (300, 450, 600, 900 px), the same presets as quantem.widget | keyword values |
 | `method="ssb"`, `"reconstruction_method": "ssb"` | `"phase_of_mean"` | argument and saved value |
 | `upsampling=`, `upsampling_factor`, output-grid `upsample_factor` (backend `preview_upsampled`, `ThickSample.run`, streamed `phase`), record keys `"upsampling"`, `"ssb_upsampling_factor"` | `upsample` | keyword, attribute, record key |
 | `upsampling_mode` | `upsample_mode` | record key |
