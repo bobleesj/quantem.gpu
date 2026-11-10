@@ -1240,8 +1240,10 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
             # and the disc reaches the frame corners instead of leaving them black.
             aperture = 2 * (results[0].semiangle_mrad / 1000.0) / wavelength_A_from_kV(results[0].voltage_kV)
             limit = aperture / 2 ** 0.5
+        # The spectrum comes from the whole reconstructed field: a crop would
+        # carry the same band with fewer pixels, and the reader would see blocky bins.
         spectra, frequency_sampling = _phase_spectra(
-            phases if neural_comparison else crops, sampling,
+            phases, sampling,
             log_amplitude=neural_comparison, limit_inv_A=limit,
         )
         groups.append(spectra)
