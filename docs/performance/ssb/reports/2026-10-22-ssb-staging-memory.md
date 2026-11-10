@@ -74,7 +74,7 @@ observations, not isolated process memory requirements.
   It retains 200 trials per branch plus Newton and full-field Auto output.
 - Nineteen focused hardware checks, nine explicit-standard workflow checks,
   and 23 search-contract/privacy checks pass. They cover close/release,
-  rotation changes, upsampling, higher order,
+  rotation changes, upsample, higher order,
   device residency, region selection, saved geometry, search-mode contracts and
   privacy. Four existing legacy workflow tests fail under the unrelated new
   broad default on both the frozen and changed buffer code; their intended

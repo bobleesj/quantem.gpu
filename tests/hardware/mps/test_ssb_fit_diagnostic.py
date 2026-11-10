@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from .test_ssb_thick_sample_mps import _require_mps
-from .test_ssb_upsampling import _disk_session
+from .test_ssb_upsample import _disk_session
 
 
 @pytest.mark.parametrize("tilt", [False, True])
@@ -14,8 +14,8 @@ def test_fit_without_diagnostic_retains_fit_phase_and_later_loss(tilt):
     options = dict(tilt=tilt, num_trials=8, seed=11,
                    check_rotation=False, compare_standard=False, verbose=False)
     with _disk_session(n=32) as reference, _disk_session(n=32) as session:
-        expected = reference.fit_aberrations(search="primary", **options)
-        actual = session.fit_aberrations(search="primary", **options, compute_loss=False)
+        expected = reference.aberrations(search="primary", **options)
+        actual = session.aberrations(search="primary", **options, compute_loss=False)
         assert actual.loss is None
         assert actual.aberrations == expected.aberrations
         assert actual.sample_tilt_mrad == expected.sample_tilt_mrad
@@ -24,6 +24,6 @@ def test_fit_without_diagnostic_retains_fit_phase_and_later_loss(tilt):
         assert actual.trial_records == expected.trial_records
         assert actual.optimizer == expected.optimizer
         np.testing.assert_array_equal(actual.phase, expected.phase)
-        later = session.reconstruct(actual, compute_loss=True)
+        later = session.run(actual, compute_loss=True)
         assert later.loss == expected.loss
         np.testing.assert_array_equal(later.phase, expected.phase)

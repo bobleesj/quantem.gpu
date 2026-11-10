@@ -53,7 +53,7 @@ def test_fit_tilt_recovers_known_tilt(name, sample_tilt_mrad):
     data, det_mrad = _simulated_crystal(name)
     ssb = _session(data, det_mrad)
     assert ssb.supports_tilt
-    result = ssb.fit_aberrations(search="primary", tilt=True, verbose=False)
+    result = ssb.aberrations(search="primary", tilt=True, verbose=False)
     # 1 mrad is the scan/detector sampling limit of this simulation (same bound as the CUDA test)
     assert abs(result.sample_tilt_mrad[0] - sample_tilt_mrad[0]) < 1.0
     assert abs(result.sample_tilt_mrad[1] - sample_tilt_mrad[1]) < 1.0
@@ -81,7 +81,7 @@ def test_joint_fit_rejects_scan_with_no_fitting_frequencies():
         _session(counts, det_mrad=3.0, scan_A=5.0) as ssb,
         pytest.raises(ValueError, match="acquire a finer scan"),
     ):
-        ssb.fit_aberrations(search="primary", tilt=True, num_trials=8, verbose=False)
+        ssb.aberrations(search="primary", tilt=True, num_trials=8, verbose=False)
 
 
 def test_batch_fit_matches_reference_fit(monkeypatch):
@@ -132,7 +132,7 @@ def test_zero_depth_weighting_is_standard_ssb():
     """Thickness below the sinc cutoff gives every weight exactly 1: the thick path must reproduce standard MPS SSB."""
     _require_mps()
     ssb = _poisson_disk_session()
-    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
+    ssb.run(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     for aberrations in ({"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}, {"C10_nm": -40.0, "C12_nm": 12.0, "phi12_deg": math.degrees(-1.0)}):
         standard, standard_loss = ssb.preview(aberrations)
         thick, thick_loss = ssb.preview(aberrations, sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)

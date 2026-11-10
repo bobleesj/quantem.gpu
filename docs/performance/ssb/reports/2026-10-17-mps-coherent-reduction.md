@@ -44,7 +44,7 @@ complete acquisition-processing benchmark.
 - Twelve additional frozen full-array comparisons covered ordinary, tilt/depth
   and higher-order reconstruction at native and automatic sampling. Maximum
   error was 3.49e-6 rad; all twelve native loss values were unchanged.
-- All 31 MPS upsampling tests passed, including factors 1, 2, 3, 4 and 8, the
+- All 31 MPS upsample tests passed, including factors 1, 2, 3, 4 and 8, the
   symmetry guard and a new incomplete-BF-group regression. Repeated candidate
   results were identical.
 - The legacy frozen-fit script built the native Metal target, then could not

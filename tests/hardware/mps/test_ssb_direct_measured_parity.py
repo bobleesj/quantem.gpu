@@ -5,7 +5,7 @@ The fixture lives outside the repository; without it this test skips. It is the 
 and detector shape, selected detector pixels, count type), ``counts.bin`` (selected BF counts, plane-major
 ``[pixel, scan row, scan column]``, after the loader's flagged-pixel median fill), ``detector_sum.u64``,
 ``optics.json`` (``optics_sets``: name, public ``aberrations``, ``sample_tilt_mrad``, ``depth_spread_nm``,
-``rotation_deg``) and ``references.json`` (``references``: file, ``amplitude_file``, method, ``upsampling``,
+``rotation_deg``) and ``references.json`` (``references``: file, ``amplitude_file``, method, ``upsample``,
 ``factor`` "1", "2" or "auto", setting, ``requested`` regularization, optics) with the CUDA ``.npy`` arrays.
 
 The default presets run unless ``SSB_DIRECT_ALL=1``; ``SSB_DIRECT_OPTICS`` picks one optics set. Gates per
@@ -88,15 +88,15 @@ def test_three_methods_match_cuda():
                 ptycho.set_rotation(optics["rotation_deg"])
             ptycho.sample_tilt_mrad = tuple(optics["sample_tilt_mrad"])
             ptycho.depth_spread_nm = optics["depth_spread_nm"]
-            auto = ptycho._resolve_upsampling("auto")
+            auto = ptycho._resolve_upsample("auto")
             for entry in record["references"]:
                 if entry["optics"] != optics["name"] or not (every or entry["setting"] in (None, "default")):
                     continue
                 if entry["factor"] == "auto":
-                    assert entry["upsampling"] == auto, "Auto factor differs from CUDA's"
+                    assert entry["upsample"] == auto, "Auto factor differs from CUDA's"
                 options = dict(entry.get("requested") or {})
-                result = ptycho.reconstruct(None, method=entry["method"], aberrations=dict(optics["aberrations"]),
-                                            upsampling=entry["upsampling"], compute_loss=False, **options)
+                result = ptycho.run(None, method=entry["method"], aberrations=dict(optics["aberrations"]),
+                                            upsample=entry["upsample"], compute_loss=False, **options)
                 stem = Path(entry["file"]).name[: -len("-phase.npy")]
                 label = f"{optics['name']} {stem}"
                 p = _compare(result.phase, np.load(root / entry["file"]), wrap=True)

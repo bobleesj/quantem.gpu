@@ -52,7 +52,7 @@ so R is the radius where the disk falls to half its plateau.
 | MPS array with `bf_radius` | NumPy copy of the integer half-maximum | 2 alpha / R |
 | MPS dataset and `SSB.open` | integer half-maximum of the bright-field CROP (no disk edge in it) | 2 alpha / R |
 | CUDA WebGPU export (`detected_radius_px`) | inverse of the above | 2 alpha / det |
-| regional fit (`fit_aberrations(scan_region=...)`) | `bf_radius` or the equal-area radius | alpha / R |
+| regional fit (`aberrations(scan_region=...)`) | `bf_radius` or the equal-area radius | alpha / R |
 
 **After.** One radius, one formula, both backends and every input: `direct_ptycho.brightfield.disk_edge_radius(mean_pattern)`
 is the radius of a disk with the area of the pixels brighter than half the plateau (the median of the pixels above
@@ -71,7 +71,7 @@ Script: scratch `probes/abtem_radii.py`; test `tests/hardware/cuda/test_ssb_unit
 | equal area, mean + std | 54.493 | 0.5505 | +0.67 % | 1.1011 | +101.3 % |
 | integer half maximum | 55 | 0.5455 | -0.26 % | 1.0909 | +99.5 % |
 
-Fitted C10 (truth -10 nm, `fit_aberrations(trials=200)`): exact sampling -10.03 nm; new automatic sampling -9.67 nm;
+Fitted C10 (truth -10 nm, `aberrations(trials=200)`): exact sampling -10.03 nm; new automatic sampling -9.67 nm;
 equal-area -9.60 nm; integer half maximum -9.77 nm; old CUDA automatic (1.0909) -4.36 nm; old MPS array automatic
 (1.1011) -4.29 nm.
 
@@ -130,7 +130,7 @@ is deleted (section 6).
 `MpsSSBBackend.fit` called `optimizer.optimize(source, ...)`, which recomputed the mean pattern, the selection and the
 whole G(q, k) stack with its own DC rule, then replaced the session's prepared state. `optimize` now takes the session's
 prepared state and selection, so previews before and after a fit and the fit itself read one preparation
-(`test_mps_fit_reads_the_prepared_session_evidence`). The test-only `direct_ptycho.mps.reconstruct.reconstruct`, a second
+(`test_mps_fit_reads_the_prepared_session_evidence`). The test-only `direct_ptycho.mps.reconstruct.run`, a second
 from-source preparation, is deleted with its environment-gated test (that test passed an encoded resident, which SSB
 refuses since the restructure).
 

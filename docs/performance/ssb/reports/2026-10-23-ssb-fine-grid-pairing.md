@@ -96,7 +96,7 @@ outputs also equal their reference byte for byte. A corresponding forty-case
 sweep of frequency reuse alone passed on the other CUDA device.
 
 The installed-source run passed 31 CUDA tests, including full-plane parity at
-24 combinations of upsampling, rotation, depth and square/anisotropic detector
+24 combinations of upsample, rotation, depth and square/anisotropic detector
 calibration. The standard `run_ssb_preview` runner compared the installed
 candidate with the frozen reference: all 55 output hashes match at 1×–8×.
 The public-repository privacy checks also passed (5 tests).

@@ -10,7 +10,7 @@ from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
 
 def call(session, **options):
-    return inspect.unwrap(DirectPtycho.fit_aberrations)(session, **options)
+    return inspect.unwrap(DirectPtycho.aberrations)(session, **options)
 
 
 def test_primary_preserves_budget_seed_and_options():
@@ -104,7 +104,7 @@ def _exact_session(monkeypatch, start, refine, *, study=None, **session):
         monkeypatch.setattr(fifth_order_fit, "make_independent_sampler", lambda **kwargs: None)
     return SimpleNamespace(
         backend="cuda", _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object(), band_power=lambda band: 1.0),
-        reconstruct=lambda result, **kwargs: result, _accept_result=lambda result: result, **session)
+        run=lambda result, **kwargs: result, _accept_result=lambda result: result, **session)
 
 
 def _record(point, stop="test stop"):
@@ -153,22 +153,22 @@ def test_trial_budget_comparison_keeps_start_and_saved_results_independent(tmp_p
     @contextmanager
     def select_region(region):
         assert region == (0, 512, 0, 512)
-        child = SimpleNamespace(aberrations={"C10_nm": 0.})
+        child = SimpleNamespace(known_aberrations={"C10_nm": 0.})
         def run(**kwargs):
-            assert child.aberrations == {"C10_nm": 0.}
-            child.aberrations["C10_nm"] = 99.
+            assert child.known_aberrations == {"C10_nm": 0.}
+            child.known_aberrations["C10_nm"] = 99.
             options.append(kwargs)
-            return SimpleNamespace(aberrations=dict(child.aberrations), num_trials=kwargs["trials"])
-        child.fit_aberrations = run
+            return SimpleNamespace(aberrations=dict(child.known_aberrations), num_trials=kwargs["trials"])
+        child.aberrations = run
         try:
             yield child
         finally:
             closed.append(True)
     parent = SimpleNamespace(input_scan_shape=(512, 512), select_region=select_region,
-                             aberrations={"C10_nm": 0.})
+                             known_aberrations={"C10_nm": 0.})
     fits = call(parent, search="broad", trials=(200, 400, 600), seed=17, save_dir=tmp_path, verbose=False)
     assert list(fits) == [200, 400, 600]
-    assert parent.aberrations == {"C10_nm": 0.}
+    assert parent.known_aberrations == {"C10_nm": 0.}
     assert len(closed) == 3
     assert [item["save_dir"] for item in options] == [tmp_path / f"trials-{n}" for n in fits]
     assert all(item["seed"] == 17 and item["refinement"] == "auto" for item in options)

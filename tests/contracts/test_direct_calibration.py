@@ -17,18 +17,18 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
     source.write_bytes(b"disposable acquisition identity")
     options = {
         "method": method,
-        "phase_damping": 0.05,
+        "phase_damp": 0.05,
         "smoothness_inv_A": 0.7,
         "detector_weighting": "inverse_mean",
     }
     if method == "complex":
-        options["amplitude_damping"] = 0.1
+        options["amplitude_damp"] = 0.1
     result = DirectPtychoResult(
         object_wave=np.ones((8, 8), np.complex64), backend="mps",
         source_path=str(source), aberrations={"C10_nm": -8., "C12_nm": 0.2, "phi12_deg": 35.},
         sample_tilt_mrad=(1., -2.), depth_spread_nm=12., num_bright_field_pixels=17,
         voltage_kV=300., semiangle_mrad=30., object_sampling_A=(0.25, 0.25),
-        upsampling=2, phase_estimator=method, amplitude_estimated=method == "complex",
+        upsample=2, phase_estimator=method, amplitude_estimated=method == "complex",
         reconstruction_method=method, reconstruction_options=options,
         reconstruction_diagnostics={"training_relative_sse": 0.12, "normalization": "relative amplitude"},
     )
@@ -46,8 +46,8 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
     assert original["reconstruction_method"] == method
     assert original["reconstruction_options"] == options
     assert original["reconstruction_diagnostics"] == result.reconstruction_diagnostics
-    assert original["upsampling"] == 2
-    assert original["upsampling_mode"] == "explicit"
+    assert original["upsample"] == 2
+    assert original["upsample_mode"] == "explicit"
     assert original["loss"] is None  # Prediction error is not the SSB fit objective.
 
     paths = (tmp_path / "result.npz", tmp_path / "result.json")
@@ -57,7 +57,7 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
     restored = load_result(paths=paths, signature=signature, backend="mps")
     reopened = json.loads(restored.save_calibration(tmp_path / "reopened.json").read_text())
     for key in ("reconstruction_method", "reconstruction_options", "reconstruction_diagnostics",
-                "phase_estimator", "upsampling", "upsampling_mode", "aberrations", "session_identity"):
+                "phase_estimator", "upsample", "upsample_mode", "aberrations", "session_identity"):
         assert reopened[key] == original[key]
     np.testing.assert_array_equal(restored.object_wave, result.object_wave)
     assert result.phase_estimator == method

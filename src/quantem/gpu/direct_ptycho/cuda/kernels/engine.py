@@ -56,7 +56,7 @@ void sum_sumsq_phase(
 }
 ''', 'sum_sumsq_phase')
 
-# Thick-sample SSB correction (sample tilt + thickness), for ThickSample.reconstruct.
+# Thick-sample SSB correction (sample tilt + thickness), for ThickSample.run.
 # Standard SSB treats the sample as one plane at the probe defocus. For a crystal of thickness t tilted by theta (straight
 # columns), the slice at depth z (from mid-depth) sees the defocus C10 + z and sits shifted by z theta. Averaging the two SSB
 # terms over depth gives each its own real weight (sinc of the depth-phase rate times t / 2):

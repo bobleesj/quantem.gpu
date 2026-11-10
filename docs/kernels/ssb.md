@@ -12,7 +12,7 @@ diagnostic that every backend reports as `result.loss`:
 ```
 
 The aberrations are fitted with the SSB model instead:
-`fit_aberrations()` maximizes the least-squares agreement of the model with G
+`aberrations()` maximizes the least-squares agreement of the model with G
 over 200 seeded TPE trials, fits the sample tilt and depth spread, and refines
 on exact derivatives of the agreement (a trust-region Newton on the exact
 gradient and Hessian at low order, a bounded quasi-Newton on exact gradients
@@ -348,13 +348,13 @@ workflow = DirectPtycho.open(
     semiangle_mrad=21.4,
     scan_sampling_A=(0.5, 0.5),
 )
-result = workflow.fit_aberrations(save_dir="results/ssb")
+result = workflow.aberrations(save_dir="results/ssb")
 ```
 
 For known aberrations, reconstruct without fitting:
 
 ```python
-result = workflow.reconstruct(
+result = workflow.run(
     aberrations={"C10_nm": 12.5, "C12_nm": 3.0, "phi12_deg": 15.0},
     save_dir="results/fixed-ssb",
 )

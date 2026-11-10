@@ -647,8 +647,8 @@ class PreparedDirect:
 
     def solve(
         self,
-        phase_damping: float,
-        amplitude_damping: float | None,
+        phase_damp: float,
+        amplitude_damp: float | None,
         *,
         compute_loss: bool,
     ):
@@ -660,8 +660,8 @@ class PreparedDirect:
             if self.complex_object:
                 matrix = group.gram.copy()
                 penalty = group.prior.astype(cp.float64) * self.scale
-                penalty[:, :count] *= amplitude_damping
-                penalty[:, count:] *= phase_damping
+                penalty[:, :count] *= amplitude_damp
+                penalty[:, count:] *= phase_damp
                 diagonal = cp.arange(matrix.shape[-1])
                 matrix[:, diagonal, diagonal] += penalty
                 coefficients = cp.linalg.solve(matrix, group.rhs[..., None])[
@@ -672,7 +672,7 @@ class PreparedDirect:
                 coefficients = _evaluate(
                     group.basis,
                     group.eigen,
-                    phase_damping,
+                    phase_damp,
                     dim,
                     size=nfrequency * dim,
                 ).reshape(nfrequency, dim)
@@ -735,7 +735,7 @@ class DragWindow:
         self.series.add(cp.concatenate([part.ravel() for group in prepared.groups for part in (group.gram, group.rhs)]))
         return self.series.ready
 
-    def solve(self, value: float, phase_damping: float, amplitude_damping: float | None,
+    def solve(self, value: float, phase_damp: float, amplitude_damp: float | None,
               *, complex_object: bool):
         """The wave at control ``value`` (inside the window), as PreparedDirect.solve without the loss."""
         values = self.series.evaluate(value)
@@ -751,11 +751,11 @@ class DragWindow:
             count = group.rows.shape[1]
             penalty = group.prior * template.scale
             if complex_object:
-                penalty = penalty * cp.concatenate((cp.full(count, amplitude_damping), cp.full(count, phase_damping)))
+                penalty = penalty * cp.concatenate((cp.full(count, amplitude_damp), cp.full(count, phase_damp)))
             else:
                 if self.complex_object:
                     gram, rhs, penalty = gram[:, count:, count:], rhs[:, count:], penalty[:, count:]
-                penalty = penalty * phase_damping
+                penalty = penalty * phase_damp
             width = rhs.shape[1]
             coefficients = cp.empty((size, width), cp.complex64)
             _cholesky(width)(
@@ -784,7 +784,7 @@ def _wave(spectra, incident_scale):
     amplitude, phase = [cp.fft.ifft2(spectrum).real.astype(cp.float32) for spectrum in spectra]
     wave = cp.exp(amplitude + 1j * phase).astype(cp.complex64)
     if not bool(cp.isfinite(wave).all()):
-        raise ValueError('Direct inversion diverged; increase phase_damping or amplitude_damping, or use method="phase".')
+        raise ValueError('Direct inversion diverged; increase phase_damp or amplitude_damp, or use method="phase".')
     diagnostics = {
         "model": "T = exp(eta + i phi), linearized about unity",
         "normalization": "zero mean phase and log-amplitude; relative amplitude only",

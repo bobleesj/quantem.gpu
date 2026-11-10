@@ -31,7 +31,7 @@ def test_export_load_and_reuse_without_changing_frame_history(tmp_path, record):
         semiangle_mrad=30.0,
         annulus_mrad=(32.0, 45.0),
         object_sampling_A=(0.2, 0.2),
-        upsampling=1,
+        upsample=1,
         training_record=record,
     )
     model = NeuralPhaseModel.load(checkpoint)
@@ -170,13 +170,13 @@ def test_direct_neural_comparison_keeps_both_images_visible():
     result = DirectPtychoResult(
         object_wave=np.exp(1j * phase), backend="mps", neural_phase=phase * 0.9,
         object_sampling_A=(0.1, 0.1), reconstruction_method="phase",
-        reconstruction_options={"phase_damping": 0.02, "neural_phase_model": {"input_phase_damping": 0.03}},
+        reconstruction_options={"phase_damp": 0.02, "neural_phase_model": {"input_phase_damp": 0.03}},
     )
     figure = result.show(show_fft=True, cmap="gray")
     images = [axis for axis in figure.axes if axis.images]
     assert len(images) == 6
-    assert "Phase damping 0.02" in images[0].get_title()
-    assert "Input phase damping 0.03" in images[1].get_title()
+    assert "Smoothing 0.02" in images[0].get_title()
+    assert "Trained with smoothing 0.03" in images[1].get_title()
     from matplotlib.colors import Normalize
 
     normalization = Normalize(*np.percentile(np.concatenate([result.phase.ravel(), result.neural_phase.ravel()]), [.5, 99.5]))

@@ -53,7 +53,7 @@ def test_regional_fit_keeps_scope_panels_and_parent_state(tmp_path, search, save
         events.append("save")
         return updated
 
-    child = SimpleNamespace(fit_aberrations=fit, _save_result=Mock(side_effect=save))
+    child = SimpleNamespace(aberrations=fit, _save_result=Mock(side_effect=save))
     @contextmanager
     def select_region(chosen):
         assert chosen == region
@@ -68,7 +68,7 @@ def test_regional_fit_keeps_scope_panels_and_parent_state(tmp_path, search, save
         parent._reconstruction = updated
         return updated
     parent._accept_result = Mock(side_effect=accept)
-    fitted = inspect.unwrap(DirectPtycho.fit_aberrations)(
+    fitted = inspect.unwrap(DirectPtycho.aberrations)(
         parent, search=search, scan_region=region, show=False,
         on_initial_fit=received.append, save_dir=tmp_path if saved else None,
     )
@@ -90,5 +90,5 @@ def test_regional_fit_keeps_scope_panels_and_parent_state(tmp_path, search, save
 def test_regional_fifth_order_rejects_invalid_or_padded_fit_regions(region):
     parent = SimpleNamespace(input_scan_shape=(512, 512), select_region=Mock())
     with pytest.raises(ValueError, match="scan_region"):
-        inspect.unwrap(DirectPtycho.fit_aberrations)(parent, scan_region=region, show=False)
+        inspect.unwrap(DirectPtycho.aberrations)(parent, scan_region=region, show=False)
     parent.select_region.assert_not_called()

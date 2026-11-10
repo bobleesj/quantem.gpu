@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.display._layout import panel_figure, panel_inches, resolve_columns, scalebar
-from quantem.gpu.optics.physics import wrap_degrees
+from quantem.gpu.optics.physics import wavelength_A_from_kV, wrap_degrees
 from quantem.gpu.direct_ptycho.probe import model_probe, probe_grid
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ def retired_estimator_note(phase_estimator: object, record: str) -> str | None:
     if method is None:
         return None
     return (f"SSB: {record} was saved with the retired {phase_estimator} estimator and loads as saved; "
-            f"reconstruct(method='ssb') reconstructs the phase of the mean wave, reconstruct(method='{method}') replaces "
+            f"run(method='ssb') reconstructs the phase of the mean wave, run(method='{method}') replaces "
             f"{phase_estimator}.")
 
 
@@ -65,7 +65,7 @@ class DirectPtychoResult(Mapping[str, float]):
     Read coefficients directly with ``aberrations["C10_nm"]``,
     ``aberrations["C12_nm"]`` (nm), and ``aberrations["phi12_deg"]`` (degrees).
     ``dict(aberrations)`` copies the coefficients. Tilt, rotation, phase, and
-    trial history remain properties. After ``fit_aberrations(tilt=True)``,
+    trial history remain properties. After ``aberrations(tilt=True)``,
     C10 is the defocus at the model's mid-depth. Use reconstruction overrides
     to explore changed coefficients without modifying the fitted result.
 
@@ -80,7 +80,7 @@ class DirectPtychoResult(Mapping[str, float]):
     annular_counts : array or None
         Measured guide on the native scan grid, when a neural phase model is used.
     sample_tilt_mrad : tuple[float, float] | None
-        Sample tilt (row, col) in mrad, scan frame, from ``fit_aberrations(tilt=True)``; None for standard SSB.
+        Sample tilt (row, col) in mrad, scan frame, from ``aberrations(tilt=True)``; None for standard SSB.
     depth_spread_nm : float | None
         Depth over which the tilted columns spread in the thick-sample model (a model parameter, not a measured
         thickness); None for standard SSB.
@@ -93,25 +93,25 @@ class DirectPtychoResult(Mapping[str, float]):
         (> 1: the tilt explains more); None when ``compare_standard=False``.
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees, in [0, 360). The CoM curl fixes it only modulo 180 degrees;
-        for an estimated rotation ``fit_aberrations`` fits both branches and keeps one (``rotation_branches``).
+        for an estimated rotation ``aberrations()`` fits both branches and keeps one (``rotation_branches``).
     scan_detector_rotation_flipped : bool
         Whether the detector axes were exchanged before applying the rotation.
     rotation_branches : RotationBranches | None
         Both 180-degree branches, fitted independently, with the atomic-column and phase-tail evidence and the branch
         kept; ``show("rotation")`` draws it. None when no comparison ran (a given or recorded rotation).
     rotation_refined : bool
-        Whether ``fit_aberrations(refine_rotation=True)`` refined the estimated rotation; ``scan_detector_rotation_deg``
+        Whether ``aberrations(refine_rotation=True)`` refined the estimated rotation; ``scan_detector_rotation_deg``
         is then the refined angle.
     rotation_estimate_deg : float | None
         The estimated rotation (on the kept 180-degree branch) the refinement started from; None when not refined.
     rotation_refinement : dict | None
         The refinement's record: ``estimate_deg``, ``refined_deg``, the agreement (``estimate_agreement``,
         ``refined_agreement``) and loss at both, the angles evaluated, ``evaluations`` and ``seconds``.
-    upsampling : int
+    upsample : int
         Output factor relative to the native scan grid. ``object_sampling_A``
         records output pixel spacing, preserving the physical field of view.
     object_sampling_A : tuple[float, float] | None
-        Pixel size of the reconstructed image in Angstrom, (row, col): the scan step divided by ``upsampling``.
+        Pixel size of the reconstructed image in Angstrom, (row, col): the scan step divided by ``upsample``.
     reconstruction_method : str
         ``ssb``, ``phase`` or ``complex``. The regularized methods are experimental.
     reconstruction_options : dict[str, object]
@@ -137,7 +137,7 @@ class DirectPtychoResult(Mapping[str, float]):
     optimizer : dict[str, object]
         Numerical search/refinement device, precision, and Newton diagnostics.
     objective : str | None
-        What ``fit_aberrations`` maximized: ``"agreement"`` (the least-squares agreement of the SSB model with the
+        What ``aberrations()`` maximized: ``"agreement"`` (the least-squares agreement of the SSB model with the
         data, with or without tilt) or ``"broad_fifth_agreement"`` (the same through fifth order); None for a result
         that was not fitted. Results saved by earlier versions may say ``"phase_variance"`` (a retired search).
     refinement : str | None
@@ -177,7 +177,7 @@ class DirectPtychoResult(Mapping[str, float]):
     voltage_kV: float | None = None
     semiangle_mrad: float | None = None
     object_sampling_A: tuple[float, float] | None = None
-    upsampling: int = 1
+    upsample: int = 1
     reconstruction_method: str = "phase_of_mean"
     reconstruction_options: dict[str, object] = field(default_factory=dict)
     reconstruction_diagnostics: dict[str, object] = field(default_factory=dict)
@@ -204,7 +204,7 @@ class DirectPtychoResult(Mapping[str, float]):
     _calibration_source: dict[str, object] | None = field(default=None, repr=False, compare=False)
     sample_agreement: float | None = None
     objective: str | None = None
-    # fit_aberrations(refine_rotation=True): the estimate it started from and the search (rotation_refinement.py)
+    # aberrations(refine_rotation=True): the estimate it started from and the search (rotation_refinement.py)
     rotation_refined: bool = False
     rotation_estimate_deg: float | None = None
     rotation_refinement: dict[str, object] | None = None
@@ -220,7 +220,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> aberrations = ssb.fit_aberrations()
+        >>> aberrations = ssb.aberrations()
         >>> defocus_nm = aberrations["C10_nm"]
         """
         return self.aberrations[coefficient]
@@ -236,7 +236,7 @@ class DirectPtychoResult(Mapping[str, float]):
     def __repr__(self) -> str:
         method = self.reconstruction_method
         lines = ["SSB Result" if method in ("phase_of_mean", "phase_of_mean") else f"Direct {method} result"]
-        lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsampling}x output")
+        lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsample}x output")
         if self.phase_estimator is not None:
             lines.append(f"  Estimator      {self.phase_estimator}")
         if not self.amplitude_estimated:
@@ -342,7 +342,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> fit = ptycho.fit_aberrations()  # doctest: +SKIP
+        >>> fit = ptycho.aberrations()  # doctest: +SKIP
         >>> fit.report()  # doctest: +SKIP
         >>> fit.report(columns=2)  # doctest: +SKIP
         >>> parameters = fit.report(to_dict=True)  # doctest: +SKIP
@@ -399,15 +399,15 @@ class DirectPtychoResult(Mapping[str, float]):
         if self.timings:
             record["timings"] = dict(self.timings)
         if None not in (self.voltage_kV, self.semiangle_mrad, self.object_sampling_A):
-            from quantem.gpu.optics import ssb_upsampling_requirement
+            from quantem.gpu.optics import ssb_upsample_requirement
 
-            required = ssb_upsampling_requirement(
+            required = ssb_upsample_requirement(
                 voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-                scan_sampling_A=tuple(float(step) * self.upsampling for step in self.object_sampling_A),
+                scan_sampling_A=tuple(float(step) * self.upsample for step in self.object_sampling_A),
             )
-            if self.upsampling < required - 1e-12:
-                record["upsampling"] = self.upsampling
-                record["nominal_upsampling_requirement"] = required
+            if self.upsample < required - 1e-12:
+                record["upsample"] = self.upsample
+                record["nominal_upsample_requirement"] = required
         if to_dict:
             return record
 
@@ -434,9 +434,9 @@ class DirectPtychoResult(Mapping[str, float]):
         if "stop_reason" in record:
             row["Stopping reason"] = record["stop_reason"]
         row.update({f"Timing: {name} (s)": seconds for name, seconds in self.timings.items()})
-        if "nominal_upsampling_requirement" in record:
-            row["Output sampling (×)"] = record["upsampling"]
-            row["Nominal requirement (×)"] = record["nominal_upsampling_requirement"]
+        if "nominal_upsample_requirement" in record:
+            row["Output sampling (×)"] = record["upsample"]
+            row["Nominal requirement (×)"] = record["nominal_upsample_requirement"]
         model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
         table = pd.DataFrame.from_dict(row, orient="index", columns=[model]).rename_axis("Parameter")
         columns = resolve_columns(len(table), columns=columns, default=1)
@@ -488,7 +488,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         The model grid resolves the aperture and expands for defocus and
         astigmatism. It is independent of detector binning, scan spacing,
-        and reconstruction upsampling.
+        and reconstruction upsample.
 
         Examples
         --------
@@ -533,7 +533,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.reconstruct(aberrations)
+        >>> result = ssb.run(aberrations)
         >>> probe = result.probe()
         >>> probe_fourier = result.probe(space="fourier")
         """
@@ -542,6 +542,50 @@ class DirectPtychoResult(Mapping[str, float]):
         if self.object_wave.ndim != 2:
             raise ValueError("A trial stack has several probes. Reconstruct one trial's parameters first.")
         return model_probe(self, space=space)
+
+    def save(self, path: str | Path = "phase.npz", *, calibration: bool = True) -> list[str]:
+        """Write this result to one folder and return what was written.
+
+        A path with no suffix, or a directory, means the folder to write into:
+        ``phase.npz`` with the host arrays and, when the result carries a
+        persistent acquisition identity, ``calibration.json`` for reuse. The
+        device arrays stay on the GPU and no CuPy import is needed here.
+
+        Parameters
+        ----------
+        path
+            Destination folder, or a ``.npz`` filename.
+        calibration
+            Write ``calibration.json`` beside the arrays when the result can
+            record one; a fit made from an array cannot and is skipped.
+
+        Returns
+        -------
+        list of str
+            Every file written, in the order written, as a path a reader can
+            paste or open.
+        """
+        target = Path(path)
+        folder = target if target.suffix == "" else target.parent
+        folder.mkdir(parents=True, exist_ok=True)
+        arrays = {"phase": host_array(self.phase)}
+        if self.amplitude is not None:
+            arrays["amplitude"] = host_array(self.amplitude)
+        if self.neural_phase is not None:
+            arrays["neural_phase"] = host_array(self.neural_phase)
+        written = []
+        npz = target if target.suffix == ".npz" else folder / "phase.npz"
+        np.savez_compressed(npz, **arrays)
+        written.append(str(npz))
+        if calibration:
+            try:
+                written.append(str(self.save_calibration(folder / "calibration.json")))
+            except ValueError:
+                # An array-backed fit has no acquisition identity to record; the arrays stand.
+                pass
+        names = ", ".join(Path(item).name for item in written)
+        print(f"saved {names} in {folder}")
+        return written
 
     def save_calibration(self, path: str | Path = "calibration.json") -> Path:
         """Save this fitted model for reuse in ShowPtycho without fitting again.
@@ -569,7 +613,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> fit = ssb.fit_aberrations(search="broad")
+        >>> fit = ssb.aberrations(search="broad")
         >>> fit.show("convergence")
         >>> fit.save_calibration("ssb-results/calibration.json")
         """
@@ -577,13 +621,16 @@ class DirectPtychoResult(Mapping[str, float]):
 
         return save_calibration(self, path)
 
-    def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt", "convergence", "damping", "probe_phase"] = "phase", *,
+    def show(self, view: Literal["phase", "amplitude", "probe", "rotation", "parameters", "depth", "tilt",
+                                 "convergence", "damping", "probe_phase"] = "phase", *,
              axsize: tuple[float, float] | None = None,
              compare: Self | Sequence[Self] | Mapping[object, Self] | None = None,
              x: Literal["auto", "time", "evaluations"] = "auto",
              show_parameters: bool = True,
              interactive: bool = False, show_fft: bool = False,
              fft_limit_inv_A: float | None = None,
+             clim: tuple[float, float] | None = None,
+             percentiles: tuple[float, float] | None = None,
              size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
              rows: int | None = None, columns: int | None = None,
              region: Literal["center", "top-left", "top-right", "bottom-left", "bottom-right"] | None = None,
@@ -607,7 +654,7 @@ class DirectPtychoResult(Mapping[str, float]):
             aberrations are encoded in the complex Fourier probe's phase.
             ``rotation`` draws the 180-degree branch evidence of an estimated
             rotation (``rotation_branches.show()``): both branches' fits at
-            ``upsampling="auto"`` above their native phase distributions. A phase view coarser than
+            ``upsample="auto"`` above their native phase distributions. A phase view coarser than
             ``"auto"`` (a native fit) is shown as reconstructed, and one line
             names the auto factor.
             ``depth`` shows the conditional focus-depth agreement slice;
@@ -656,9 +703,19 @@ class DirectPtychoResult(Mapping[str, float]):
             magnitude displays, not independent-resolution FRC curves.
         fft_limit_inv_A : float or None, optional
             Display only the common Fourier band within this frequency on each
-            axis. Neural comparisons use full-field log10 amplitude with shared
+            axis. By default, the square inscribed in the aperture,
+            (2*alpha/lambda)/sqrt(2), so every upsample factor shows the same
+            physical region and the measured disc fills the panel. Neural comparisons use full-field log10 amplitude with shared
             1–99.8 percentile limits and magma colors. Only displayed frequency
             support is restricted; stored reconstruction arrays are unchanged.
+        clim : pair of float, optional
+            Absolute phase limits in radians. Overrides the fitted limits and
+            ``percentiles`` for this call without changing the result.
+        percentiles : pair of float, optional
+            Percentiles of the displayed phase that set the contrast, pooled
+            over every panel in the call. ``(0.5, 99.5)`` clips the tails; pass
+            a narrow pair to pull out faint contrast. Mutually exclusive with
+            ``clim``.
         size : {"small", "medium", "large", "xlarge"}, int or None, optional
             Per-panel width: small 3, medium 4.5, large 6 or xlarge 9 inches
             at the static 100-DPI reference, or a positive integer pixel width
@@ -692,7 +749,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.reconstruct(aberrations, upsampling="auto")
+        >>> result = ssb.run(aberrations, upsample="auto")
         >>> result.show()
         >>> result.show("probe")
         >>> result.show(size="large")
@@ -712,6 +769,12 @@ class DirectPtychoResult(Mapping[str, float]):
 
         if fft_limit_inv_A is not None and (not show_fft or not np.isfinite(fft_limit_inv_A) or fft_limit_inv_A <= 0):
             raise ValueError("Use show_fft=True and a positive finite fft_limit_inv_A.")
+        if clim is not None and percentiles is not None:
+            raise ValueError("Set clim or percentiles, not both.")
+        if clim is not None and (len(clim) != 2 or not all(np.isfinite(clim)) or clim[0] >= clim[1]):
+            raise ValueError(f"clim must be two increasing finite radians; got {clim!r}.")
+        if percentiles is not None and (len(percentiles) != 2 or not 0 <= percentiles[0] < percentiles[1] <= 100):
+            raise ValueError(f"percentiles must increase within 0..100; got {percentiles!r}.")
         if (region is not None or interactive or show_fft) and view != "phase":
             raise ValueError("interactive, show_fft and region apply to phase images; use show(view='phase', ...).")
         if interactive and (save is not None or axsize is not None):
@@ -751,7 +814,8 @@ class DirectPtychoResult(Mapping[str, float]):
                 region = "center"
             figure = _phase_comparison(self, *others, axsize=axsize, cmap=cmap, region=region,
                                        show_fft=show_fft, interactive=interactive, size=size or "medium",
-                                       columns=columns, rows=rows, fft_limit_inv_A=fft_limit_inv_A)
+                                       columns=columns, rows=rows, fft_limit_inv_A=fft_limit_inv_A,
+                                       clim=clim, percentiles=percentiles)
             if save is not None:
                 figure.savefig(save, dpi="figure", bbox_inches="tight")
             return figure
@@ -807,10 +871,12 @@ class DirectPtychoResult(Mapping[str, float]):
             if save is not None:
                 figure.savefig(save, dpi="figure", bbox_inches="tight")
             return figure
-        if view == "phase":
+        if view in ("phase", "amplitude"):
+            if view == "amplitude" and self.amplitude is None:
+                raise ValueError("Amplitude needs method='complex'; this result estimated phase only.")
             column_sampling = float(self.object_sampling_A[1])
-            arrays = host_array(self.phase)
-            titles = _phase_title(self)
+            arrays = host_array(self.phase if view == "phase" else self.amplitude)
+            titles = _phase_title(self) if view == "phase" else f"Relative amplitude\n{self.upsample}× upsample"
             bars = scalebar(column_sampling, "Å", arrays.shape[0], axsize[0])
             panel_size = (12, 12)
         elif view == "probe":
@@ -820,7 +886,7 @@ class DirectPtychoResult(Mapping[str, float]):
                     scalebar(self.probe_sampling_mrad[1], "mrad", arrays[1].shape[0], axsize[0])]
             panel_size = (6, 6)
         else:
-            raise ValueError(f"Choose view='phase', 'probe', 'rotation', 'parameters', 'depth', 'tilt' or 'convergence'; "
+            raise ValueError(f"Choose view='phase', 'amplitude', 'probe', 'rotation', 'parameters', 'depth', 'tilt' or 'convergence'; "
                              f"got {view!r}.")
         if rows is not None or columns is not None:
             frames = arrays if isinstance(arrays, list) else ([arrays] if arrays.ndim == 2 else list(arrays))
@@ -1001,20 +1067,20 @@ def _is_cupy_array(value: object) -> bool:
 
 
 def _announce_below_auto(result: DirectPtychoResult) -> None:
-    """Say in one line when a shown phase is coarser than ``upsampling="auto"`` and how to get the auto one."""
-    from quantem.gpu.optics.physics import ssb_upsampling_factor
+    """Say in one line when a shown phase is coarser than ``upsample="auto"`` and how to get the auto one."""
+    from quantem.gpu.optics.physics import ssb_upsample_factor
 
     if None in (result.voltage_kV, result.semiangle_mrad, result.object_sampling_A):
         return
     try:
-        auto = ssb_upsampling_factor(
+        auto = ssb_upsample_factor(
             voltage_kV=result.voltage_kV, semiangle_mrad=result.semiangle_mrad,
-            scan_sampling_A=tuple(float(step) * result.upsampling for step in result.object_sampling_A))
+            scan_sampling_A=tuple(float(step) * result.upsample for step in result.object_sampling_A))
     except ValueError:
         return
-    if result.upsampling < auto:
-        print(f"SSB: showing this phase at {result.upsampling}x, the grid it was reconstructed on; "
-              f"ssb.reconstruct(result, upsampling='auto') shows it at {auto}x.")
+    if result.upsample < auto:
+        print(f"SSB: showing this phase at {result.upsample}x, the grid it was reconstructed on; "
+              f"ssb.run(result, upsample='auto') shows it at {auto}x.")
 
 
 @cache
@@ -1065,32 +1131,44 @@ def _phase_title(result: DirectPtychoResult, area: str = "Full field", *, neural
     method = result.reconstruction_method
     options = result.reconstruction_options
     if method in ("phase_of_mean", "phase_of_mean"):
-        heading = "Conventional SSB"
-        detail = "No damping"
+        heading = "Phase of the mean"
+        detail = "No smoothing"
     else:
-        heading = "Regularized phase-only" if method == "phase" else "Amplitude + phase"
-        strength = options.get("phase_damping")
+        heading = "Smoothed phase" if method == "phase" else "Phase and amplitude"
+        strength = options.get("phase_damp")
         phase = "not recorded" if strength is None else f"{strength:g}"
-        detail = f"Phase damping {phase}"
+        detail = f"Smoothing {phase}"
         if method == "complex":
-            strength = options.get("amplitude_damping")
+            strength = options.get("amplitude_damp")
             amplitude = "not recorded" if strength is None else f"{strength:g}"
-            detail = f"Damping: phase {phase}, amplitude {amplitude}"
+            detail = f"Smoothing: phase {phase}, amplitude {amplitude}"
     if neural:
-        heading = "Neural phase: U-Net + ADF + bounded correction"
-        strength = options["neural_phase_model"]["input_phase_damping"]
-        detail = f"Input phase damping {strength:g}"
-    return f"{heading}\n{detail}\n{area} · {result.upsampling}× upsampling · phase (rad)"
+        heading = "Learned correction"
+        strength = options["neural_phase_model"]["input_phase_damp"]
+        detail = f"Trained with smoothing {strength:g}"
+    return f"{heading}\n{detail}\n{area} · {result.upsample}× upsample · phase (rad)"
 
 
 def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "inferno",
                       region: str | None = "center", show_fft: bool = False,
                       interactive: bool = False, size: str | int = "medium",
                       columns: int | None = None, rows: int | None = None,
-                      fft_limit_inv_A: float | None = None):
+                      fft_limit_inv_A: float | None = None,
+                      clim: tuple[float, float] | None = None,
+                      percentiles: tuple[float, float] | None = None):
     """Show calibrated full fields, matching crops and optionally their spectra."""
     entries = [(result, neural) for result in (first, *others)
                for neural in ((False, True) if result.neural_phase is not None else (False,))]
+    # A compared result re-solved with the same optics and smoothing repeats the base
+    # image; drop the copy so every column is a different reconstruction.
+    unique, seen = [], []
+    for result, neural in entries:
+        array = host_array(result.neural_phase if neural else result.phase)
+        if any(array.shape == previous.shape and np.array_equal(array, previous) for previous in seen):
+            continue
+        seen.append(array)
+        unique.append((result, neural))
+    entries = unique
     results = [result for result, _ in entries]
     count = len(results)
     columns = resolve_columns(count, columns=columns, rows=rows, default=min(count, 2))
@@ -1105,7 +1183,7 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
                for shape, step in zip(shapes[1:], sampling[1:], strict=True)):
         raise ValueError("Compare results of the same physical scan field; their shape × sampling differs.")
     if interactive and not all(np.array_equal(shapes[0], shape) for shape in shapes[1:]):
-        raise ValueError("Interactive comparisons need the same pixel grids; use matching upsampling or interactive=False.")
+        raise ValueError("Interactive comparisons need the same pixel grids; use matching upsample or interactive=False.")
 
     all_bounds = []
     crops = phases
@@ -1133,6 +1211,13 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
         phase_limits = tuple(np.percentile(np.concatenate([p.ravel() for p in phases]), [.5, 99.5]))
         if phase_limits[0] == phase_limits[1]:
             phase_limits = (phase_limits[0] - .5, phase_limits[1] + .5)
+    if percentiles is not None:
+        phase_limits = tuple(float(v) for v in np.percentile(
+            np.concatenate([p.ravel() for p in phases]), list(percentiles)))
+        if phase_limits[0] == phase_limits[1]:
+            phase_limits = (phase_limits[0] - .5, phase_limits[1] + .5)
+    if clim is not None:
+        phase_limits = (float(clim[0]), float(clim[1]))
     titles = [_phase_title(result, neural=neural) for result, neural in entries]
     bars = [scalebar(step[1], "Å", phase.shape[0], axsize[0]) for step, phase in zip(sampling, phases, strict=True)]
     groups = [phases]
@@ -1155,9 +1240,21 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
             for index, result in enumerate(results):
                 labels[index] += "\nTilt fixed at zero" if result.sample_tilt_mrad is None else "\nTilt-corrected"
     if show_fft:
+        # The displayed band is the measured one: without an explicit limit, crop
+        # to the aperture, 2*alpha/lambda, so an upsampled grid shows the same
+        # physical frequency region instead of zooming past the aperture.
+        limit = fft_limit_inv_A
+        if limit is None and all(result.voltage_kV is not None and result.semiangle_mrad is not None
+                                 for result in results):
+            # The square inscribed in the aperture: every pixel shown is measured,
+            # and the disc reaches the frame corners instead of leaving them black.
+            aperture = 2 * (results[0].semiangle_mrad / 1000.0) / wavelength_A_from_kV(results[0].voltage_kV)
+            limit = aperture / 2 ** 0.5
+        # The spectrum comes from the whole reconstructed field: a crop would
+        # carry the same band with fewer pixels, and the reader would see blocky bins.
         spectra, frequency_sampling = _phase_spectra(
-            phases if neural_comparison else crops, sampling,
-            log_amplitude=neural_comparison, limit_inv_A=fft_limit_inv_A,
+            phases, sampling,
+            log_amplitude=neural_comparison, limit_inv_A=limit,
         )
         groups.append(spectra)
         area = "Full-field" if neural_comparison or region is None else "Crop"

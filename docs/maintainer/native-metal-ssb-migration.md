@@ -29,7 +29,7 @@ into a SwiftPM library while leaving all UIKit and application ownership behind.
 | `MetalDirectPtychoGeometry` | Complete calibrated BF geometry in logical source order; row and column reciprocal arrays remain explicitly named |
 | `MetalDirectPtychoAberrations` | `c10Angstroms` and `c12Angstroms` in Angstrom; `phi12Radians` in radians |
 | `MetalDirectPtychoEngine.prepare(brightfield:)` | Plane-major lossless `uint8` BF buffer shaped `[logical_brightfield, 512, 512]` |
-| `reconstruct(aberrations:scanDetectorRotationDegrees:)` | Row-major 512×512 complex64 object and Fourier sum (retired 2026-10-25) |
+| `run(aberrations:scanDetectorRotationDegrees:)` | Row-major 512×512 complex64 object and Fourier sum (retired 2026-10-25) |
 | `phaseVariance(aberrations:scanDetectorRotationDegrees:)` | Exact full-logical-BF phase-variance objective (retired 2026-10-25) |
 | `optimize(start:scanDetectorRotationDegrees:globalTrials:seed:...)` | Deterministic seeded TPE search, 200 trials by default, then Nelder–Mead (retired 2026-10-25) |
 | `MetalDirectPtychoProvenance` | Source/compute dtype, no crop, scan bin 1, logical/executed/proven-zero BF counts, cached/streamed BF counts, and exact cache bytes |

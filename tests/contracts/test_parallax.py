@@ -38,7 +38,7 @@ def test_parallax_reconstructs_encoded_acquisition_from_its_exact_counts(
         _write_master(tmp_path, counts), backend="cuda",
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
-        result = parallax.run(loaded, upsampling_factor=1)
+        result = parallax.run(loaded, upsample_factor=1)
 
     scans = counts.shape[0] * counts.shape[1]
     exact_mean = (counts.sum(axis=(0, 1), dtype=np.uint64) / scans).astype(np.float32)
@@ -60,7 +60,7 @@ def test_parallax_shifts_each_image_once_and_upsamples_on_the_finer_grid(tmp_pat
     """The image sums the bright-field images, each shifted once by its returned shift.
 
     Upsampling tiles every image's spectrum and shifts it on the finer grid, as
-    QuantEM's DirectPtychography.reconstruct does, so the samples of the
+    QuantEM's DirectPtychography.run does, so the samples of the
     differently tilted images interleave (tiling the summed spectrum instead
     left every odd row and column zero). The density is the same sum of images
     of ones. Reference: the same sums in NumPy float64.
@@ -77,7 +77,7 @@ def test_parallax_shifts_each_image_once_and_upsamples_on_the_finer_grid(tmp_pat
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         results = {
-            factor: parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsampling_factor=factor)
+            factor: parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsample_factor=factor)
             for factor in (1, 2)
         }
 
@@ -110,7 +110,7 @@ def test_parallax_repeats_bit_identically(tmp_path) -> None:
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         first, second = (
-            parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsampling_factor=2)
+            parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsample_factor=2)
             for _ in range(2)
         )
 
@@ -139,7 +139,7 @@ def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         result = parallax.run(
-            loaded, upsampling_factor=1, fit_aberrations=True,
+            loaded, upsample_factor=1, aberrations=True,
             scan_sampling_A=scan_sampling_A, detector_sampling_mrad=(1.0, 1.0),
         )
 
@@ -154,11 +154,11 @@ def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
 def test_parallax_fit_recovers_exact_shifts_on_a_centred_disk() -> None:
     """Shifts made from known coefficients come back to rounding, for an off-centre disk on a full detector.
 
-    The model is the one ``fit_aberrations_from_shifts`` documents: scan-frame shifts ``alpha @ A R`` for beam
+    The model is the one ``aberrations_from_shifts`` documents: scan-frame shifts ``alpha @ A R`` for beam
     angles ``alpha`` measured from the disk centre (92.6, 99.3) of a 192 x 192 detector. SSB's rotation r turns the
     detector frame back by r, so phi12 comes back in the scan frame as ``phi12 + r``.
     """
-    from quantem.gpu.parallax.workflow import fit_aberrations_from_shifts
+    from quantem.gpu.parallax.workflow import aberrations_from_shifts
 
     c10_nm, c12_nm, phi12, rotation_deg = -21.0, 4.0, 0.3, 37.0
     rows, cols = np.indices((192, 192))
@@ -171,7 +171,7 @@ def test_parallax_fit_recovers_exact_shifts_on_a_centred_disk() -> None:
     turn = np.radians(-rotation_deg)
     rotation = np.array([[np.cos(turn), -np.sin(turn)], [np.sin(turn), np.cos(turn)]])
 
-    aberrations, rotation_angle_deg = fit_aberrations_from_shifts(
+    aberrations, rotation_angle_deg = aberrations_from_shifts(
         angles_rad @ aberration_A @ rotation, angles_rad
     )
 
@@ -216,12 +216,12 @@ def test_parallax_uses_a_fractional_radius_as_given_and_takes_samplings_as_pairs
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         selected = {
-            radius: len(parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsampling_factor=1).shifts)
+            radius: len(parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsample_factor=1).shifts)
             for radius in (4, 4.9)
         }
         assert selected == {radius: int((distance_squared <= radius**2).sum()) for radius in (4, 4.9)}
         assert selected[4.9] > selected[4]
-        options = dict(bright_field_center_px=center, bright_field_radius_px=4, fit_aberrations=True)
+        options = dict(bright_field_center_px=center, bright_field_radius_px=4, aberrations=True)
         pair = parallax.run(loaded, scan_sampling_A=(0.5, 0.5), detector_sampling_mrad=(1.0, 1.0), **options)
         for samplings in (
             {"scan_sampling_A": 0.5, "detector_sampling_mrad": (1.0, 1.0)},
@@ -232,7 +232,7 @@ def test_parallax_uses_a_fractional_radius_as_given_and_takes_samplings_as_pairs
             parallax.run(loaded, scan_sampling_A=(0.5, 0.5, 0.5), detector_sampling_mrad=(1.0, 1.0), **options)
 
 
-def test_parallax_rejects_data_it_cannot_reconstruct() -> None:
+def test_parallax_rejects_data_it_cannot_run() -> None:
     from quantem.gpu import parallax
     from quantem.gpu.io.dataset import Dataset4dstemGPU
 
@@ -277,10 +277,10 @@ def test_parallax_real_acquisition_recovers_aberrations_when_available() -> None
         got = parallax.run(
             loaded,
             bright_field_radius_px=5,
-            upsampling_factor=1,
+            upsample_factor=1,
             scan_sampling_A=(0.5, 0.5),
             semiangle_mrad=30,
-            fit_aberrations=True,
+            aberrations=True,
         )
 
     assert tuple(got.image.shape) == scan_shape

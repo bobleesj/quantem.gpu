@@ -5,7 +5,7 @@
 ## Question
 
 The default SSB result is tilt-corrected (sample tilt and depth spread fitted with the aberrations), so the
-ShowPtycho sliders and `SSB(data).reconstruct()` run the thick-sample model. How fast can both run on an Apple
+ShowPtycho sliders and `SSB(data).run()` run the thick-sample model. How fast can both run on an Apple
 GPU without changing any result beyond float32 rounding, the 200-trial search, the Newton polish or the
 two independent 180-degree branch fits?
 
@@ -39,7 +39,7 @@ read of each G value and column table.
 Parity on the thin-film scan, against a float64 evaluation of 11 spectrum rows: mean relative error 2.5e-6
 (per-term kernel 2.8e-6) at the fitted parameters and 1.2e-5 (per-term 6.5e-5) at a far point
 (C10 −15 nm, 4 nm C12, 40 nm depth); p99.9 1.5e-5 against 3.1e-5. Phase difference between the two kernels:
-max 1.4e-5 rad, RMS 3.0e-6 rad at native sampling. `tests/hardware/mps/test_ssb_upsampling.py` compares the
+max 1.4e-5 rad, RMS 3.0e-6 rad at native sampling. `tests/hardware/mps/test_ssb_upsample.py` compares the
 separable and per-term kernels with tilt and depth at 1x, 2x and 3x (max 2e-6 rad on the synthetic session) and
 checks that one or three rows per thread give the same bits.
 

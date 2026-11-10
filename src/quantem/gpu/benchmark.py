@@ -154,7 +154,7 @@ def _regions(shape: tuple[int, int], sizes: tuple[int, ...]) -> list[tuple[str, 
 def run_ssb_preview(
     ssb: DirectPtycho,
     *,
-    upsampling: tuple[int, ...] = (1, 2, 3, 4, 8),
+    upsample: tuple[int, ...] = (1, 2, 3, 4, 8),
     runs: int = 6,
     defocus_step_nm: float = 0.1,
     progress: Callable[[str], None] | None = None,
@@ -164,14 +164,14 @@ def run_ssb_preview(
     Retain the session's aberrations, rotation, tilt, depth and complete
     bright-field support. Only C10 changes along a deterministic trajectory;
     the session itself is not modified. No fitting or loss diagnostic runs.
-    Each output grid is measured separately, because changing upsampling
+    Each output grid is measured separately, because changing upsample
     changes the reconstructed frequency coverage.
 
     Parameters
     ----------
     ssb : quantem.gpu.SSB
         Calibrated session, normally restored from a reviewed joint fit.
-    upsampling : tuple of int
+    upsample : tuple of int
         Output factors to measure. Supported factors are 1, 2, 3, 4 and 8.
     runs : int
         First observation plus warm observations, at least two.
@@ -195,14 +195,14 @@ def run_ssb_preview(
     Examples
     --------
     >>> from quantem.gpu.benchmark import run_ssb_preview
-    >>> report = run_ssb_preview(ssb, upsampling=(1, 4), runs=11)  # doctest: +SKIP
+    >>> report = run_ssb_preview(ssb, upsample=(1, 4), runs=11)  # doctest: +SKIP
     """
     if runs < 2:
         raise ValueError("Use runs >= 2 for a first observation and warm timings.")
-    if not upsampling or any(
-        type(value) is not int or value not in (1, 2, 3, 4, 8) for value in upsampling
+    if not upsample or any(
+        type(value) is not int or value not in (1, 2, 3, 4, 8) for value in upsample
     ):
-        raise ValueError("Choose upsampling factors from (1, 2, 3, 4, 8).")
+        raise ValueError("Choose upsample factors from (1, 2, 3, 4, 8).")
     if not np.isfinite(defocus_step_nm) or defocus_step_nm == 0:
         raise ValueError("Use a finite, nonzero defocus_step_nm to measure new images.")
     backend = ssb.backend
@@ -239,7 +239,7 @@ def run_ssb_preview(
         "browser_paint_measured": False,
         "measurements": {},
     }
-    for factor in upsampling:
+    for factor in upsample:
         compute_times, download_times, delivery_times, samples = [], [], [], []
         for index in range(runs):
             values = {**optics, "C10_nm": optics["C10_nm"] + index * defocus_step_nm}
@@ -248,7 +248,7 @@ def run_ssb_preview(
                     ssb.preview,
                     values,
                     compute_loss=False,
-                    upsampling=factor,
+                    upsample=factor,
                     output="native" if backend == "cuda" else "numpy",
                     **sample,
                 ),
@@ -259,7 +259,7 @@ def run_ssb_preview(
             download_s = time.perf_counter() - started
             if not np.isfinite(phase).all():
                 raise RuntimeError(
-                    f"Nonfinite phase at upsampling={factor}; inspect calibration."
+                    f"Nonfinite phase at upsample={factor}; inspect calibration."
                 )
             compute_times.append(compute_s)
             download_times.append(download_s)
@@ -354,7 +354,7 @@ def run_ssb(
     selected = resolve(backend)
     if selected not in {"cuda", "mps"}:
         raise RuntimeError(
-            "SSB benchmarking needs CUDA or Apple MPS. Install the matching GPU extra."
+            "DirectPtycho benchmarking needs CUDA or Apple MPS. Install the matching GPU extra."
         )
     environment = _environment(selected)
     reference = (
@@ -437,7 +437,7 @@ def run_ssb(
             with ssb:
                 fitted, seconds = _timed(
                     partial(
-                        ssb.fit_aberrations,
+                        ssb.aberrations,
                         search="standard",
                         num_trials=num_trials,
                         seed=seed,
@@ -455,9 +455,9 @@ def run_ssb(
                 keep("full_field_fit", seconds, fitted.phase, record)
                 output, output_s = _timed(
                     partial(
-                        ssb.reconstruct,
+                        ssb.run,
                         fitted,
-                        upsampling="auto",
+                        upsample="auto",
                         compute_loss=False,
                     ),
                     selected,
@@ -514,7 +514,7 @@ def run_ssb(
                     with regional:
                         local, fit_s = _timed(
                             partial(
-                                regional.fit_aberrations,
+                                regional.aberrations,
                                 search="standard",
                                 num_trials=num_trials,
                                 seed=seed,
@@ -532,7 +532,7 @@ def run_ssb(
                             local.aberrations,
                             sample_tilt_mrad=local.sample_tilt_mrad,
                             depth_spread_nm=local.depth_spread_nm,
-                            upsampling=factor,
+                            upsample=factor,
                             compute_loss=False,
                         ),
                         selected,

@@ -96,7 +96,7 @@ defocus changes separately from fitting:
 ```python
 from quantem.gpu.benchmark import run_ssb_preview
 
-report = run_ssb_preview(ssb, upsampling=(1, 2, 3, 4, 8), runs=11)
+report = run_ssb_preview(ssb, upsample=(1, 2, 3, 4, 8), runs=11)
 ```
 
 This keeps all active aberrations, tilt, depth and BF pixels. Each observation

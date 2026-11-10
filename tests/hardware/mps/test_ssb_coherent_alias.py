@@ -12,7 +12,7 @@ pytest.importorskip("mlx.core", reason="Physical Apple Metal backend required")
 @pytest.mark.parametrize("anisotropic", [False, True])
 def test_coherent_sum_matches_per_detector_correction(monkeypatch, factor, anisotropic):
     mx = pytest.importorskip("mlx.core")
-    from quantem.gpu.direct_ptycho.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsample as up
     from quantem.gpu.direct_ptycho.mps.thick_sample import _params
 
     with _session(constant=False) as ssb:
@@ -61,7 +61,7 @@ def test_coherent_sum_matches_per_detector_correction(monkeypatch, factor, aniso
         wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
         expected = mx.arctan2(mx.imag(wave), mx.real(wave))
         mx.eval(expected)
-        actual = up._reconstruct_upsampled(prepared, **sample, upsampling_factor=factor)
+        actual = up._reconstruct_upsampled(prepared, **sample, upsample_factor=factor)
         # Existing MPS coherent-object tolerance; no reduced support or precision.
         np.testing.assert_allclose(actual, np.asarray(expected), rtol=0, atol=1e-7)
 
@@ -69,8 +69,8 @@ def test_coherent_sum_matches_per_detector_correction(monkeypatch, factor, aniso
 @pytest.mark.parametrize("native", [128, 256, 512, 1024])
 def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
     """Fine-grid tilt previews retain the full phase when zero support is omitted."""
-    from quantem.gpu.direct_ptycho.mps import upsampling as up
-    from .test_ssb_upsampling import _disk_session
+    from quantem.gpu.direct_ptycho.mps import upsample as up
+    from .test_ssb_upsample import _disk_session
 
     coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
     # Odd and even aberration orders exercise the complete corrected spectrum.
@@ -79,7 +79,7 @@ def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
     sample = {"sample_tilt_mrad": (-9., 5.), "depth_spread_nm": 18.}
     with _disk_session(native, detector_sampling=(8., 12.)) as ssb:
         compact, loss = ssb.preview(
-            coefs, **sample, upsampling=2, compute_loss=False,
+            coefs, **sample, upsample=2, compute_loss=False,
         )
         monkeypatch.setattr(
             up, "_coherent_support",
@@ -90,7 +90,7 @@ def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
         # the compact geometry retained by the previous slider evaluation.
         ssb._backend()._prepared.upsampled_geometry = None
         dense, dense_loss = ssb.preview(
-            coefs, **sample, upsampling=2, compute_loss=False,
+            coefs, **sample, upsample=2, compute_loss=False,
         )
         np.testing.assert_array_equal(compact, dense)
         assert loss is dense_loss is None

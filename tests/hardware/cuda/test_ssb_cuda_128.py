@@ -443,9 +443,9 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
     aberrations = {"C10_nm": -8.0, "C12_nm": 3.0, "phi12_deg": math.degrees(0.4)}
     with DirectPtycho(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5),
              detector_sampling_mrad=(2.0, 2.0), bright_field_center_px=(7.5, 7.5), bright_field_radius_px=5) as session:
-        before = session.reconstruct(aberrations=aberrations).loss
-        session.fit_aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
-        after = session.reconstruct(aberrations=aberrations, force=True).loss
+        before = session.run(aberrations=aberrations).loss
+        session.aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
+        after = session.run(aberrations=aberrations, force=True).loss
         engine = session._backend()._get_accelerator()
         engine_aberrations = aberrations_to_engine(aberrations)
         _, exact = engine.reconstruct_with_loss(
@@ -597,7 +597,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
         herm.aberrations["C12"],
         herm.aberrations["phi12"],
     )
-    full_phase, _ = full_engine.thick.reconstruct(*args, (0.0, 0.0), 0.0, compute_loss=False)
+    full_phase, _ = full_engine.thick.run(*args, (0.0, 0.0), 0.0, compute_loss=False)
     _full_mean_phase, full_loss = full_engine.reconstruct_with_loss(*args)
     assert herm_result.phase_estimator == "phase_of_mean" and not herm_result.amplitude_estimated
     phase_err = cp.abs(cp.angle(herm_result.object_wave * cp.exp(-1j * full_phase)))

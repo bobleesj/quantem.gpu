@@ -85,9 +85,9 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
         values[..., 2, 3] = 0  # independent dense reference's scientific validity mask
         with DirectPtycho(values, **SETTINGS, scan_detector_rotation_flipped=transposed) as dense:
             expected, _ = dense.preview(ABERRATIONS, compute_loss=False,
-                upsampling=factor, sample_tilt_mrad=(1., -2.), depth_spread_nm=depth, output="native")
+                upsample=factor, sample_tilt_mrad=(1., -2.), depth_spread_nm=depth, output="native")
             phase, loss = streamed.phase(aberrations_to_engine(ABERRATIONS), voltage_kV=300., semiangle_mrad=30.,
-                scan_sampling_A=SETTINGS["scan_sampling_A"], rotation_deg=27., upsampling_factor=factor,
+                scan_sampling_A=SETTINGS["scan_sampling_A"], rotation_deg=27., upsample_factor=factor,
                 sample_tilt_mrad=(1., -2.), depth_spread_A=depth * 10)
             assert streamed.num_bright_field_pixels == dense.num_bright_field_pixels
             assert loss is None and phase.dtype == cp.float32
@@ -102,23 +102,23 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
         with DirectPtycho(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True) as session:
             assert session._data is data and session._compute is None
             region = (173, 301, 251, 379)
-            fitted = session.fit_aberrations(search="primary", tilt=False, scan_region=region, num_trials=0,
+            fitted = session.aberrations(search="primary", tilt=False, scan_region=region, num_trials=0,
                 refinement=None, check_rotation=False, verbose=False)
             assert fitted.phase.shape == (128, 128)
             assert fitted.fit_scan_region == region
             assert fitted.bright_field_center_px == SETTINGS["bright_field_center_px"]
             with DirectPtycho(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True,
                      scan_region=region) as explicit:
-                expected_fit = explicit.fit_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
+                expected_fit = explicit.aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
                     check_rotation=False, verbose=False)
                 cp.testing.assert_array_equal(fitted.phase, expected_fit.phase)
-            result = session.reconstruct(fitted, compute_loss=False)
+            result = session.run(fitted, compute_loss=False)
             assert result.phase.shape == (1024, 1024) and result.loss is None
             assert result.fit_scan_region == region
             assert result.object_sampling_A == SETTINGS["scan_sampling_A"]
             assert session._compute is None
             # Existing 1024 callers retain diagnostic loss and other estimators.
-            with_loss = session.reconstruct(fitted)
+            with_loss = session.run(fitted)
             assert math.isfinite(with_loss.loss)
             cp.testing.assert_allclose(result.phase, with_loss.phase, atol=1e-6, rtol=1e-5)
             # A widget export must still contain exactly the selected counts,
@@ -139,7 +139,7 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
             # Dense reference is limited to 1024; the public large path matches it.
             values[..., 2, 3] = 0
             with DirectPtycho(values, **SETTINGS, scan_detector_rotation_flipped=True) as dense:
-                expected = dense.reconstruct(fitted, compute_loss=False)
+                expected = dense.run(fitted, compute_loss=False)
                 cp.testing.assert_allclose(result.phase, expected.phase, atol=1e-6, rtol=1e-5)
         assert not data.data.is_released
         assert data.read(scan_region=(0, 1, 0, 1))[0, 0, 2, 3].item() == 65535
@@ -179,9 +179,9 @@ def test_open_large_file_keeps_encoded_source_and_closes_only_its_owner(tmp_path
         with DirectPtycho.open(str(path), **SETTINGS) as session:
             owner = session._owned_dataset
             assert owner is session._data and not owner.data.is_released
-            first = session.reconstruct(aberrations=ABERRATIONS, compute_loss=False,
+            first = session.run(aberrations=ABERRATIONS, compute_loss=False,
                                         save_dir=tmp_path / "result")
-            second = session.reconstruct(aberrations=ABERRATIONS, compute_loss=False,
+            second = session.run(aberrations=ABERRATIONS, compute_loss=False,
                                          save_dir=tmp_path / "result")
             assert second.reused
             cp.testing.assert_array_equal(first.phase, second.phase)

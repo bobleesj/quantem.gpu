@@ -72,7 +72,7 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
     }
     assert shared <= constructor.parameters.keys()
     assert constructor.parameters["backend"].default == "auto"
-    reconstruct = inspect.signature(DirectPtycho.reconstruct)
+    reconstruct = inspect.signature(DirectPtycho.run)
     assert reconstruct.parameters["compute_loss"].default is True
 
 
@@ -85,7 +85,7 @@ def test_mps_preview_honors_compute_loss(monkeypatch) -> None:
 
     def upsampled(candidate, **kwargs):
         assert candidate is prepared and "phase_estimator" not in kwargs
-        calls.append(("phase", kwargs["upsampling_factor"]))
+        calls.append(("phase", kwargs["upsample_factor"]))
         return np.ones((4, 4), dtype=np.float32)
 
     def variance(c10, c12, phi12):
@@ -101,8 +101,8 @@ def test_mps_preview_honors_compute_loss(monkeypatch) -> None:
     backend.reconstruct_with_loss = variance
 
     aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
-    phase, without_loss = backend.preview_upsampled(aberrations, upsampling_factor=2, compute_loss=False)
-    _, with_loss = backend.preview_upsampled(aberrations, upsampling_factor=2, compute_loss=True)
+    phase, without_loss = backend.preview_upsampled(aberrations, upsample_factor=2, compute_loss=False)
+    _, with_loss = backend.preview_upsampled(aberrations, upsample_factor=2, compute_loss=True)
     assert phase.shape == (4, 4)
     assert without_loss is None
     assert with_loss == 0.25
@@ -230,7 +230,7 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
         **common,
     )
 
-    assert default.aberrations == explicit.aberrations
+    assert default.known_aberrations == explicit.known_aberrations
     assert not default._aberrations_explicit
     assert explicit._aberrations_explicit
 
@@ -392,4 +392,4 @@ def test_removed_class_alias_and_fit_display_default():
     assert not hasattr(gpu, "SSB")
     assert not hasattr(direct_ptycho, "SSB")
     assert not hasattr(direct_ptycho.DirectPtycho, "find_aberrations")
-    assert inspect.signature(gpu.DirectPtycho.fit_aberrations).parameters["columns"].default == 2
+    assert inspect.signature(gpu.DirectPtycho.aberrations).parameters["columns"].default == 2

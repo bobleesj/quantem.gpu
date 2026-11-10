@@ -65,7 +65,7 @@ G reads alone are about 7 GB per redraw (14 ms at the measured 489 GB/s).
   8.1e-7 rad (2.3e-7 mean). The 4.4e-6 rad difference between the two is the
   old kernel's float32 error at low frequencies, where the double-sideband
   normalisation divides two nearly equal phase differences.
-- `tests/hardware/mps/test_ssb_upsampling.py` compares the separable and
+- `tests/hardware/mps/test_ssb_upsample.py` compares the separable and
   per-term kernels and checks the phasor reduction against float64.
 
 ## Browser frame rate

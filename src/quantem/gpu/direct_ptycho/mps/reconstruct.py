@@ -46,7 +46,7 @@ _DIAGNOSTIC_BF_TILE = 256
 # 4 % faster loss previews for 6 to 12 GB more resident memory, an opt-in for big Macs. Chunks of 1024 or fewer
 # pixels (Macs below 96 GB) are not split either way.
 LOSS_ROW_IFFT_TILE_BF: int | None = 1024
-# The tile inside fit_aberrations: its few loss and phase evaluations (the fit's final loss, both branches' phases)
+# The tile inside aberrations: its few loss and phase evaluations (the fit's final loss, both branches' phases)
 # take a negligible share of the fit's time, so they run in quarter-size tiles and the fit keeps 0.5 GB of row IFFT
 # instead of 2.1 GB. The same bits either way.
 FIT_LOSS_ROW_IFFT_TILE_BF: int | None = 256
@@ -55,7 +55,7 @@ _loss_tile_override: ContextVar[int | None] = ContextVar("loss_row_ifft_tile_bf"
 
 @contextmanager
 def fit_loss_tiles():
-    """Run the enclosed loss evaluations with ``FIT_LOSS_ROW_IFFT_TILE_BF`` tiles (``DirectPtycho.fit_aberrations``)."""
+    """Run the enclosed loss evaluations with ``FIT_LOSS_ROW_IFFT_TILE_BF`` tiles (``DirectPtycho.aberrations``)."""
     token = _loss_tile_override.set(FIT_LOSS_ROW_IFFT_TILE_BF)
     try:
         yield

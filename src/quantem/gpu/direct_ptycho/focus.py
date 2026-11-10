@@ -46,7 +46,7 @@ def show_focus(
     if offsets.ndim != 1 or not offsets.size or not np.isfinite(offsets).all():
         raise ValueError("Give finite focus_offsets_nm, for example (-5, 0, 5), relative to the joint fit.")
     if fit.sample_tilt_mrad is None or fit.depth_spread_nm is None:
-        raise ValueError("Focus/depth images require a joint fit. Run ssb.fit_aberrations(tilt=True) first.")
+        raise ValueError("Focus/depth images require a joint fit. Run ssb.aberrations(tilt=True) first.")
     depths = (
         np.unique(np.maximum(0.0, fit.depth_spread_nm + np.array([-5.0, 0.0, 5.0])))
         if depth_spread_nm is None else np.atleast_1d(np.asarray(depth_spread_nm, dtype=float))
@@ -64,7 +64,7 @@ def show_focus(
         except ImportError as exc:
             raise ImportError("Interactive focus images need quantem.widget; install it, or use mode='static'.") from exc
 
-    factor = session._resolve_upsampling("auto")
+    factor = session._resolve_upsample("auto")
     sampling = session._output_sampling(factor)
     crop = (slice(None), slice(None))
     if region is not None:
@@ -80,7 +80,7 @@ def show_focus(
                 aberrations = {**fit.aberrations, "C10_nm": fit.aberrations["C10_nm"] + float(offset)}
                 phase, _ = session.preview(
                     aberrations, sample_tilt_mrad=fit.sample_tilt_mrad,
-                    depth_spread_nm=float(depth), upsampling=factor,
+                    depth_spread_nm=float(depth), upsample=factor,
                     compute_loss=False,
                 )
                 row_images.append(phase[crop].copy())

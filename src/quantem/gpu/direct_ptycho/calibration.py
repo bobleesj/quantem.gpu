@@ -7,10 +7,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from quantem.gpu.geometry import sample_to_propagator_tilt
-from quantem.gpu.optics.physics import ssb_upsampling_factor
+from quantem.gpu.optics.physics import ssb_upsample_factor
 
-# 7: the output factor is "upsampling" (was "upsampling_factor") and reconstruction_options names the direct
-#    strengths phase_damping and amplitude_damping (were phase_regularization and amplitude_regularization).
+# 7: the output factor is "upsample" (was "upsample_factor") and reconstruction_options names the direct
+#    strengths phase_damp and amplitude_damp (were phase_regularization and amplitude_regularization).
 #    An earlier /6 record is rewritten once with quantem.widget's scripts/rewrite_ssb_calibration.py.
 CALIBRATION_SCHEMA = "quantem.ssb-calibration/7"
 # Every calibration record a reader accepts, the current one first.
@@ -22,7 +22,7 @@ def capture_calibration(session, result):
     if result.calibration_context is not None or session.source_kind == "array" or session.source_path is None:
         return
     shape = session.input_scan_shape
-    prepared_shape = tuple(int(n) // result.upsampling for n in result.object_wave.shape[-2:])
+    prepared_shape = tuple(int(n) // result.upsample for n in result.object_wave.shape[-2:])
     result.calibration_context = {
         "scan_shape": list(shape),
         "scan_region": list(session.scan_region or (0, shape[0], 0, shape[1])),
@@ -93,9 +93,9 @@ def save_calibration(result, path):
         sample, depth = None, None
     if (sample is None) != (depth is None) or (depth is not None and depth < 0):
         raise ValueError("Sample tilt and positive depth spread must describe one complete model.")
-    factor = (ssb_upsampling_factor(scan_sampling_A=geometry["scan_sampling_A"],
+    factor = (ssb_upsample_factor(scan_sampling_A=geometry["scan_sampling_A"],
                                    semiangle_mrad=geometry["semiangle_mrad"], voltage_kV=geometry["voltage_kV"])
-              if method in ("phase_of_mean", "phase_of_mean") else result.upsampling)
+              if method in ("phase_of_mean", "phase_of_mean") else result.upsample)
     record = {
         "schema": CALIBRATION_SCHEMA, "id": uuid4().hex[:12], "generated_at_utc": datetime.now(UTC).isoformat(),
         "notes": "", "aberrations": dict(result.aberrations),
@@ -115,7 +115,7 @@ def save_calibration(result, path):
         "reconstruction_method": method,
         "reconstruction_options": deepcopy(result.reconstruction_options),
         "reconstruction_diagnostics": deepcopy(result.reconstruction_diagnostics),
-        "upsampling": factor, "upsampling_mode": "auto" if method in ("phase_of_mean", "phase_of_mean") else "explicit",
+        "upsample": factor, "upsample_mode": "auto" if method in ("phase_of_mean", "phase_of_mean") else "explicit",
         "display_negate_phase": False,
         "display": {"tilt_correction": sample is not None, "max_columns": 3},
         "session_identity": identity, "local_tilt": None,

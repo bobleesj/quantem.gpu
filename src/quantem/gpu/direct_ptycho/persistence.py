@@ -41,15 +41,15 @@ FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 # The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
-# 11: the result field upsampling_factor is upsampling, and reconstruction_options names the direct strengths
-#     phase_damping and amplitude_damping (phase_regularization, amplitude_regularization before). A version-10
+# 11: the result field upsample_factor is upsample, and reconstruction_options names the direct strengths
+#     phase_damp and amplitude_damp (phase_regularization, amplitude_regularization before). A version-10
 #     record also carries the previous source hash in its signature, so it is computed again, as after any code change.
 # 10: the record holds no absolute path, inode, device or time: the source is its portable acquisition_identity, and
 #     input names files relative to the results folder (portable_source), so a moved or copied folder is reused.
 # 9: the rotation check is rotation_branches, both 180-degree branches fitted independently (their aberrations, loss,
 #    column test, phase tail and native phases), replacing column_sign, initial_column_sign,
 #    initial_scan_detector_rotation_deg and rotation_check_phases.
-# 8: the result field refine_method is refinement, the name of the fit_aberrations keyword it records.
+# 8: the result field refine_method is refinement, the name of the aberrations keyword it records.
 # 12: sample_agreement is the fraction of the agreement band's power the fit explains (it was the raw agreement).
 RESULT_VERSION = 12
 RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"

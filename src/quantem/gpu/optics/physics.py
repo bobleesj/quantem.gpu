@@ -11,7 +11,7 @@ ELECTRON_MASS = 9.1093837015e-31  # Electron rest mass (kg)
 ELECTRON_CHARGE = 1.602176634e-19  # Elementary charge (C)
 SPEED_OF_LIGHT = 299792458  # Speed of light (m/s)
 
-# The SSB output factors a reconstruction accepts, and the largest one upsampling="auto" chooses.
+# The SSB output factors a reconstruction accepts, and the largest one upsample="auto" chooses.
 SSB_UPSAMPLING_FACTORS = (1, 2, 3, 4, 8)
 SSB_AUTO_UPSAMPLING_MAX = 4
 
@@ -128,7 +128,7 @@ def wrap_degrees(angle_deg: float, period_deg: float) -> float:
     return 0.0 if wrapped == period_deg else wrapped
 
 
-def ssb_upsampling_requirement(
+def ssb_upsample_requirement(
     *,
     voltage_kV: float,
     semiangle_mrad: float,
@@ -180,7 +180,7 @@ def ssb_upsampling_requirement(
     return max(spacing) / target_spacing
 
 
-def ssb_upsampling_factor(
+def ssb_upsample_factor(
     *,
     voltage_kV: float,
     semiangle_mrad: float,
@@ -206,29 +206,29 @@ def ssb_upsampling_factor(
     int
         Smallest of 1, 2, 3, 4 and 8, up to ``max_factor``, whose output
         Nyquist frequency covers nominal support on both scan axes, or
-        ``max_factor`` when none does. Use ``ssb_upsampling_requirement`` to
+        ``max_factor`` when none does. Use ``ssb_upsample_requirement`` to
         inspect the fractional requirement.
 
     Notes
     -----
-    A capped factor undersamples nominal support. ``upsampling="auto"``
+    A capped factor undersamples nominal support. ``upsample="auto"``
     uses the default cap and prints one line, once per session, naming the
     factor the scan sampling supports; pass that factor explicitly (for
-    example ``upsampling=8``) to use it. This choice does not change
+    example ``upsample=8``) to use it. This choice does not change
     fitting.
 
     Examples
     --------
     At 300 kV and 30 mrad, a 1 Å step needs about 6.1×:
 
-    >>> ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0)
+    >>> ssb_upsample_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0)
     4
-    >>> ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0, max_factor=8)
+    >>> ssb_upsample_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0, max_factor=8)
     8
     """
     if isinstance(max_factor, bool) or not isinstance(max_factor, Integral) or max_factor not in SSB_UPSAMPLING_FACTORS:
         raise ValueError("max_factor must be 1, 2, 3, 4, or 8.")
-    required = ssb_upsampling_requirement(
+    required = ssb_upsample_requirement(
         voltage_kV=voltage_kV, semiangle_mrad=semiangle_mrad,
         scan_sampling_A=scan_sampling_A,
     )

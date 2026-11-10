@@ -3,7 +3,7 @@
 Standard SSB treats the sample as one plane at the probe defocus. A crystal of thickness t tilted by theta sees a range of
 defoci and shifts through its depth; averaging the SSB transfer terms over that depth gives each its own sinc weight (see
 ``kernels/engine.py``). ``ThickSample`` evaluates that model on one engine's prepared bright-field spectra ``G_qk``:
-phase images for previews and reconstruction, and the agreement that ``fit_aberrations(tilt=True)`` maximises.
+phase images for previews and reconstruction, and the agreement that ``aberrations(tilt=True)`` maximises.
 """
 
 import math
@@ -48,7 +48,7 @@ class ThickSample:
         self._wave_cells = None
         self._wave_lens_cache = None
 
-    def reconstruct(
+    def run(
         self,
         C10: float,
         C12: float,
@@ -57,22 +57,22 @@ class ThickSample:
         thickness: float,
         compute_loss: bool = True,
         chunk_bytes: int = 1 << 30,
-        upsampling_factor: int = 1,
+        upsample_factor: int = 1,
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
-        """SSB phase of a thick, tilted crystal at ``upsampling_factor``, and the native-grid phase-variance loss.
+        """SSB phase of a thick, tilted crystal at ``upsample_factor``, and the native-grid phase-variance loss.
 
         Each pixel's SSB correction is averaged over the sample depth (see ``thick_correct_kernel``);
         ``sample_tilt_mrad`` = (row, col) in the scan frame, ``thickness`` in the C10 unit, and thickness 0 reproduces
         standard SSB. The corrected spectra are summed in bounded BF groups before a single inverse FFT and phase
-        extraction (``phase_of_mean``); upsampling aliases are read directly from the native spectra without a per-BF
+        extraction (``phase_of_mean``); upsample aliases are read directly from the native spectra without a per-BF
         expanded image. Linear averaging commutes with the inverse FFT, but not with phase extraction. The loss,
         when asked for, is ``phase_variance``'s on the native grid.
         """
-        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
-            raise ValueError("upsampling_factor must be 1, 2, 3, 4, or 8.")
-        qrow, qcol = self._frequencies(upsampling_factor)
+        if type(upsample_factor) is not int or upsample_factor not in (1, 2, 3, 4, 8):
+            raise ValueError("upsample_factor must be 1, 2, 3, 4, or 8.")
+        qrow, qcol = self._frequencies(upsample_factor)
         return self._reconstruct_wave(
             C10, C12, phi12, sample_tilt_mrad, thickness, qrow, qcol,
             compute_loss=compute_loss, chunk_bytes=chunk_bytes,
@@ -294,7 +294,7 @@ class ThickSample:
         # the BF sum and the inverse FFT run in complex128; the phase is returned float32 like every other path
         return cp.angle(cp.fft.ifft2(spectrum / num_bright_field_pixels)).astype(cp.float32)
 
-    def _frequencies(self, upsampling_factor: int) -> tuple[cp.ndarray, cp.ndarray]:
+    def _frequencies(self, upsample_factor: int) -> tuple[cp.ndarray, cp.ndarray]:
         """Row and column frequencies (1/A) of the output grid.
 
         Same field of view at every factor: Fourier spacing is unchanged; the
@@ -302,9 +302,9 @@ class ThickSample:
         the new q.
         """
         cache = self.engine._cache
-        if upsampling_factor == 1:
+        if upsample_factor == 1:
             return cache["qx_1d"], cache["qy_1d"]
-        ny, nx = cache["ny"] * upsampling_factor, cache["nx"] * upsampling_factor
+        ny, nx = cache["ny"] * upsample_factor, cache["nx"] * upsample_factor
         return ((cp.fft.fftfreq(ny) * ny * cache["qx_1d"][1]).astype(cp.float32),
                 (cp.fft.fftfreq(nx) * nx * cache["qy_1d"][1]).astype(cp.float32))
 
@@ -444,7 +444,7 @@ class ThickSample:
                     f"The model-agreement fit needs spatial frequencies in {band_inv_A[0]:g}–{band_inv_A[1]:g} 1/A, "
                     f"but this scan reaches only {float(q_magnitude.max()):.3g} 1/A. "
                     "Acquire a finer scan. "
-                    "Reconstruction upsampling does not add measured frequencies."
+                    "Reconstruction upsample does not add measured frequencies."
                 )
             if half:
                 # columns 0 and nx/2 map onto themselves (their mirror is in the stored half): count once there

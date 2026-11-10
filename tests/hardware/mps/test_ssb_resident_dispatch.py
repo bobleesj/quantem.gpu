@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from .test_ssb_thick_sample_mps import _require_mps
-from .test_ssb_upsampling import _disk_session
+from .test_ssb_upsample import _disk_session
 
 
 @pytest.mark.parametrize("batch", [1, 8, 13, 28, 84])

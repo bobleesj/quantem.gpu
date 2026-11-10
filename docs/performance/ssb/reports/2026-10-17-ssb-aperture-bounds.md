@@ -44,7 +44,7 @@ These peaks include preparation; they are not incremental redraw memory.
 - All 28 complete frozen real-data phase arrays were bitwise identical.
   Comparisons cover ordinary, tilt/depth, native and Auto reconstruction,
   plus requests with loss. Recorded loss values were identical.
-- All 33 MPS upsampling tests passed, including higher orders, partial BF
+- All 33 MPS upsample tests passed, including higher orders, partial BF
   groups, repeated execution and a new anisotropic-aperture check at 3×.
   The existing independent GPU reference tolerance remains 2e-5 rad.
 - The native Metal reconstruction and saved-workflow gate passed. This does

@@ -358,7 +358,7 @@ def _gradient_session(monkeypatch, backend, start, seen=None):
         backend=backend, _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None,
                                                                               trial_records=[], tilt_fit_gain=None)),
         _backend=lambda: SimpleNamespace(band_power=lambda band: 1.0),
-        reconstruct=lambda result, **kwargs: result, _accept_result=lambda result: result,
+        run=lambda result, **kwargs: result, _accept_result=lambda result: result,
     )
 
 
@@ -445,7 +445,7 @@ def test_higher_order_limit_is_recorded_and_checked_before_computation(monkeypat
             SimpleNamespace(backend="cuda", _find_aberrations=Mock()), search="standard", trials=200, seed=42,
             save_dir=None, force=False, verbose=False, show=False,
             primary_options={"check_rotation": False, "refine_rotation": False}, higher_order_limit=5)
-    call = inspect.unwrap(DirectPtycho.fit_aberrations)
+    call = inspect.unwrap(DirectPtycho.aberrations)
     with pytest.raises(ValueError, match="search='primary'"):
         call(SimpleNamespace(), search="primary", higher_order_limit=20)
     with pytest.raises(ValueError, match="search='primary'"):
@@ -549,7 +549,7 @@ def _broad_session(monkeypatch, objective, standard):
         backend="cuda", _find_aberrations=Mock(return_value=SimpleNamespace(rotation_branches=None,
                                                                              trial_records=[], tilt_fit_gain=None)),
         _backend=lambda: SimpleNamespace(band_power=lambda band: 1.0),
-        reconstruct=lambda result, **kwargs: result, _accept_result=lambda result: result,
+        run=lambda result, **kwargs: result, _accept_result=lambda result: result,
     )
 
 

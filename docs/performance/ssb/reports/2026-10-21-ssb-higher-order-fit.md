@@ -38,7 +38,7 @@ identifies `optimizer_backend="numpy"` and the `agreement_backend`.
 This optional path does not change the default fit optimizer.
 
 The result's `aberrations` carry `C21_nm`, `phi21_deg`, `C23_nm`, `phi23_deg` and
-`C30_nm`, so `reconstruct(result)` applies them. `result.optimizer["higher_order"]`
+`C30_nm`, so `run(result)` applies them. `result.optimizer["higher_order"]`
 records the agreement before and after, the evaluations, the time, and the
 guard below: `trusted` and its numbers in `guard`.
 

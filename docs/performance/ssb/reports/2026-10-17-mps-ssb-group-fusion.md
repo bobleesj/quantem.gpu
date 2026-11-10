@@ -5,7 +5,7 @@ comparisons, profiler traces and application evidence remain private.
 
 ## Change
 
-The coherent upsampling kernel now corrects and accumulates 64 existing
+The coherent upsample kernel now corrects and accumulates 64 existing
 bright-field groups per launch. Each frequency reuses its coordinates and tilt
 shift across groups. Partial group spectra stay in registers instead of being
 written to memory and read by a second reduction kernel.
@@ -59,7 +59,7 @@ cost. The Metal trace did not provide hardware ALU or DRAM counters.
   inputs in a paired test. The existing addressing is retained.
 - All 120 real full-image comparisons were bit-identical to the frozen GPU
   implementation, across ordinary and joint C10/tilt changes.
-- The MPS upsampling suite passed 43 tests, including incomplete BF groups
+- The MPS upsample suite passed 43 tests, including incomplete BF groups
   across multiple launches, higher-order aberrations, cancellation, anisotropic
   sampling and saved-result behavior.
 - Native reconstruction, the 200-trial native fit and saved-run round trip

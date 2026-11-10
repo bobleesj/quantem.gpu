@@ -37,7 +37,7 @@ def test_constant_scan_remains_flat_inside_alias_support(factor, depth):
         phase, loss = ssb.preview(
             {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.},
             sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth,
-            upsampling=factor, compute_loss=False,
+            upsample=factor, compute_loss=False,
         )
         assert loss is None
         assert np.isfinite(phase).all()
@@ -53,13 +53,13 @@ def test_shared_default_retains_native_diagnostic_and_saved_policy(tmp_path):
         explicit, explicit_loss = ssb.preview(coefs, **sample, phase_estimator="phase_of_mean")
         np.testing.assert_array_equal(wave_phase, explicit)
         assert native_loss == explicit_loss
-        _, fine_loss = ssb.preview(coefs, **sample, upsampling=3)
+        _, fine_loss = ssb.preview(coefs, **sample, upsample=3)
         assert fine_loss == native_loss
         with pytest.raises(ValueError, match="method='phase'"):
             ssb.preview(coefs, **sample, phase_estimator="mean_phase")
-        saved = ssb.reconstruct(aberrations=coefs, upsampling="auto", save_dir=tmp_path)
+        saved = ssb.run(aberrations=coefs, upsample="auto", save_dir=tmp_path)
         assert saved.phase_estimator == "phase_of_mean"
-        assert saved.metadata["signature"]["reconstruction"]["upsampling_dc_policy"] == "single_origin"
+        assert saved.metadata["signature"]["reconstruction"]["upsample_dc_policy"] == "single_origin"
 
 
 def _mean_free_reference(ssb, factor, depth):
@@ -128,7 +128,7 @@ def test_nonconstant_scan_preserves_mean_free_fourier_signal(depth):
     with _session(constant=False) as ssb:
         actual, _ = ssb.preview(
             coefs, sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth,
-            upsampling=4, compute_loss=False,
+            upsample=4, compute_loss=False,
         )
         expected = _mean_free_reference(ssb, 4, depth)
         assert np.std(actual) > 1e-5

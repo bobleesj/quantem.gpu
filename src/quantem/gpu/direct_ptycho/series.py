@@ -88,7 +88,7 @@ def reconstruct_series(
     num_trials : int, optional
         Compatibility alias for ``trials``. Supply only one of them.
     refinement : str or None, default "auto"
-        ``"auto"``, the exact-derivative fit (``fit_aberrations``), or None for no local refinement; another value
+        ``"auto"``, the exact-derivative fit (``aberrations()``), or None for no local refinement; another value
         is retired and prints one line.
     backend : {"auto", "cuda", "mps"}, default "auto"
         Accelerated SSB backend. CPU is never used.
@@ -148,7 +148,7 @@ def reconstruct_series(
                     f"Raw probe-reference acquisition not found: {source}"
                 )
             with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
-                reference_result = ssb.fit_aberrations(
+                reference_result = ssb.aberrations(
                     search="primary", num_trials=num_trials,
                     refinement=refinement,
                     save_dir=reference_path / "ssb-fit",
@@ -189,13 +189,13 @@ def reconstruct_series(
                         "scan_detector_rotation_flipped": reference_flipped}
         with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
             if fixed_probe:
-                result = ssb.reconstruct(
+                result = ssb.run(
                     aberrations=reference_aberrations,
                     save_dir=screen_path / "ssb-locked",
                     verbose=False,
                 )
             else:
-                result = ssb.fit_aberrations(
+                result = ssb.aberrations(
                     search="primary", num_trials=num_trials,
                     refinement=refinement,
                     save_dir=screen_path / "ssb-fit",
@@ -688,7 +688,7 @@ def open_screen_record(
     --------
     >>> from quantem.gpu.direct_ptycho.series import open_screen_record  # doctest: +SKIP
     >>> ssb = open_screen_record("OUT/live/screen/scan_018")  # doctest: +SKIP
-    >>> ssb.reconstruct()  # doctest: +SKIP
+    >>> ssb.run()  # doctest: +SKIP
     >>> ssb.show(show_fft=True, save_dir="ssb-results")  # doctest: +SKIP
     """
     from quantem.gpu.direct_ptycho.workflow import DirectPtycho

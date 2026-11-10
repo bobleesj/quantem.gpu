@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from .test_ssb_thick_sample_mps import _require_mps
-from .test_ssb_upsampling import _disk_session
+from .test_ssb_upsample import _disk_session
 
 
 @pytest.mark.parametrize("retain", [False, True])
@@ -22,19 +22,19 @@ def test_region_fit_preserves_overview_with_memory_budget(monkeypatch, retain):
     with _disk_session(n=128) as session:
         before, before_loss = session.preview(
             optics, sample_tilt_mrad=(2.0, -1.0), depth_spread_nm=12.0,
-            upsampling=2, compute_loss=True,
+            upsample=2, compute_loss=True,
         )
         prepared = session._compute._prepared
         with session.select_region((16, 80, 24, 104)) as regional:
             assert (session._compute._prepared is prepared) == retain
-            fit = regional.fit_aberrations(search="primary",
+            fit = regional.aberrations(search="primary",
                 tilt=True, num_trials=8, seed=11,
                 check_rotation=False, compare_standard=False, verbose=False,
             )
             assert np.isfinite(fit.phase).all()
         after, after_loss = session.preview(
             optics, sample_tilt_mrad=(2.0, -1.0), depth_spread_nm=12.0,
-            upsampling=2, compute_loss=True,
+            upsample=2, compute_loss=True,
         )
         np.testing.assert_array_equal(after, before)
         assert after_loss == before_loss
@@ -53,9 +53,9 @@ def test_full_field_region_shares_evidence_but_keeps_fit_state_independent():
             assert other.g_qk is prepared.g_qk
             options = dict(tilt=True, num_trials=8, seed=11,
                            check_rotation=False, compare_standard=False, verbose=False)
-            shared = regional.fit_aberrations(search="primary", **options)
+            shared = regional.aberrations(search="primary", **options)
             regional._compute.release_prepared()
-            rebuilt = regional.fit_aberrations(search="primary", **options)
+            rebuilt = regional.aberrations(search="primary", **options)
             assert shared.aberrations == rebuilt.aberrations
             assert shared.sample_tilt_mrad == rebuilt.sample_tilt_mrad
             assert shared.depth_spread_nm == rebuilt.depth_spread_nm

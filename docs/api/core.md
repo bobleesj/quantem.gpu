@@ -48,7 +48,7 @@ relativistic electron wavelength in Å for an accelerating voltage in kV, and
 `interaction_parameter(voltage_kV)`, the relativistic interaction parameter
 σ = 2π m e λ / h² in rad/(V·Å) (6.526 × 10⁻⁴ at 300 kV) computed with that
 same wavelength: a projected potential of V_p V·Å shifts the phase by σ V_p.
-`quantem.gpu.optics.ssb_upsampling_factor` chooses the SSB output grid
+`quantem.gpu.optics.ssb_upsample_factor` chooses the SSB output grid
 from voltage (kV), convergence semi-angle (mrad), and scan step (Å, a
 `(row, col)` pair).
 
@@ -96,7 +96,7 @@ independently assembled native or browser product set as a
 from quantem.gpu import io, parallax
 
 data = io.load("scan_master.h5", backend="cuda")
-result = parallax.run(data, fit_aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
+result = parallax.run(data, aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
 ```
 
 `parallax.run` takes the acquisition `io.load` returns on CUDA and returns
@@ -104,7 +104,7 @@ result = parallax.run(data, fit_aberrations=True, scan_sampling_A=(0.5, 0.5), se
 are read, in bounded bands of scan rows, as exact counts. The bright-field
 center `bright_field_center_px` `(row, column)` and radius
 `bright_field_radius_px` are fitted from the mean diffraction pattern
-unless given. `fit_aberrations=True` needs `scan_sampling_A` (Å per scan
+unless given. `aberrations=True` needs `scan_sampling_A` (Å per scan
 pixel, `(row, col)` or one number for both axes) and the detector calibration,
 `semiangle_mrad` or `detector_sampling_mrad` (mrad per detector pixel,
 `(row, col)` or one number). The fit is
@@ -114,7 +114,7 @@ and `C12_nm` in nm, `phi12_deg` in degrees, scan frame) and
 units and convention `SSB` takes.
 Parallax runs on CUDA only; an acquisition on an Apple GPU (MPS)
 raises `NotImplementedError`. Persist center, BF radius,
-scan sampling, the semiangle or detector sampling, upsampling factor,
+scan sampling, the semiangle or detector sampling, upsample factor,
 aberration-fit choice, and package revision with the result.
 
 ## Scan rotation

@@ -1,4 +1,4 @@
-"""fit_aberrations(refine_rotation=True): the 1-D search over an estimated rotation, its record and its persistence."""
+"""aberrations(refine_rotation=True): the 1-D search over an estimated rotation, its record and its persistence."""
 
 import math
 
@@ -129,7 +129,7 @@ def _session(monkeypatch, tmp_path, backend, *, estimated):
 def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path, monkeypatch, capsys):
     backend = _Backend()
     session = _session(monkeypatch, tmp_path, backend, estimated=True)
-    fit = session.fit_aberrations(search="primary", tilt=False, num_trials=4, check_rotation=False, refine_rotation=True,
+    fit = session.aberrations(search="primary", tilt=False, num_trials=4, check_rotation=False, refine_rotation=True,
                                    save_dir=tmp_path / "result")
     assert backend.fits[0] == (3.0, 4) and all(trials == 0 for _, trials in backend.fits[1:])
     assert 3 <= len(backend.fits) - 1 <= 12
@@ -147,12 +147,12 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
     assert report["Estimated rotation (deg)"] == 3.0
     assert report["SSB-selected rotation (deg)"] == pytest.approx(5.0, abs=0.1)
     assert "Refined from   3.00° (estimate)" in repr(fit)
-    # reconstruct() applies the refined fit and carries its record
-    applied = session.reconstruct(fit)
+    # run() applies the refined fit and carries its record
+    applied = session.run(fit)
     assert applied.rotation_refined and applied.rotation_estimate_deg == 3.0
 
     calls = len(backend.fits)
-    again = _session(monkeypatch, tmp_path, backend, estimated=True).fit_aberrations(search="primary",
+    again = _session(monkeypatch, tmp_path, backend, estimated=True).aberrations(search="primary",
         tilt=False, num_trials=4, check_rotation=False, refine_rotation=True, save_dir=tmp_path / "result",
         verbose=False)
     assert again.reused and len(backend.fits) == calls
@@ -162,7 +162,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
     assert again.rotation_refinement == record
     # without refine_rotation the saved refined fit is not this fit: one search again, no polishes
     unrefined = _Backend()
-    plain = _session(monkeypatch, tmp_path, unrefined, estimated=True).fit_aberrations(search="primary",
+    plain = _session(monkeypatch, tmp_path, unrefined, estimated=True).aberrations(search="primary",
         tilt=False, num_trials=4, check_rotation=False, save_dir=tmp_path / "result", verbose=False)
     assert not plain.reused and unrefined.fits == [(3.0, 4)]
     assert "refine_rotation" not in plain.metadata["signature"]["settings"]
@@ -170,7 +170,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
 
 def test_a_given_rotation_is_never_refined(tmp_path, monkeypatch, capsys):
     backend = _Backend()
-    fit = _session(monkeypatch, tmp_path, backend, estimated=False).fit_aberrations(search="primary",
+    fit = _session(monkeypatch, tmp_path, backend, estimated=False).aberrations(search="primary",
         tilt=False, num_trials=4, refine_rotation=True)
     assert backend.fits == [(3.0, 4)]
     assert fit.scan_detector_rotation_deg == 3.0
@@ -183,7 +183,7 @@ def test_the_default_fit_searches_once_and_records_no_refinement(tmp_path, monke
     results = []
     for options in ({}, {"refine_rotation": False}):
         backend = _Backend()
-        results.append(_session(monkeypatch, tmp_path, backend, estimated=True).fit_aberrations(search="primary",
+        results.append(_session(monkeypatch, tmp_path, backend, estimated=True).aberrations(search="primary",
             tilt=False, num_trials=4, check_rotation=False, verbose=False, **options))
         assert backend.fits == [(3.0, 4)]
     for fit in results:
@@ -194,5 +194,5 @@ def test_the_default_fit_searches_once_and_records_no_refinement(tmp_path, monke
 
 def test_refine_rotation_needs_local_refinement(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="refine_rotation polishes the fit"):
-        _session(monkeypatch, tmp_path, _Backend(), estimated=True).fit_aberrations(search="primary",
+        _session(monkeypatch, tmp_path, _Backend(), estimated=True).aberrations(search="primary",
             tilt=False, refinement=None, refine_rotation=True, verbose=False)

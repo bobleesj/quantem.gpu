@@ -3,17 +3,17 @@
 > **Historical:** describes the code as of 2026-10-15; `refinement="nelder-mead"`, the phase-variance search and the `mean_phase` estimator are retired. See the [current fit methods](../../../api/ssb.md).
 
 The Python MPS backend now reconstructs C10/C12 SSB on finer grids with the
-existing `upsampling_factor="auto"` API. It also fuses the depth correction
+existing `upsample_factor="auto"` API. It also fuses the depth correction
 into the 512-point row inverse FFT and reuses probe terms within joint search.
 Public call signatures, search defaults, trial order and the phase estimator
 are unchanged. These are MLX/Metal kernels behind the Python API; they do not
-add upsampling to the native Swift application.
+add upsample to the native Swift application.
 
 ```python
 parameters = ssb.find_aberrations(
     tilt=True, num_trials=200, refinement="nelder-mead",
 )
-result = ssb.reconstruct(parameters, upsampling_factor="auto")
+result = ssb.run(parameters, upsample_factor="auto")
 ```
 
 ## Matched measurement

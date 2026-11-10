@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import torch
+from tqdm.auto import tqdm
 from torch import nn
 
 from quantem.gpu import detector
@@ -48,14 +49,29 @@ def _regions(shape, size):
         raise ValueError(
             "Use a supported native CUDA scan patch (128, 256, 512 or 1024) to avoid FFT padding."
         )
-    if rows < size or cols < 2 * size:
-        raise ValueError(
-            f"A {size}-pixel training and validation patch requires at least "
-            f"{size} rows and {2 * size} columns; got {shape}. Choose a smaller supported patch or a larger acquisition."
-        )
-    row = (rows - size) // 2
-    left, right = (cols // 2 - size) // 2, cols // 2 + (cols - cols // 2 - size) // 2
-    return [(row, row + size, c, c + size) for c in (left, right)]
+    if rows >= size and cols >= 2 * size:
+        row = (rows - size) // 2
+        left, right = (cols // 2 - size) // 2, cols // 2 + (cols - cols // 2 - size) // 2
+        return [(row, row + size, c, c + size) for c in (left, right)]
+    if cols >= size and rows >= 2 * size:
+        col = (cols - size) // 2
+        top, bottom = (rows // 2 - size) // 2, rows // 2 + (rows - rows // 2 - size) // 2
+        return [(r, r + size, col, col + size) for r in (top, bottom)]
+    if rows >= size and cols >= size:
+        # One patch fits: train and hold out complementary electron halves of the
+        # same detector patch. Weaker than two spatial regions, and recorded.
+        row, col = (rows - size) // 2, (cols - size) // 2
+        region = (row, row + size, col, col + size)
+        return [region, region]
+    if rows >= 64 and cols >= 64:
+        # Smaller scan: the whole field is the single patch; the backend pads it
+        # to the next FFT size, as it does for the phase solve.
+        region = (0, rows, 0, cols)
+        return [region, region]
+    raise ValueError(
+        f"A {size}-pixel training patch needs at least {size} rows and {size} columns; "
+        f"two spatial regions need {size} rows and {2 * size} columns. Got {shape}."
+    )
 
 
 @dataclass
@@ -97,15 +113,15 @@ def _count_pair(ptycho, fit, region, factor, valid, annulus, generator, *, inclu
     pair = []
     for half in (first, second):
         with type(ptycho)(cp.from_dlpack(half), **options) as session:
-            result = session.reconstruct(
-                fit, method="phase", upsampling=factor, compute_loss=False, verbose=False
+            result = session.run(
+                fit, method="phase", upsample=factor, compute_loss=False, verbose=False
             )
             equations = session._prepared_direct[1]["phase"]
             phase = torch.from_dlpack(result.phase).detach()
             item = _Half(equations, phase, half[:, :, annulus].sum(-1))
             if include_complex:
-                result = session.reconstruct(
-                    fit, method="complex", upsampling=factor, compute_loss=False, verbose=False
+                result = session.run(
+                    fit, method="complex", upsample=factor, compute_loss=False, verbose=False
                 )
                 item.complex_equations = session._prepared_direct[1]["complex"]
                 item.complex_phase = torch.from_dlpack(result.phase)
@@ -147,7 +163,7 @@ def _detector_mask(ptycho, limits, device):
     return valid, torch.as_tensor(mask, device=device)
 
 
-def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsampling, annulus_mrad):
+def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsample, annulus_mrad):
     scan = ptycho._input_dataset
     if ptycho.backend != "cuda" or scan is None or ptycho.scan_region is not None:
         raise ValueError("Open a full native counting acquisition as a CUDA dataset before fitting.")
@@ -156,7 +172,7 @@ def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsampling, annulus_
     if isinstance(patch_size, bool) or not isinstance(patch_size, int):
         raise ValueError("patch_size must be an integer number of scan pixels.")
     regions = _regions(scan.shape[:2], patch_size)
-    factor = ptycho._resolve_upsampling(upsampling)
+    factor = ptycho._resolve_upsample(upsample)
     sampling = ptycho._output_sampling(factor)
     limits = (
         (1.05 * ptycho.semiangle_mrad, 1.5 * ptycho.semiangle_mrad)
@@ -192,7 +208,7 @@ def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsampling, annulus_
         selected = 0
         best = (deepcopy(unet.state_dict()), deepcopy(head.state_dict()), readout.detach().clone())
         trace = [dict(step=0, validation_gain=0.0)]
-        for step in range(1, steps + 1):
+        for step in tqdm(range(1, steps + 1), desc="correction", leave=False):
             optimizer.zero_grad(set_to_none=True)
             loss = -evaluate(training, step % 2) * 1e5
             loss.backward()
@@ -227,7 +243,7 @@ def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsampling, annulus_
             unet={k: v.cpu() for k, v in best[0].items()}, readout=best[2].cpu(),
             directions=[{k: v.cpu() for k, v in best[1].items()}],
             voltage_kV=ptycho.voltage_kV, semiangle_mrad=ptycho.semiangle_mrad,
-            annulus_mrad=limits, object_sampling_A=sampling, upsampling=factor,
+            annulus_mrad=limits, object_sampling_A=sampling, upsample=factor,
             training_record=training_record,
         ))
         if checkpoint is not None:
@@ -325,7 +341,7 @@ def plot_training(model, *, size):
         rows = [r for r in model.training_history if r.get("stage", "unet") == stage]
         index = 1 if stage == "readout" else 2 if stage.startswith("direction") else 0
         axis = axes[index]
-        label = stage
+        label = {"unet": "learned correction", "readout": "blend"}.get(stage, stage)
         selected = model.selected_step
         if stage == "readout":
             selected = model.training_record.get("selected_readout_ridge")
@@ -342,10 +358,11 @@ def plot_training(model, *, size):
                 axis.plot(row["step"], row["validation_gain"], "*", color=line.get_color(),
                           markersize=12, label=f"Selected {selected:g}")
         axis.axhline(0, color=".7", lw=.7)
-        axis.set(xlabel="Readout ridge" if stage == "readout" else "Optimizer update",
-                 ylabel="Validation error reduction", title="U-Net vs direct phase" if index == 0 else "Incremental stage gain")
+        axis.set(xlabel="Blending strength" if stage == "readout" else "Optimizer update",
+                 ylabel="Match to measured data\n(higher is better)",
+                 title="Learned correction vs direct phase" if index == 0 else "Added by the correction")
         axis.grid(alpha=.2)
         axis.legend()
-    figure.suptitle("Training selection · higher gain is better · zero correction remains a candidate")
+    figure.suptitle("Training selection · higher is better · no correction stays a candidate")
     plt.close(figure)
     return figure

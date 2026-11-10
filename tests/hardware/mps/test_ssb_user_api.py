@@ -1,4 +1,4 @@
-"""The beginner SSB path: DirectPtycho(data) finds the rotation, reconstruct() fits once, show() names its package."""
+"""The beginner SSB path: DirectPtycho(data) finds the rotation, run() fits once, show() names its package."""
 
 import math
 import sys
@@ -81,11 +81,11 @@ def test_reconstruct_fits_once_when_no_aberrations_are_known(capsys):
 
     with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
         fits = []
-        fit = ssb.fit_aberrations
-        ssb.fit_aberrations = lambda **options: fits.append(options) or fit(trials=20, **options)
-        first = ssb.reconstruct()
-        second = ssb.reconstruct()
-        given = ssb.reconstruct(aberrations={"C10_nm": 1.0})
+        fit = ssb.aberrations
+        ssb.aberrations = lambda **options: fits.append(options) or fit(trials=20, **options)
+        first = ssb.run()
+        second = ssb.run()
+        given = ssb.run(aberrations={"C10_nm": 1.0})
     assert len(fits) == 1
     assert first.aberrations == second.aberrations
     assert given.aberrations["C10_nm"] == 1.0
@@ -103,23 +103,23 @@ def test_show_names_the_package_it_needs(monkeypatch):
 
 
 def test_reconstruct_replays_trials_by_trial_ids():
-    """reconstruct(trial_ids=[...]) replays recorded attempts as a phase stack; trials= is no keyword any more."""
+    """run(trial_ids=[...]) replays recorded attempts as a phase stack; trials= is no keyword any more."""
     pytest.importorskip("mlx.core")
     from quantem.gpu import DirectPtycho
 
     with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
-        fitted = ssb.fit_aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
-        replay = ssb.reconstruct(fitted, trial_ids=[2, 0])
+        fitted = ssb.aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
+        replay = ssb.run(fitted, trial_ids=[2, 0])
         assert replay.phase.shape == (2, *fitted.phase.shape)
         assert replay.metadata["trial_ids"] == [2, 0]
         with pytest.raises(TypeError, match="trials"):
-            ssb.reconstruct(fitted, trials=[0])
+            ssb.run(fitted, trials=[0])
 
 
 def test_assigned_aberrations_are_known_and_reconstruct_does_not_refit(capsys):
-    """ssb.aberrations = {...} states a known (restored) calibration; reconstruct() applies it without a fit.
+    """ssb.aberrations = {...} states a known (restored) calibration; run() applies it without a fit.
 
-    Before 2026-10-20 the assignment left the session's aberrations "unknown", so reconstruct() fitted again and
+    Before 2026-10-20 the assignment left the session's aberrations "unknown", so run() fitted again and
     replaced a restored calibration with a new fit.
     """
     pytest.importorskip("mlx.core")
@@ -127,19 +127,19 @@ def test_assigned_aberrations_are_known_and_reconstruct_does_not_refit(capsys):
 
     known = {"C10_nm": 1.5, "C12_nm": 0.4, "phi12_deg": 12.0}
     with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
-        ssb.fit_aberrations = lambda **options: pytest.fail("reconstruct() refitted known aberrations")
+        ssb.aberrations = lambda **options: pytest.fail("run() refitted known aberrations")
         ssb.aberrations = known
-        result = ssb.reconstruct()
+        result = ssb.run()
         assert result.aberrations == known
         given = DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options())
         with given:
-            np.testing.assert_array_equal(result.phase, given.reconstruct().phase)
+            np.testing.assert_array_equal(result.phase, given.run().phase)
         with pytest.raises(ValueError, match="C10_nm"):
             ssb.aberrations = {"C10": 1.0}
         assert ssb.aberrations == known
     assert "fitting with search='standard' first" not in capsys.readouterr().out
     with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options()) as ssb:
-        ssb.aberrations = None  # forget them: the next reconstruct() fits
+        ssb.aberrations = None  # forget them: the next run() fits
         fits = []
-        ssb.fit_aberrations = lambda **options: fits.append(options) or pytest.skip("fit requested, as intended")
-        ssb.reconstruct()
+        ssb.aberrations = lambda **options: fits.append(options) or pytest.skip("fit requested, as intended")
+        ssb.run()

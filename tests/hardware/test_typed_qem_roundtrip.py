@@ -289,9 +289,9 @@ def test_fixed_ssb_survives_typed_save_reopen(tmp_path, backend, kind):
             for tilt in (None, (1.0, -2.0)):
                 session.sample_tilt_mrad = tilt
                 session.depth_spread_nm = 5 if tilt else None
-                phase = session.reconstruct(
+                phase = session.run(
                     aberrations={"C10_nm": 2},
-                    upsampling=2,
+                    upsample=2,
                     compute_loss=False,
                 ).phase
                 result.append(phase.get() if backend == "cuda" else np.asarray(phase))

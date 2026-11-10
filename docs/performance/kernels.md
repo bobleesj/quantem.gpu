@@ -42,7 +42,7 @@ with one app instance on the built-in display.
 
 ## Native regularized direct reconstruction (`MetalDirectPtychoKernels`)
 
-Methods `phase` and `complex` of `MetalDirectPtychoJointModel.reconstruct(_:upsamplingFactor:method:regularization:)`
+Methods `phase` and `complex` of `MetalDirectPtychoJointModel.run(_:upsampleFactor:method:regularization:)`
 (`DirectPtychoSolver`, `ssb_direct.metal`), the port of the CUDA `PreparedDirect`: per scan frequency the normal
 equations of every supported output alias (`direct_normal_equations`: the weak-object transfer per BF pixel in
 float32 with CUDA's expressions, products of open alias pairs, float32 batch sums met in float-float across BF
@@ -185,7 +185,7 @@ Last measurements (2026-08-19, private 512² `uint8` fixture `native-ssb-fullbf-
 
 | Kernels | Status | Served | Last measured | Replaced by | Retired |
 |---|---|---|---|---|---|
-| `ssb_gamma_accumulate`, `ssb_gamma_accumulate_half`, `ssb_gamma_accumulate_half_aberrations`, `ssb_gamma_accumulate_full_aberrations`, `ssb_finalize_fourier_sum`, `ssb_precompute_cross_trig` | **retired** (non-model engine removed) | `MetalDirectPtychoEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`: SSB without tilt or depth, C10/C12 plus manual higher orders | warm reconstruction 8.9 ms p50, 512² | `ssb-redraw` (joint model, method `ssb`) | 2026-10-25 |
+| `ssb_gamma_accumulate`, `ssb_gamma_accumulate_half`, `ssb_gamma_accumulate_half_aberrations`, `ssb_gamma_accumulate_full_aberrations`, `ssb_finalize_fourier_sum`, `ssb_precompute_cross_trig` | **retired** (non-model engine removed) | `MetalDirectPtychoEngine.run(aberrations:scanDetectorRotationDegrees:)`: SSB without tilt or depth, C10/C12 plus manual higher orders | warm reconstruction 8.9 ms p50, 512² | `ssb-redraw` (joint model, method `ssb`) | 2026-10-25 |
 | `ssb_precompute_chi_trig`, `ssb_correct_half_ifft_small`, `ssb_ifft_small_phase_moments`, `ssb_correct_half_column_ifft512_hermitian`, `ssb_ifft512_nyquist_correction`, `ssb_ifft512_rows_hermitian_phase_moments`, `ssb_correct_full_for_phase_loss`, `ssb_accumulate_phase_moments`, `ssb_transpose_half_to_column_major`, `ssb_transpose_half_to_row_major` | **retired** (phase-variance fit removed) | `MetalDirectPtychoEngine.phaseVariance` and `optimize` (`SSBOptimizer`: 200 seeded TPE trials, Nelder–Mead); `DirectPtychoFitOptions(objective: .phaseVariance)` | exact loss 25.1 ms p50; 200-trial fit 6.06 s p50, 512² | `ssb-joint-agreement`, `ssb-low-order-derivatives`, `ssb-fifth-agreement`, `ssb-fifth-gradient` (model agreement) | 2026-10-25 |
 
 The 2026-11-05 versions are measured in the

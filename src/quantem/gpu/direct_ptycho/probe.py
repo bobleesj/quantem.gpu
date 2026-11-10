@@ -9,7 +9,7 @@ from quantem.gpu.direct_ptycho.higher_order import ORDERS
 def probe_grid(result):
     """Resolve the aperture and leave room around its defocused footprint."""
     if result.voltage_kV is None or result.semiangle_mrad is None:
-        raise ValueError("Probe calibration is missing. Run ptycho.reconstruct() with voltage and convergence semiangle.")
+        raise ValueError("Probe calibration is missing. Run ptycho.run() with voltage and convergence semiangle.")
     wavelength = wavelength_A_from_kV(result.voltage_kV)
     semiangle = result.semiangle_mrad * 1e-3
     sampling = wavelength / (4 * semiangle)

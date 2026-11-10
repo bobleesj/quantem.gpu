@@ -38,7 +38,7 @@ so the per-set work, not the G reads, set the cost.
 | `thick_fit_batch` (8 sets, depth 0) | the same three | 24.5 ms | 7.2 ms |
 | `thick_wave_sum` (drag preview, 1x) | BF geometry and chi(k) once per block | 2.85 ms | 2.25 ms |
 | | aperture denominator constant on square pixels | 2.25 ms | 1.81 ms |
-| `ThickSample.reconstruct` (mean phase + loss) | one correction launch from the half plane, no full-plane copy or angle images | 223 ms | 97 ms |
+| `ThickSample.run` (mean phase + loss) | one correction launch from the half plane, no full-plane copy or angle images | 223 ms | 97 ms |
 
 - **Local memory, not arithmetic.** The per-set loop ran to the runtime batch
   size, so the per-set accumulators were indexed dynamically and the compiler
@@ -96,7 +96,7 @@ standard fit with the previous kernels; MPS is the M5 Max run of the same protoc
 | 2 session prepare: bright field, G(q, k) (s) | | 0.16 | 0.17 |
 | 3 one tilt fit, rotation given (s) | 9.3 | 1.62 | 0.67 |
 | 3b the same, `compare_standard=False` (s) | 6.3 | 1.21 | 0.53 |
-| 4 default `reconstruct()`, both branches (s) | 17 to 18 | 3.60 | 1.51 |
+| 4 default `run()`, both branches (s) | 17 to 18 | 3.60 | 1.51 |
 | 5 `tilt=False` fit, rotation given (s) | | 0.60 | 0.25 |
 | 6 drag preview, tilt-corrected, 1x (ms) | 104 | 33.9 | 23.6 |
 | 7 drag preview, tilt-corrected, 3x (ms) | 158 | 53.7 | 36.1 |

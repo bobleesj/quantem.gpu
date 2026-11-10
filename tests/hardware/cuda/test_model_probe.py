@@ -68,7 +68,7 @@ def test_live_probe_follows_optics_but_not_damping():
         assert viewer.reconstruction.phase_bytes != initial_phase
         changed_probe = viewer.probe._data.copy()
         changed_phase = viewer.reconstruction.phase_bytes
-        viewer.reconstruction.phase_damping = 0.3
+        viewer.reconstruction.phase_damp = 0.3
         np.testing.assert_array_equal(viewer.probe._data, changed_probe)
         assert viewer.reconstruction.phase_bytes != changed_phase
         viewer.reconstruction.higher_order_aberrations_json = json.dumps({"C30_nm": 10000})

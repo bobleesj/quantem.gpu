@@ -192,7 +192,7 @@ def run_mps(case: SSBParityCase, meta: dict[str, object], session=None) -> list[
     for index in range(len(case.aberrations_A_rad)):
         aberrations = _aberration_dict(case, index)
         started = time.perf_counter()
-        result = session.reconstruct(aberrations=aberrations, compute_loss=False)
+        result = session.run(aberrations=aberrations, compute_loss=False)
         object_seconds = time.perf_counter() - started
         started = time.perf_counter()
         # the phase-variance objective's own mean BF phase and loss, at the engine units the oracle evaluates

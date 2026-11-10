@@ -13,7 +13,7 @@ def test_alias_aperture_bounds_preserve_soft_edges(angular_sampling):
     """Check open, closed and anisotropic soft edges against the GPU model."""
     _require_mps()
     from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
-    from quantem.gpu.direct_ptycho.mps.upsampling import _ALIAS_GEOMETRY, _HEADER
+    from quantem.gpu.direct_ptycho.mps.upsample import _ALIAS_GEOMETRY, _HEADER
 
     mx = require_mlx()
     wavelength, semiangle = 0.02, 0.03
@@ -131,7 +131,7 @@ def test_alias_sampling_preserves_gpu_model_and_native_loss(factor, depth_nm):
         expected = _zero_inserted_reference(
             prepared, factor, (-80.0, 40.0, -0.7), (-9, 5), depth_nm * 10
         )
-        phase, loss = ssb.preview(coefs, **sample, upsampling=factor)
+        phase, loss = ssb.preview(coefs, **sample, upsample=factor)
         assert phase.shape == (128 * factor, 128 * factor)
         np.testing.assert_allclose(phase, expected, rtol=0, atol=2e-5)
         assert loss == native_loss
@@ -191,7 +191,7 @@ def test_slider_changes_match_fresh_sessions():
         for aberrations, tilt, depth, rotation, factor in states:
             options = dict(
                 sample_tilt_mrad=tilt, depth_spread_nm=depth,
-                upsampling=factor, compute_loss=False,
+                upsample=factor, compute_loss=False,
             )
             reused.set_rotation(rotation)
             phase, _ = reused.preview(aberrations, **options)
@@ -210,7 +210,7 @@ def test_cancelled_preview_returns_no_partial_result_and_session_recovers(factor
     coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
     if higher:
         coefs.update(C21_nm=20., phi21_deg=12.)
-    settings = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18., upsampling=factor)
+    settings = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18., upsample=factor)
     with _disk_session() as ssb:
         expected, expected_loss = ssb.preview(coefs, **settings)
         checks = []
@@ -232,20 +232,20 @@ def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch)
     from concurrent.futures import CancelledError
 
     _require_mps()
-    from quantem.gpu.direct_ptycho.mps import upsampling
+    from quantem.gpu.direct_ptycho.mps import upsample
 
     from .test_ssb_thick_sample_mps import _poisson_disk_session
 
     # the per-term coherent kernel (higher orders; the two-term transfer has the separable kernel, depth or not)
-    monkeypatch.setattr(upsampling, "_SEPARABLE", False)
-    monkeypatch.setattr(upsampling, "_WORK_BYTES", (128 * 3) ** 2 * 8 * 3)
+    monkeypatch.setattr(upsample, "_SEPARABLE", False)
+    monkeypatch.setattr(upsample, "_WORK_BYTES", (128 * 3) ** 2 * 8 * 3)
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     settings = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=18.0,
-                    upsampling=3, compute_loss=False)
+                    upsample=3, compute_loss=False)
     with _poisson_disk_session() as ssb:
         expected, _ = ssb.preview(coefs, **settings)
         assert ssb._backend()._prepared.g_qk.shape[0] > 4 * 64
-        kernel = upsampling._coherent_alias_kernel()
+        kernel = upsample._coherent_alias_kernel()
         dispatched = []
 
         def tracked_kernel(**kwargs):
@@ -253,7 +253,7 @@ def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch)
             return kernel(**kwargs)
 
         monkeypatch.setattr(
-            upsampling, "_coherent_alias_kernel",
+            upsample, "_coherent_alias_kernel",
             lambda has_depth=True: tracked_kernel,
         )
         with pytest.raises(CancelledError):
@@ -284,28 +284,28 @@ def test_interruptible_native_loss_keeps_exact_full_bf_sums(monkeypatch, depth_n
 def test_automatic_sampling_rotation_and_saved_result(tmp_path):
     """Replay fine sampling and both rotations without refitting."""
     _require_mps()
-    from quantem.gpu.optics.physics import ssb_upsampling_factor
+    from quantem.gpu.optics.physics import ssb_upsample_factor
 
     coefs = {"C10_nm": 3.0, "C12_nm": 0.5, "phi12_deg": 15.0}
     with _disk_session(source_path=tmp_path / "source.npy") as ssb:
-        fine = ssb.reconstruct(aberrations=coefs, upsampling="auto")
-        factor = ssb_upsampling_factor(
+        fine = ssb.run(aberrations=coefs, upsample="auto")
+        factor = ssb_upsample_factor(
             voltage_kV=300,
             semiangle_mrad=30,
             scan_sampling_A=(0.3, 0.3),
         )
-        assert fine.upsampling == factor
+        assert fine.upsample == factor
         assert fine.phase.shape == (128 * factor, 128 * factor)
         np.testing.assert_allclose(fine.object_sampling_A, (0.3 / factor,) * 2)
         assert fine.amplitude_estimated is False
         original = fine.phase.copy()
         ssb.set_rotation(180.0)
-        opposite = ssb.reconstruct(aberrations=coefs, upsampling="auto")
+        opposite = ssb.run(aberrations=coefs, upsample="auto")
         assert opposite.scan_detector_rotation_deg == 180.0
         assert not np.array_equal(original, opposite.phase)
         ssb.set_rotation(0.0)
-        restored = ssb.reconstruct(
-            aberrations=coefs, upsampling="auto", save_dir=tmp_path / "fine"
+        restored = ssb.run(
+            aberrations=coefs, upsample="auto", save_dir=tmp_path / "fine"
         )
         np.testing.assert_array_equal(restored.phase, original)
         assert (tmp_path / "fine" / "ssb-reconstruct.npz").is_file()
@@ -315,19 +315,19 @@ def test_automatic_sampling_rotation_and_saved_result(tmp_path):
 def test_coherent_half_spectrum_retains_full_complex_result(monkeypatch, depth_nm):
     """Reduce paired frequencies only when the complete soft aperture fits."""
     _require_mps()
-    from quantem.gpu.direct_ptycho.mps import upsampling
+    from quantem.gpu.direct_ptycho.mps import upsample
 
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     sample = {"sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": depth_nm}
     with _disk_session() as ssb:
         ssb.set_rotation(165.8)
-        half, _ = ssb.preview(coefs, **sample, upsampling=4, compute_loss=False)
+        half, _ = ssb.preview(coefs, **sample, upsample=4, compute_loss=False)
         prepared = ssb._backend()._prepared
-        assert upsampling._coherent_columns(prepared, 512) == 257
+        assert upsample._coherent_columns(prepared, 512) == 257
         # Native Nyquist frequencies intersect the aperture and are unpaired.
-        assert upsampling._coherent_columns(prepared, 128) == 128
-        monkeypatch.setattr(upsampling, "_coherent_columns", lambda prepared, n: n)
-        full, _ = ssb.preview(coefs, **sample, upsampling=4, compute_loss=False)
+        assert upsample._coherent_columns(prepared, 128) == 128
+        monkeypatch.setattr(upsample, "_coherent_columns", lambda prepared, n: n)
+        full, _ = ssb.preview(coefs, **sample, upsample=4, compute_loss=False)
         np.testing.assert_allclose(half, full, rtol=0, atol=2e-5)
 
 
@@ -339,22 +339,22 @@ def test_coherent_reduction_keeps_partial_bf_groups(
 ):
     """Every BF contribution survives grouping, including an incomplete tail."""
     _require_mps()
-    from quantem.gpu.direct_ptycho.mps import upsampling
+    from quantem.gpu.direct_ptycho.mps import upsample
 
     from .test_ssb_thick_sample_mps import _poisson_disk_session
 
     if small_work_budget:
         # Exercise accumulation across several launches and an incomplete tail.
-        monkeypatch.setattr(upsampling, "_WORK_BYTES", 3 * (128 * 3) ** 2 * 8 * 3)
+        monkeypatch.setattr(upsample, "_WORK_BYTES", 3 * (128 * 3) ** 2 * 8 * 3)
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     if higher_order:
         coefs.update(C21_nm=300.0, phi21_deg=23.0)
     sample = {"sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": depth_nm}
     with _poisson_disk_session() as ssb:
         ssb.set_rotation(165.8)
-        actual, loss = ssb.preview(coefs, **sample, upsampling=3)
+        actual, loss = ssb.preview(coefs, **sample, upsample=3)
         stored = int(ssb._backend()._prepared.g_qk.shape[0])
-        chunk = upsampling._WORK_BYTES // ((128 * 3) ** 2 * 8 * 3)
+        chunk = upsample._WORK_BYTES // ((128 * 3) ** 2 * 8 * 3)
         assert stored > chunk
         assert stored % chunk != 0
         if small_work_budget:
@@ -367,7 +367,7 @@ def test_coherent_reduction_keeps_partial_bf_groups(
             # A final single-BF tile exercises constant-address MLX inputs.
             for start in range(0, stored, stored - 1):
                 stop = min(start + stored - 1, stored)
-                corrected = upsampling._alias_correction_kernel()(
+                corrected = upsample._alias_correction_kernel()(
                     inputs=[prepared.g_qk[start:stop], qr, qc,
                             prepared.kx[start:stop], prepared.ky[start:stop],
                             params, dc, probe[start:stop], coefficients],
@@ -383,11 +383,11 @@ def test_coherent_reduction_keeps_partial_bf_groups(
             return total[:, :columns]
 
         with monkeypatch.context() as ungrouped:
-            ungrouped.setattr(upsampling, "_coherent_spectrum", per_detector)
-            expected, expected_loss = ssb.preview(coefs, **sample, upsampling=3)
+            ungrouped.setattr(upsample, "_coherent_spectrum", per_detector)
+            expected, expected_loss = ssb.preview(coefs, **sample, upsample=3)
         np.testing.assert_allclose(actual, expected, rtol=0, atol=2e-5)
         assert loss == expected_loss
-        repeated, repeated_loss = ssb.preview(coefs, **sample, upsampling=3)
+        repeated, repeated_loss = ssb.preview(coefs, **sample, upsample=3)
         np.testing.assert_array_equal(repeated, actual)
         assert repeated_loss == loss
 
@@ -401,7 +401,7 @@ def test_coherent_reconstruction_preserves_anisotropic_aperture(depth_nm):
         ssb.set_rotation(165.8)
         phase, _ = ssb.preview(
             coefs, sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm,
-            upsampling=3, compute_loss=False,
+            upsample=3, compute_loss=False,
         )
         expected = _zero_inserted_reference(
             ssb._backend()._prepared, 3, (-80.0, 40.0, -0.7),
@@ -414,7 +414,7 @@ def test_coherent_reconstruction_preserves_anisotropic_aperture(depth_nm):
 def test_zero_depth_specialization_preserves_all_phase_bits(monkeypatch, higher):
     """Turning depth off retains the full phase of the general optical model, and with higher orders its loss."""
     _require_mps()
-    from quantem.gpu.direct_ptycho.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsample as up
 
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     if higher:
@@ -422,7 +422,7 @@ def test_zero_depth_specialization_preserves_all_phase_bits(monkeypatch, higher)
     with _disk_session() as ssb:
         settings = dict(
             sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=0.0,
-            upsampling=3, compute_loss=higher,
+            upsample=3, compute_loss=higher,
         )
         actual, actual_loss = ssb.preview(coefs, **settings)
         coherent = up._coherent_alias_kernel
@@ -445,7 +445,7 @@ def test_zero_depth_specialization_preserves_all_phase_bits(monkeypatch, higher)
 def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detector_sampling):
     """The separable C10/C12 phasors reproduce the per-term transfer to float32 rounding."""
     _require_mps()
-    from quantem.gpu.direct_ptycho.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsample as up
 
     cases = [
         {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0},
@@ -456,10 +456,10 @@ def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detec
     with _disk_session(detector_sampling=detector_sampling) as ssb:
         ssb.set_rotation(165.8)
         for coefs in cases:
-            actual, _ = ssb.preview(coefs, upsampling=factor, compute_loss=False)
+            actual, _ = ssb.preview(coefs, upsample=factor, compute_loss=False)
             with monkeypatch.context() as reference:
                 reference.setattr(up, "_SEPARABLE", False)
-                expected, _ = ssb.preview(coefs, upsampling=factor, compute_loss=False)
+                expected, _ = ssb.preview(coefs, upsample=factor, compute_loss=False)
             difference = np.angle(np.exp(1j * (actual.astype(np.float64) - expected)))
             assert np.abs(difference).max() < 2e-6, (coefs, np.abs(difference).max())
         prepared = ssb._backend()._prepared
@@ -472,7 +472,7 @@ def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detec
 def test_separable_depth_weights_match_per_term_transfer(monkeypatch, factor, detector_sampling):
     """With sample tilt and depth spread the separable kernel reproduces the per-term transfer to float32 rounding."""
     _require_mps()
-    from quantem.gpu.direct_ptycho.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsample as up
 
     cases = [
         ({"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}, (-9.0, 5.0), 18.0),
@@ -482,7 +482,7 @@ def test_separable_depth_weights_match_per_term_transfer(monkeypatch, factor, de
     with _disk_session(detector_sampling=detector_sampling) as ssb:
         ssb.set_rotation(165.8)
         for coefs, tilt, depth in cases:
-            sample = dict(sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling=factor, compute_loss=False)
+            sample = dict(sample_tilt_mrad=tilt, depth_spread_nm=depth, upsample=factor, compute_loss=False)
             actual, _ = ssb.preview(coefs, **sample)
             for aliases in (1, 3):
                 # one fine row per thread, or every fine row of a source row: the same arithmetic per output
@@ -503,14 +503,14 @@ def test_separable_depth_weights_match_per_term_transfer(monkeypatch, factor, de
 def test_odd_region_spectrum_matches_full_gpu_transfer(monkeypatch, factor, depth_nm):
     """Odd-sized regions retain every frequency at native and automatic sampling."""
     _require_mps()
-    from quantem.gpu.direct_ptycho.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsample as up
 
     with _disk_session(n=165) as ssb:
         ssb.set_rotation(165.8)
         coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
         settings = dict(
             sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm,
-            upsampling=factor, compute_loss=False,
+            upsample=factor, compute_loss=False,
         )
         with monkeypatch.context() as reference:
             reference.setattr(up, "_SEPARABLE", False)
@@ -533,7 +533,7 @@ def test_odd_region_spectrum_matches_full_gpu_transfer(monkeypatch, factor, dept
 def test_paired_rows_at_2x_keep_every_phase_bit(monkeypatch):
     """At 2x one thread computes both fine rows of a source row; each output keeps its own arithmetic."""
     _require_mps()
-    from quantem.gpu.direct_ptycho.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsample as up
 
     rows = np.array([0, 1, 2, 126, 127, 128, 129, 254, 255], np.uint32)
     pairs = up._alias_row_pairs(rows, 128)
@@ -544,17 +544,17 @@ def test_paired_rows_at_2x_keep_every_phase_bit(monkeypatch):
     with _disk_session(detector_sampling=(10.0, 7.0)) as ssb:
         ssb.set_rotation(165.8)
         for coefs, tilt in cases:
-            paired, _ = ssb.preview(coefs, upsampling=2, compute_loss=False, sample_tilt_mrad=tilt)
+            paired, _ = ssb.preview(coefs, upsample=2, compute_loss=False, sample_tilt_mrad=tilt)
             with monkeypatch.context() as single:
                 single.setattr(up, "_PAIRED", False)
-                expected, _ = ssb.preview(coefs, upsampling=2, compute_loss=False, sample_tilt_mrad=tilt)
+                expected, _ = ssb.preview(coefs, upsample=2, compute_loss=False, sample_tilt_mrad=tilt)
             np.testing.assert_array_equal(paired.view(np.uint32), expected.view(np.uint32))
 
 
 def test_separable_phasor_tables_reduce_exactly():
     """Each table phasor equals the float64 phase m * P reduced modulo 2 pi."""
     _require_mps()
-    from quantem.gpu.direct_ptycho.mps import upsampling as up
+    from quantem.gpu.direct_ptycho.mps import upsample as up
     from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
     mx = require_mlx()

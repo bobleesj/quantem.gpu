@@ -69,7 +69,7 @@ def test_fit_tilt_recovers_known_tilt(sample_tilt_mrad):
     data, det_mrad = _simulated_crystal(sample_tilt_mrad)
     ssb = _session(data, det_mrad)
     assert ssb.supports_tilt
-    result = ssb.fit_aberrations(search="primary", tilt=True, verbose=False)
+    result = ssb.aberrations(search="primary", tilt=True, verbose=False)
     # Validated 2026-09-24: (3, -4) -> (3.0, -4.1); (0, 0) -> (-0.3, -0.1). 1 mrad is the scan/detector sampling limit here.
     assert abs(result.sample_tilt_mrad[0] - sample_tilt_mrad[0]) < 1.0
     assert abs(result.sample_tilt_mrad[1] - sample_tilt_mrad[1]) < 1.0
@@ -88,7 +88,7 @@ def test_the_joint_fit_lands_on_a_maximum_of_the_agreement():
     _require_cuda()
     data, det_mrad = _simulated_crystal((3.0, -4.0))
     ssb = _session(data, det_mrad)
-    result = ssb.fit_aberrations(search="primary", tilt=True, check_rotation=False, verbose=False,
+    result = ssb.aberrations(search="primary", tilt=True, check_rotation=False, verbose=False,
                                   compare_standard=False)
     assert result.tilt_fit_gain is None and result.refinement == "newton"
     assert result.optimizer["derivatives"] == "exact"
@@ -100,24 +100,24 @@ def test_the_joint_fit_lands_on_a_maximum_of_the_agreement():
     assert np.all(values[1:] <= values[0] * (1 + 1e-6))
 
 def test_tilt_refit_from_the_previous_scan_needs_no_search():
-    """fit_aberrations(tilt=True, num_trials=0) refines from the session's aberrations, tilt and depth spread (a previous
+    """aberrations(tilt=True, num_trials=0) refines from the session's aberrations, tilt and depth spread (a previous
     scan's fit, here moved by 0.5 mrad and 2 nm of defocus) and lands on the full search's maximum."""
     _require_cuda()
     data, det_mrad = _simulated_crystal((3.0, -4.0))
-    searched = _session(data, det_mrad).fit_aberrations(search="primary", tilt=True, check_rotation=False, verbose=False,
+    searched = _session(data, det_mrad).aberrations(search="primary", tilt=True, check_rotation=False, verbose=False,
                                                          compare_standard=False)
     following = _session(data, det_mrad)
     following.aberrations = {**searched.aberrations, "C10_nm": searched.aberrations["C10_nm"] + 2.0}
     following.sample_tilt_mrad = (searched.sample_tilt_mrad[0] + 0.5, searched.sample_tilt_mrad[1] - 0.5)
     following.depth_spread_nm = searched.depth_spread_nm
-    refit = following.fit_aberrations(search="primary", tilt=True, num_trials=0, check_rotation=False, verbose=False,
+    refit = following.aberrations(search="primary", tilt=True, num_trials=0, check_rotation=False, verbose=False,
                                        compare_standard=False)
     assert refit.num_trials == 0
     assert abs(refit.sample_tilt_mrad[0] - searched.sample_tilt_mrad[0]) < 0.1
     assert abs(refit.sample_tilt_mrad[1] - searched.sample_tilt_mrad[1]) < 0.1
     assert abs(refit.aberrations["C10_nm"] - searched.aberrations["C10_nm"]) < 0.1
     with pytest.raises(ValueError, match="trials=0"):
-        _session(data, det_mrad).fit_aberrations(search="primary", tilt=True, num_trials=0, check_rotation=False, verbose=False)
+        _session(data, det_mrad).aberrations(search="primary", tilt=True, num_trials=0, check_rotation=False, verbose=False)
 
 
 # ---
@@ -131,7 +131,7 @@ def test_zero_depth_weighting_is_standard_ssb():
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200      # bright-field disk
     ssb = _session(counts, det_mrad=(3.0, 3.0), scan_A=0.3)
-    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
+    ssb.run(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     for aberrations in ({"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}, {"C10_nm": -40.0, "C12_nm": 12.0, "phi12_deg": math.degrees(-1.0)}):
         standard, standard_loss = ssb.preview(aberrations)
         thick, thick_loss = ssb.preview(aberrations, sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
@@ -145,7 +145,7 @@ def _synthetic_session():
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200
     ssb = _session(counts, det_mrad=(3.0, 3.0), scan_A=0.3)
-    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
+    ssb.run(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     return ssb, ssb._backend()._accelerator
 
 
@@ -165,7 +165,7 @@ def test_torch_reference_matches_cuda_engine():
             phase, loss = engine.reconstruct_with_loss(C10, C12, phi12)
         else:
             phase, loss = engine.thick.phase_variance(C10, C12, phi12, tilt, thickness)
-        torch_phase, torch_loss = reference.reconstruct(C10, C12, phi12, tilt, thickness)
+        torch_phase, torch_loss = reference.run(C10, C12, phi12, tilt, thickness)
         np.testing.assert_allclose(torch_phase.cpu().numpy(), cp.asnumpy(phase), atol=2e-5)
         assert abs(torch_loss - float(loss)) <= 1e-4 * abs(float(loss))
         fit = engine.thick.fit(C10, C12, phi12, tilt, thickness)
@@ -240,7 +240,7 @@ def test_batched_fit_kernel_matches_reference_objective():
 
 
 def test_batched_fit_repeats_bit_identically():
-    """The same trials give the same tilt-fit objective, bit for bit, so fit_aberrations(tilt=True) is reproducible.
+    """The same trials give the same tilt-fit objective, bit for bit, so aberrations(tilt=True) is reproducible.
 
     1528 bright-field pixels make six 256-pixel tiles; their sums used to meet in atomic additions, whose order changed
     from call to call (every repeat differed, by up to 2e-7 relative).
@@ -251,7 +251,7 @@ def test_batched_fit_repeats_bit_identically():
     rows, cols = np.meshgrid(np.arange(64) - 31.5, np.arange(64) - 31.5, indexing="ij")
     counts[:, :, np.hypot(rows, cols) < 22] += 200
     ssb = _session(counts, det_mrad=(30 / 22, 30 / 22), scan_A=0.3)
-    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
+    ssb.run(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     engine = ssb._backend()._accelerator
     params = np.column_stack([rng.uniform(-300, 300, 16), rng.uniform(0, 200, 16), rng.uniform(-1.5, 1.5, 16),
                               rng.uniform(-20, 20, 16), rng.uniform(-20, 20, 16), rng.choice([0.0, 150.0, 400.0], 16)])

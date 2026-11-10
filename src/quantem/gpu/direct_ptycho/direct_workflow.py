@@ -20,8 +20,8 @@ TILES = 3
 
 def settings(
     method,
-    phase_damping,
-    amplitude_damping,
+    phase_damp,
+    amplitude_damp,
     smoothness_inv_A,
     detector_weighting,
 ):
@@ -34,8 +34,8 @@ def settings(
         if any(
             value is not None
             for value in (
-                phase_damping,
-                amplitude_damping,
+                phase_damp,
+                amplitude_damp,
                 smoothness_inv_A,
                 detector_weighting,
             )
@@ -44,20 +44,20 @@ def settings(
                 "Damping and prior controls need method='phase' or 'complex'; omit them for method='ssb'."
             )
         return {}
-    if method == "phase" and amplitude_damping is not None:
+    if method == "phase" and amplitude_damp is not None:
         raise ValueError(
-            "amplitude_damping needs method='complex'; omit it for method='phase'."
+            "amplitude_damp needs method='complex'; omit it for method='phase'."
         )
     strengths = {
-        "phase_damping": 0.3
-        if phase_damping is None
-        else float(phase_damping)
+        "phase_damp": 0.3
+        if phase_damp is None
+        else float(phase_damp)
     }
     if method == "complex":
-        strengths["amplitude_damping"] = (
+        strengths["amplitude_damp"] = (
             0.3
-            if amplitude_damping is None
-            else float(amplitude_damping)
+            if amplitude_damp is None
+            else float(amplitude_damp)
         )
     for name, value in strengths.items():
         if not math.isfinite(value) or value <= 0:
@@ -129,8 +129,8 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
         )
         cached[1][policy["method"]] = prepared
     return prepared.solve(
-        policy["phase_damping"],
-        policy.get("amplitude_damping"),
+        policy["phase_damp"],
+        policy.get("amplitude_damp"),
         compute_loss=compute_loss,
     )
 
@@ -176,7 +176,7 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     value = float(coefs.get(control, 0.0))
     if method == "phase_of_mean":
         return window.phase(value)
-    wave, _ = window.solve(value, policy["phase_damping"], policy.get("amplitude_damping"),
+    wave, _ = window.solve(value, policy["phase_damp"], policy.get("amplitude_damp"),
                            complex_object=method == "complex")
     return _phase(session, wave)
 
@@ -267,7 +267,7 @@ def _exact(session, coefs, tilt, depth, factor, policy):
     """The exact phase, as ``preview(..., output="native")`` computes it."""
     method = policy.get("method", "phase_of_mean")
     if method == "phase_of_mean":
-        phase, _ = session.preview(coefs, compute_loss=False, upsampling=factor, sample_tilt_mrad=tilt or (0.0, 0.0),
+        phase, _ = session.preview(coefs, compute_loss=False, upsample=factor, sample_tilt_mrad=tilt or (0.0, 0.0),
                                    depth_spread_nm=depth or 0.0, output="native")
         return phase
     wave, _ = solve(session, coefs, tilt, depth, factor, policy, compute_loss=False)
@@ -332,10 +332,10 @@ def run(
     """Apply one regularized method with explicit provenance and saved reuse."""
     if parameters is not None and not isinstance(parameters, DirectPtychoResult):
         raise TypeError(
-            "Pass the result of fit_aberrations(), or coefficients through aberrations={...}."
+            "Pass the result of aberrations(), or coefficients through aberrations={...}."
         )
     if parameters is None and aberrations is None and not session._aberrations_explicit:
-        parameters = session.fit_aberrations(verbose=verbose)
+        parameters = session.aberrations(verbose=verbose)
     correction = parameters
     if correction is not None:
         coefs, tilt, depth = (
@@ -357,7 +357,7 @@ def run(
         aberrations=coefs,
         sample_tilt_mrad=tilt,
         depth_spread_nm=depth,
-        upsampling=factor,
+        upsample=factor,
         compute_loss=bool(compute_loss),
     )
     if neural_model is not None:
@@ -406,7 +406,7 @@ def run(
         voltage_kV=session.voltage_kV,
         semiangle_mrad=session.semiangle_mrad,
         object_sampling_A=session._output_sampling(factor),
-        upsampling=factor,
+        upsample=factor,
         phase_estimator=policy["method"],
         amplitude_estimated=policy["method"] == "complex",
         reconstruction_method=policy["method"],
@@ -426,10 +426,10 @@ def run(
         result.timings["annular_s"] = time.perf_counter() - began
         began = time.perf_counter()
         input_wave = wave
-        if policy["phase_damping"] != neural_model.input_phase_damping:
+        if policy["phase_damp"] != neural_model.input_phase_damp:
             input_wave, _ = solve(
                 session, coefs, tilt, depth, factor,
-                {**policy, "phase_damping": neural_model.input_phase_damping},
+                {**policy, "phase_damp": neural_model.input_phase_damp},
                 compute_loss=False,
             )
         prepared = session._prepared_direct[1]["phase"]

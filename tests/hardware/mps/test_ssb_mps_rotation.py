@@ -32,7 +32,7 @@ def test_rotation_change_keeps_every_aperture_pixel_with_anisotropic_sampling():
     aberrations = {"C10_nm": 4.0, "C12_nm": 1.0, "phi12_deg": math.degrees(0.4)}
 
     with DirectPtycho(counts, scan_detector_rotation_deg=0.0, **settings) as turned:
-        turned.reconstruct(aberrations=aberrations)
+        turned.run(aberrations=aberrations)
         turned.set_rotation(45.0)
         phase, loss = turned.preview(aberrations)
     with DirectPtycho(counts, scan_detector_rotation_deg=45.0, **settings) as prepared:
@@ -97,10 +97,10 @@ def test_an_estimate_180_degrees_off_keeps_the_branch_with_positive_columns(esti
 
     frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
     with DirectPtycho(frames, scan_detector_rotation_deg=0.0, **_settings(detector_mrad)) as session:
-        direct = session.fit_aberrations(search="primary", num_trials=40, check_rotation=False, verbose=False)
+        direct = session.aberrations(search="primary", num_trials=40, check_rotation=False, verbose=False)
     with DirectPtycho(frames, **_settings(detector_mrad)) as session:
         assert session.scan_detector_rotation_source == "estimated"
-        checked = session.fit_aberrations(search="primary", num_trials=40, verbose=False)
+        checked = session.aberrations(search="primary", num_trials=40, verbose=False)
         assert session.scan_detector_rotation_deg == 0.0
 
     branches = checked.rotation_branches
@@ -125,7 +125,7 @@ def test_unresolved_columns_leave_the_choice_to_the_phase_tail(estimate_180_degr
     frames, detector_mrad = _astigmatic_crystal()
     with DirectPtycho(frames, **_settings(detector_mrad)) as session:
         session._dark_field = np.ones(frames.shape[:2], np.float32)
-        checked = session.fit_aberrations(search="primary", num_trials=40, verbose=False)
+        checked = session.aberrations(search="primary", num_trials=40, verbose=False)
     branches = checked.rotation_branches
     assert branches.decided_by == "phase_tail" and checked.scan_detector_rotation_deg == 0.0
     assert branches.num_columns == 0 and "no atomic columns located" in branches.summary
@@ -136,7 +136,7 @@ def test_unresolved_columns_leave_the_choice_to_the_phase_tail(estimate_180_degr
 
 
 def test_reconstruct_keeps_the_branch_comparison_of_the_fit_it_applies(estimate_180_degrees_off, capsys):
-    """reconstruct() after a branch comparison reuses the kept fit and carries its evidence; no third search."""
+    """run() after a branch comparison reuses the kept fit and carries its evidence; no third search."""
     pytest.importorskip("mlx.core")
     import matplotlib
 
@@ -146,21 +146,21 @@ def test_reconstruct_keeps_the_branch_comparison_of_the_fit_it_applies(estimate_
 
     frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
     with DirectPtycho(frames, **_settings(detector_mrad)) as session:
-        fitted = session.fit_aberrations(search="primary", num_trials=40, verbose=False)
-        assert session.reconstruct() is fitted
-        for result in (session.reconstruct(), session.reconstruct(fitted, upsampling=2)):
+        fitted = session.aberrations(search="primary", num_trials=40, verbose=False)
+        assert session.run() is fitted
+        for result in (session.run(), session.run(fitted, upsample=2)):
             assert result.rotation_branches is fitted.rotation_branches
             report = result.report().iloc[:, 0]
             assert report["Suggested rotation (deg)"] == 180.0 and report["SSB-selected rotation (deg)"] == 0.0
             assert report["180° branch by"] == "atomic columns"
             assert isinstance(result.show("rotation"), Figure)
-        changed = session.reconstruct(aberrations={"C10_nm": fitted.aberrations["C10_nm"] + 1.0})
+        changed = session.run(aberrations={"C10_nm": fitted.aberrations["C10_nm"] + 1.0})
         assert changed.rotation_branches is None
         with pytest.raises(ValueError, match="compare_rotation_branches"):
             changed.show("rotation")
     capsys.readouterr()
     with DirectPtycho(frames, **_settings(detector_mrad)) as fresh:
-        auto = fresh.reconstruct()
+        auto = fresh.run()
     assert auto.rotation_branches is not None and auto.scan_detector_rotation_deg == 0.0
     out = capsys.readouterr().out
     assert "SSB: kept 0.0°: atomic columns positive" in out and out.count("SSB: kept") == 1
@@ -180,19 +180,19 @@ def test_branch_panels_are_each_fit_at_the_auto_factor_while_the_fit_stays_nativ
 
     frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
     with DirectPtycho(frames, **_settings(detector_mrad)) as session:
-        fitted = session.fit_aberrations(search="primary", num_trials=40, verbose=False)
+        fitted = session.aberrations(search="primary", num_trials=40, verbose=False)
         branches = fitted.rotation_branches
-        assert fitted.upsampling == 1 and fitted.phase.shape == (64, 64)
+        assert fitted.upsample == 1 and fitted.phase.shape == (64, 64)
         assert all(branch.phase.shape == (64, 64) for branch in branches.branches)
         tests = [(branch.column_z, branch.phase_skewness) for branch in branches.branches]
         panels = branches.upsampled_phases()
-        assert branches.upsampling == 2 and branches.object_sampling_A == (0.125, 0.125)
-        assert session.scan_detector_rotation_deg == 0.0 and session.reconstruct() is fitted
+        assert branches.upsample == 2 and branches.object_sampling_A == (0.125, 0.125)
+        assert session.scan_detector_rotation_deg == 0.0 and session.run() is fitted
         for branch, panel in zip(branches.branches, panels, strict=True):
             assert panel.shape == (128, 128)
             session.set_rotation(branch.scan_detector_rotation_deg)
             expected, _ = session.preview(dict(branch.aberrations), sample_tilt_mrad=branch.sample_tilt_mrad,
-                                          depth_spread_nm=branch.depth_spread_nm, upsampling=2,
+                                          depth_spread_nm=branch.depth_spread_nm, upsample=2,
                                           compute_loss=False)
             np.testing.assert_array_equal(panel, expected)
             # the native samples of the 2x grid are the scan positions the columns were located at
@@ -208,7 +208,7 @@ def test_branch_panels_are_each_fit_at_the_auto_factor_while_the_fit_stays_nativ
 
 
 def test_a_region_fit_keeps_its_branch_panels_after_its_region_session_closes(tmp_path):
-    """fit_aberrations(scan_region=...) fits in a region session that closes: the panels come with the fit and record.
+    """aberrations(scan_region=...) fits in a region session that closes: the panels come with the fit and record.
 
     A bright-field disk shifted by a smooth phase object, 128 x 128 positions at 0.25 Å (2x auto); fit quality is not
     the point, only that the panels are the region's, reconstructed before its G(q, k) is gone, and saved.
@@ -230,14 +230,14 @@ def test_a_region_fit_keeps_its_branch_panels_after_its_region_session_closes(tm
     settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
                     detector_sampling_mrad=(3.75, 3.75), scan_detector_rotation_flipped=False, source_path=str(master))
     with DirectPtycho(counts, **settings) as session:
-        fitted = session.fit_aberrations(search="primary", scan_region=(0, 128, 0, 128), tilt=False, num_trials=8, refinement=None,
+        fitted = session.aberrations(search="primary", scan_region=(0, 128, 0, 128), tilt=False, num_trials=8, refinement=None,
                                           save_dir=tmp_path / "results", verbose=False)
     branches = fitted.rotation_branches
-    assert fitted.fit_scan_region == (0, 128, 0, 128) and branches.upsampling == 2
+    assert fitted.fit_scan_region == (0, 128, 0, 128) and branches.upsample == 2
     assert [panel.shape for panel in branches.upsampled_phases()] == [(256, 256)] * 2
     paths = (fitted.saved_path, fitted.saved_path.with_suffix(".json"))
     reloaded = load_result(paths=paths, signature=fitted.metadata["signature"], backend="mps").rotation_branches
-    assert reloaded.upsampling == 2
+    assert reloaded.upsample == 2
     for saved, panel in zip(reloaded.upsampled_phases(), branches.upsampled_phases(), strict=True):
         np.testing.assert_array_equal(saved, panel)
 
@@ -245,7 +245,7 @@ def test_a_region_fit_keeps_its_branch_panels_after_its_region_session_closes(tm
 def test_a_given_rotation_is_never_flipped(capsys):
     """A rotation the user gives is fitted once and kept, even 180 degrees off; the comparison only reports.
 
-    Before 2026-10-20 reconstruct() moved a given 180 degrees to 0 here (and a given 169.888 to 349.888 on data).
+    Before 2026-10-20 run() moved a given 180 degrees to 0 here (and a given 169.888 to 349.888 on data).
     """
     pytest.importorskip("mlx.core")
     from quantem.gpu import DirectPtycho
@@ -253,14 +253,14 @@ def test_a_given_rotation_is_never_flipped(capsys):
     frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
     with DirectPtycho(frames, scan_detector_rotation_deg=180.0, **_settings(detector_mrad)) as session:
         assert session.scan_detector_rotation_source == "given"
-        result = session.reconstruct()
+        result = session.run()
         assert result.scan_detector_rotation_deg == 180.0 and result.rotation_branches is None
         assert "SSB: kept" not in capsys.readouterr().out
         branches = session.compare_rotation_branches(num_trials=40, verbose=False)
         assert branches.kept_rotation_deg == 180.0 and branches.chosen_rotation_deg == 0.0
         assert branches.summary.startswith("kept the given 180.0°; the evidence selects 0.0°")
         assert session.scan_detector_rotation_deg == 180.0
-        kept = session.reconstruct()
+        kept = session.run()
         assert kept.scan_detector_rotation_deg == 180.0 and kept.rotation_branches is branches
         assert session.compare_rotation_branches(num_trials=40, verbose=False, apply=True).kept_rotation_deg == 0.0
         assert session.scan_detector_rotation_deg == 0.0
@@ -281,16 +281,16 @@ def test_joint_fit_takes_a_c10_range_and_holds_c12_at_zero():
     settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
                     detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=0.0)
     with DirectPtycho(frames, **settings) as session:
-        held = session.fit_aberrations(search="primary", tilt=True, num_trials=40, verbose=False,
+        held = session.aberrations(search="primary", tilt=True, num_trials=40, verbose=False,
                                         search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})
         assert held.aberrations["C12_nm"] == 0.0 and held.aberrations["phi12_deg"] == 0.0
         # a given rotation is fitted once: no branch comparison
         assert -50.0 <= held.aberrations["C10_nm"] <= 50.0 and held.rotation_branches is None
-        bounded = session.fit_aberrations(search="primary", tilt=True, num_trials=40, verbose=False,
+        bounded = session.aberrations(search="primary", tilt=True, num_trials=40, verbose=False,
                                            search_ranges={"C10_nm": (-12, -4), "C12_nm": (0, 5)})
         assert -12.0 <= bounded.aberrations["C10_nm"] <= -4.0 and 0.0 <= bounded.aberrations["C12_nm"] <= 5.0
         assert bounded.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.1)
-        fixed_defocus = session.fit_aberrations(search="primary", tilt=True, num_trials=40, verbose=False,
+        fixed_defocus = session.aberrations(search="primary", tilt=True, num_trials=40, verbose=False,
                                                  fixed_aberrations={"C10_nm": -8.0})
         assert fixed_defocus.aberrations["C10_nm"] == pytest.approx(-8.0, abs=1e-6)
 
@@ -311,7 +311,7 @@ def test_unsupported_joint_constraints_say_what_to_pass(constraints, match):
     session = DirectPtycho.__new__(DirectPtycho)  # validation runs before any data is touched
     session._device = None
     with pytest.raises(ValueError, match=match):
-        DirectPtycho.fit_aberrations(session, search="primary", tilt=True, verbose=False, **constraints)
+        DirectPtycho.aberrations(session, search="primary", tilt=True, verbose=False, **constraints)
 
 
 @pytest.mark.parametrize("pins,lock,refinement", [
@@ -332,7 +332,7 @@ def test_search_range_pins_hold_their_values_on_mps(pins, lock, refinement):
     settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
                     detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=0.0)
     with DirectPtycho(frames, **settings) as session:
-        fitted = session.fit_aberrations(search="primary", tilt=False, num_trials=30, search_ranges=pins, refine_lock=lock,
+        fitted = session.aberrations(search="primary", tilt=False, num_trials=30, search_ranges=pins, refine_lock=lock,
                                           refinement=refinement,
                                           check_rotation=False, verbose=False)
         assert fitted.aberrations["C12_nm"] == pytest.approx(pins["C12_nm"], abs=1e-9)
@@ -356,7 +356,7 @@ def test_holding_c12_at_zero_still_fits_the_defocus(lock):
     settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
                     detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=0.0)
     with DirectPtycho(frames, **settings) as session:
-        fitted = session.fit_aberrations(search="primary", tilt=False, num_trials=40, search_ranges={"C12_nm": 0.0}, refine_lock=lock,
+        fitted = session.aberrations(search="primary", tilt=False, num_trials=40, search_ranges={"C12_nm": 0.0}, refine_lock=lock,
                                           check_rotation=False, verbose=False)
     assert fitted.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.5)
     assert fitted.aberrations["C12_nm"] == 0.0 and fitted.aberrations["phi12_deg"] == 0.0
@@ -376,9 +376,9 @@ def test_refine_rotation_recovers_a_two_degree_offset(monkeypatch, estimate_deg)
     monkeypatch.setattr(workflow, "_estimate_rotation", lambda *args: (estimate_deg, False))
     frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
     with DirectPtycho(frames, **_settings(detector_mrad)) as session:
-        fit = session.fit_aberrations(search="primary", num_trials=40, refine_rotation=True, verbose=False)
+        fit = session.aberrations(search="primary", num_trials=40, refine_rotation=True, verbose=False)
         assert session.scan_detector_rotation_deg == fit.scan_detector_rotation_deg
-        assert session.reconstruct() is fit
+        assert session.run() is fit
     assert fit.rotation_branches.kept == 0 and fit.rotation_branches.decided_by == "columns"
     assert fit.rotation_refined and fit.rotation_estimate_deg == estimate_deg
     assert abs((fit.scan_detector_rotation_deg + 180.0) % 360.0 - 180.0) < 0.1
@@ -395,7 +395,7 @@ def test_a_given_rotation_is_fitted_once_and_not_refined():
 
     frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
     with DirectPtycho(frames, scan_detector_rotation_deg=2.0, **_settings(detector_mrad)) as session:
-        fit = session.fit_aberrations(search="primary", num_trials=40, refine_rotation=True, verbose=False)
+        fit = session.aberrations(search="primary", num_trials=40, refine_rotation=True, verbose=False)
     assert fit.scan_detector_rotation_deg == 2.0 and fit.rotation_branches is None
     assert (fit.rotation_refined, fit.rotation_estimate_deg, fit.rotation_refinement) == (False, None, None)
 
@@ -417,7 +417,7 @@ def test_gold_refined_rotation(capsys):
     with io.load(str(master), hot_pixel_correction=harness.HOT_PIXELS, verbose=False) as data:
         harness.calibrate(data)
         with DirectPtycho(data) as ssb:
-            fit = ssb.fit_aberrations(search="primary", refine_rotation=True)
+            fit = ssb.aberrations(search="primary", refine_rotation=True)
             assert ssb.scan_detector_rotation_deg == fit.scan_detector_rotation_deg
     record = fit.rotation_refinement
     kept = fit.rotation_branches.branches[fit.rotation_branches.kept]

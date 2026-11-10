@@ -81,8 +81,8 @@ def test_native_encoded_ssb_matches_dense_and_keeps_acquisition_open(tmp_path, b
             # the centre counts from the first pixel of the full detector, also in the session that decoded only its
             # crop; that session used to report the centre inside the crop
             assert native.bright_field_center_px == dense.bright_field_center_px == (11.5, 11.5)
-            cropped_result = native.reconstruct(aberrations=ABERRATIONS)
-            dense_result = dense.reconstruct(aberrations=ABERRATIONS)
+            cropped_result = native.run(aberrations=ABERRATIONS)
+            dense_result = dense.run(aberrations=ABERRATIONS)
             assert cropped_result.bright_field_center_px == dense_result.bright_field_center_px == (11.5, 11.5)
         np.testing.assert_array_equal(data[0, 0].cpu().numpy(), counts[0, 0])
 
@@ -169,7 +169,7 @@ def test_open_retains_detector_correction_and_matches_saved_counts(tmp_path, bac
         bright_field_radius_px=4.0, bright_field_center_px=(5.5, 5.5),
     )
     preview = dict(
-        upsampling=3, sample_tilt_mrad=(-2.0, 3.0), depth_spread_nm=depth_nm,
+        upsample=3, sample_tilt_mrad=(-2.0, 3.0), depth_spread_nm=depth_nm,
     )
     # The acquisition loader remains lossless; the SSB file workflow owns its
     # explicit preprocessing choice and never changes the source file.
@@ -210,7 +210,7 @@ def test_one_number_is_the_scan_step_on_both_axes_at_every_entry_point(tmp_path,
             with one, two:
                 assert one.scan_sampling_A == two.scan_sampling_A == (0.99, 0.99)
                 assert one.detector_sampling_mrad == two.detector_sampling_mrad == (0.6, 0.6)
-                assert one.calibration().loc["Scan step (row, col)", "Value used"] == (0.99, 0.99)
+                assert one.calibration().loc["Scan step (row, col)", "Value"].startswith("(0.99, 0.99)")
                 np.testing.assert_array_equal(one.preview(ABERRATIONS)[0], two.preview(ABERRATIONS)[0])
     with pytest.raises(ValueError, match="one number for both axes or a \\(row, col\\) pair"):
         DirectPtycho(counts, **{**scalar, "scan_sampling_A": (0.99, 0.99, 0.99)})

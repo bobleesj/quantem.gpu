@@ -52,8 +52,8 @@ in quantem is heading.
 
 | Call | Method | Use it for |
 |---|---|---|
-| `fit_aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
-| `fit_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
+| `aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
 
 Both refine on exact derivatives of the model agreement. The earlier
 phase-variance search (`objective="phase_variance"`), which scored how well the

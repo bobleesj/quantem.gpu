@@ -56,7 +56,7 @@ display refresh is not equivalent to a newly computed phase image per frame.
 
 ## Verification
 
-- 47 hardware MPS upsampling tests passed, including anisotropic soft-edge
+- 47 hardware MPS upsample tests passed, including anisotropic soft-edge
   boundary cases and cancellation after queued batches, followed by recovery.
 - Frozen GPU fit trajectory and optimum matched their unchanged pin.
 - Native reconstruction and saved-result round-trip checks passed.

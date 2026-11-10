@@ -123,13 +123,13 @@ def test_transposed_detector_matches_explicit_swap_on_mps(tmp_path):
     coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
     with DirectPtycho(tensor, scan_detector_rotation_flipped=True, detector_sampling_mrad=(6., 7.),
              bright_field_center_px=(5., 5.5), **settings) as candidate:
-        actual = candidate.reconstruct(aberrations=coefficients)
+        actual = candidate.run(aberrations=coefficients)
         state = candidate.browser_state()
         assert actual.scan_detector_rotation_flipped is True
         assert actual.bright_field_center_px == (5., 5.5)
     with DirectPtycho(tensor.swapaxes(-1, -2).contiguous(), detector_sampling_mrad=(7., 6.),
              bright_field_center_px=(5.5, 5.), **settings) as reference:
-        expected = reference.reconstruct(aberrations=coefficients)
+        expected = reference.run(aberrations=coefficients)
         reference_state = reference.browser_state()
     np.testing.assert_array_equal(actual.phase, expected.phase)
     assert actual.loss == expected.loss
@@ -154,10 +154,10 @@ def test_saved_geometry_reopens_the_same_encoded_brightfield(tmp_path):
                     detector_sampling_mrad=(6., 7.))
     coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
     with DirectPtycho.open(str(source), **settings) as initial:
-        expected = initial.reconstruct(aberrations=coefficients)
+        expected = initial.run(aberrations=coefficients)
     with DirectPtycho.open(str(source), **settings,
                   bright_field_center_px=expected.bright_field_center_px,
                   bright_field_radius_px=expected.bright_field_radius_px) as reopened:
-        actual = reopened.reconstruct(aberrations=coefficients)
+        actual = reopened.run(aberrations=coefficients)
     np.testing.assert_array_equal(actual.phase, expected.phase)
     assert actual.loss == expected.loss

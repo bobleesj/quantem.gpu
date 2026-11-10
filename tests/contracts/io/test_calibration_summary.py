@@ -112,9 +112,8 @@ def test_ssb_calibration_dict_holds_the_table_rows():
     assert isinstance(table, pd.DataFrame) and type(rows) is dict
     assert rows == table.to_dict(orient="index")
     assert list(rows) == list(table.index)
-    assert rows["Accelerating voltage"] == {"File value": 200.0, "File unit": "kV", "Value used": 300.0,
-                                            "Unit used": "kV", "Source": "Explicit override"}
-    assert rows["Scan step (row, col)"]["Value used"] == (0.264, 0.264)
+    assert rows["Accelerating voltage"] == {"Value": "300.0 kV", "Source": "Explicit override"}
+    assert rows["Scan step (row, col)"]["Value"] == "(0.264, 0.264) angstrom"
 
 
 def test_tables_round_for_reading_and_a_confirmed_value_stays_recorded():

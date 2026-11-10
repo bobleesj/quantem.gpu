@@ -40,8 +40,8 @@ def run(
     *,
     bright_field_center_px: tuple[int, int] | None = None,
     bright_field_radius_px: float | None = None,
-    upsampling_factor: int = 2,
-    fit_aberrations: bool = False,
+    upsample_factor: int = 2,
+    aberrations: bool = False,
     scan_sampling_A: float | tuple[float, float] | None = None,
     semiangle_mrad: float | None = None,
     detector_sampling_mrad: tuple[float, float] | None = None,
@@ -53,7 +53,7 @@ def run(
     a slightly tilted beam, so defocus and astigmatism shift its scan image in
     proportion to that tilt. The shifts are measured by cross-correlation and
     undone, and the images are summed into one phase-contrast image. With
-    ``fit_aberrations=True`` the shift pattern also gives defocus, two-fold
+    ``aberrations=True`` the shift pattern also gives defocus, two-fold
     astigmatism and the scan-detector rotation, in the units and convention
     ``SSB`` takes.
 
@@ -75,12 +75,12 @@ def run(
         radius detected from the mean diffraction pattern when omitted; a
         smaller value bounds memory, since the image stack holds one float32
         scan image per pixel.
-    upsampling_factor
+    upsample_factor
         Each output image axis is this many times the scan axis. Every
         image's scan samples are placed at their measured sub-pixel shifts
         on the finer grid, so where the shifts differ (defocus) the images
         interleave and resolve detail finer than the scan step.
-    fit_aberrations
+    aberrations
         Fit ``C10_nm``, ``C12_nm``, ``phi12_deg`` and the scan-detector rotation from
         the shifts. Needs ``scan_sampling_A`` and the detector calibration,
         ``semiangle_mrad`` or ``detector_sampling_mrad``.
@@ -114,7 +114,7 @@ def run(
         If the acquisition is on an Apple GPU (MPS); parallax has no MPS
         implementation.
     ValueError
-        If the acquisition is not on a CUDA GPU, ``fit_aberrations`` is
+        If the acquisition is not on a CUDA GPU, ``aberrations()`` is
         requested without the scan or detector calibration, or
         ``scan_sampling_A`` or ``detector_sampling_mrad`` is neither one
         number nor a ``(row, col)`` pair.
@@ -123,7 +123,7 @@ def run(
     --------
     >>> from quantem.gpu import DirectPtycho, io, parallax
     >>> data = io.load("scan_master.h5", backend="cuda")
-    >>> result = parallax.run(data, fit_aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
+    >>> result = parallax.run(data, aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
     >>> ssb = DirectPtycho(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
     ...           aberrations=result.aberrations, scan_detector_rotation_deg=result.scan_detector_rotation_deg)
     """
@@ -143,9 +143,9 @@ def run(
             f"Parallax runs on a CUDA GPU, but this acquisition is on {device}. "
             "Load it with io.load(path, backend='cuda')."
         )
-    if fit_aberrations and (scan_sampling_A is None or (semiangle_mrad is None and detector_sampling_mrad is None)):
+    if aberrations and (scan_sampling_A is None or (semiangle_mrad is None and detector_sampling_mrad is None)):
         raise ValueError(
-            "fit_aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
+            "aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
             "calibration: semiangle_mrad, or detector_sampling_mrad in mrad per detector pixel."
         )
     # A sampling is a (row, col) pair, as SSB reads it: one number was broadcast to both axes here,
@@ -174,7 +174,7 @@ def run(
         pixel_rows, pixel_cols = cp.nonzero(bf_mask)
         if verbose:
             print(f"[parallax] {len(pixel_rows):,} BF pixels within {radius} px of {center}")
-        image, density, global_shifts = _shifted_sum(data, center, pixel_rows, pixel_cols, upsampling_factor, verbose)
+        image, density, global_shifts = _shifted_sum(data, center, pixel_rows, pixel_cols, upsample_factor, verbose)
         # The bright-field stack and its spectra were many times the image; return
         # their blocks to the GPU for the next consumer instead of keeping them cached.
         # CuPy's pool on this GPU and Torch's cache are emptied in place: device.release_cached_memory
@@ -183,7 +183,7 @@ def run(
         torch.cuda.empty_cache()
 
         aberrations = scan_detector_rotation_deg = None
-        if fit_aberrations:
+        if aberrations:
             # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
             if detector_sampling_mrad is None:
                 mean_pattern = detector.mean(data) if mean_pattern is None else mean_pattern
@@ -193,7 +193,7 @@ def run(
             pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)
             # a step per axis: row shifts in row steps, column shifts in column steps
             angles_rad = (pixels - pixels.mean(axis=0)) * np.asarray(detector_sampling_mrad, dtype=np.float64) * 1e-3
-            aberrations, signed_rotation_deg = fit_aberrations_from_shifts(
+            aberrations, signed_rotation_deg = aberrations_from_shifts(
                 cp.asnumpy(global_shifts).astype(np.float64) * np.asarray(scan_sampling_A, dtype=np.float64), angles_rad
             )
             # The fit keeps its angle within 90 degrees of zero; a result states the physical rotation in
@@ -209,7 +209,7 @@ def run(
         )
 
 
-def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float], float]:
+def aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float], float]:
     """Fit defocus, two-fold astigmatism and the scan-detector rotation to parallax shifts.
 
     With SSB's aberration function ``chi = (pi / lambda) alpha^T A alpha``,
@@ -220,10 +220,10 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     symmetric aberration matrix, then the scan-detector rotation ``R``. A
     least-squares fit of ``M`` and its polar decomposition ``M = R P`` (``P =
     R^T A R``, the aberrations in the scan frame) separate the two, as
-    QuantEM's ``fit_aberrations_from_shifts`` does. The half turn ``(R, P) ->
+    QuantEM's ``aberrations_from_shifts`` does. The half turn ``(R, P) ->
     (-R, -P)`` fits equally well; the rotation is kept within 90 degrees of
     zero and the aberrations take its sign, the 180-degree ambiguity that
-    ``DirectPtycho.fit_aberrations(check_rotation=True)`` settles.
+    ``DirectPtycho.aberrations(check_rotation=True)`` settles.
 
     Parameters
     ----------
@@ -259,7 +259,7 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     return aberrations, math.degrees(rotation_rad)
 
 
-def _shifted_sum(data, center, pixel_rows, pixel_cols, upsampling_factor, verbose):
+def _shifted_sum(data, center, pixel_rows, pixel_cols, upsample_factor, verbose):
     """Read, align and sum the bright-field images: ``(image, density, shifts)``.
 
     A function of its own so that the image stack (one float32 scan image per
@@ -308,28 +308,28 @@ def _shifted_sum(data, center, pixel_rows, pixel_cols, upsampling_factor, verbos
         print(f"[parallax] Max shift: {max_shift:.2f} pixels")
 
     # Shift every image once by its measured shift and sum, in frequency space
-    # on the output grid, as QuantEM's DirectPtychography.reconstruct does.
-    # Tiling an image's spectrum upsampling_factor times per axis puts its scan
+    # on the output grid, as QuantEM's DirectPtychography.run does.
+    # Tiling an image's spectrum upsample_factor times per axis puts its scan
     # samples on the finer grid with zeros between them; the phase ramp then
     # moves the samples to their measured sub-pixel positions, so the images
     # interleave and the sum resolves detail finer than the scan step. The
     # ramp factorizes into a row part and a column part, in cycles per scan
     # pixel on the output grid.
-    out_rows, out_cols = upsampling_factor * scan_rows, upsampling_factor * scan_cols
+    out_rows, out_cols = upsample_factor * scan_rows, upsample_factor * scan_cols
     # The ramps are evaluated in float64 and rounded once to complex64.
     shifts_f64 = global_shifts.astype(cp.float64)
     ramp_row = cp.exp(
-        -2j * cp.pi * shifts_f64[:, 0:1] * cp.fft.fftfreq(out_rows, d=1.0 / upsampling_factor)[None, :]
+        -2j * cp.pi * shifts_f64[:, 0:1] * cp.fft.fftfreq(out_rows, d=1.0 / upsample_factor)[None, :]
     ).astype(cp.complex64)
     ramp_col = cp.exp(
-        -2j * cp.pi * shifts_f64[:, 1:2] * cp.fft.fftfreq(out_cols, d=1.0 / upsampling_factor)[None, :]
+        -2j * cp.pi * shifts_f64[:, 1:2] * cp.fft.fftfreq(out_cols, d=1.0 / upsample_factor)[None, :]
     ).astype(cp.complex64)
     spectrum = cp.zeros((out_rows, out_cols), cp.complex64)
     batch = max(1, BATCH_BYTES // (out_rows * out_cols * 8))
     for first in range(0, n_pixels, batch):
         stop = min(first + batch, n_pixels)
         tiled = cp.tile(
-            cp.fft.fft2(stack[first:stop], axes=(1, 2)), (1, upsampling_factor, upsampling_factor)
+            cp.fft.fft2(stack[first:stop], axes=(1, 2)), (1, upsample_factor, upsample_factor)
         )
         tiled *= ramp_row[first:stop, :, None]
         tiled *= ramp_col[first:stop, None, :]

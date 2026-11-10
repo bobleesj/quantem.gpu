@@ -15,7 +15,7 @@ def test_reconstruction_does_not_export_phase(monkeypatch):
     ssb, _ = _synthetic_session()
     values = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
     try:
-        expected = ssb.reconstruct(aberrations=values)
+        expected = ssb.run(aberrations=values)
         # Preparation may export tiny geometry metadata; repeated scientific
         # reconstruction must not export the image and upload it again.
         original_asnumpy = cp.asnumpy
@@ -27,7 +27,7 @@ def test_reconstruction_does_not_export_phase(monkeypatch):
 
         with monkeypatch.context() as patch:
             patch.setattr(cp, "asnumpy", no_host)
-            actual = ssb.reconstruct(aberrations=values, force=True)
+            actual = ssb.run(aberrations=values, force=True)
         assert isinstance(actual.object_wave, cp.ndarray)
         cp.testing.assert_array_equal(actual.object_wave, expected.object_wave)
         phase, _ = ssb.preview(values)
@@ -41,18 +41,18 @@ def test_trial_replay_and_tilt_stay_on_device(monkeypatch):
 
     ssb, _ = _synthetic_session()
     try:
-        fitted = ssb.fit_aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
+        fitted = ssb.aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
         ssb.sample_tilt_mrad = (2.0, -1.0)
         ssb.depth_spread_nm = 5.0
-        ssb.reconstruct(upsampling=2, force=True)
+        ssb.run(upsample=2, force=True)
 
         def no_host(*args, **kwargs):
             raise AssertionError("Reconstruction exported a CUDA array")
 
         with monkeypatch.context() as patch:
             patch.setattr(cp, "asnumpy", no_host)
-            result = ssb.reconstruct(upsampling=2, force=True)
-            replay = ssb.reconstruct(fitted, trial_ids=[0, 2])
+            result = ssb.run(upsample=2, force=True)
+            replay = ssb.run(fitted, trial_ids=[0, 2])
         assert isinstance(result.object_wave, cp.ndarray)
         assert isinstance(replay.object_wave, cp.ndarray)
         assert replay.object_wave.shape == (2, 128, 128)
@@ -66,17 +66,17 @@ def test_trial_replay_owns_each_trial_wave():
 
     ssb, _ = _synthetic_session()
     try:
-        fitted = ssb.fit_aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
+        fitted = ssb.aberrations(search="primary", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
         expected = []
         for record in fitted.trial_records[:3]:
             values = record["params"]
-            result = ssb.reconstruct(aberrations={
+            result = ssb.run(aberrations={
                 "C10_nm": values["C10_nm"], "C12_nm": values["C12_nm"],
                 "phi12_deg": values["phi12_deg"],
             }, compute_loss=False)
             expected.append(result.object_wave.copy())
         assert any(not cp.array_equal(expected[0], frame) for frame in expected[1:])
-        replay = ssb.reconstruct(fitted, trial_ids=[0, 1, 2])
+        replay = ssb.run(fitted, trial_ids=[0, 1, 2])
         cp.testing.assert_array_equal(replay.object_wave, cp.stack(expected))
     finally:
         ssb.close()

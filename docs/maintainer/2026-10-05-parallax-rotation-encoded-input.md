@@ -29,8 +29,8 @@ counts?
 
 ## Results
 
-Parallax (`voltage_kV=300`, `scan_sampling=0.5`, `fit_aberrations=True`,
-`upsampling_factor=2`):
+Parallax (`voltage_kV=300`, `scan_sampling=0.5`, `aberrations=True`,
+`upsample_factor=2`):
 
 | Case | Mean pattern, detected disk | BF stack | Shifts, image, aberrations |
 |---|---|---|---|
@@ -75,12 +75,12 @@ masked sums and `io.save`/`io.load` round trips match the rotated counts.
 
 ## Findings left as they are
 
-- Parallax spectrum tiling inserts zeros: with `upsampling_factor=2` (the default)
+- Parallax spectrum tiling inserts zeros: with `upsample_factor=2` (the default)
   every odd row and column of the image is exactly 0 on the real acquisition
   (base and branch alike), because tiling the summed spectrum before the inverse
   FFT is zero insertion, not interpolation.
 - Parallax applies the measured shifts twice: `align_vbf_stack_multiscale_cp`
-  returns a stack already shifted by its phase ramps, and the upsampling step
+  returns a stack already shifted by its phase ramps, and the upsample step
   shifts it again by the same global shifts.
 
 Checked 2026-10-10 against 0.0.1rc15: each image is now shifted once;

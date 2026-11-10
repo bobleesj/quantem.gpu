@@ -61,7 +61,7 @@ Question: can `stream(frames, fit, method=("phase", "complex"))` reconstruct bot
 on every frame live, without changing the registration?
 
 Setup: a real experimental 4D-STEM time series, 40 frames (512 x 512 scan, 192 x 192 detector) after
-the reference frame, output 1536 x 1536 at `upsampling_factor="auto"`, GPU 0, `show=False`, a fresh
+the reference frame, output 1536 x 1536 at `upsample_factor="auto"`, GPU 0, `show=False`, a fresh
 scratch `save_dir` (every frame refit). Each frame runs SSB (for registration), then phase-only, then
 amplitude + phase, each with `force=True, compute_loss=False`.
 

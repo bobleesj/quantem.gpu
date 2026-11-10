@@ -140,7 +140,7 @@ class DirectPtychoProtocol(Protocol):
         self,
         aberrations: dict[str, float],
         *,
-        upsampling_factor: int,
+        upsample_factor: int,
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float],
         depth_spread_A: float,

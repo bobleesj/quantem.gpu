@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from tqdm.auto import tqdm
 from torch import nn
 
 from quantem.gpu.device.cuda_runtime import cp
@@ -117,12 +118,12 @@ class _Case:
 
 def _pair(ptycho, optics, region, factor, sampling, guide, scan_basis):
     with ptycho.select_region(region) as selected:
-        baseline = selected.reconstruct(
+        baseline = selected.run(
             optics,
             method="phase",
-            phase_damping=0.03,
+            phase_damp=0.03,
             scan_basis=scan_basis,
-            upsampling=factor,
+            upsample=factor,
             compute_loss=False,
         )
         engine, settings, _ = direct_workflow._inputs(
@@ -159,7 +160,7 @@ def _fit_unet(training, validation, steps, trace):
     best, selected, saved = 0.0, 0, deepcopy(network.state_dict())
     checks = {0, 5, 10, 25, 50, 100, 200, 400, steps}
     began = time.perf_counter()
-    for step in range(steps + 1):
+    for step in tqdm(range(steps + 1), desc="learned correction", leave=False):
         if step in checks or step % 100 == 0:
             with torch.no_grad():
                 gain = float(
@@ -280,7 +281,7 @@ def _direction_gain(case, head):
     return -change / case.power
 
 
-def _fit_head(training, validation, steps, seed, trace):
+def _fit_head(training, validation, steps, seed, trace, label="correction direction"):
     device = training[0].base.device
     torch.manual_seed(seed)
     head = Direction().to(device)
@@ -289,7 +290,7 @@ def _fit_head(training, validation, steps, seed, trace):
     optimizer = torch.optim.AdamW(head.parameters(), lr=0.002, weight_decay=0.0001)
     best, selected, saved = 0.0, 0, deepcopy(head.state_dict())
     significant, last_change = 0.0, 0
-    for step in range(steps + 1):
+    for step in tqdm(range(steps + 1), desc=label, leave=False):
         if step % 100 == 0 or step == steps:
             with torch.no_grad():
                 gain = float(torch.stack([_direction_gain(c, head) for c in validation]).mean())
@@ -327,7 +328,7 @@ def train(
     direction_steps,
     patch_size,
     seed,
-    upsampling,
+    upsample,
     annulus_mrad,
     scan_basis,
 ):
@@ -344,13 +345,16 @@ def train(
     ):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{name} must be a positive integer.")
-    regions = _regions(ptycho.scan_shape, patch_size)
-    factor = ptycho._resolve_upsampling(upsampling)
+    shape = (ptycho._input_dataset.shape[0], ptycho._input_dataset.shape[1])
+    regions = _regions(shape, patch_size)
+    factor = ptycho._resolve_upsample(upsample)
     sampling = ptycho._output_sampling(factor)
-    limits = annular_limits(
-        annulus_mrad or (1.05 * ptycho.semiangle_mrad, 1.5 * ptycho.semiangle_mrad)
-    )
     pixel_margin = max(np.broadcast_to(ptycho.detector_sampling_mrad, (2,)))
+    # The annulus starts clear of the bright-field disk by two detector pixels, and grows
+    # with the pixel size when one pixel is a large fraction of the convergence angle.
+    inner = max(1.05 * ptycho.semiangle_mrad, ptycho.semiangle_mrad + 2 * pixel_margin)
+    outer = max(1.5 * ptycho.semiangle_mrad, inner + 2 * pixel_margin)
+    limits = annular_limits(annulus_mrad or (inner, outer))
     if limits[0] < ptycho.semiangle_mrad + pixel_margin:
         raise ValueError(
             "Choose an annulus outside the bright-field disk plus one detector pixel for detector-held-out training."
@@ -372,8 +376,9 @@ def train(
         weights, ridge, _ = _fit_readout(training, validation, kernels, trace)
         _direction_cases([*training, *validation])
         heads, head_steps = [], []
-        for head_seed in (seed + 13, seed + 37):
-            head, selected = _fit_head(training, validation, direction_steps, head_seed, trace)
+        for index, head_seed in enumerate((seed + 13, seed + 37), start=1):
+            head, selected = _fit_head(training, validation, direction_steps, head_seed, trace,
+                                       label=f"correction direction {index} of 2")
             heads.append(head)
             head_steps.append(selected)
         torch.cuda.synchronize(device)
@@ -405,7 +410,7 @@ def train(
                 voltage_kV=ptycho.voltage_kV,
                 semiangle_mrad=ptycho.semiangle_mrad,
                 object_sampling_A=sampling,
-                upsampling=factor,
+                upsample=factor,
                 annulus_mrad=limits,
                 training_record=record,
             )
@@ -468,7 +473,7 @@ def held_scores(model, ptycho, optics, region, scan_basis):
         table.attrs.update(
             scan_region=region,
             partition="detector blocks",
-            phase_damping=0.03,
+            phase_damp=0.03,
             conditioning="Fixed full-data optical fit and shared disjoint annular guide.",
         )
         return table

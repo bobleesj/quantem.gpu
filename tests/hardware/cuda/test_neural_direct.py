@@ -35,24 +35,24 @@ def test_reconstruct_compare_damping_and_restore(tmp_path):
         with DirectPtycho(data, **calibration["session"]) as ptycho:
             ptycho.sample_tilt_mrad = tuple(calibration["sample_tilt_mrad"])
             ptycho.depth_spread_nm = calibration["depth_spread_nm"]
-            settings = dict(method="phase", upsampling="auto", compute_loss=False,
+            settings = dict(method="phase", upsample="auto", compute_loss=False,
                             scan_basis=calibration["scan_basis"])
-            direct = ptycho.reconstruct(**settings)
-            neural = ptycho.reconstruct(**settings, neural_model=model)
+            direct = ptycho.run(**settings)
+            neural = ptycho.run(**settings, neural_model=model)
             cp.testing.assert_array_equal(direct.phase, neural.phase)
             assert neural.neural_phase is not None and neural.annular_counts is not None
             assert neural.neural_phase.shape == direct.phase.shape
             assert neural.annular_counts.shape == data.shape[:2]
 
-            tuned = ptycho.reconstruct(**settings, neural_model=model, phase_damping=0.02,
+            tuned = ptycho.run(**settings, neural_model=model, phase_damp=0.02,
                                        save_dir=tmp_path)
             cp.testing.assert_array_equal(tuned.neural_phase, neural.neural_phase)
             assert not cp.array_equal(tuned.phase, neural.phase)
-            assert tuned.reconstruction_options["phase_damping"] == 0.02
-            assert tuned.reconstruction_options["neural_phase_model"]["input_phase_damping"] == 0.03
+            assert tuned.reconstruction_options["phase_damp"] == 0.02
+            assert tuned.reconstruction_options["neural_phase_model"]["input_phase_damp"] == 0.03
 
             with patch.object(PreparedDirect, "prepare", side_effect=AssertionError("Unexpected solve")):
-                restored = ptycho.reconstruct(**settings, neural_model=model, phase_damping=0.02,
+                restored = ptycho.run(**settings, neural_model=model, phase_damp=0.02,
                                               save_dir=tmp_path)
             assert restored.reused
             cp.testing.assert_array_equal(restored.phase, tuned.phase)
@@ -62,7 +62,7 @@ def test_reconstruct_compare_damping_and_restore(tmp_path):
 
             # An incomplete archive must be recomputed, never returned as a complete neural result.
             np.savez(restored.saved_path, object_wave=cp.asnumpy(restored.object_wave))
-            repaired = ptycho.reconstruct(**settings, neural_model=model, phase_damping=0.02,
+            repaired = ptycho.run(**settings, neural_model=model, phase_damp=0.02,
                                           save_dir=tmp_path)
             assert not repaired.reused
             cp.testing.assert_array_equal(repaired.neural_phase, tuned.neural_phase)
@@ -79,20 +79,20 @@ def test_fit_staged_in_memory_and_score_unused_region(tmp_path):
         with DirectPtycho(data, **calibration["session"]) as ptycho:
             ptycho.sample_tilt_mrad = tuple(calibration["sample_tilt_mrad"])
             ptycho.depth_spread_nm = calibration["depth_spread_nm"]
-            settings = dict(method="phase", upsampling="auto", compute_loss=False,
+            settings = dict(method="phase", upsample="auto", compute_loss=False,
                             scan_basis=calibration["scan_basis"])
-            optics = ptycho.reconstruct(**settings)
+            optics = ptycho.run(**settings)
             model = NeuralPhaseModel.fit(ptycho, optics, steps=2, direction_steps=1,
                                         scan_basis=calibration["scan_basis"])
             assert not list(tmp_path.iterdir())
             assert model.checkpoint_sha256 is None
             assert len(model._net["heads"]) == 2
             assert model.training_record["recipe"] == "staged"
-            reconstruction = ptycho.reconstruct(optics, **settings, neural_model=model)
+            reconstruction = ptycho.run(optics, **settings, neural_model=model)
             assert bool(cp.isfinite(reconstruction.neural_phase).all())
             model.save(tmp_path / "optional.pt")
             restored = NeuralPhaseModel.load(tmp_path / "optional.pt")
-            replay = ptycho.reconstruct(optics, **settings, refinement=restored)
+            replay = ptycho.run(optics, **settings, refinement=restored)
             cp.testing.assert_array_equal(replay.neural_phase, reconstruction.neural_phase)
             scores = model.score(ptycho, optics, partition="detector",
                                  scan_basis=calibration["scan_basis"])

@@ -23,7 +23,7 @@ The fits use the session's default tilt-corrected joint model. Fitting sample ti
 atomic-column contrast while leaving the two symmetry-related branches equally compatible with the data.
 
 Both tests read the native phases. What ``RotationBranches.show`` draws of each branch is its fit reconstructed at
-``upsampling="auto"`` (``RotationBranches.upsampled_phases``), with the columns at scan pixels times the factor.
+``upsample="auto"`` (``RotationBranches.upsampled_phases``), with the columns at scan pixels times the factor.
 """
 
 import math
@@ -192,7 +192,7 @@ class RotationBranches:
         ``effect >= COLUMN_EFFECT_MIN``), else ``"phase_tail"`` (``phase_skewness``).
     scan_sampling_A : tuple[float, float] | None
         The native scan step (row, col) in Å.
-    upsampling : int | None
+    upsample : int | None
         Output factor of ``upsampled_phases``, set when they are reconstructed (None before).
     """
     branches: tuple[RotationBranch, RotationBranch]
@@ -201,8 +201,8 @@ class RotationBranches:
     kept: int
     decided_by: Literal["columns", "phase_tail"]
     scan_sampling_A: tuple[float, float] | None = None
-    upsampling: int | None = None
-    # (the requested upsampling, both panels) once reconstructed
+    upsample: int | None = None
+    # (the requested upsample, both panels) once reconstructed
     _upsampled: tuple[object, tuple[np.ndarray, np.ndarray]] | None = field(default=None, repr=False, compare=False)
     # a weakref.WeakMethod to the fitting session's reconstruction of both panels: it never keeps a session alive
     _panel_source: Callable | None = field(default=None, repr=False, compare=False)
@@ -224,33 +224,33 @@ class RotationBranches:
 
     @property
     def object_sampling_A(self) -> tuple[float, float] | None:
-        """Pixel size (row, col) in Å of ``upsampled_phases``: the scan step over ``upsampling``."""
-        if self.scan_sampling_A is None or self.upsampling is None:
+        """Pixel size (row, col) in Å of ``upsampled_phases``: the scan step over ``upsample``."""
+        if self.scan_sampling_A is None or self.upsample is None:
             return None
-        return tuple(float(step) / self.upsampling for step in self.scan_sampling_A)
+        return tuple(float(step) / self.upsample for step in self.scan_sampling_A)
 
-    def upsampled_phases(self, upsampling: int | Literal["auto"] = "auto") -> tuple[np.ndarray, np.ndarray]:
-        """Each branch's fit reconstructed at ``upsampling`` (radians): the panels ``show`` draws.
+    def upsampled_phases(self, upsample: int | Literal["auto"] = "auto") -> tuple[np.ndarray, np.ndarray]:
+        """Each branch's fit reconstructed at ``upsample`` (radians): the panels ``show`` draws.
 
         The SSB session that fitted or reloaded the branches reconstructs each one at its own rotation, aberrations,
         sample tilt and depth spread with the G(q, k) it already holds: no search and no second G(q, k) build (a
         session that reloaded the fit builds its G(q, k) first, as its first reconstruction would). On
         the 512 x 512 gold scan at 0.5 Å (4x auto, 2048 x 2048 each) both took 0.4 s on an M5 Max, 0.35 GiB above
         the fitted session and below the fit's own peak. The result is kept for the next call. ``"auto"`` is
-        ``ssb.reconstruct(upsampling="auto")``'s factor; the column test and the phase tail stay on the native
+        ``ssb.run(upsample="auto")``'s factor; the column test and the phase tail stay on the native
         ``phase``.
         """
         cached = self._upsampled
-        if cached is None or cached[0] != upsampling:
+        if cached is None or cached[0] != upsample:
             source = None if self._panel_source is None else self._panel_source()
-            phases = None if source is None else source(self, upsampling)
+            phases = None if source is None else source(self, upsample)
             if phases is None:
                 raise ValueError(
                     "The branch panels are reconstructed by the SSB session that fitted or reloaded these branches, and "
                     "it is closed. Show them before ssb.close(), or reload the fit with the same save_dir; "
                     "show(panels=False) draws the evidence alone.")
             factor, phases = phases
-            self._upsampled, self.upsampling = (upsampling, tuple(phases)), int(factor)
+            self._upsampled, self.upsample = (upsample, tuple(phases)), int(factor)
         return self._upsampled[1]
 
     def bind_session(self, reconstruct_panels: Callable) -> None:
@@ -330,13 +330,13 @@ class RotationBranches:
         table = pd.DataFrame(rows, index=index)
         return table.round({name: 3 for name in table.columns if name not in ("loss", "kept", "status")}).round({"loss": 7})
 
-    def show(self, *, upsampling: int | Literal["auto"] = "auto", panels: bool = True,
+    def show(self, *, upsample: int | Literal["auto"] = "auto", panels: bool = True,
              size: str | int | None = None, zoom: float = 1,
              axsize: tuple[float, float] | None = None,
              cmap: str = "inferno", save: str | Path | None = None):
         """Both rotations' phase images above their full-field phase histograms.
 
-        Top: each branch's fit reconstructed at ``upsampling`` (``upsampled_phases``, ``"auto"`` by default),
+        Top: each branch's fit reconstructed at ``upsample`` (``upsampled_phases``, ``"auto"`` by default),
         minus its mean, on shared symmetric limits (pooled 0.5-99.5%), pixel size = step / factor, with the dark-field
         columns at scan pixels times the factor. Bottom, from the native phases the decision used: each branch's
         mean-subtracted phase as the fraction of pixels per bin, on identical symmetric bins and a log axis (bins with
@@ -375,14 +375,14 @@ class RotationBranches:
         grid = figure.add_gridspec(len(heights), 2, height_ratios=heights)
         if panels:
             axes = [figure.add_subplot(grid[0, index]) for index in (0, 1)]
-            self._show_panels(figure, axes, upsampling, cmap)
+            self._show_panels(figure, axes, upsample, cmap)
             if zoom > 1:
                 from matplotlib.patches import Rectangle
 
                 zoom_axes = [figure.add_subplot(grid[1, index]) for index in (0, 1)]
-                self._show_panels(figure, zoom_axes, upsampling, cmap, zoom=zoom)
+                self._show_panels(figure, zoom_axes, upsample, cmap, zoom=zoom)
                 bounds = zoom_bounds(self.branches[0].phase.shape, zoom)
-                row, stop_row, col, stop_col = (value * self.upsampling for value in bounds)
+                row, stop_row, col, stop_col = (value * self.upsample for value in bounds)
                 for axis in axes:
                     axis.add_patch(Rectangle((col - .5, row - .5), stop_col - col, stop_row - row,
                                              fill=False, edgecolor="#00D5FF", linewidth=1))
@@ -411,16 +411,16 @@ class RotationBranches:
         plt.close(figure)
         return figure
 
-    def _show_panels(self, figure, axes, upsampling, cmap="inferno", *, zoom=1) -> None:
+    def _show_panels(self, figure, axes, upsample, cmap="inferno", *, zoom=1) -> None:
         """Draw ``upsampled_phases`` on ``axes`` (branch order), the columns at scan pixels times the factor."""
         from quantem.core.visualization import show_2d
 
         centred = [phase.astype(np.float64) - phase.astype(np.float64).mean()
-                   for phase in self.upsampled_phases(upsampling)]
-        factor = self.upsampling
+                   for phase in self.upsampled_phases(upsample)]
+        factor = self.upsample
         lower, upper = np.quantile(np.concatenate([values.ravel() for values in centred]), [0.005, 0.995])
         limit = max(abs(float(lower)), abs(float(upper))) or 1.0
-        label = f"{factor}× auto" if upsampling == "auto" else f"{factor}×"
+        label = f"{factor}× auto" if upsample == "auto" else f"{factor}×"
         titles = [f"{branch.scan_detector_rotation_deg:.1f}°{' kept' if index == self.kept else ''} · {label} (rad)"
                   for index, branch in enumerate(self.branches)]
         sampling = self.object_sampling_A
@@ -465,7 +465,7 @@ class RotationBranches:
             arrays["rotation_branch_columns"] = self.columns
             arrays["rotation_branch_column_phases"] = np.stack([branch.column_phases for branch in self.branches])
         if self._upsampled is not None and self._upsampled[0] == "auto":
-            record["upsampling"] = self.upsampling
+            record["upsample"] = self.upsample
             arrays["rotation_branch_upsampled_phases"] = np.stack(self._upsampled[1])
         return record, arrays
 
@@ -490,7 +490,7 @@ class RotationBranches:
         restored = cls(branches=tuple(branches), columns=columns, chosen=int(record["chosen"]), kept=int(record["kept"]),
                        decided_by=record["decided_by"], scan_sampling_A=None if sampling is None else tuple(sampling))
         if "rotation_branch_upsampled_phases" in arrays:
-            restored.upsampling = int(record["upsampling"])
+            restored.upsample = int(record["upsample"])
             restored._upsampled = ("auto", tuple(np.asarray(arrays["rotation_branch_upsampled_phases"])))
         return restored
 

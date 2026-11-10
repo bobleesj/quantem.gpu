@@ -102,8 +102,13 @@ def save(
     format: str = "arina",
     backend: str = "auto",
     compression: str = "auto",
-) -> SaveResult:
-    """Save encoded acquisitions as QEM or GPU data as HDF5.
+) -> SaveResult | list[str]:
+    """Save encoded acquisitions as QEM, GPU data as HDF5, or a reconstruction as arrays.
+
+    When ``data`` is a :class:`DirectPtychoResult` the call writes that result's
+    folder instead: ``phase.npz`` with its host arrays and ``calibration.json``
+    when the result carries an acquisition identity. It then returns the files
+    written. Everything else is an acquisition save described below.
 
     ``format="quantem"`` instead writes one self-contained ``.qem`` copy, not an
     HDF5 master/shard set. A complete encoded CUDA or MPS/Metal resident saves
@@ -232,6 +237,11 @@ def save(
     quantem.gpu.io.load : Round-trip read of these files; bit-exact for
         lossless storage. Precision conversions require their own error checks.
     """
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+
+    if isinstance(data, DirectPtychoResult):
+        return data.save(filepath)
+
     started = time.perf_counter()
     if isinstance(data, torch.Tensor) and data.is_cuda:
         data = cp.from_dlpack(data.detach())
@@ -516,3 +526,4 @@ def _prepare_save_data(data, dtype, scan_shape):
 def _is_cuda_array(data) -> bool:
     """Return True for CuPy/CUDA arrays without importing CUDA on CPU/Mac hosts."""
     return cp is not None and isinstance(data, cp.ndarray)
+

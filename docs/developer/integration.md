@@ -89,7 +89,7 @@ let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
 let fit = try DirectPtychoModelFit.findAberrations(
   model: model, rotationDegrees: rotation,
   darkField: darkField, scanSampling: scanSampling)
-let phase = try model.reconstruct(fit.fit.point, upsamplingFactor: autoFactor)
+let phase = try model.run(fit.fit.point, upsampleFactor: autoFactor)
 ```
 
 The engine Fourier-transforms every active BF column once and keeps the
@@ -99,7 +99,7 @@ shape, source/compute dtype, scan bin 1, no scan crop, logical/executed/
 zero-aperture BF counts, cached/streamed BF counts, and cache bytes. The
 staged fit is described in `native/swift/README.md`.
 
-The engine's own non-model reconstruction (`reconstruct(aberrations:)`), its
+The engine's own non-model reconstruction (`run(aberrations:)`), its
 phase-variance objective (`phaseVariance`), the seeded TPE and Nelder–Mead search
 over it (`optimize`, `SSBOptimizer`) and its optional BF sampling are retired.
 `DirectPtychoFitOptions(objective: .phaseVariance)` still decodes from saved runs and is

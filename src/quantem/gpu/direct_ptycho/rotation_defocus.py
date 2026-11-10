@@ -135,7 +135,7 @@ class RotationDefocusComparison:
              "depth_nm": fit.depth_spread_nm or 0.0,
              "phase": result.phase, "native_phase": fit.phase,
              "sampling_A": result.object_sampling_A,
-             "upsampling": result.upsampling}
+             "upsample": result.upsample}
             for fit, result in zip(self.fits, self.reconstructions, strict=True)
         ]
         focus_ranges = self.focus_ranges
@@ -148,7 +148,7 @@ class RotationDefocusComparison:
             for key, collection in (("phase", images), ("native_phase", histograms)):
                 phase = case[key]
                 height, width = phase.shape
-                scale = case["upsampling"] if key == "phase" else 1
+                scale = case["upsample"] if key == "phase" else 1
                 top = int(native_height * (1 - view_fraction) / 2) * scale
                 left = int(native_width * (1 - view_fraction) / 2) * scale
                 region = host_array(phase[top:height - top, left:width - left])
@@ -187,7 +187,7 @@ class RotationDefocusComparison:
                 ax.text(0.06 * width, 0.86 * height, "1 nm", color="white", weight="bold")
             if has_zoom:
                 crop = zoom_bounds(case["native_phase"].shape, zoom)
-                top, bottom, left, right = (value * case["upsampling"] for value in crop)
+                top, bottom, left, right = (value * case["upsample"] for value in crop)
                 ax.add_patch(Rectangle((left - .5, top - .5), right - left, bottom - top,
                                        fill=False, edgecolor="#00D5FF", linewidth=1))
                 zoom_axis = axes[row + 2, col]
@@ -293,20 +293,20 @@ def compare_rotation_defocus(
                     candidate.set_rotation(angle)
                 for interval in focus_ranges:
                     # Keep each numerical search independent; only source Fourier data are reused.
-                    candidate.aberrations = initial.copy()
+                    candidate.known_aberrations = initial.copy()
                     candidate.sample_tilt_mrad = None
                     candidate.depth_spread_nm = None
                     case = f"{angle:.1f}°, C10 [{interval[0]:g}, {interval[1]:g}] nm"
                     refinement_label = "" if refinement is None else f" + {refinement} refinement"
                     progress.set_postfix_str(f"{case} | Fitting: {num_trials} trials{refinement_label}")
-                    fitted = candidate.fit_aberrations(
+                    fitted = candidate.aberrations(
                         search="primary",
                         tilt=tilt, num_trials=num_trials, refinement=refinement,
                         search_ranges={**ranges, "C10_nm": interval}, seed=seed,
                         check_rotation=False, compare_standard=False, verbose=False,
                     )
                     progress.set_postfix_str(f"{case} | Reconstructing scan region {bounds}")
-                    reconstructed = candidate.reconstruct(upsampling="auto")
+                    reconstructed = candidate.run(upsample="auto")
                     fits.append(fitted)
                     reconstructions.append(reconstructed)
                     progress.update(1)
