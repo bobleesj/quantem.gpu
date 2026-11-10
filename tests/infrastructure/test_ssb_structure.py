@@ -276,7 +276,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
     prepared = []
     monkeypatch.setattr(DirectPtycho, "open", classmethod(fake_open))
     monkeypatch.setattr(screening, "prepare", lambda source, **kwargs: prepared.append(kwargs) or type("P", (), {
-        name: np.zeros((4, 4), np.float32) for name in ("mean_diffraction_pattern", "bright_field", "dark_field",
+        name: np.zeros((4, 4), np.float32) for name in ("mean_pattern", "bright_field", "dark_field",
                                                        "com_row", "com_col", "dpc_phase")})())
     (raw / "dataset.yaml").write_text("schema: quantem.dataset/2\nmicroscope: {voltage_kV: 300, semiangle_mrad: 30}\n"
                                       "calibrations: {default: {scan_sampling_A: [0.264, 0.264]}}\n")
@@ -658,7 +658,7 @@ files:
         screening,
         "prepare",
         lambda *args, **kwargs: SimpleNamespace(
-            mean_diffraction_pattern=np.zeros((5, 6), dtype=np.float32),
+            mean_pattern=np.zeros((5, 6), dtype=np.float32),
             bright_field=np.ones((3, 4), dtype=np.float32),
             dark_field=np.full((3, 4), 2.0, dtype=np.float32),
             com_row=zeros,

@@ -16,6 +16,7 @@ import numpy as np
 from fastapi import HTTPException
 
 from quantem.gpu import detector, dpc
+from quantem.gpu.detector.workflow import _equal_area_disk
 from quantem.gpu.remote.catalog import Catalog
 from quantem.gpu.remote.plan import BrowsePlan
 from quantem.gpu.remote.residency import (
@@ -300,8 +301,8 @@ class BrowseService:
             total = plan.diffraction(
                 entry.session.reduce_frames_exact(plan.positions(0, 0, *plan.scan_shape))
             )
-            mean_dp = (total / math.prod(plan.scan_shape)).astype(np.float32)
-            center, radius = detector.fit_probe(mean_dp)
+            mean_pattern = (total / math.prod(plan.scan_shape)).astype(np.float32)
+            center, radius = _equal_area_disk(mean_pattern)
             entry.derived[key] = (float(center[0]), float(center[1]), float(radius))
         return entry.derived[key]
 

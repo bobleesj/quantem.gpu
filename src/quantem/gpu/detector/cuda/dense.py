@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from quantem.gpu.detector.cuda.probe import mean_dp
+from quantem.gpu.detector.cuda.probe import mean_pattern
 from quantem.gpu.detector.tensors import TorchBackend, scan_shape_of
 from quantem.gpu.device.cuda_runtime import cp, cuda_module
 from quantem.gpu.resident.queries import DetectorQueries
@@ -163,9 +163,9 @@ class CudaKernelCompute(DetectorQueries):
         return self._frames[int(index)].get()
 
     @_on_data_gpu
-    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
+    def masked_sum(self, mask: np.ndarray) -> np.ndarray:
         """Float32 virtual image: each frame's selected pixels summed exactly, rounded once."""
-        mask = self._mask(det_mask)
+        mask = self._mask(mask)
         if not mask.any():
             return np.zeros(self.scan_shape, dtype=np.float32)
         if self._suffix is None:
@@ -173,10 +173,10 @@ class CudaKernelCompute(DetectorQueries):
         return self._selected_sums(mask, cp.float32).reshape(self.scan_shape).get()
 
     @_on_data_gpu
-    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+    def masked_sum_exact(self, mask: np.ndarray) -> np.ndarray:
         """Exact uint64 virtual image of the selected pixels."""
         _require_counts(self._frames, "Exact detector sums")
-        mask = self._mask(det_mask)
+        mask = self._mask(mask)
         if not mask.any():
             return np.zeros(self.scan_shape, dtype=np.uint64)
         if self._suffix is None:
@@ -186,8 +186,8 @@ class CudaKernelCompute(DetectorQueries):
         return image.reshape(self.scan_shape).get()
 
     @_on_data_gpu
-    def mean_dp(self) -> np.ndarray:
-        return mean_dp(self._data).get()
+    def mean_pattern(self) -> np.ndarray:
+        return mean_pattern(self._data).get()
 
     @_on_data_gpu
     def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
@@ -239,19 +239,19 @@ class CudaKernelCompute(DetectorQueries):
         return pattern.reshape(self.detector_shape).get().astype(np.uint32, copy=False)
 
     @_on_data_gpu
-    def center_of_mass(self, det_mask: np.ndarray | None = None):
+    def center_of_mass(self, mask: np.ndarray | None = None):
         """Absolute detector ``(com_col, com_row)``, flat float32, from exact integer moments.
 
         Each pattern is read once; intensity, row and column moments accumulate
         in 64-bit integers and divide in float64. An empty pattern gives 0.
         """
         if self._suffix is None:
-            return self._torch_backend().center_of_mass(det_mask)
-        if det_mask is None and self._full_center_of_mass is not None:
+            return self._torch_backend().center_of_mass(mask)
+        if mask is None and self._full_center_of_mass is not None:
             return tuple(values.copy() for values in self._full_center_of_mass)
         com_row = cp.empty(self.n_frames, dtype=cp.float32)
         com_col = cp.empty(self.n_frames, dtype=cp.float32)
-        mask = None if det_mask is None else self._mask(det_mask)
+        mask = None if mask is None else self._mask(mask)
         selected = self.detector_shape[0] * self.detector_shape[1] if mask is None else int(mask.sum())
         if selected == 0:
             com_row.fill(0)
@@ -278,17 +278,17 @@ class CudaKernelCompute(DetectorQueries):
                 ),
             )
         centers = com_col.get(), com_row.get()
-        if det_mask is None and self._immutable:
+        if mask is None and self._immutable:
             self._full_center_of_mass = tuple(values.copy() for values in centers)
         return centers
 
     # ---
 
-    def _mask(self, det_mask) -> np.ndarray:
+    def _mask(self, mask) -> np.ndarray:
         """Flat host boolean mask; selected-pixel indices are planned on the host."""
-        mask = np.asarray(det_mask, dtype=bool)
+        mask = np.asarray(mask, dtype=bool)
         if mask.shape != self.detector_shape:
-            raise ValueError(f"det_mask shape {mask.shape} does not match detector shape {self.detector_shape}.")
+            raise ValueError(f"mask shape {mask.shape} does not match detector shape {self.detector_shape}.")
         return np.ascontiguousarray(mask.reshape(-1))
 
     def _indices(self, mask: np.ndarray):

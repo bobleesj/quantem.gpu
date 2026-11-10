@@ -2,22 +2,21 @@
 
 from quantem.gpu.detector.session import DetectorSession, prepare
 from quantem.gpu.detector.workflow import (
-    BrightFieldDiskFit,
+    BrightFieldDisk,
     adf,
     bf,
     detector_mask,
     detector_sampling_mrad,
     df,
     disk_edge_radius,
-    fit_bright_field_disk,
-    fit_probe,
+    bright_field_disk,
     masked_sum,
     mean,
     show,
 )
 
 __all__ = [
-    "BrightFieldDiskFit",
+    "BrightFieldDisk",
     "DetectorSession",
     "adf",
     "bf",
@@ -25,8 +24,7 @@ __all__ = [
     "detector_sampling_mrad",
     "df",
     "disk_edge_radius",
-    "fit_bright_field_disk",
-    "fit_probe",
+    "bright_field_disk",
     "masked_sum",
     "mean",
     "prepare",

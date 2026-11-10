@@ -107,7 +107,7 @@ def test_float_products_and_selected_mean_stay_on_device(tmp_path):
             session.masked_sum(mask), raw[:, :, mask].sum(-1), atol=1e-5, rtol=1e-6
         )
         np.testing.assert_allclose(
-            session.mean_dp(), raw.mean((0, 1)), atol=1e-5, rtol=1e-6
+            session.mean_pattern(), raw.mean((0, 1)), atol=1e-5, rtol=1e-6
         )
         indices = [1, 3, 6]
         np.testing.assert_allclose(
@@ -168,7 +168,7 @@ def test_float_background_is_applied_once_and_survives_export(tmp_path):
             np.testing.assert_array_equal(
                 session.masked_sum(np.ones((128, 128), bool)), [[81920] * 4]
             )
-            np.testing.assert_array_equal(session.mean_dp(), raw[0, 0] - dark)
+            np.testing.assert_array_equal(session.mean_pattern(), raw[0, 0] - dark)
             if not copied.exists():
                 io.save(copied, loaded)
         assert loaded.data.nbytes == 0
@@ -257,7 +257,7 @@ def test_cuda_resident_survives_client_device_switch(tmp_path):
             # No scientific work is submitted on device 1.
             session = detector.prepare(loaded)
             np.testing.assert_array_equal(session.frame(0), np.ones((128, 128)))
-            np.testing.assert_array_equal(session.mean_dp(), np.ones((128, 128)))
+            np.testing.assert_array_equal(session.mean_pattern(), np.ones((128, 128)))
             np.testing.assert_array_equal(
                 session.reduce_frames([0, 1]), np.ones((128, 128))
             )

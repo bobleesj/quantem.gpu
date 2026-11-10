@@ -51,7 +51,7 @@ def test_float_detector_geometries(tmp_path, backend, detector_shape):
     with io.load(original, backend=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
         np.testing.assert_array_equal(session.frame(5), values[-1, -1])
-        np.testing.assert_allclose(session.mean_dp(), values.mean((0, 1)), atol=1e-6)
+        np.testing.assert_allclose(session.mean_pattern(), values.mean((0, 1)), atol=1e-6)
         np.testing.assert_allclose(
             session.masked_sum(mask), values[:, :, mask].sum(-1), rtol=1e-6
         )
@@ -86,7 +86,7 @@ def test_existing_float_products_preserve_gpu_baseline(tmp_path, backend):
         session = detector.prepare(loaded)
         results = [
             session.frame(17),
-            session.mean_dp(),
+            session.mean_pattern(),
             session.masked_sum(np.ones((128, 128), bool)),
         ]
         hashes = [
@@ -192,11 +192,11 @@ def test_float_original_to_qem_and_native_patterns(
         pattern = session.frame(34, output="native")
         assert not isinstance(pattern, np.ndarray)
         np.testing.assert_array_equal(_host(pattern), values[-1, -1])
-        mean = session.mean_dp(output="native")
+        mean = session.mean_pattern(output="native")
         assert not isinstance(mean, np.ndarray)
         np.testing.assert_allclose(_host(mean), values.mean((0, 1)), atol=1e-6)
         mean[...] = 0
-        np.testing.assert_allclose(session.mean_dp(), values.mean((0, 1)), atol=1e-6)
+        np.testing.assert_allclose(session.mean_pattern(), values.mean((0, 1)), atol=1e-6)
         io.save(saved, loaded)
     assert validate_qem(saved)["integrity"] == "verified"
     with io.load(saved, backend=backend, verbose=False) as reopened:
@@ -237,7 +237,7 @@ def test_integer_original_native_outputs_and_qem(
         assert not isinstance(pattern, np.ndarray)
         assert _host(pattern).dtype == np.dtype(count_dtype)
         np.testing.assert_array_equal(_host(pattern), values[-1, -1])
-        mean = session.mean_dp(output="native")
+        mean = session.mean_pattern(output="native")
         assert not isinstance(mean, np.ndarray)
         np.testing.assert_allclose(_host(mean), values.mean((0, 1)), rtol=1e-6)
         saved = tmp_path / "scan.qem"
@@ -295,7 +295,7 @@ def test_simulated_integer_counts_to_qem(
         assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= 2 * 80 * 80 * 4
         session = detector.prepare(loaded)
         np.testing.assert_array_equal(session.frame(5), values[-1, -1])
-        np.testing.assert_allclose(session.mean_dp(), values.mean((0, 1)), rtol=1e-6)
+        np.testing.assert_allclose(session.mean_pattern(), values.mean((0, 1)), rtol=1e-6)
         io.save(saved, loaded)
     assert validate_qem(saved)["integrity"] == "verified"
     with io.load(saved, backend=backend, verbose=False) as reopened:

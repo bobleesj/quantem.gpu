@@ -10,7 +10,7 @@ def test_missing_convergence_uses_recorded_angular_pixel_area(tmp_path):
     products = _result(master, workflow)
     products.metadata["detector_sampling_mrad"] = [2., 3.]
     workflow._add_calibration(products)
-    assert products.metadata["semiangle_mrad"] == disk_edge_radius(products.mean_diffraction_pattern) * np.sqrt(6.)
+    assert products.metadata["semiangle_mrad"] == disk_edge_radius(products.mean_pattern) * np.sqrt(6.)
     assert "recorded detector sampling" in products.metadata["semiangle_mrad_source"]
     products.metadata["semiangle_mrad"] = 30.
     workflow._add_calibration(products)
@@ -31,7 +31,7 @@ def _result(master, workflow):
     zeros = np.zeros((4, 4), dtype=np.float32)
     counts = np.ones((4, 4), dtype=np.uint64)
     return workflow.ScreeningResult(
-        mean_diffraction_pattern=np.arange(9, dtype=np.float32).reshape(3, 3),
+        mean_pattern=np.arange(9, dtype=np.float32).reshape(3, 3),
         bright_field=np.ones((4, 4), dtype=np.float32),
         dark_field=np.full((4, 4), 2.0, dtype=np.float32),
         dpc_phase=zeros.copy(),
@@ -71,7 +71,7 @@ def test_screening_cache_roundtrip(monkeypatch, tmp_path) -> None:
     assert actual.cache_path == cache_path
     assert actual.bright_field_center_px == (3.5, 4.5)
     assert actual.bright_field_edge_radius_px == 2.0
-    np.testing.assert_array_equal(actual.mean_diffraction_pattern, expected.mean_diffraction_pattern)
+    np.testing.assert_array_equal(actual.mean_pattern, expected.mean_pattern)
     np.testing.assert_array_equal(actual.bright_field, expected.bright_field)
     np.testing.assert_array_equal(actual.dark_field, expected.dark_field)
     np.testing.assert_array_equal(actual.dpc_phase, expected.dpc_phase)
@@ -129,7 +129,7 @@ def test_screening_cache_without_retained_phase_is_rebuilt(tmp_path) -> None:
     np.savez(
         cache_path,
         metadata_json=workflow._metadata_array(expected.metadata),
-        mean_diffraction_pattern=expected.mean_diffraction_pattern,
+        mean_pattern=expected.mean_pattern,
         bright_field=expected.bright_field,
         dark_field=expected.dark_field,
         com_row=expected.com_row,
@@ -147,8 +147,8 @@ def test_screening_cache_path_tracks_exact_cache_version(tmp_path) -> None:
 
     path = workflow._cache_path(master, tmp_path / "cache")
 
-    assert workflow._CACHE_SCHEMA == "quantem.screening-cache/9"
-    assert path.name == "scan_master.screening-v9.npz"
+    assert workflow._CACHE_SCHEMA == "quantem.screening-cache/10"
+    assert path.name == "scan_master.screening-v10.npz"
 
 
 def test_screening_cache_rejects_legacy_first_chunk_version(tmp_path) -> None:

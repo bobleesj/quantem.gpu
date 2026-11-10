@@ -31,18 +31,18 @@ class MetalRawBackend(DetectorQueries):
     def frame(self, index: int) -> np.ndarray:
         return self.frames.frame(int(index))
 
-    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
-        return self.masked_sum_exact(det_mask).astype(np.float32)
+    def masked_sum(self, mask: np.ndarray) -> np.ndarray:
+        return self.masked_sum_exact(mask).astype(np.float32)
 
-    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+    def masked_sum_exact(self, mask: np.ndarray) -> np.ndarray:
         """Exact uint64 per-frame sums of the selected detector pixels."""
-        mask = np.ascontiguousarray(det_mask, dtype=bool)
+        mask = np.ascontiguousarray(mask, dtype=bool)
         if not mask.any():
             return np.zeros(self.scan_shape, dtype=np.uint64)
         image = np.asarray(self.frames.vi.masked_sum(mask))
         return image.reshape(self.scan_shape).astype(np.uint64, copy=False)
 
-    def mean_dp(self) -> np.ndarray:
+    def mean_pattern(self) -> np.ndarray:
         # The exact total divided in float64 and rounded once, like every mean pattern.
         return (np.asarray(self.frames.detector_sum) / self.n_frames).astype(np.float32)
 
@@ -64,11 +64,11 @@ class MetalRawBackend(DetectorQueries):
         """Exact uint64 sum of the selected patterns."""
         return self.frames.vi.sum_frames(np.asarray(scan_indices, dtype=np.uint32))
 
-    def center_of_mass(self, det_mask: np.ndarray | None = None):
+    def center_of_mass(self, mask: np.ndarray | None = None):
         """Per-scan-position centre of mass (the DPC vector field) on the raw Metal kernel.
 
         Returns ``(com_col, com_row)``, flat ``(N,)`` float32, the same contract
         as the CUDA and Torch backends.
         """
-        mask = None if det_mask is None else np.ascontiguousarray(det_mask)
+        mask = None if mask is None else np.ascontiguousarray(mask)
         return self.frames.vi.center_of_mass(mask)

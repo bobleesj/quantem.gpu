@@ -120,14 +120,14 @@ def bench_append(data, reps):
 
 def bench_session(data, reps, exact=True, immutable=False):
     session = detector.prepare(data, immutable=immutable)
-    mean_dp = session.mean_dp()
-    center, radius = detector.fit_probe(mean_dp)
+    mean_pattern = session.mean_pattern()
+    center, radius = detector.workflow._equal_area_disk(mean_pattern)
     rows, cols = np.indices(session.detector_shape)
     distance = np.hypot(rows - center[0], cols - center[1])
     masks = {"bf": distance <= radius, "adf": (distance >= radius) & (distance <= 2 * radius), "df": distance >= radius}
     outputs = {}
-    result = {"mean": timed(session.mean_dp, reps)}
-    result["mean"]["digest"] = digest(mean_dp)
+    result = {"mean": timed(session.mean_pattern, reps)}
+    result["mean"]["digest"] = digest(mean_pattern)
     for name in ("bf", "adf", "df"):
         other = masks["adf" if name == "bf" else "bf"]
 

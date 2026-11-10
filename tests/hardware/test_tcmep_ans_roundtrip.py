@@ -81,7 +81,7 @@ def test_published_acquisition_roundtrip(path, tmp_path, record_property):
                     actual.view(f"u{data.dtype.itemsize}"),
                     expected_row(row)[0, 0].view(f"u{data.dtype.itemsize}"),
                 )
-            mean = session.mean_dp()
+            mean = session.mean_pattern()
             assert mean.shape == shape[2:] and np.isfinite(mean).all()
             mask = np.zeros(shape[2:], bool)
             mask[::2, ::2] = True

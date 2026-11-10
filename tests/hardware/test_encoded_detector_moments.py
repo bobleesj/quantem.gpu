@@ -163,7 +163,7 @@ def test_mean_pattern_divides_the_exact_total_once(tmp_path):
         total = (counts.astype(np.uint64) * _valid()).sum(axis=(0, 1))
         expected = (total / 324).astype(np.float32)
         assert np.any(total.astype(np.float32) / np.float32(324) != expected)
-        np.testing.assert_array_equal(detector.prepare(loaded).mean_dp(), expected)
+        np.testing.assert_array_equal(detector.prepare(loaded).mean_pattern(), expected)
 
 
 def test_sessions_report_the_flagged_detector_pixels(tmp_path):
@@ -204,7 +204,7 @@ def test_series_answers_equal_each_acquisition_alone(tmp_path):
         np.testing.assert_array_equal(
             series.masked_sums_exact(masks), np.stack([item.masked_sums_exact(masks) for item in alone], axis=1)
         )
-        np.testing.assert_array_equal(series.mean_dp(), np.stack([item.mean_dp() for item in alone]))
+        np.testing.assert_array_equal(series.mean_pattern(), np.stack([item.mean_pattern() for item in alone]))
         np.testing.assert_array_equal(series.detector_total(), np.stack([item.detector_total() for item in alone]))
         np.testing.assert_array_equal(
             series.detector_total()[1], (counts[1].astype(np.uint64) * _valid()).sum(axis=(0, 1))
@@ -245,11 +245,11 @@ def test_mean_pattern_of_released_rows_raises(tmp_path):
     total = counts.reshape(-1, 6, 5).astype(np.uint64).sum(axis=0)
     with io.load(tmp_path / "counts.npy", backend=backend, verbose=False) as loaded:
         session = detector.prepare(loaded)
-        np.testing.assert_array_equal(session.mean_dp(), (total / (96 * 80)).astype(np.float32))
+        np.testing.assert_array_equal(session.mean_pattern(), (total / (96 * 80)).astype(np.float32))
         np.testing.assert_array_equal(session.detector_total(), total)
         loaded.release_rows_before(40)
         assert 0 < loaded.data.released_scans <= 40 * 80
         with pytest.raises(ValueError, match="released"):
-            session.mean_dp()
+            session.mean_pattern()
         with pytest.raises(ValueError, match="released"):
             session.detector_total()

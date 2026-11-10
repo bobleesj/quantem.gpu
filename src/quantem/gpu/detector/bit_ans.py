@@ -56,7 +56,7 @@ class BitANSDetectorCompute(DetectorQueries):
         """Return the virtual-detector image without a host copy."""
         return _into(out, self.source.detector_sum_device(mask), "detector image")
 
-    def mean_dp(self):
+    def mean_pattern(self):
         return _host(self.source.mean_dp_device(), self.source.backend)
 
     def mean_dp_native(self):

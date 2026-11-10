@@ -435,7 +435,7 @@ class PrecisionSource(DetectorQueries):
             raise IndexError("Scan position lies outside this loaded region.")
         return self.frame_native(row * self.shape[1] + col).to_torch()
 
-    def mean_dp(self):
+    def mean_pattern(self):
         self._check()
         result = MetalArray(self.detector_shape, np.float32)
         # Parts retain their buffers until this ordered submission finishes.

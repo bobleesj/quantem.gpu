@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 
-from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 from quantem.gpu.direct_ptycho.mps.hardware import (
     default_object_redraw_chunk_bf,
     effective_phase_loss_chunk_bf,
@@ -55,7 +55,7 @@ def newton_supported(search_ranges: dict | None, refine_lock: list[str] | None) 
 
 def optimize(
     prepared: PreparedMpsSSB,
-    selection: BrightfieldDisk,
+    selection: BrightFieldSelection,
     *,
     voltage_kV: float,
     semiangle_mrad: float,

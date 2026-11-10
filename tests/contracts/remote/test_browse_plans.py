@@ -84,7 +84,7 @@ def _dense_products(counts, *, det_bin, scan_bin, crop):
             padded_rows // scan_bin, scan_bin, padded_columns // scan_bin, scan_bin, *dense.shape[2:]
         ).sum(axis=(1, 3), dtype=cp.uint32)
     session = detector.prepare(dense)
-    center, radius = detector.fit_probe(np.asarray(session.mean_dp(), dtype=np.float32))
+    center, radius = detector.workflow._equal_area_disk(np.asarray(session.mean_pattern(), dtype=np.float32))
     detector_rows, detector_columns = dense.shape[2:]
     grid_rows, grid_columns = np.ogrid[:detector_rows, :detector_columns]
     distance_squared = (grid_rows - center[0]) ** 2 + (grid_columns - center[1]) ** 2

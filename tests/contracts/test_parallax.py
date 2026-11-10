@@ -23,9 +23,9 @@ def test_parallax_reconstructs_encoded_acquisition_from_its_exact_counts(
     received = {}
     detect, align = workflow.detect_bf_radius, workflow.align_vbf_stack_multiscale_cp
 
-    def record_detection(mean_dp):
-        received["mean_dp"] = cp.asnumpy(mean_dp)
-        received["disk"] = detect(mean_dp)
+    def record_detection(mean_pattern):
+        received["mean_pattern"] = cp.asnumpy(mean_pattern)
+        received["disk"] = detect(mean_pattern)
         return received["disk"]
 
     def record_alignment(**kwargs):
@@ -38,11 +38,11 @@ def test_parallax_reconstructs_encoded_acquisition_from_its_exact_counts(
         _write_master(tmp_path, counts), backend="cuda",
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
-        result = parallax.run(loaded, upsample_factor=1)
+        result = parallax.run(loaded, upsample=1)
 
     scans = counts.shape[0] * counts.shape[1]
     exact_mean = (counts.sum(axis=(0, 1), dtype=np.uint64) / scans).astype(np.float32)
-    np.testing.assert_array_equal(received["mean_dp"], exact_mean)
+    np.testing.assert_array_equal(received["mean_pattern"], exact_mean)
     (center_row, center_col), radius = received["disk"]
     rows, cols = np.indices(counts.shape[2:])
     disk = (rows - center_row) ** 2 + (cols - center_col) ** 2 <= radius**2
@@ -77,7 +77,7 @@ def test_parallax_shifts_each_image_once_and_upsamples_on_the_finer_grid(tmp_pat
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         results = {
-            factor: parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsample_factor=factor)
+            factor: parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsample=factor)
             for factor in (1, 2)
         }
 
@@ -110,7 +110,7 @@ def test_parallax_repeats_bit_identically(tmp_path) -> None:
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         first, second = (
-            parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsample_factor=2)
+            parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsample=2)
             for _ in range(2)
         )
 
@@ -139,7 +139,7 @@ def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         result = parallax.run(
-            loaded, upsample_factor=1, aberrations=True,
+            loaded, upsample=1, aberrations=True,
             scan_sampling_A=scan_sampling_A, detector_sampling_mrad=(1.0, 1.0),
         )
 
@@ -216,7 +216,7 @@ def test_parallax_uses_a_fractional_radius_as_given_and_takes_samplings_as_pairs
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         selected = {
-            radius: len(parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsample_factor=1).shifts)
+            radius: len(parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsample=1).shifts)
             for radius in (4, 4.9)
         }
         assert selected == {radius: int((distance_squared <= radius**2).sum()) for radius in (4, 4.9)}
@@ -277,7 +277,7 @@ def test_parallax_real_acquisition_recovers_aberrations_when_available() -> None
         got = parallax.run(
             loaded,
             bright_field_radius_px=5,
-            upsample_factor=1,
+            upsample=1,
             scan_sampling_A=(0.5, 0.5),
             semiangle_mrad=30,
             aberrations=True,

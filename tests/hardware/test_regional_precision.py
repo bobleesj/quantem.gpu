@@ -73,7 +73,7 @@ def test_generated_scan_roundtrip_and_calibrated_products(tmp_path):
             loaded.read(scan_region=(1, 5, 2, 5), detector_region=(1, 6, 2, 8)).cpu(),
             expected[1:5, 2:5, 1:6, 2:8],
         )
-        mean = loaded.data.mean_dp()
+        mean = loaded.data.mean_pattern()
         mean = mean.get() if hasattr(mean, "get") else mean
         np.testing.assert_allclose(mean, expected.mean((0, 1)), rtol=2e-6, atol=3e-5)
         mask = np.zeros((8, 8), np.float32)

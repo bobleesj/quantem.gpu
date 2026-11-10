@@ -94,7 +94,7 @@ class CountDetectorCompute(DetectorQueries):
         """Exact uint64 sum of every pattern, decoding each detector pixel once."""
         return _copy_output(self.source.detector_total_device())
 
-    def mean_dp(self):
+    def mean_pattern(self):
         return _copy_output(self.source.mean_dp_device())
 
     def mean_dp_native(self):
@@ -197,8 +197,8 @@ class CountSeriesCompute(DetectorQueries):
     def detector_total(self):
         return np.stack([member.detector_total() for member in self.acquisitions])
 
-    def mean_dp(self):
-        return np.stack([member.mean_dp() for member in self.acquisitions])
+    def mean_pattern(self):
+        return np.stack([member.mean_pattern() for member in self.acquisitions])
 
     def reduce_frames(self, indices, reduce="mean"):
         return np.stack(

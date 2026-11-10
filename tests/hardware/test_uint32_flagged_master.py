@@ -99,7 +99,7 @@ def test_flagged_uint32_master_preserves_dtype_with_explicit_correction(tmp_path
             )
             total = expected.sum(0, dtype=np.uint64)
             np.testing.assert_array_equal(session.detector_total(), total)
-            np.testing.assert_array_equal(session.mean_dp(), (total / len(expected)).astype(np.float32))
+            np.testing.assert_array_equal(session.mean_pattern(), (total / len(expected)).astype(np.float32))
         finally:
             session.close()
     with h5py.File(master) as handle:

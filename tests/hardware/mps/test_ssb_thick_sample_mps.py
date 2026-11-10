@@ -41,7 +41,7 @@ def _simulated_crystal(name):
         pytest.skip("set QUANTEM_THICK_SIM_DIR to the simulated tilted / untilted BaTiO3 runs")
     folder = Path(root) / name
     meta = json.loads((folder / "meta.json").read_text())
-    # abTEM intensities are normalised (frame sum ~1). The host mean_dp used for BF selection sums in uint64
+    # abTEM intensities are normalised (frame sum ~1). The host mean_pattern used for BF selection sums in uint64
     # (detector/workflow.py), which truncates sub-unit floats to 0 and selects no BF pixels, so express them as a dose
     # of 1e6 electrons per frame; a uniform scale changes neither the phase nor the location of the fit optimum.
     return np.load(folder / "data.npy") * np.float32(1e6), float(meta["det_mrad"])

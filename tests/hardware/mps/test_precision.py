@@ -112,7 +112,7 @@ def test_mps_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
             atol=2e-5,
         )
         np.testing.assert_allclose(
-            session.mean_dp(), expected.mean(axis=(0, 1)), rtol=3e-6, atol=2e-5
+            session.mean_pattern(), expected.mean(axis=(0, 1)), rtol=3e-6, atol=2e-5
         )
         mask = ((np.indices((7, 9)).sum(axis=0) % 3) == 0).astype(np.float32)
         np.testing.assert_allclose(
@@ -258,7 +258,7 @@ def test_direct_ans_mean_keeps_its_frozen_compensated_order():
     values = torch.arange(17 * 513 * 4 * 8, device="mps").reshape(17, 513, 4, 8)
     values = ((values * 17) % 787).float() / 13 - 7
     with io.load(values, backend="mps", dtype="scaled_uint16", verbose=False) as loaded:
-        actual = loaded.data.mean_dp()
+        actual = loaded.data.mean_pattern()
         try:
             np.testing.assert_array_equal(actual.get(), frozen)
         finally:
@@ -274,7 +274,7 @@ def test_count_and_precision_results_are_one_metal_array_type():
 
     values = (torch.arange(4 * 4 * 8 * 8, device="mps").reshape(4, 4, 8, 8) % 23).float() / 3
     with io.load(values, backend="mps", dtype="scaled_uint16", verbose=False) as loaded:
-        mean = loaded.data.mean_dp()
+        mean = loaded.data.mean_pattern()
         codes = loaded.data.parts[0].owner.detector_total_device()
         try:
             assert type(mean) is MetalArray and type(codes) is MetalArray

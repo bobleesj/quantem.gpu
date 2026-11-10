@@ -1,6 +1,6 @@
 """Guard: no private device owner may escape the count detector adapter.
 
-F1 shipped because ``CountDetectorCompute.mean_dp`` handed callers the raw
+F1 shipped because ``CountDetectorCompute.mean_pattern`` handed callers the raw
 Metal/ANS owner object (``MetalArray``) instead of a copied NumPy array; the
 same class of bug can reappear in any method that forgets ``_copy_output``.
 Native outputs instead use ``torch_value`` to transfer private ownership
@@ -60,7 +60,7 @@ def test_every_device_call_is_copied_before_it_is_returned():
 def test_every_device_getattr_is_read_through_copy_output():
     """A ``getattr(source, "x_device")`` alias must be called inside a copy.
 
-    ``mean_dp`` reaches its device method through ``getattr``, so the lexical
+    ``mean_pattern`` reaches its device method through ``getattr``, so the lexical
     call check above cannot see the call site; require the alias itself to be
     passed to ``_copy_output``.
     """

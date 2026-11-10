@@ -30,7 +30,7 @@ def test_partial_scan_and_detector_changes_preserve_every_arrived_count():
                 np.testing.assert_array_equal(image, frozen)
             np.testing.assert_array_equal(session.frame(count - 1), raw[count - 1].get())
             expected_mean = (raw[:count].sum(0, dtype=cp.uint64).astype(cp.float64) / count).astype(cp.float32).get()
-            np.testing.assert_array_equal(session.mean_dp(), expected_mean)
+            np.testing.assert_array_equal(session.mean_pattern(), expected_mean)
             if count < live.total:
                 assert np.isnan(session.frame(count)).all()
         dataset = live.finish()

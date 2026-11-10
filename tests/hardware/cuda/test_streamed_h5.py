@@ -102,9 +102,9 @@ def test_h5_explicit_gpu_median_hot_pixel_correction(
                 frame.get() if output == "native" else frame,
                 expected.reshape(-1, 5, 5)[index],
             )
-        mean_dp = session.mean_dp(output=output).get()
+        mean_pattern = session.mean_pattern(output=output).get()
         np.testing.assert_allclose(
-            mean_dp,
+            mean_pattern,
             expected.mean(axis=(0, 1)),
             rtol=0,
             atol=1e-5,

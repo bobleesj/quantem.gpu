@@ -118,7 +118,7 @@ It is a narrow profile of `detector.integer-products` in
    `reduce_frames_exact` covers it. Lack of packed support must be reported,
    not replaced by a hidden dense expansion.
 
-The existing `bf`, `adf`, `df`, `masked_sum`, and `mean_dp` display-oriented
+The existing `bf`, `adf`, `df`, `masked_sum`, and `mean_pattern` display-oriented
 results are not promises of integer output. In particular, converting an exact
 sum to `float32` can round a count above 2^24. Their established behavior and
 floating tolerances are unchanged by this contract.

@@ -50,15 +50,15 @@ def test_mean_pattern_and_scan_region_means_equal_the_float64_reference(tmp_path
     with io.load(tmp_path / "intensities.npy", backend=backend) as loaded:
         assert loaded.dtype == np.float32
         session = detector.prepare(loaded)
-        mean_dp = session.mean_dp()
+        mean_pattern = session.mean_pattern()
         expected = (frames.sum(axis=0) / len(frames)).astype(np.float32)
         # A float32 running total is what this rules out: it differs from the reference here.
         running = np.zeros(DETECTOR_SHAPE, np.float32)
         for frame in intensities.reshape(-1, *DETECTOR_SHAPE):
             running += frame
         assert np.any(running / np.float32(len(frames)) != expected)
-        np.testing.assert_array_equal(mean_dp, expected)
-        np.testing.assert_array_equal(session.mean_dp(output="native").get() if backend == "cuda" else session.mean_dp(output="native").cpu().numpy(), expected)
+        np.testing.assert_array_equal(mean_pattern, expected)
+        np.testing.assert_array_equal(session.mean_pattern(output="native").get() if backend == "cuda" else session.mean_pattern(output="native").cpu().numpy(), expected)
         np.testing.assert_array_equal(session.reduce_frames(np.arange(len(frames)), "mean"), expected)
         np.testing.assert_array_equal(session.reduce_frames(region, "mean"), (frames[region].sum(axis=0) / len(region)).astype(np.float32))
         np.testing.assert_array_equal(session.reduce_frames(region, "sum"), frames[region].sum(axis=0).astype(np.float32))
@@ -83,7 +83,7 @@ def test_real_float_acquisitions_equal_the_float64_reference():
                 if region_rows.start <= row < region_rows.stop:
                     region_total += block[region_cols].sum(axis=0)
             session = detector.prepare(loaded)
-            np.testing.assert_array_equal(session.mean_dp(), (total / (scan_rows * scan_cols)).astype(np.float32), err_msg=source.name)
+            np.testing.assert_array_equal(session.mean_pattern(), (total / (scan_rows * scan_cols)).astype(np.float32), err_msg=source.name)
             indices = (np.arange(scan_rows)[region_rows, None] * scan_cols + np.arange(scan_cols)[None, region_cols]).ravel()
             np.testing.assert_array_equal(
                 session.reduce_frames(indices, "mean"), (region_total / len(indices)).astype(np.float32), err_msg=source.name
@@ -116,8 +116,8 @@ def test_mean_pattern_of_released_rows_raises(tmp_path):
         with io.load(tmp_path / "intensities.npy", backend=backend, verbose=False) as loaded:
             session = detector.prepare(loaded)
             if asked_before:
-                np.testing.assert_array_equal(session.mean_dp(), mean)
+                np.testing.assert_array_equal(session.mean_pattern(), mean)
             loaded.release_rows_before(2)
             assert loaded.data._lanes.released_scans > 0
             with pytest.raises(ValueError, match="released"):
-                session.mean_dp()
+                session.mean_pattern()

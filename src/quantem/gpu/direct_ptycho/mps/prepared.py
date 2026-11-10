@@ -10,11 +10,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from quantem.gpu.detector import fit_probe
+from quantem.gpu.detector.workflow import _equal_area_disk
 from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.detector import disk_edge_radius
-from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 from quantem.gpu.direct_ptycho.mps.frames import (
     ArrayFrames,
     EncodedBrightFieldFrames,
@@ -85,7 +85,7 @@ def prepare_selection(
     frames,
     *,
     scan_shape: tuple[int, int],
-    selection: BrightfieldDisk,
+    selection: BrightFieldSelection,
     voltage_kV: float,
     semiangle_mrad: float,
     scan_sampling: tuple[float, float],
@@ -368,7 +368,7 @@ def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_
 def retarget_prepared_rotation(
     prepared: PreparedMpsSSB,
     *,
-    selection: BrightfieldDisk,
+    selection: BrightFieldSelection,
     scan_detector_rotation_deg: float,
 ) -> None:
     """Update rotation-dependent geometry without rebuilding source FFT evidence."""
@@ -422,7 +422,7 @@ def retarget_prepared_rotation(
 
 
 def bright_field_frequencies(
-    selection: BrightfieldDisk,
+    selection: BrightFieldSelection,
     ang_y_rad: float,
     ang_x_rad: float,
     wavelength: float,
@@ -452,10 +452,10 @@ def resolve_bf_selection(
     *,
     mean_diffraction: np.ndarray | None = None,
     bright_field_edge_radius_px: float | None = None,
-) -> BrightfieldDisk:
+) -> BrightFieldSelection:
     """Return one validated BF selection for exact or raw detector input.
 
-    Without ``bright_field_radius_px`` the disk is ``detector.fit_probe``'s equal-area disk (pixels above mean + std); with it the
+    Without ``bright_field_radius_px`` the disk is ``detector.bright_field_disk``'s equal-area disk (pixels above mean + std); with it the
     centre is the intensity-weighted centroid. ``bright_field_edge_radius_px`` is the disk edge radius the detector calibration
     uses: the caller's (``semiangle / detector_sampling_mrad`` when the sampling is given, which a bright-field crop must pass
     because its pattern has no edge to measure) or ``disk_edge_radius`` of the mean pattern, the rule CUDA uses too.
@@ -474,7 +474,7 @@ def resolve_bf_selection(
     if bright_field_edge_radius_px is None:
         bright_field_edge_radius_px = disk_edge_radius(mean_pattern)
     if bright_field_radius_px is None:
-        probe_center, probe_radius = fit_probe(mean_pattern)
+        probe_center, probe_radius = _equal_area_disk(mean_pattern)
     mask = mean_pattern > float(mean_pattern.max()) * float(threshold)
     rows, cols = np.nonzero(mask)
     if rows.size == 0:
@@ -509,7 +509,7 @@ def resolve_bf_selection(
         raise ValueError(
             f"No BF pixels selected with threshold={threshold} and radius={bright_field_radius_px}."
         )
-    return BrightfieldDisk(
+    return BrightFieldSelection(
         rows=rows.astype(np.int32),
         cols=cols.astype(np.int32),
         bright_field_center_px=center,

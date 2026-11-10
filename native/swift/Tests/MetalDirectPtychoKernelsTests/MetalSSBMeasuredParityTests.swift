@@ -291,7 +291,7 @@ func agreementEvaluator(_ model: MetalDirectPtychoJointModel)
 
 final class MetalSSBMeasuredParityTests: XCTestCase {
   /// The BF disk and the fitted detector sampling from the median-filled detector sums
-  /// (`fit_detector_sampling`: semiangle / the half-plateau edge radius).
+  /// (`detector_sampling`: semiangle / the half-plateau edge radius).
   func testBrightfieldDiskMatchesMPS() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let fixture = try MeasuredSSBFixture.load(device: device)

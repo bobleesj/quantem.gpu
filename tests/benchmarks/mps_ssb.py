@@ -422,7 +422,7 @@ def measure(master, reps=20, load_reps=3, log=print):
 
     # Show4DSTEM on the gold scan as loaded: the uint16 count resident and its incremental exact sum.
     session = detector.prepare(data)
-    center, radius = detector.fit_probe(session.mean_dp())
+    center, radius = detector.workflow._equal_area_disk(session.mean_pattern())
     moved, annulus = disk_masks(session.detector_shape, center, radius, steps=reps + 4)
     images = {}
 

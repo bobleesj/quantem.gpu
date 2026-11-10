@@ -6,7 +6,7 @@ from quantem.gpu.device.cuda_runtime import cp
 
 
 def detect_bf_radius(
-    mean_dp,
+    mean_pattern,
     threshold_ratio: float = 0.1
 ) -> tuple[tuple[int, int], int]:
     """
@@ -17,7 +17,7 @@ def detect_bf_radius(
 
     Parameters
     ----------
-    mean_dp : cupy.ndarray
+    mean_pattern : cupy.ndarray
         Mean diffraction pattern with shape (k_row, k_col).
     threshold_ratio : float
         Fraction of max intensity for thresholding (default: 0.1).
@@ -34,18 +34,18 @@ def detect_bf_radius(
         If the diffraction pattern is empty, all-zero, or contains
         only NaN/Inf values.
     """
-    if mean_dp.ndim != 2:
+    if mean_pattern.ndim != 2:
         raise ValueError(
-            f"Expected 2D diffraction pattern, got {mean_dp.ndim}D "
-            f"with shape {mean_dp.shape}"
+            f"Expected 2D diffraction pattern, got {mean_pattern.ndim}D "
+            f"with shape {mean_pattern.shape}"
         )
-    n_k_row, n_k_col = mean_dp.shape
+    n_k_row, n_k_col = mean_pattern.shape
     if n_k_row == 0 or n_k_col == 0:
         raise ValueError(
-            f"Diffraction pattern has zero-size dimension: shape {mean_dp.shape}"
+            f"Diffraction pattern has zero-size dimension: shape {mean_pattern.shape}"
         )
     # Threshold, centroid and radial profile run in float32 whatever the pattern's dtype.
-    dp = mean_dp.astype(cp.float32)
+    dp = mean_pattern.astype(cp.float32)
     dp_max = float(cp.nanmax(dp))
     if not np.isfinite(dp_max) or dp_max <= 0:
         raise ValueError(
@@ -109,7 +109,7 @@ def detect_bf_radius(
     return (row_center, col_center), radius
 
 
-def mean_dp(data):
+def mean_pattern(data):
     """
     Compute mean diffraction pattern on GPU.
 

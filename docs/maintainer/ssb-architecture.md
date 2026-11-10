@@ -31,7 +31,7 @@ derives object phase and amplitude from that wave. There is no separate fit or
 phase-evaluation result class.
 
 Backend geometry and browser transport use private typed records such as
-`BrightfieldDisk` and `ExportState`. They are integration details and are
+`BrightFieldSelection` and `ExportState`. They are integration details and are
 not exported from `quantem.gpu` or `quantem.gpu.direct_ptycho`.
 
 The scientific defaults are 200 trials, the least-squares agreement of the SSB

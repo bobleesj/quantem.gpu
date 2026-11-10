@@ -140,7 +140,7 @@ def test_mean_pattern_of_integer_frames_builds_no_binned_copy():
         gc.collect()
         before = int(metal_device().currentAllocatedSize())
         session = detector.prepare(frames)
-        np.testing.assert_array_equal(session.mean_dp(), (values.sum(axis=0, dtype=np.uint64) / 2048).astype(np.float32))
+        np.testing.assert_array_equal(session.mean_pattern(), (values.sum(axis=0, dtype=np.uint64) / 2048).astype(np.float32))
         time.sleep(2)
         assert int(metal_device().currentAllocatedSize()) - before < values.nbytes // 16
     finally:

@@ -63,7 +63,7 @@ def test_cupy_detector_products_match_manual_sum() -> None:
 
 def test_auto_probe_on_gaussian_dp() -> None:
     cp = pytest.importorskip("cupy")
-    from quantem.gpu.detector import fit_probe
+    from quantem.gpu.detector.workflow import _equal_area_disk
 
     det = 64
     y, x = cp.mgrid[:det, :det]
@@ -71,7 +71,7 @@ def test_auto_probe_on_gaussian_dp() -> None:
     r2 = (y - center) ** 2 + (x - center) ** 2
     dp = cp.exp(-r2 / (2 * 8.0**2)).astype(cp.float32)
 
-    (row, col), radius = fit_probe(cp.asnumpy(dp))
+    (row, col), radius = _equal_area_disk(cp.asnumpy(dp))
 
     assert radius > 0
     assert abs(row - center) < 3

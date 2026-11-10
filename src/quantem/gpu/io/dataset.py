@@ -22,7 +22,7 @@ from quantem.gpu.io.representation import DataRepresentation
 if TYPE_CHECKING:
     import pandas as pd
 
-    from quantem.gpu.detector import BrightFieldDiskFit
+    from quantem.gpu.detector import BrightFieldDisk
 
 
 class Calibration:
@@ -39,7 +39,7 @@ class Calibration:
     >>> data.calibration.voltage_kV = 300  # doctest: +SKIP
     >>> data.calibration.semiangle_mrad = 30  # doctest: +SKIP
     >>> data.calibration.scan_sampling_A = (0.264, 0.264)  # doctest: +SKIP
-    >>> fit = data.calibration.fit_detector_sampling()  # doctest: +SKIP
+    >>> fit = data.calibration.detector_sampling()  # doctest: +SKIP
     >>> data.calibration  # doctest: +SKIP
     """
 
@@ -53,7 +53,7 @@ class Calibration:
         "detector_sampling_inv_A": ("1/angstrom", True),
     }
 
-    # the bright-field disk fit_detector_sampling records: read here, never set by hand (give a centre or a radius to
+    # the bright-field disk detector_sampling records: read here, never set by hand (give a centre or a radius to
     # SSB or Show4DSTEM instead)
     FITTED = {
         "bright_field_center_px": ("px", True),
@@ -75,7 +75,7 @@ class Calibration:
     def __setattr__(self, name: str, value) -> None:
         if name in Calibration.FITTED:
             raise AttributeError(
-                f"{name} is fitted by data.calibration.fit_detector_sampling(); to use another value, give "
+                f"{name} is fitted by data.calibration.detector_sampling(); to use another value, give "
                 f"{name.replace('_edge', '')}= to DirectPtycho(...) or Show4DSTEM(...)."
             )
         if name not in Calibration.FIELDS:
@@ -83,21 +83,21 @@ class Calibration:
         self._dataset._record_calibration(**{name: value})
 
     def __dir__(self):
-        return [*Calibration.FIELDS, *Calibration.FITTED, "fit_detector_sampling", "table"]
+        return [*Calibration.FIELDS, *Calibration.FITTED, "detector_sampling", "table"]
 
-    def fit_detector_sampling(self) -> "BrightFieldDiskFit":
+    def detector_sampling(self) -> "BrightFieldDisk":
         """Calibrate the detector from the bright-field disk and the recorded convergence semiangle, and record it.
 
         The bright-field disk is the image of the probe-forming aperture, so its edge sits at the convergence
         semiangle: ``detector_sampling_mrad = semiangle_mrad / bright_field_edge_radius_px`` on both axes
-        (``detector.fit_bright_field_disk``). The mean pattern is computed on the encoded acquisition, with no dense
+        (``detector.bright_field_disk``). The mean pattern is computed on the encoded acquisition, with no dense
         copy. The fit records the detector sampling (source ``Fitted (bright-field disk)``), the disk centre and its
         edge radius here; SSB, the viewers and ``io.save`` then use them instead of fitting again. A detector sampling
         you set by hand is kept, and one line says so. Fit again after changing ``semiangle_mrad``.
 
         Returns
         -------
-        BrightFieldDiskFit
+        BrightFieldDisk
             ``bright_field_center_px`` (row, col), ``bright_field_edge_radius_px``, ``detector_sampling_mrad``
             (row, col) mrad per pixel, ``method``, and ``show()`` for the mean pattern with the fitted edge.
 
@@ -109,7 +109,7 @@ class Calibration:
         Examples
         --------
         >>> data.calibration.semiangle_mrad = 30  # doctest: +SKIP
-        >>> fit = data.calibration.fit_detector_sampling()  # doctest: +SKIP
+        >>> fit = data.calibration.detector_sampling()  # doctest: +SKIP
         >>> fit.show()  # doctest: +SKIP
         """
         from quantem.gpu import detector
@@ -120,7 +120,7 @@ class Calibration:
                 "Fitting the detector sampling needs the convergence semiangle, which this acquisition does not "
                 "record: set data.calibration.semiangle_mrad = ... (mrad) first."
             )
-        fit = detector.fit_bright_field_disk(self._dataset, semiangle_mrad)
+        fit = detector.bright_field_disk(self._dataset, semiangle_mrad)
         self._dataset._record_bright_field_disk(fit)
         return fit
 
@@ -350,7 +350,7 @@ class Dataset4dstemGPU:
             return torch_value(cached_mean())
         session = prepare(self)
         if dim == (0, 1):
-            return torch_value(session.mean_dp(output="native"))
+            return torch_value(session.mean_pattern(output="native"))
         total_t = torch_value(
             session.masked_sum(np.ones(session.detector_shape, dtype=bool), output="native")
         )
@@ -403,7 +403,7 @@ class Dataset4dstemGPU:
 
         A single number for a sampling applies to both (row, col) axes. ``provenance`` is
         ``qem_metadata.USER_OVERRIDE`` for a value set by hand, ``qem_metadata.BRIGHT_FIELD_DISK_FIT``
-        for the detector sampling ``fit_detector_sampling`` records.
+        for the detector sampling ``detector_sampling`` records.
         """
         scan_sampling_A, detector_sampling_mrad, detector_sampling_inv_A = (
             None if value is None else (value, value) if np.ndim(value) == 0 else value
@@ -450,7 +450,7 @@ class Dataset4dstemGPU:
         self.metadata.pop("calibration_overrides", None)
         self.metadata.update(updated)
 
-    def _record_bright_field_disk(self, fit: "BrightFieldDiskFit") -> None:
+    def _record_bright_field_disk(self, fit: "BrightFieldDisk") -> None:
         """Record a bright-field disk fit: its centre and edge radius, and its detector sampling unless set by hand."""
         overrides = self.metadata.get("scientific_metadata", {}).get("calibration_overrides", {})
         by_hand = overrides.get(qem_metadata.DETECTOR_PIXEL_SIZE[0], {}).get("provenance") == qem_metadata.USER_OVERRIDE

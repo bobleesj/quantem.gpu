@@ -130,7 +130,7 @@ class DetectorSession:
         Integer counts give exact 64-bit ``sum`` and native-width ``max``; float sources
         (scaled precision, float ANS, bounded float reads) give float32. The
         ``mean`` is float32 on every source: an integer total is divided in
-        float64 and rounded once, as for :meth:`mean_dp`.
+        float64 and rounded once, as for :meth:`mean_pattern`.
         """
         return np.asarray(self._backend.reduce_frames(indices, reduce=mode))
 
@@ -142,7 +142,7 @@ class DetectorSession:
         """Return the exact integer maximum of selected scan frames."""
         return _exact_to_numpy(self._backend.reduce_frames_max(indices)).reshape(self.detector_shape)
 
-    def mean_dp(self, *, output: str = "numpy"):
+    def mean_pattern(self, *, output: str = "numpy"):
         """Return the float32 mean diffraction pattern on the host or device.
 
         Integer counts sum exactly; the total is divided by the number of scan
@@ -152,7 +152,7 @@ class DetectorSession:
         _check_output(output, None)
         if output == "native":
             return self._backend.mean_dp_native()
-        return _reduced_to_numpy(self._backend.mean_dp())
+        return _reduced_to_numpy(self._backend.mean_pattern())
 
     def finish(self) -> dict:
         """Wait for the oldest query launched with ``wait=False`` and return its timings.
@@ -286,7 +286,7 @@ class DetectorSession:
 
         Examples
         --------
-        >>> mean_dp = (session.detector_total() / session.num_frames).astype(np.float32)
+        >>> mean_pattern = (session.detector_total() / session.num_frames).astype(np.float32)
         """
         result = _exact_to_numpy(self._backend.detector_total())
         return result.reshape((*self.series_shape, *self.detector_shape))

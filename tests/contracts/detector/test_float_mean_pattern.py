@@ -64,8 +64,8 @@ def test_reuse_fitted_disk_for_bright_and_dark_field(monkeypatch):
     from quantem.gpu import detector
 
     data = _bright_disk_counts()
-    mean_dp = detector.mean(data)
-    center, radius = detector.fit_probe(mean_dp)
+    mean_pattern = detector.mean(data)
+    center, radius = detector.workflow._equal_area_disk(mean_pattern)
     assert center == (16.0, 15.0)
     assert radius == np.sqrt(113 / np.pi)
 
@@ -73,7 +73,7 @@ def test_reuse_fitted_disk_for_bright_and_dark_field(monkeypatch):
         raise AssertionError("Supplied geometry must reuse the existing fit.")
 
     monkeypatch.setattr(detector.workflow, "mean", already_computed)
-    rows, columns = np.indices(mean_dp.shape)
+    rows, columns = np.indices(mean_pattern.shape)
     distance = np.hypot(rows - center[0], columns - center[1])
     bright = detector.bf(data, bright_field_center_px=center, bright_field_radius_px=radius)
     dark = detector.df(data, bright_field_center_px=center, bright_field_edge_radius_px=radius)
@@ -92,12 +92,12 @@ def test_automatic_disk_follows_array_edits_and_detector_crops():
     data = _bright_disk_counts()
     bright = detector.bf(data)
     data[:] = np.roll(data, (3, -2), axis=(-2, -1))
-    center, _ = detector.fit_probe(detector.mean(data))
+    center, _ = detector.workflow._equal_area_disk(detector.mean(data))
     assert center == (19.0, 13.0)
     np.testing.assert_array_equal(detector.bf(data), bright)
 
     crop = data[:, :, 8:30, 3:25]
-    crop_center, crop_radius = detector.fit_probe(detector.mean(crop))
+    crop_center, crop_radius = detector.workflow._equal_area_disk(detector.mean(crop))
     assert crop_center == (center[0] - 8, center[1] - 3)
     np.testing.assert_array_equal(
         detector.bf(crop),
@@ -110,7 +110,7 @@ def test_cuda_float_mean_dp_matches_scaled_counts():
     cp = pytest.importorskip("cupy")
     if cp.cuda.runtime.getDeviceCount() == 0:
         pytest.skip("CUDA device unavailable")
-    from quantem.gpu.detector.cuda.probe import mean_dp as cuda_mean_dp
+    from quantem.gpu.detector.cuda.probe import mean_pattern as cuda_mean_pattern
 
     counts = _bright_disk_counts()
     intensities = (counts / SCALE).astype(np.float32)
@@ -119,5 +119,5 @@ def test_cuda_float_mean_dp_matches_scaled_counts():
         detector_mean(cp.asarray(intensities)) * SCALE, expected, rtol=1e-6
     )
     np.testing.assert_allclose(
-        cuda_mean_dp(cp.asarray(intensities)).get() * SCALE, expected, rtol=1e-6
+        cuda_mean_pattern(cp.asarray(intensities)).get() * SCALE, expected, rtol=1e-6
     )

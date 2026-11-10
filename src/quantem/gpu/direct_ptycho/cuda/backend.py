@@ -6,7 +6,7 @@ import time
 import cupy as cp
 import numpy as np
 
-from quantem.gpu.detector.cuda.probe import mean_dp
+from quantem.gpu.detector.cuda.probe import mean_pattern
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.detector import disk_edge_radius
 from quantem.gpu.direct_ptycho.contract import ExportState, BackendPrecision
@@ -125,10 +125,10 @@ class CudaSSBBackend:
             pattern_sum = cp.zeros(det_rows * det_cols, dtype=sum_dtype)
             for start in range(0, flat.shape[0], 16 * scan_cols):
                 pattern_sum += flat[start:start + 16 * scan_cols].astype(sum_dtype).sum(axis=0)
-            mean_pattern = (pattern_sum.reshape(det_rows, det_cols).astype(cp.float64)
-                            / flat.shape[0]).astype(data.dtype)
+            padding_pattern = (pattern_sum.reshape(det_rows, det_cols).astype(cp.float64)
+                               / flat.shape[0]).astype(data.dtype)
             padded = cp.broadcast_to(
-                mean_pattern[None, None], (target, target, det_rows, det_cols),
+                padding_pattern[None, None], (target, target, det_rows, det_cols),
             ).copy()
             padded[pad_top:pad_top + scan_rows, pad_left:pad_left + scan_cols] = data
             data = padded
@@ -138,7 +138,7 @@ class CudaSSBBackend:
 
         # The bright-field disk edge sits at the semiangle, which calibrates the detector.
         if detector_sampling_mrad is None:
-            detector_sampling_mrad = semiangle / disk_edge_radius(cp.asnumpy(mean_dp(data)))
+            detector_sampling_mrad = semiangle / disk_edge_radius(cp.asnumpy(mean_pattern(data)))
             detector_sampling_mrad = (detector_sampling_mrad, detector_sampling_mrad)
         elif isinstance(detector_sampling_mrad, (int, float)):
             detector_sampling_mrad = (float(detector_sampling_mrad), float(detector_sampling_mrad))

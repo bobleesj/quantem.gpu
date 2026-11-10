@@ -26,7 +26,7 @@ def test_host_mean_pattern_and_frame_reductions(runner):
     expected = (total / 324).astype(np.float32)
     assert int(total.min()) > 2**24
     assert np.any(total.astype(np.float32) / np.float32(324) != expected)
-    np.testing.assert_array_equal(session.mean_dp(), expected)
+    np.testing.assert_array_equal(session.mean_pattern(), expected)
     indices = np.arange(10, 310)
     selected = counts.reshape(-1, 6, 7)[indices]
     np.testing.assert_array_equal(

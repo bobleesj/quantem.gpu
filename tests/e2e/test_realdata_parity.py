@@ -51,8 +51,8 @@ def test_realdata_detector_products_are_exact_and_gpu_backed() -> None:
     data = load(path, verbose=False).data
 
     t1 = time.perf_counter()
-    mean_dp = detector.mean(data)
-    center, radius = detector.fit_probe(mean_dp)
+    mean_pattern = detector.mean(data)
+    center, radius = detector.workflow._equal_area_disk(mean_pattern)
     bright_field = detector.bf(data, bright_field_center_px=center, bright_field_radius_px=radius)
     cp.cuda.Stream.null.synchronize()
     elapsed = time.perf_counter() - t1
@@ -62,10 +62,10 @@ def test_realdata_detector_products_are_exact_and_gpu_backed() -> None:
         cp.asnumpy(data.reshape(-1, *data.shape[-2:]).sum(axis=0, dtype=cp.uint64))
         / int(np.prod(data.shape[:2]))
     ).astype(np.float32)
-    np.testing.assert_array_equal(mean_dp, expected_mean)
+    np.testing.assert_array_equal(mean_pattern, expected_mean)
     assert bright_field.dtype == np.float32
     assert np.isfinite(bright_field).all()
     assert elapsed > 0.0
 
-    del data, mean_dp, bright_field
+    del data, mean_pattern, bright_field
     _clean_gpu()

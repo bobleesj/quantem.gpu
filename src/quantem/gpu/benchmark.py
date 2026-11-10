@@ -422,7 +422,7 @@ def run_ssb(
         ):
             with contextlib.redirect_stdout(text_io.StringIO()):
                 _, calibration_s = _timed(
-                    data.calibration.fit_detector_sampling, selected
+                    data.calibration.detector_sampling, selected
                 )
         shape = tuple(int(size) for size in data.shape)
         regions = _regions(shape[:2], region_sizes)

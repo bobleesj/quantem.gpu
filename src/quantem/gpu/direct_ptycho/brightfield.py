@@ -18,7 +18,7 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU
 
 
 @dataclass(frozen=True)
-class BrightfieldDisk:
+class BrightFieldSelection:
     """Validated detector coordinates and geometry for one BF selection.
 
     Coordinates and centers always follow the public ``(row, col)`` convention.
@@ -116,7 +116,7 @@ def crop_bright_field(
     (pixels above ``threshold`` x max, within the radius around the centroid of pixels above mean + std, or within
     ``bright_field_radius_px`` around the weighted centroid), so the crop plus the pinned centre selects exactly the pixels a
     full-detector session would (tests/hardware/cuda/test_ssb_open_encoded.py). This is the equal-area rule of
-    ``detector.fit_probe`` evaluated in float64; ``fit_probe``'s float32 would move the centre in its last bits and
+    ``detector.bright_field_disk`` evaluated in float64; the float32 rule would move the centre in its last bits and
     with it the pixels the session reads.
     """
     center, radius, calibration_radius, (row0, row1, col0, col1), mean_pattern = bright_field_crop_region(

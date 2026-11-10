@@ -413,7 +413,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     from quantem.gpu import DirectPtychoResult
     from quantem.gpu.formats.ssb_phase import export_result, read_result
     from quantem.gpu.direct_ptycho import workflow
-    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
     from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
     from quantem.gpu.direct_ptycho.series import write_fit_metadata
 
@@ -425,7 +425,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
         def __init__(self, data, **settings):
             received.append(settings["detector_sampling_mrad"])
 
-    selection = BrightfieldDisk(rows=np.asarray([1, 1]), cols=np.asarray([1, 2]), bright_field_center_px=(1.0, 1.5),
+    selection = BrightFieldSelection(rows=np.asarray([1, 1]), cols=np.asarray([1, 2]), bright_field_center_px=(1.0, 1.5),
                                 bright_field_radius_px=1.0, bright_field_edge_radius_px=48.0, detector_shape=(3, 4))
     columns = tmp_path / "columns.u16"
     np.zeros((2, 4), dtype=np.uint16).tofile(columns)

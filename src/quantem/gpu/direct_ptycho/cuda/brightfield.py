@@ -22,7 +22,7 @@ def select_bright_field(
 
     Candidates are the pixels of the mean diffraction pattern above ``threshold`` x max. Without ``bright_field_radius_px`` the
     disk is the equal-area disk of the pixels above mean + std, around their unweighted centroid (the rule of
-    ``detector.fit_probe``, which the MPS backend calls; here it runs on the device in float32 so the mean pattern never
+    ``detector.bright_field_disk``, which the MPS backend evaluates in float32; here it runs on the device in float32 so the mean pattern never
     leaves the GPU, and CuPy's reductions can round the threshold differently in the last bit, so the two are kept
     apart). With ``bright_field_radius_px`` the centre is the intensity-weighted centroid of the candidates; ``bright_field_center_px`` (row,
     col, detector pixels) pins it instead, which ``DirectPtycho.open`` uses to reproduce the full-detector disk on a detector
@@ -35,11 +35,11 @@ def select_bright_field(
         if np.issubdtype(data.dtype, np.integer)
         else cp.float64
     )
-    mean_dp = (
+    mean_pattern = (
         frames.sum(axis=0, dtype=sum_dtype).astype(cp.float32)
         / int(frames.shape[0])
     )
-    bf_mask = mean_dp > mean_dp.max() * threshold
+    bf_mask = mean_pattern > mean_pattern.max() * threshold
     bf_inds = cp.nonzero(bf_mask)
     bf_inds_row = bf_inds[0].astype(cp.int32)
     bf_inds_col = bf_inds[1].astype(cp.int32)
@@ -55,15 +55,15 @@ def select_bright_field(
         center_row, center_col = float(bright_field_center_px[0]), float(bright_field_center_px[1])
         selected_radius = float(bright_field_radius_px)
     elif bright_field_radius_px is None:
-        probe_mask = mean_dp > mean_dp.mean() + mean_dp.std()
+        probe_mask = mean_pattern > mean_pattern.mean() + mean_pattern.std()
         probe_total = int(probe_mask.sum().get())
         if probe_total > 0:
             probe = probe_mask.astype(cp.float32)
             row_coords = cp.arange(
-                mean_dp.shape[0], dtype=cp.float32
+                mean_pattern.shape[0], dtype=cp.float32
             ).reshape(-1, 1)
             col_coords = cp.arange(
-                mean_dp.shape[1], dtype=cp.float32
+                mean_pattern.shape[1], dtype=cp.float32
             ).reshape(1, -1)
             center_row = float(
                 ((row_coords * probe).sum() / probe_total).get()
@@ -73,11 +73,11 @@ def select_bright_field(
             )
             selected_radius = math.sqrt(probe_total / math.pi)
         else:
-            center_row = mean_dp.shape[0] / 2.0
-            center_col = mean_dp.shape[1] / 2.0
-            selected_radius = min(mean_dp.shape) * 0.25
+            center_row = mean_pattern.shape[0] / 2.0
+            center_col = mean_pattern.shape[1] / 2.0
+            selected_radius = min(mean_pattern.shape) * 0.25
     else:
-        weights = mean_dp[bf_inds_row, bf_inds_col].astype(cp.float32)
+        weights = mean_pattern[bf_inds_row, bf_inds_col].astype(cp.float32)
         weight_sum = float(weights.sum().get())
         if weight_sum > 0:
             center_row = float(

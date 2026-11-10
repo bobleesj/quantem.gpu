@@ -60,10 +60,10 @@ milliradians. The unit is in the keyword name; a bound given both ways raises.
 |---|---|---|
 | `detector.mean(data)` | one supported 4D source | detector-shaped mean diffraction pattern |
 | `detector.fit_probe(data)` | 2D mean diffraction pattern, or a 4D source whose mean pattern is used | `(row, column)` center and equivalent-area radius, in detector pixels; `ValueError` when the pattern has no disk |
-| `detector.fit_bright_field_disk(data, semiangle_mrad=None)` | 2D mean diffraction pattern, or a 4D source whose mean pattern is used; optional convergence semiangle (mrad) | `BrightFieldDiskFit`: `bright_field_center_px` (row, column), `bright_field_edge_radius_px`, `detector_sampling_mrad` (None without a semiangle), `method`, and `show()` (the mean pattern with the fitted edge, axes in mrad) |
-| `data.calibration.fit_detector_sampling()` | a loaded acquisition with a recorded `semiangle_mrad` | the same `BrightFieldDiskFit`, computed on the encoded data and recorded on `data.calibration` (source **Fitted (bright-field disk)**); SSB and the viewers then read it |
-| `detector.disk_edge_radius(mean_dp)` | 2D mean diffraction pattern | radius in detector pixels at which the bright-field disk falls to half its plateau |
-| `detector.detector_sampling_mrad(mean_dp, semiangle_mrad)` | 2D mean diffraction pattern and the convergence semiangle (mrad) | `(row, column)` detector sampling in mrad per pixel: `semiangle_mrad / disk_edge_radius(mean_dp)`, the rule SSB, parallax and screening use when none is recorded |
+| `detector.bright_field_disk(data, semiangle_mrad=None)` | 2D mean diffraction pattern, or a 4D source whose mean pattern is used; optional convergence semiangle (mrad) | `BrightFieldDisk`: `bright_field_center_px` (row, column), `bright_field_edge_radius_px`, `detector_sampling_mrad` (None without a semiangle), `method`, and `show()` (the mean pattern with the fitted edge, axes in mrad) |
+| `data.calibration.detector_sampling()` | a loaded acquisition with a recorded `semiangle_mrad` | the same `BrightFieldDisk`, computed on the encoded data and recorded on `data.calibration` (source **Fitted (bright-field disk)**); SSB and the viewers then read it |
+| `detector.disk_edge_radius(mean_pattern)` | 2D mean diffraction pattern | radius in detector pixels at which the bright-field disk falls to half its plateau |
+| `detector.detector_sampling_mrad(mean_pattern, semiangle_mrad)` | 2D mean diffraction pattern and the convergence semiangle (mrad) | `(row, column)` detector sampling in mrad per pixel: `semiangle_mrad / disk_edge_radius(mean_pattern)`, the rule SSB, parallax and screening use when none is recorded |
 | `detector.bf(data, ...)` | 4D source; optional geometry overrides | scan-shaped bright-field sum |
 | `detector.adf(data, ...)` | 4D source; optional annular limits | scan-shaped annular dark-field sum |
 | `detector.df(data, ...)` | 4D source; optional inner limit | scan-shaped dark-field sum |
@@ -121,9 +121,9 @@ product and must not be labeled native detector resolution.
 ```python
 from quantem.gpu import detector, io
 
-mean_dp = detector.mean(data)
-center, radius = detector.fit_probe(mean_dp)
-show_2d(mean_dp, norm="log_auto", title="Mean diffraction pattern", cmap="inferno")
+mean_pattern = detector.mean(data)
+center, radius = detector.fit_probe(mean_pattern)
+show_2d(mean_pattern, norm="log_auto", title="Mean diffraction pattern", cmap="inferno")
 ```
 
 `fit_probe` retains the threshold/centroid estimator and estimates disk geometry,

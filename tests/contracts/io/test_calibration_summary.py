@@ -142,13 +142,13 @@ def _disk_acquisition(metadata: dict) -> Dataset4dstemGPU:
     return Dataset4dstemGPU(counts, metadata)
 
 
-def test_fit_detector_sampling_records_the_disk_and_its_detector_step():
+def test_detector_sampling_records_the_disk_and_its_detector_step():
     """The semiangle sits at the disk edge: the fit records the step, the centre and the edge with their source."""
     from quantem.gpu import detector
 
     data = _disk_acquisition({"voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": [0.5, 0.5]})
-    fit = data.calibration.fit_detector_sampling()
-    expected = detector.fit_bright_field_disk(detector.mean(data), 30)
+    fit = data.calibration.detector_sampling()
+    expected = detector.bright_field_disk(detector.mean(data), 30)
     assert fit.bright_field_center_px == expected.bright_field_center_px == (23.0, 25.0)
     assert fit.detector_sampling_mrad == expected.detector_sampling_mrad
     assert data.calibration.detector_sampling_mrad == fit.detector_sampling_mrad
@@ -169,22 +169,22 @@ def test_fit_detector_sampling_records_the_disk_and_its_detector_step():
 def test_a_detector_step_set_by_hand_wins_over_the_fit(capsys):
     data = _disk_acquisition({"voltage_kV": 300, "semiangle_mrad": 30})
     data.calibration.detector_sampling_mrad = 0.7
-    fit = data.calibration.fit_detector_sampling()
+    fit = data.calibration.detector_sampling()
     assert data.calibration.detector_sampling_mrad == (0.7, 0.7)
     assert data.calibration.table().loc["Detector step (row, col)", "Source"] == "Overridden"
     assert data.calibration.bright_field_center_px == fit.bright_field_center_px
     assert "kept the detector sampling set by hand" in capsys.readouterr().out
     # and a value set by hand after the fit replaces the fitted one
     other = _disk_acquisition({"voltage_kV": 300, "semiangle_mrad": 30})
-    other.calibration.fit_detector_sampling()
+    other.calibration.detector_sampling()
     other.calibration.detector_sampling_mrad = 0.7
     assert other.calibration.table().loc["Detector step (row, col)", "Source"] == "Overridden"
 
 
-def test_fit_detector_sampling_needs_the_semiangle_and_its_disk_is_not_set_by_hand():
+def test_detector_sampling_needs_the_semiangle_and_its_disk_is_not_set_by_hand():
     data = _disk_acquisition({"voltage_kV": 300})
     with pytest.raises(ValueError, match="semiangle_mrad"):
-        data.calibration.fit_detector_sampling()
+        data.calibration.detector_sampling()
     assert data.calibration.bright_field_center_px is None
     with pytest.raises(AttributeError, match="bright_field_center_px= to DirectPtycho"):
         data.calibration.bright_field_center_px = (20, 20)

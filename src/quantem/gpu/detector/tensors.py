@@ -71,13 +71,13 @@ class TorchBackend(DetectorQueries):
     def frame(self, index: int) -> np.ndarray:
         return self._flat[int(index)].cpu().numpy()
 
-    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
+    def masked_sum(self, mask: np.ndarray) -> np.ndarray:
         """Virtual image: sum masked detector pixels per scan position (chunked)."""
-        return self._masked_sum_tensor(det_mask).cpu().numpy()
+        return self._masked_sum_tensor(mask).cpu().numpy()
 
     def masked_sum_native(
         self,
-        det_mask: np.ndarray | torch.Tensor,
+        mask: np.ndarray | torch.Tensor,
         *,
         out: torch.Tensor | None = None,
     ) -> torch.Tensor:
@@ -85,7 +85,7 @@ class TorchBackend(DetectorQueries):
 
         Parameters
         ----------
-        det_mask
+        mask
             Detector mask in (row, col) order, as a NumPy array or Torch tensor.
             Boolean or binary masks select pixels; other real-valued masks
             apply float32 weights, including negative and fractional values.
@@ -110,7 +110,7 @@ class TorchBackend(DetectorQueries):
                 "out must be a contiguous float32 Torch tensor with scan shape "
                 f"{self.scan_shape} on {self.device}."
             )
-        result = self._masked_sum_tensor(det_mask)
+        result = self._masked_sum_tensor(mask)
         if out is not None:
             out.copy_(result)
             result = out
@@ -120,9 +120,9 @@ class TorchBackend(DetectorQueries):
             torch.mps.synchronize()
         return result
 
-    def _masked_sum_tensor(self, det_mask: np.ndarray | torch.Tensor) -> torch.Tensor:
+    def _masked_sum_tensor(self, mask: np.ndarray | torch.Tensor) -> torch.Tensor:
         """Keep the existing bounded reduction and its float32 result on device."""
-        values = det_mask if isinstance(det_mask, torch.Tensor) else np.ascontiguousarray(det_mask)
+        values = mask if isinstance(mask, torch.Tensor) else np.ascontiguousarray(mask)
         # Keep the existing exact integer and sparse Boolean reductions. Custom
         # real-valued masks must not lose their weights in those selection paths.
         weights = torch.as_tensor(values, device=self.device, dtype=torch.float32)
@@ -166,11 +166,11 @@ class TorchBackend(DetectorQueries):
             out[start : start + step] = torch.tensordot(chunk, weights, dims=([1, 2], [0, 1]))
         return out.reshape(self.scan_shape)
 
-    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+    def masked_sum_exact(self, mask: np.ndarray) -> np.ndarray:
         """Virtual image with integer counts preserved through host transfer."""
         if torch.is_floating_point(self._flat):
             raise TypeError("Exact detector sums require integer detector data.")
-        mask = torch.as_tensor(np.ascontiguousarray(det_mask), device=self.device, dtype=torch.bool).reshape(-1)
+        mask = torch.as_tensor(np.ascontiguousarray(mask), device=self.device, dtype=torch.bool).reshape(-1)
         selected = torch.nonzero(mask, as_tuple=False).reshape(-1)
         if selected.numel() == 0:
             return np.zeros(self.scan_shape, dtype=np.uint64)
@@ -182,7 +182,7 @@ class TorchBackend(DetectorQueries):
             out[start:stop] = flat[start:stop].index_select(1, selected).to(torch.int64).sum(dim=1)
         return out.reshape(self.scan_shape).cpu().numpy().astype(np.uint64, copy=False)
 
-    def mean_dp(self) -> np.ndarray:
+    def mean_pattern(self) -> np.ndarray:
         """Mean pattern with exact integer sums or preserved fractional intensities.
 
         Integers accumulate in int64 and floats to float64 accuracy; the chunk
@@ -287,16 +287,16 @@ class TorchBackend(DetectorQueries):
                 result = chunk.sum(dim=0) if result is None else result + chunk.sum(dim=0)
         return np.zeros(self.detector_shape, np.int64) if result is None else result.cpu().numpy()
 
-    def center_of_mass(self, det_mask: np.ndarray | None = None):
+    def center_of_mass(self, mask: np.ndarray | None = None):
         """Per-scan-position centre of mass over the (masked) detector: the DPC vector field.
 
         Returns ``(com_col, com_row)``, each ``(N,)`` float32 in absolute
         detector pixels (col = sum col*I / sum I, row = sum row*I / sum I), the
         same contract as the Metal and CUDA backends so DPC is single-source.
-        ``det_mask`` None means the full detector. Chunked by the same byte
+        ``mask`` None means the full detector. Chunked by the same byte
         budget as ``masked_sum``; an empty pattern gives 0.
         """
-        mask = None if det_mask is None else torch.as_tensor(np.ascontiguousarray(det_mask), device=self.device).float()
+        mask = None if mask is None else torch.as_tensor(np.ascontiguousarray(mask), device=self.device).float()
         rows = torch.arange(self.detector_shape[0], device=self.device, dtype=torch.float32)[:, None]
         cols = torch.arange(self.detector_shape[1], device=self.device, dtype=torch.float32)[None, :]
         com_col = torch.zeros(self.n_frames, dtype=torch.float32, device=self.device)
@@ -344,12 +344,12 @@ class ArrayBackend(DetectorQueries):
     def frame(self, index: int) -> np.ndarray:
         return np.asarray(self._flat[int(index)])
 
-    def mean_dp(self) -> np.ndarray:
+    def mean_pattern(self) -> np.ndarray:
         total = self._flat.sum(axis=0, dtype=_host_accumulator(self._flat.dtype))
         return (total / self.n_frames).astype(np.float32)
 
-    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
-        mask = self._mask(det_mask).reshape(-1)
+    def masked_sum(self, mask: np.ndarray) -> np.ndarray:
+        mask = self._mask(mask).reshape(-1)
         pixels = self._flat.reshape(self.n_frames, -1)
         accumulator = _host_accumulator(pixels.dtype)
         image = np.empty(self.n_frames, dtype=accumulator)
@@ -359,8 +359,8 @@ class ArrayBackend(DetectorQueries):
             image[start:stop] = pixels[start:stop][:, mask].sum(axis=1, dtype=accumulator)
         return image.astype(np.float32).reshape(self.scan_shape)
 
-    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
-        mask = self._mask(det_mask).reshape(-1)
+    def masked_sum_exact(self, mask: np.ndarray) -> np.ndarray:
+        mask = self._mask(mask).reshape(-1)
         pixels = self._flat.reshape(self.n_frames, -1)
         if not np.issubdtype(pixels.dtype, np.integer):
             raise TypeError("Exact detector sums require integer detector data.")
@@ -406,12 +406,12 @@ class ArrayBackend(DetectorQueries):
             raise TypeError("Exact scan ROI maxima require integer detector data.")
         return selected.max(axis=0).astype(np.uint32, copy=False)
 
-    def center_of_mass(self, det_mask: np.ndarray | None = None):
+    def center_of_mass(self, mask: np.ndarray | None = None):
         """Per-scan-position centre of mass ``(com_col, com_row)``, flat float32, computed in float64.
 
         An empty pattern gives 0: its denominator is clamped to 1e-10.
         """
-        mask = np.ones(self.detector_shape, dtype=bool) if det_mask is None else self._mask(det_mask)
+        mask = np.ones(self.detector_shape, dtype=bool) if mask is None else self._mask(mask)
         rows = np.arange(self.detector_shape[0], dtype=np.float64)[None, :, None]
         cols = np.arange(self.detector_shape[1], dtype=np.float64)[None, None, :]
         com_row = np.empty(self.n_frames, dtype=np.float64)
@@ -425,10 +425,10 @@ class ArrayBackend(DetectorQueries):
             com_col[start:stop] = (weighted * cols).sum(axis=(1, 2)) / total
         return com_col.astype(np.float32), com_row.astype(np.float32)
 
-    def _mask(self, det_mask) -> np.ndarray:
-        mask = np.asarray(det_mask, dtype=bool)
+    def _mask(self, mask) -> np.ndarray:
+        mask = np.asarray(mask, dtype=bool)
         if mask.shape != self.detector_shape:
-            raise ValueError(f"det_mask shape {mask.shape} does not match detector shape {self.detector_shape}.")
+            raise ValueError(f"mask shape {mask.shape} does not match detector shape {self.detector_shape}.")
         return mask
 
     def _frames_per_chunk(self) -> int:

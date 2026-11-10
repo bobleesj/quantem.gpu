@@ -258,14 +258,14 @@ state a known calibration, which `run()` then applies without fitting.
 mrad per pixel, `(row, col)`. Calibrate it as its own step before SSB:
 
 ```python
-fit = data.calibration.fit_detector_sampling()   # semiangle / bright-field edge radius, recorded on data
+fit = data.calibration.detector_sampling()   # semiangle / bright-field edge radius, recorded on data
 fit.show()                                       # the mean pattern with the fitted disk edge, axes in mrad
 ```
 
 The bright-field disk is the image of the aperture, so its edge sits at the convergence semiangle. The fit
 records the detector step with the source **Fitted (bright-field disk)**, together with the disk centre and its
 edge radius, and `DirectPtycho(data)` reads all of them. When nothing is recorded, CUDA and MPS estimate the step with the
-same rule (`quantem.gpu.detector.fit_bright_field_disk`: `semiangle_mrad` divided by the radius in detector
+same rule (`quantem.gpu.detector.bright_field_disk`: `semiangle_mrad` divided by the radius in detector
 pixels at which the bright-field disk of the full-detector mean pattern falls to half its plateau) and print one
 line saying so. A detector step set by hand, on `data.calibration` or as a keyword, always wins. In
 `DirectPtycho(data, bright_field_center_px=..., bright_field_radius_px=...)`, disk geometry uses
@@ -1198,7 +1198,7 @@ rotation estimates it from the centre-of-mass curl, labelled **Estimated
 `ptycho.calibration()` returns a DataFrame with **File value**, **File unit**,
 **Value used**, **Unit used**, and **Source**, using the session's current values.
 File values include saved calibration overrides. Source labels are **Recorded**,
-**Overridden** (set on `data.calibration`), **Fitted (bright-field disk)** (`data.calibration.fit_detector_sampling()`),
+**Overridden** (set on `data.calibration`), **Fitted (bright-field disk)** (`data.calibration.detector_sampling()`),
 **Explicit override**, **Estimated**,
 **Estimated (centre-of-mass curl)** and **Default**, from the one label set of
 `quantem.gpu.io.metadata_display`. Later

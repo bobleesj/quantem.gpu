@@ -238,7 +238,7 @@ def test_a_recorded_inverse_angstrom_detector_sampling_is_used(tmp_path, backend
 
 
 def test_ssb_reads_the_recorded_bright_field_fit_and_announces_an_estimate(tmp_path, backend, capsys):
-    """data.calibration.fit_detector_sampling() is the step SSB otherwise takes silently: same numbers, now visible.
+    """data.calibration.detector_sampling() is the step SSB otherwise takes silently: same numbers, now visible.
 
     Without a recorded detector step SSB estimates it with the same disk-edge rule and says so in one line; after the
     fit it reads the recorded step and centre, prints nothing about them, and selects the same bright-field pixels.
@@ -257,11 +257,11 @@ def test_ssb_reads_the_recorded_bright_field_fit_and_announces_an_estimate(tmp_p
         with DirectPtycho(loaded, **settings) as estimated:
             announced = capsys.readouterr().out
             assert "estimated from the bright-field disk edge" in announced
-            assert "data.calibration.fit_detector_sampling()" in announced
+            assert "data.calibration.detector_sampling()" in announced
             estimated_state = (estimated.detector_sampling_mrad, estimated.bright_field_center_px,
                                estimated.bright_field_radius_px)
             estimated_phase = estimated.preview(ABERRATIONS)[0]
-        fit = loaded.calibration.fit_detector_sampling()
+        fit = loaded.calibration.detector_sampling()
         assert fit.detector_sampling_mrad == detector.detector_sampling_mrad(detector.mean(loaded), 30)
         with DirectPtycho(loaded, **settings) as recorded:
             assert "bright-field disk edge" not in capsys.readouterr().out

@@ -42,7 +42,7 @@ def test_e8m0_extreme_products_preserve_values(backend):
     values = codes.view(FLOAT8_DTYPES["float8_e8m0fnu"])
     expected = values.astype(np.float64).mean(axis=(0, 1)).astype(np.float32)
     with io.load(values, backend=backend, verbose=False) as data:
-        np.testing.assert_array_equal(detector.prepare(data).mean_dp(), expected)
+        np.testing.assert_array_equal(detector.prepare(data).mean_pattern(), expected)
 
     codes = np.asarray(
         [[0, 0, 0, 0], [0, 0, 1, 1], [0, 1, 2, 2], [0, 127, 126, 125],
@@ -151,7 +151,7 @@ def test_float8_original_bits_survive_save_move_and_reopen(
         )
         if input_kind == "numpy":
             np.testing.assert_allclose(
-                detector.prepare(loaded).mean_dp(),
+                detector.prepare(loaded).mean_pattern(),
                 expected,
                 rtol=1e-6,
                 atol=0,
@@ -229,7 +229,7 @@ def test_float8_detector_products_match_float32(tmp_path, backend, kind):
                 candidate.masked_sum(selection), expected.masked_sum(selection)
             )
         np.testing.assert_allclose(
-            candidate.mean_dp(), expected.mean_dp(), rtol=1e-6, atol=0
+            candidate.mean_pattern(), expected.mean_pattern(), rtol=1e-6, atol=0
         )
         np.testing.assert_array_equal(candidate.frame(0), expected.frame(0))
         for reduction in ("mean", "sum", "max"):

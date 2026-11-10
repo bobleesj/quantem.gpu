@@ -73,8 +73,8 @@ def measure(source, options):
     times, digests = {}, {}
     loaded, load_first = timed(lambda: io.load(source, verbose=False, **options))
     session = detector.prepare(loaded)
-    mean_dp, times["mean"] = timed(session.mean_dp)
-    digests["mean"] = digest(mean_dp)
+    mean_pattern, times["mean"] = timed(session.mean_pattern)
+    digests["mean"] = digest(mean_pattern)
     session.close()
     loaded.close()
     loaded, load_second = timed(lambda: io.load(source, verbose=False, **options))

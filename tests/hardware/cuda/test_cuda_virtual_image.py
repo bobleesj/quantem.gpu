@@ -187,7 +187,7 @@ def test_cuda_dense_mean_pattern_and_frame_reductions(runner) -> None:
     total = counts.sum(axis=(0, 1), dtype=np.uint64)
     expected = (total / 324).astype(np.float32)
     assert np.any(total.astype(np.float32) / np.float32(324) != expected)
-    np.testing.assert_array_equal(session.mean_dp(), expected)
+    np.testing.assert_array_equal(session.mean_pattern(), expected)
     indices = np.arange(10, 310)
     selected = counts.reshape(-1, 6, 7)[indices]
     np.testing.assert_array_equal(

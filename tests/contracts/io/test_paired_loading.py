@@ -130,7 +130,7 @@ def test_corrected_series_and_scan_selection_match_stored_counts(tmp_path, metho
                                       counts.reshape(1024, 24, 24)[[7, 512, 997]].sum(axis=0, dtype=np.uint64))
         single.close()
     session = detector.prepare([item.data for item in loaded])
-    np.testing.assert_array_equal(session.mean_dp(),
+    np.testing.assert_array_equal(session.mean_pattern(),
                                   np.stack([a.mean(axis=(0, 1)).astype(np.float32) for a in expected]))
     for mode in ("sum", "mean", "max"):
         selected = np.stack([a.reshape(1024, 24, 24)[[7, 512, 512, 997]] for a in expected])

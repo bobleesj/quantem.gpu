@@ -534,7 +534,7 @@ class MpsSSBBackend:
             path = u8_path
             dtype = np.dtype(np.uint8)
 
-        # detector_sum here can be the float64 mean_dp * N reconstruction,
+        # detector_sum here can be the float64 mean_pattern * N reconstruction,
         # which is not exact integer counts; the BF-column container insists
         # on exactness. The already-derived dc_value carries the same
         # information, so only exact integer sums are forwarded.

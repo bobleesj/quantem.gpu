@@ -167,13 +167,13 @@ aberrations.
 ```python
 from matplotlib.patches import Circle
 
-mean_dp = detector.mean(data)
-center, radius = detector.fit_probe(mean_dp)
+mean_pattern = detector.mean(data)
+center, radius = detector.fit_probe(mean_pattern)
 bf = detector.bf(data, bright_field_center_px=center, bright_field_radius_px=radius)
 adf = detector.adf(data, bright_field_center_px=center, bright_field_edge_radius_px=radius)
 
 fig, axes = show_2d(
-    [[mean_dp, bf], [mean_dp, adf]],
+    [[mean_pattern, bf], [mean_pattern, adf]],
     title=[["Mean DP: BF disk", "BF image"], ["Mean DP: ADF ring", "ADF image"]],
     norm=[["log_auto", "power_sqrt"], ["log_auto", "power_sqrt"]],
     axsize=(3, 3),
@@ -214,9 +214,9 @@ angles when convergence semi-angle calibration is available in `data.metadata`.
 <summary>Inspect the mean diffraction pattern and fitted values</summary>
 
 ```python
-mean_dp = detector.mean(data)
-center, radius = detector.fit_probe(mean_dp)
-show_2d(mean_dp, norm="power_sqrt", cmap="inferno")
+mean_pattern = detector.mean(data)
+center, radius = detector.fit_probe(mean_pattern)
+show_2d(mean_pattern, norm="power_sqrt", cmap="inferno")
 ```
 
 `fit_probe` estimates the bright-field disk geometry, not probe phase or

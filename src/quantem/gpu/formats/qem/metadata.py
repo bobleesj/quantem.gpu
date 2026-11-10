@@ -60,7 +60,7 @@ MAPED_RECORDS = {"maped_merge": "quantem_maped_merge_v1", "maped_summary": "quan
 # 2: the pixel list is coordinates_row_col (coordinates_row_column in the unnamed version 1).
 HOT_PIXEL_SCHEMA = "quantem.hot-pixel-correction/3"
 # The provenance of a calibration override: a value set by hand, or the detector sampling
-# ``data.calibration.fit_detector_sampling()`` fitted on the bright-field disk.
+# ``data.calibration.detector_sampling()`` fitted on the bright-field disk.
 USER_OVERRIDE = "user_override"
 BRIGHT_FIELD_DISK_FIT = "bright_field_disk_fit"
 ACQUISITION_SYSTEM = "acquisition_system"   # read from the microscope at acquisition (e.g. AutoScript at Go)

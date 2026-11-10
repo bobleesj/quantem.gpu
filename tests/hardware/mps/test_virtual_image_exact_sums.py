@@ -39,7 +39,7 @@ def test_detector_total_and_mean_of_saturated_frames(dtype, frames, chunk_frames
         np.testing.assert_array_equal(chunked.vi.detector_sum_exact(), exact)
         np.testing.assert_array_equal(chunked.detector_sum, exact)
         session = detector.prepare(chunked)
-        np.testing.assert_array_equal(session.mean_dp(), (exact / frames).astype(np.float32))
+        np.testing.assert_array_equal(session.mean_pattern(), (exact / frames).astype(np.float32))
         if dtype == np.uint16:
             mean = np.empty(4, dtype=np.float32)
             np.divide(exact.reshape(-1), float(frames), out=mean, casting="unsafe")
@@ -119,7 +119,7 @@ def test_dense_mean_pattern_and_frame_reductions(runner):
         total = counts.sum(axis=0, dtype=np.uint64)
         expected = (total / 324).astype(np.float32)
         assert np.any(total.astype(np.float32) / np.float32(324) != expected)
-        np.testing.assert_array_equal(session.mean_dp(), expected)
+        np.testing.assert_array_equal(session.mean_pattern(), expected)
         indices = np.arange(10, 310)
         selected = counts[indices].sum(axis=0, dtype=np.uint64)
         np.testing.assert_array_equal(session.reduce_frames(indices, "mean"), (selected / 300).astype(np.float32))

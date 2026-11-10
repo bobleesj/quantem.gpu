@@ -40,7 +40,7 @@ def run(
     *,
     bright_field_center_px: tuple[int, int] | None = None,
     bright_field_radius_px: float | None = None,
-    upsample_factor: int = 2,
+    upsample: int = 2,
     aberrations: bool = False,
     scan_sampling_A: float | tuple[float, float] | None = None,
     semiangle_mrad: float | None = None,
@@ -75,7 +75,7 @@ def run(
         radius detected from the mean diffraction pattern when omitted; a
         smaller value bounds memory, since the image stack holds one float32
         scan image per pixel.
-    upsample_factor
+    upsample
         Each output image axis is this many times the scan axis. Every
         image's scan samples are placed at their measured sub-pixel shifts
         on the finer grid, so where the shifts differ (defocus) the images
@@ -174,7 +174,7 @@ def run(
         pixel_rows, pixel_cols = cp.nonzero(bf_mask)
         if verbose:
             print(f"[parallax] {len(pixel_rows):,} BF pixels within {radius} px of {center}")
-        image, density, global_shifts = _shifted_sum(data, center, pixel_rows, pixel_cols, upsample_factor, verbose)
+        image, density, global_shifts = _shifted_sum(data, center, pixel_rows, pixel_cols, upsample, verbose)
         # The bright-field stack and its spectra were many times the image; return
         # their blocks to the GPU for the next consumer instead of keeping them cached.
         # CuPy's pool on this GPU and Torch's cache are emptied in place: device.release_cached_memory
@@ -259,7 +259,7 @@ def aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float], flo
     return aberrations, math.degrees(rotation_rad)
 
 
-def _shifted_sum(data, center, pixel_rows, pixel_cols, upsample_factor, verbose):
+def _shifted_sum(data, center, pixel_rows, pixel_cols, upsample, verbose):
     """Read, align and sum the bright-field images: ``(image, density, shifts)``.
 
     A function of its own so that the image stack (one float32 scan image per
@@ -309,27 +309,27 @@ def _shifted_sum(data, center, pixel_rows, pixel_cols, upsample_factor, verbose)
 
     # Shift every image once by its measured shift and sum, in frequency space
     # on the output grid, as QuantEM's DirectPtychography.run does.
-    # Tiling an image's spectrum upsample_factor times per axis puts its scan
+    # Tiling an image's spectrum upsample times per axis puts its scan
     # samples on the finer grid with zeros between them; the phase ramp then
     # moves the samples to their measured sub-pixel positions, so the images
     # interleave and the sum resolves detail finer than the scan step. The
     # ramp factorizes into a row part and a column part, in cycles per scan
     # pixel on the output grid.
-    out_rows, out_cols = upsample_factor * scan_rows, upsample_factor * scan_cols
+    out_rows, out_cols = upsample * scan_rows, upsample * scan_cols
     # The ramps are evaluated in float64 and rounded once to complex64.
     shifts_f64 = global_shifts.astype(cp.float64)
     ramp_row = cp.exp(
-        -2j * cp.pi * shifts_f64[:, 0:1] * cp.fft.fftfreq(out_rows, d=1.0 / upsample_factor)[None, :]
+        -2j * cp.pi * shifts_f64[:, 0:1] * cp.fft.fftfreq(out_rows, d=1.0 / upsample)[None, :]
     ).astype(cp.complex64)
     ramp_col = cp.exp(
-        -2j * cp.pi * shifts_f64[:, 1:2] * cp.fft.fftfreq(out_cols, d=1.0 / upsample_factor)[None, :]
+        -2j * cp.pi * shifts_f64[:, 1:2] * cp.fft.fftfreq(out_cols, d=1.0 / upsample)[None, :]
     ).astype(cp.complex64)
     spectrum = cp.zeros((out_rows, out_cols), cp.complex64)
     batch = max(1, BATCH_BYTES // (out_rows * out_cols * 8))
     for first in range(0, n_pixels, batch):
         stop = min(first + batch, n_pixels)
         tiled = cp.tile(
-            cp.fft.fft2(stack[first:stop], axes=(1, 2)), (1, upsample_factor, upsample_factor)
+            cp.fft.fft2(stack[first:stop], axes=(1, 2)), (1, upsample, upsample)
         )
         tiled *= ramp_row[first:stop, :, None]
         tiled *= ramp_col[first:stop, None, :]

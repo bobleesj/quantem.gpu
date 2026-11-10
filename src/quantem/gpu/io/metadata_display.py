@@ -49,7 +49,7 @@ RECORDED = "Recorded"
 OVERRIDDEN = "Overridden"  # set on data.calibration and saved beside the file's record
 PARTLY_OVERRIDDEN = "Recorded + overridden"
 NOT_RECORDED = "Not recorded"
-FITTED_BRIGHT_FIELD_DISK = "Fitted (bright-field disk)"  # data.calibration.fit_detector_sampling()
+FITTED_BRIGHT_FIELD_DISK = "Fitted (bright-field disk)"  # data.calibration.detector_sampling()
 FROM_SYSTEM = "Microscope (recorded at Go)"  # the acquisition system's own reading, kept with the scan
 # and the states only a session's launch table states, for the value it uses:
 EXPLICIT_OVERRIDE = "Explicit override"  # a keyword given to DirectPtycho(...) or DirectPtycho.open(...)

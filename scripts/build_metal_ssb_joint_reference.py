@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 from quantem.gpu.direct_ptycho.mps.frames import ArrayFrames
 from quantem.gpu.direct_ptycho.mps.prepared import prepare_selection
 from quantem.gpu.direct_ptycho.mps.thick_sample import thick_fit_batch
@@ -39,7 +39,7 @@ def _main() -> None:
         counts[:, :, row, col] += np.round(
             8 + 6 * np.cos(argument + 0.2 * row)
         ).astype(np.uint16)
-    selection = BrightfieldDisk(rows, cols, (6, 6), 6, 6, (13, 13))
+    selection = BrightFieldSelection(rows, cols, (6, 6), 6, 6, (13, 13))
     prepared = prepare_selection(
         ArrayFrames(counts), scan_shape=(n, n), selection=selection,
         voltage_kV=300, semiangle_mrad=30, scan_sampling=(0.4, 0.4),

@@ -189,7 +189,7 @@ def test_mps_backend_writes_exact_integer_bf_columns(
 ) -> None:
     """C1: export uses the smallest lossless dtype without changing counts."""
     pytest.importorskip("mlx.core")
-    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
     from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
     from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
 
@@ -205,7 +205,7 @@ def test_mps_backend_writes_exact_integer_bf_columns(
 
     rows = np.asarray([0, 1, 2], dtype=np.int32)
     cols = np.asarray([1, 2, 3], dtype=np.int32)
-    selection = BrightfieldDisk(
+    selection = BrightFieldSelection(
         rows=rows,
         cols=cols,
         bright_field_center_px=(1.0, 2.0),
@@ -287,13 +287,13 @@ def test_mps_numpy_session_exports_exact_columns_and_keeps_its_reconstruction(tm
 def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) -> None:
     """C1: exact BF columns expose the same neutral contract as CUDA."""
     pytest.importorskip("mlx.core")
-    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
     from quantem.gpu.direct_ptycho.mps.backend import MpsSSBBackend
     from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
 
     rows = np.asarray([1, 1, 2, 2], dtype=np.int32)
     cols = np.asarray([1, 2, 1, 2], dtype=np.int32)
-    selection = BrightfieldDisk(
+    selection = BrightFieldSelection(
         rows=rows,
         cols=cols,
         bright_field_center_px=(1.5, 1.5),
@@ -338,11 +338,11 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
 
 def test_brightfield_selection_is_validated_and_immutable() -> None:
     """C1a: one typed BF value owns validated row/column geometry."""
-    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 
     rows = np.asarray([0, 1, 2], dtype=np.int64)
     cols = np.asarray([1, 2, 3], dtype=np.int64)
-    selection = BrightfieldDisk(
+    selection = BrightFieldSelection(
         rows=rows,
         cols=cols,
         bright_field_center_px=(1.0, 2.0),
@@ -363,10 +363,10 @@ def test_brightfield_selection_is_validated_and_immutable() -> None:
 
 def test_brightfield_selection_rejects_duplicate_coordinates() -> None:
     """C1b: duplicate scientific evidence fails at construction."""
-    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 
     with pytest.raises(ValueError, match="duplicates"):
-        BrightfieldDisk(
+        BrightFieldSelection(
             rows=np.asarray([1, 1]),
             cols=np.asarray([2, 2]),
             bright_field_center_px=(1.0, 2.0),
@@ -1535,7 +1535,7 @@ def test_mps_auto_bf_applies_detected_probe_disk(monkeypatch) -> None:
 
     dp = np.ones((9, 9), dtype=np.float32)
     monkeypatch.setattr(mps, "detector_mean", lambda _data: dp)
-    monkeypatch.setattr(mps, "fit_probe", lambda _dp: ((4.0, 4.0), 2.2))
+    monkeypatch.setattr(mps, "_equal_area_disk", lambda _dp: ((4.0, 4.0), 2.2))
     # a flat pattern has no disk edge; the calibration radius is the edge rule's answer
     monkeypatch.setattr(mps, "disk_edge_radius", lambda _dp: 2.2)
 
@@ -1562,10 +1562,10 @@ def test_mps_auto_bf_can_reuse_the_computed_mean_dp(monkeypatch) -> None:
     dp = np.ones((9, 9), dtype=np.float32)
 
     def fail_mean_dp(_data):
-        raise AssertionError("mean_dp must not run when evidence is supplied")
+        raise AssertionError("mean_pattern must not run when evidence is supplied")
 
     monkeypatch.setattr(mps, "detector_mean", fail_mean_dp)
-    monkeypatch.setattr(mps, "fit_probe", lambda _dp: ((4.0, 4.0), 2.2))
+    monkeypatch.setattr(mps, "_equal_area_disk", lambda _dp: ((4.0, 4.0), 2.2))
     monkeypatch.setattr(mps, "disk_edge_radius", lambda _dp: 2.2)
 
     selection = mps.resolve_bf_selection(

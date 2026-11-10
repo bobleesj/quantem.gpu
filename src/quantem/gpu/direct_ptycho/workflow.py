@@ -18,6 +18,7 @@ import numpy as np
 import torch
 
 from quantem.gpu import detector, io
+from quantem.gpu.detector.workflow import _equal_area_disk
 from quantem.gpu.device import resolve
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.geometry.frames import opposite_rotation_deg
@@ -157,14 +158,14 @@ def _announce_rotation(angle_deg: float, flipped: bool) -> None:
 
 def _announce_detector_sampling(detector_sampling_mrad, semiangle_mrad: float, *, recordable: bool) -> None:
     """The one line a session prints when it estimated the detector sampling itself, and how to state it instead."""
-    explicit = ("data.calibration.fit_detector_sampling() records it and shows the fit"
+    explicit = ("data.calibration.detector_sampling() records it and shows the fit"
                 if recordable else "give detector_sampling_mrad= to state it")
     print(f"SSB: detector step {float(detector_sampling_mrad[0]):.4f} mrad per pixel, estimated from the bright-field "
-          f"disk edge at the {float(semiangle_mrad):g} mrad semiangle (detector.fit_bright_field_disk); {explicit}.")
+          f"disk edge at the {float(semiangle_mrad):g} mrad semiangle (detector.bright_field_disk); {explicit}.")
 
 
 def _recorded_bright_field_center_px(metadata: dict[str, object]) -> tuple[float, float] | None:
-    """The bright-field centre (row, col) ``data.calibration.fit_detector_sampling()`` recorded, or None."""
+    """The bright-field centre (row, col) ``data.calibration.detector_sampling()`` recorded, or None."""
     disk = metadata.get(BRIGHT_FIELD_DISK_KEY)
     if not isinstance(disk, dict) or disk.get("bright_field_center_px") is None:
         return None
@@ -488,7 +489,7 @@ class DirectPtycho:
                 self._detector_sampling_recorded = detector_sampling_mrad is not None
                 detector_sampling_estimated = detector_sampling_mrad is None
             if bright_field_center_px is None:
-                # the centre data.calibration.fit_detector_sampling() recorded: the one SSB's own rule finds
+                # the centre data.calibration.detector_sampling() recorded: the one SSB's own rule finds
                 bright_field_center_px = _recorded_bright_field_center_px(metadata)
             if source_path is None:
                 source_path = metadata.get("source_path")
@@ -1064,7 +1065,7 @@ class DirectPtycho:
                 "bright_field_center_px", "bright_field_radius_px", "detector_sampling_mrad"
             )):
                 pattern = detector.mean(self._data)
-                center, radius = detector.fit_probe(pattern)
+                center, radius = _equal_area_disk(pattern)
                 if options["bright_field_center_px"] is None:
                     center = center[::-1] if self.scan_detector_rotation_flipped else center
                     options["bright_field_center_px"] = tuple(float(value) + origin for value, origin in zip(center, self._crop_origin))
@@ -2401,7 +2402,7 @@ class DirectPtycho:
                                   "scan_detector_rotation_flipped": self.scan_detector_rotation_flipped}
             if center is None or radius is None or detector_sampling_mrad is None:
                 mean_pattern = detector.mean(self._data)
-                detected_center, detected_radius = detector.fit_probe(mean_pattern)
+                detected_center, detected_radius = _equal_area_disk(mean_pattern)
                 center = detected_center if center is None else center
                 radius = detected_radius if radius is None else radius
                 if detector_sampling_mrad is None:

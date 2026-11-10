@@ -39,7 +39,7 @@ def test_original_hdf5_default_ans_roundtrip(tmp_path, backend):
         assert loaded.metadata["backend"] == backend
         session = detector.prepare(loaded)
         np.testing.assert_array_equal(session.frame(1023), values[-1, -1])
-        np.testing.assert_allclose(session.mean_dp(), values.mean((0, 1)), rtol=1e-6)
+        np.testing.assert_allclose(session.mean_pattern(), values.mean((0, 1)), rtol=1e-6)
         np.testing.assert_array_equal(
             session.masked_sum(np.ones((8, 12), bool)), values.sum((2, 3))
         )

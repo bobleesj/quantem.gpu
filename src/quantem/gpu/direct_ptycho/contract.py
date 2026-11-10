@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 
 import numpy as np
 
-from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 # The local refinement a low-order fit applied: the trust-region Newton on the exact derivatives ("newton"), or the
@@ -37,7 +37,7 @@ class ExportState:
 
     backend: Literal["cuda", "mps"]
     scan_shape: tuple[int, int]
-    brightfield: BrightfieldDisk
+    brightfield: BrightFieldSelection
     kx_bf: np.ndarray
     ky_bf: np.ndarray
     qx_1d: np.ndarray

@@ -17,7 +17,7 @@ import numpy as np
 
 from quantem.gpu.io.qem import save_streamed
 from quantem.gpu.resident.cuda.counts import StreamedCounts
-from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 from quantem.gpu.direct_ptycho.contract import ExportState
 from quantem.gpu.direct_ptycho.cuda.kernels import get_fft_kernel
 from quantem.gpu.direct_ptycho.cuda.kernels.engine import (
@@ -258,7 +258,7 @@ class SSBEngine:
         )
         # the disk radius this calibration implies: detector_sampling_mrad = semiangle / radius
         detected_radius = float(self.semiangle_cutoff) / detector_sampling
-        selection = BrightfieldDisk(
+        selection = BrightFieldSelection(
             rows=rows,
             cols=cols,
             bright_field_center_px=center,

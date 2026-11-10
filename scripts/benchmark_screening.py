@@ -26,7 +26,7 @@ from benchmark_support import (
 )
 
 PRODUCT_FIELDS = (
-    "mean_diffraction_pattern",
+    "mean_pattern",
     "bright_field",
     "dark_field",
     "dpc_phase",
@@ -39,7 +39,7 @@ EXACT_INTEGER_PRODUCT_FIELDS = (
     "annular_dark_field",
 )
 FULL_PRODUCT_FIELDS = (
-    "mean_diffraction_pattern",
+    "mean_pattern",
     "total_intensity",
     "bright_field",
     "annular_bright_field",
@@ -115,7 +115,7 @@ def _product_arrays(
         arrays[name] = np.ascontiguousarray(value)
     expected_scan_shape = arrays["bright_field"].shape
     for name in product_fields:
-        if name == "mean_diffraction_pattern":
+        if name == "mean_pattern":
             continue
         if arrays[name].shape != expected_scan_shape:
             raise RuntimeError(

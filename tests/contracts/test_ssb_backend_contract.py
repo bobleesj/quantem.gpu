@@ -43,9 +43,9 @@ class _Backend:
 
 
 def _selection():
-    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 
-    return BrightfieldDisk(
+    return BrightFieldSelection(
         rows=np.asarray([1], dtype=np.int32),
         cols=np.asarray([1], dtype=np.int32),
         bright_field_center_px=(1.0, 1.0),
@@ -260,10 +260,10 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
 
 def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
     """Logical BF membership and nonzero probe support are distinct evidence."""
-    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
     from quantem.gpu.direct_ptycho.contract import ExportState
 
-    selection = BrightfieldDisk(
+    selection = BrightFieldSelection(
         rows=np.asarray([0, 1, 2], dtype=np.int32),
         cols=np.asarray([1, 1, 1], dtype=np.int32),
         bright_field_center_px=(1.0, 1.0),

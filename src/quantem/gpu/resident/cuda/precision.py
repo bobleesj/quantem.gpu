@@ -235,7 +235,7 @@ class PrecisionSource(DetectorQueries):
             "Select one diffraction pattern with source[index] or source[row, col]."
         )
 
-    def mean_dp(self):
+    def mean_pattern(self):
         with cp.cuda.Device(self._device_id):
             total = cp.zeros(self.detector_shape, cp.float64)
             for part, report in zip(self.parts, self._reports):

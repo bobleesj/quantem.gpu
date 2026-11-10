@@ -286,12 +286,12 @@ from quantem.gpu import detector, io
 
 with io.load("scan.npy", backend="mps") as loaded:  # or backend="cuda"
     dp = loaded[10, 20]
-    mean_dp = detector.mean(loaded)
+    mean_pattern = detector.mean(loaded)
     bright = detector.bf(loaded)
     io.save("scan.qem", loaded)
 ```
 
-`dp` is a Torch tensor on the source GPU. `mean_dp` and `bright` are reduced
+`dp` is a Torch tensor on the source GPU. `mean_pattern` and `bright` are reduced
 NumPy images; only those small products are transferred to the host. The complete
 acquisition stays ANS-encoded. The original-array ingestion path uses at most 32 MiB per input
 window, with separate bounded encoder scratch. Saving copies encoded bytes,

@@ -34,7 +34,7 @@ class BoundedDetectorCompute(DetectorQueries):
         row, col = divmod(int(index), self.scan_shape[1])
         return self.data.read(scan_region=(row, row + 1, col, col + 1))[0, 0].cpu().numpy()
 
-    def mean_dp(self):
+    def mean_pattern(self):
         """Mean pattern: the total divided in float64 and rounded once to float32, like every mean pattern.
 
         The session sums integer counts exactly and float intensities to
@@ -42,7 +42,7 @@ class BoundedDetectorCompute(DetectorQueries):
         pattern; a scan region reduces its own positions.
         """
         if self.n_frames == self._native.num_frames:
-            return self._valid_pattern(self._native.mean_dp())
+            return self._valid_pattern(self._native.mean_pattern())
         return self.reduce_frames(range(self.n_frames), "mean")
 
     def masked_sum(self, mask):

@@ -65,7 +65,7 @@ def test_detector_products_follow_the_resident_gpu(dtype):
     indices = np.array([0, 4, 17, 31], dtype=np.int32)
 
     def products(session):
-        images = [session.frame(4), session.mean_dp(),
+        images = [session.frame(4), session.mean_pattern(),
                   session.masked_sum(mask), session.masked_sum(~mask),
                   *session.center_of_mass(), *session.center_of_mass(mask)]
         images.extend(session.reduce_frames(indices, mode=mode)

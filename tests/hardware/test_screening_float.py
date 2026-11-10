@@ -29,7 +29,7 @@ def test_float_screening_keeps_negative_fractional_intensities(tmp_path):
     assert cached.from_cache
     assert "exact_accumulation" not in result.metadata
     assert result.metadata["intensity_accumulation"]["dtype"] == "float32"
-    np.testing.assert_array_equal(result.mean_diffraction_pattern, values.mean((0, 1)))
+    np.testing.assert_array_equal(result.mean_pattern, values.mean((0, 1)))
     np.testing.assert_array_equal(result.total_intensity, values.sum((2, 3)))
     mask = detector.detector_mask(
         result.bright_field_center_px, result.bright_field_edge_radius_px,

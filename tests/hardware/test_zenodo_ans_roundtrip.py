@@ -96,7 +96,7 @@ def test_original_ans_qem_full_value_parity(
                 points = [(0, 0), (rows // 2, columns // 2), (rows - 1, columns - 1)]
                 for row, column in points:
                     _exact(session.frame(row * columns + column), values[row, column])
-                mean = session.mean_dp()
+                mean = session.mean_pattern()
                 assert mean.shape == values.shape[2:] and np.isfinite(mean).all()
                 mask = np.zeros(values.shape[2:], bool)
                 mask[::2, ::2] = True

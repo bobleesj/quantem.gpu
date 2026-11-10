@@ -199,7 +199,7 @@ def test_selected_patterns_retain_integer_precision(tmp_path, backend, kind):
             (expected.astype(np.float64) / 3).astype(np.float32),
         )
         np.testing.assert_array_equal(
-            session.mean_dp(),
+            session.mean_pattern(),
             (expected.astype(np.float64) / len(frames)).astype(np.float32),
         )
 

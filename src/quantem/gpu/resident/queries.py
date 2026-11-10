@@ -3,7 +3,7 @@
 The detector backends and the scaled-precision residents, which answer detector
 queries on their own encoded data, share this surface. Each defines
 ``scan_shape``, ``detector_shape`` and ``n_frames`` and implements ``frame``,
-``mean_dp``, ``masked_sum``, ``reduce_frames`` and ``center_of_mass``; the
+``mean_pattern``, ``masked_sum``, ``reduce_frames`` and ``center_of_mass``; the
 optional operations below raise until a source overrides them, so
 ``DetectorSession`` calls every operation directly and an unsupported request
 says what is missing.
@@ -35,10 +35,10 @@ class DetectorQueries:
     def mean_dp_native(self):
         """Return the mean pattern without a host copy.
 
-        A source whose ``mean_dp`` already stays on its device returns that
+        A source whose ``mean_pattern`` already stays on its device returns that
         result; a source that reduces on the host has no native output.
         """
-        result = self.mean_dp()
+        result = self.mean_pattern()
         if isinstance(result, np.ndarray):
             raise NotImplementedError("This backend has no native mean output; use output='numpy'.")
         return result

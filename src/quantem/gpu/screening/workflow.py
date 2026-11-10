@@ -31,7 +31,8 @@ from quantem.gpu.optics.physics import wrap_degrees
 #    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before); the mean
 #    pattern is mean_diffraction_pattern (mean_dp before).
 # 9: sign-preserving, unit-gain inverse-gradient integration.
-_CACHE_VERSION = 9
+# 10: the mean pattern is mean_pattern (mean_diffraction_pattern before), its divisor mean_pattern_divisor.
+_CACHE_VERSION = 10
 _CACHE_SCHEMA = f"quantem.screening-cache/{_CACHE_VERSION}"
 _EXACT_COUNT_PRODUCT_FIELDS = (
     "total_intensity",
@@ -61,7 +62,7 @@ class ScreeningResult:
     ``metadata["parameters"]``.
     """
 
-    mean_diffraction_pattern: np.ndarray
+    mean_pattern: np.ndarray
     bright_field: np.ndarray
     dark_field: np.ndarray
     dpc_phase: np.ndarray
@@ -207,7 +208,7 @@ def _add_calibration(products: ScreeningResult) -> None:
     steps = np.asarray(sampling, dtype=float)
     if steps.shape != (2,) or not np.all(np.isfinite(steps) & (steps > 0)):
         return
-    radius = disk_edge_radius(products.mean_diffraction_pattern)
+    radius = disk_edge_radius(products.mean_pattern)
     products.metadata.update(
         semiangle_mrad=float(radius * np.sqrt(steps.prod())),
         semiangle_mrad_source="mean diffraction disk and recorded detector sampling",
@@ -236,6 +237,7 @@ def _build_products(
     ``io.load``'s default median fill, the values SSB fits.
     """
     from quantem.gpu import detector
+    from quantem.gpu.detector.workflow import _equal_area_disk
     from quantem.gpu.dpc.workflow import find_optimal_rotation
     from quantem.gpu.io import load
 
@@ -269,11 +271,11 @@ def _build_products(
         detector_shape = session.detector_shape
         frame_count = session.num_frames
         # The exact total divided in float64 and rounded once, like every mean pattern.
-        mean_diffraction_pattern = (
+        mean_pattern = (
             (session.detector_total() / frame_count).astype(np.float32)
-            if integer_counts else session.mean_dp()
+            if integer_counts else session.mean_pattern()
         )
-        if not np.isfinite(mean_diffraction_pattern).all():
+        if not np.isfinite(mean_pattern).all():
             raise ValueError(
                 "Screening found non-finite diffraction intensities. Preserve the "
                 "original and select a valid scan region; missing measurements "
@@ -285,8 +287,8 @@ def _build_products(
         unfilled = not correction.get("applied")
         if unfilled and loaded.metadata.get("pixel_mask") is not None:
             valid &= np.asarray(loaded.metadata["pixel_mask"]) == 0
-            mean_diffraction_pattern[~valid] = 0
-        center, radius = detector.fit_probe(mean_diffraction_pattern)
+            mean_pattern[~valid] = 0
+        center, radius = _equal_area_disk(mean_pattern)
         masks = [np.ones(detector_shape, dtype=bool)]
         masks += [
             detector.detector_mask(center, inner * radius, outer * radius, detector_shape)
@@ -341,7 +343,7 @@ def _build_products(
         "elapsed_s": float(elapsed_s),
     }
     return ScreeningResult(
-        mean_diffraction_pattern=mean_diffraction_pattern,
+        mean_pattern=mean_pattern,
         bright_field=bright_field.astype(np.float32),
         dark_field=dark_field.astype(np.float32),
         dpc_phase=phase,
@@ -367,7 +369,7 @@ def _build_products(
                     [inner, None if np.isinf(outer) else outer]
                     for inner, outer in _BAND_RADII
                 ],
-                "mean_diffraction_pattern_divisor": int(frame_count),
+                "mean_pattern_divisor": int(frame_count),
                 "coordinate_order": "row-column",
             },
             "mode": "cached-screening-products",
@@ -620,7 +622,7 @@ def _save_cache(products: ScreeningResult, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "metadata_json": _metadata_array(products.metadata),
-        "mean_diffraction_pattern": np.asarray(products.mean_diffraction_pattern, dtype=np.float32),
+        "mean_pattern": np.asarray(products.mean_pattern, dtype=np.float32),
         "bright_field": np.asarray(products.bright_field, dtype=np.float32),
         "dark_field": np.asarray(products.dark_field, dtype=np.float32),
         "dpc_phase": np.asarray(products.dpc_phase, dtype=np.float32),
@@ -645,7 +647,7 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
             return None
         parameters = metadata["parameters"]
         return ScreeningResult(
-            mean_diffraction_pattern=np.asarray(data["mean_diffraction_pattern"], dtype=np.float32),
+            mean_pattern=np.asarray(data["mean_pattern"], dtype=np.float32),
             bright_field=np.asarray(data["bright_field"], dtype=np.float32),
             dark_field=np.asarray(data["dark_field"], dtype=np.float32),
             dpc_phase=np.asarray(data["dpc_phase"], dtype=np.float32),

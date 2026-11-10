@@ -52,9 +52,9 @@ below retain that qualification.
 
 ```python
 data = io.load(folder / "data.npy")
-mean_dp = detector.mean(data)
+mean_pattern = detector.mean(data)
 show_2d(
-    mean_dp, title="Gold mean diffraction pattern", norm="log_auto",
+    mean_pattern, title="Gold mean diffraction pattern", norm="log_auto",
     cmap="inferno",
     scalebar={"sampling": metadata["sampling"][2], "units": "mrad"},
 )
@@ -222,7 +222,7 @@ region selection and panel sizes.
 Detector calibration plots use the same display vocabulary:
 
 ```python
-detector_fit = data.calibration.fit_detector_sampling()
+detector_fit = data.calibration.detector_sampling()
 detector_fit.show(size="medium", cmap="inferno", save="detector-fit.png")
 ```
 

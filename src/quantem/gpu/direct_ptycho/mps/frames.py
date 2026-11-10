@@ -24,7 +24,7 @@ from quantem.gpu.device.metal_runtime import (
     tensor_buffer,
 )
 from quantem.gpu.resident.mps.frames import ChunkedFrames
-from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
 from quantem.gpu.direct_ptycho.calibration import READABLE_CALIBRATION_SCHEMAS
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
@@ -196,7 +196,7 @@ def load_bf_columns_mps(
             "Calibration BF coordinates extend beyond bright_field_radius_px: "
             f"{cal_path}"
         )
-    selection = BrightfieldDisk(
+    selection = BrightFieldSelection(
         rows=rows_array,
         cols=cols_array,
         bright_field_center_px=bright_field_center_px,
@@ -255,7 +255,7 @@ class MpsBfColumnFrames:
         self,
         path: str | Path,
         *,
-        selection: BrightfieldDisk,
+        selection: BrightFieldSelection,
         scan_shape: tuple[int, int],
         dtype: np.dtype | str,
         detector_bin: int = 1,

@@ -31,7 +31,7 @@ pytestmark = pytest.mark.slow
 
 def _session(root: Path, rotation_deg: float):
     from quantem.gpu import DirectPtycho
-    from quantem.gpu.direct_ptycho.brightfield import BrightfieldDisk
+    from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
     from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
 
     case = json.loads((root / "case.json").read_text())
@@ -39,7 +39,7 @@ def _session(root: Path, rotation_deg: float):
     rows, cols = int(case["detectorRows"]), int(case["detectorColumns"])
     pixels = np.asarray(case["pixels"], np.int64)
     sampling = np.broadcast_to(np.asarray(calibration["detector_sampling_mrad"], float), (2,))
-    selection = BrightfieldDisk(
+    selection = BrightFieldSelection(
         rows=pixels // cols, cols=pixels % cols, bright_field_center_px=tuple(calibration["bright_field_center_px"]),
         bright_field_radius_px=float(calibration["bright_field_radius_px"]),
         bright_field_edge_radius_px=float(calibration["semiangle_mrad"]) / float(sampling[0]),

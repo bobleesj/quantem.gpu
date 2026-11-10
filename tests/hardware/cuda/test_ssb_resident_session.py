@@ -181,7 +181,7 @@ def test_calibration_from_a_resident_acquisition_opens_no_file(tmp_path, monkeyp
             detector.bf(data)
             detector.adf(data)
             dpc.run(data)
-            detector.fit_probe(mean)
+            detector.workflow._equal_area_disk(mean)
             session = DirectPtycho(data, **settings)
             fitted = session.aberrations(search="primary", **fit)
             with DirectPtycho(data, **settings) as second:      # a new session on the same data finds the saved fit by the data's identity

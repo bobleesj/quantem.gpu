@@ -94,7 +94,7 @@ def test_cuda_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
             atol=2e-5,
         )
         np.testing.assert_allclose(
-            session.mean_dp(), expected.mean(axis=(0, 1)), rtol=3e-6, atol=2e-5
+            session.mean_pattern(), expected.mean(axis=(0, 1)), rtol=3e-6, atol=2e-5
         )
         mask = ((np.indices((7, 9)).sum(axis=0) % 3) == 0).astype(np.float32)
         np.testing.assert_allclose(
@@ -183,7 +183,7 @@ def test_precision_export_reopens_and_resaves_without_changing_units(
     assert bool(cp.all(session.frame(63, output="native") == expected[7, 7]))
     assert bool(
         cp.allclose(
-            cp.asarray(session.mean_dp()), expected.mean(axis=(0, 1)), rtol=2e-6
+            cp.asarray(session.mean_pattern()), expected.mean(axis=(0, 1)), rtol=2e-6
         )
     )
     copy = tmp_path / "copy_master.h5"

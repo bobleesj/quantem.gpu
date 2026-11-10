@@ -339,7 +339,7 @@ class StreamedSeriesCompute(DetectorQueries):
             result = cp.stack([source.detector_total_device() for source in self.index_owners])
             return result[0] if not self.series_shape else result
 
-    def mean_dp(self):
+    def mean_pattern(self):
         """Return one valid-pixel mean diffraction pattern per acquisition."""
         with cp.cuda.Device(self.device):
             return (self.detector_total() / self.n_frames).astype(cp.float32)

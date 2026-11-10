@@ -32,9 +32,9 @@ def test_fit_once_for_encoded_detector_images(tmp_path, dtype, monkeypatch):
     monkeypatch.setattr(detector.workflow, "mean", record_mean)
     for path in (original, saved):
         with io.load(path, backend=backend, verbose=False) as data:
-            mean_dp = detector.mean(data)
-            np.testing.assert_allclose(mean_dp, values.mean(axis=(0, 1)), rtol=1e-6)
-            center, radius = detector.fit_probe(mean_dp)
+            mean_pattern = detector.mean(data)
+            np.testing.assert_allclose(mean_pattern, values.mean(axis=(0, 1)), rtol=1e-6)
+            center, radius = detector.workflow._equal_area_disk(mean_pattern)
             assert center == (11.0, 23.0)
             distance = np.hypot(rows - center[0], columns - center[1])
             fit_count = len(fits)

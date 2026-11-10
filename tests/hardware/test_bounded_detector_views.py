@@ -67,12 +67,12 @@ def _assert_session_reductions(view, values, *, exact_images=True):
     indices = np.array([0, 7, 40, len(viewed) // 2, len(viewed) - 1])
     mask = np.zeros(values.shape[2:], bool)
     mask[2:9, 1:8] = True
-    mean_dp = session.mean_dp()
+    mean_pattern = session.mean_pattern()
     image = session.masked_sum(mask)
     reduced = {mode: session.reduce_frames(indices, mode) for mode in ("mean", "sum", "max")}
     assert view.reads == 0
     # The total divided in float64 and rounded once, like every mean pattern.
-    np.testing.assert_array_equal(mean_dp, (wide.sum(axis=0) / len(wide)).astype(np.float32))
+    np.testing.assert_array_equal(mean_pattern, (wide.sum(axis=0) / len(wide)).astype(np.float32))
     np.testing.assert_array_equal(reduced["mean"], (wide[indices].sum(axis=0) / len(indices)).astype(np.float32))
     np.testing.assert_array_equal(reduced["sum"], wide[indices].sum(axis=0).astype(np.float32))
     np.testing.assert_array_equal(reduced["max"], viewed[indices].max(axis=0).astype(np.float32))
@@ -81,7 +81,7 @@ def _assert_session_reductions(view, values, *, exact_images=True):
         np.testing.assert_array_equal(image, expected_image)
     else:
         np.testing.assert_allclose(image, expected_image, rtol=1e-6)
-    assert all(result.dtype == np.float32 for result in (mean_dp, image, *reduced.values()))
+    assert all(result.dtype == np.float32 for result in (mean_pattern, image, *reduced.values()))
     # One pattern is the one thing a bounded reader is read for.
     np.testing.assert_array_equal(session.frame(int(indices[2])), viewed[indices[2]])
     assert view.reads == 1
@@ -141,10 +141,10 @@ def test_scaled_precision_intensities(tmp_path, region):
         view = View(loaded, region)
         session = detector.prepare(view)
         indices = [0, 3, 3, 10]
-        mean_dp = session.mean_dp()
+        mean_pattern = session.mean_pattern()
         reduced = {mode: session.reduce_frames(indices, mode) for mode in ("mean", "sum", "max")}
         assert view.reads == 0
-        np.testing.assert_allclose(mean_dp, restored.mean(axis=0), rtol=1e-6)
+        np.testing.assert_allclose(mean_pattern, restored.mean(axis=0), rtol=1e-6)
         np.testing.assert_allclose(reduced["mean"], restored[indices].mean(axis=0), rtol=1e-6)
         np.testing.assert_allclose(reduced["sum"], restored[indices].sum(axis=0), rtol=1e-6)
         np.testing.assert_allclose(reduced["max"], restored[indices].max(axis=0), rtol=1e-6)

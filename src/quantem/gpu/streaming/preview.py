@@ -130,7 +130,7 @@ class LiveDetectorSession:
                 return source.decode_scan_range_device(index, index + 1)[0].get()
             return (frame * valid).get()
 
-    def mean_dp(self):
+    def mean_pattern(self):
         """Mean of arrived positions only, with exact integer accumulation."""
         return self.reduce_frames(range(self.acquisition.received))
 

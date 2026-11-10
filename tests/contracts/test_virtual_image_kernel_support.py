@@ -41,7 +41,7 @@ def test_mps_u8_mean_dp_uses_resident_metal_detector_sum() -> None:
     backend.n_frames = 4
 
     np.testing.assert_array_equal(
-        backend.mean_dp(),
+        backend.mean_pattern(),
         np.asarray([[2, 4], [6, 8]], dtype=np.float32),
     )
 
@@ -63,7 +63,7 @@ def test_mps_mean_dp_has_no_host_chunk_fallback() -> None:
     backend.n_frames = 4
 
     with pytest.raises(NotImplementedError, match="native Metal reducer"):
-        backend.mean_dp()
+        backend.mean_pattern()
 
 
 def test_mps_production_reductions_do_not_route_to_numba() -> None:
