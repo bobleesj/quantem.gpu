@@ -11,7 +11,6 @@ Source files are opened read-only and are never modified or removed.
 import base64
 import hashlib
 import json
-import os
 import re
 import tempfile
 import time

@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from fastapi import HTTPException
 
-from quantem.gpu import detector, dpc
+from quantem.gpu import dpc
 from quantem.gpu.detector.workflow import _equal_area_disk
 from quantem.gpu.remote.catalog import Catalog
 from quantem.gpu.remote.plan import BrowsePlan

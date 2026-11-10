@@ -139,6 +139,8 @@ parts:
         - file: performance/io/reports/index
           title: IO reports
           sections:
+          - file: performance/io/reports/2026-11-07-hdf5-save
+          - file: performance/io/reports/2026-11-07-stream-index
           - file: performance/io/reports/2026-10-23-qem-verification
           - file: performance/io/reports/2026-10-23-qem-layout-cuda-profile
           - file: performance/io/reports/2026-10-23-qem-compression

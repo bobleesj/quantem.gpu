@@ -17,7 +17,6 @@ import math
 import threading
 import time
 import uuid
-import weakref
 
 import numpy as np
 

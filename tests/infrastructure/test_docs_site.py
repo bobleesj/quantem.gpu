@@ -153,7 +153,7 @@ def test_compute_docs_do_not_depend_on_application_frameworks() -> None:
 
 
 def test_scientific_kernel_pages_define_coordinates_contract_and_optimization() -> None:
-    for name in ("load-decode-bin", "virtual-detectors", "com-dpc-idpc", "phase_of_mean", "scan-regions"):
+    for name in ("load-decode-bin", "virtual-detectors", "com-dpc-idpc", "ssb", "scan-regions"):
         text = Path("docs/kernels", f"{name}.md").read_text(encoding="utf-8")
         assert "(row, column)" in text, name
         assert "(r, c)" in text, name
@@ -195,7 +195,7 @@ def test_performance_reports_have_operation_owners_and_redirects() -> None:
     """Moved reports remain reachable through the topic tree and old URLs."""
     config = CONFIG.read_text(encoding="utf-8")
     toc = TOC.read_text(encoding="utf-8")
-    topics = ("io", "phase_of_mean", "virtual-detectors", "dpc", "rendering", "parity")
+    topics = ("io", "ssb", "virtual-detectors", "dpc", "rendering", "parity")
     for topic in topics:
         assert Path("docs/performance", topic, "index.md").is_file()
         assert f"file: performance/{topic}/index" in toc
@@ -213,6 +213,6 @@ def test_performance_reports_have_operation_owners_and_redirects() -> None:
         assert f"file: {relative.as_posix()}" in toc
         destinations.add(destination)
     assert len(destinations) == len(redirects)
-    for topic in ("io", "phase_of_mean", "rendering"):
+    for topic in ("io", "ssb", "rendering"):
         for report in Path("docs/performance", topic, "reports").glob("*.md"):
             assert f"file: {report.relative_to('docs').with_suffix('').as_posix()}" in toc

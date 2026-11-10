@@ -6,7 +6,7 @@ import cupy as cp
 import numpy as np
 from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_fit_batch_kernel
 from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE
-from quantem.gpu.direct_ptycho.fifth_order_parameters import Coordinates, public_params, vector
+from quantem.gpu.direct_ptycho.fifth_order_parameters import Coordinates
 
 code = thick_fit_batch_kernel.code
 code = code.replace(

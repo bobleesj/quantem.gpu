@@ -16,7 +16,6 @@ from cupy.cuda import cufft
 from quantem.gpu import detector
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.resident.cuda.counts import StreamedCounts
-from quantem.gpu.detector import detector_sampling_mrad
 from quantem.gpu.direct_ptycho.cuda.brightfield import select_bright_field
 from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_wave_sum_kernel
 
