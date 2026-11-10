@@ -9,8 +9,6 @@ from quantem.gpu.direct_ptycho._tpe_independent import _batch_quantiles, make_in
 
 @pytest.mark.parametrize("seed", [17, 42, 87])
 def test_full_fifth_order_search_preserves_every_proposal(seed):
-    if optuna.__version__ != "4.9.0":
-        pytest.skip("Optimized sampler is qualified for Optuna 4.9.0")
     bounds = np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-2, 2)] * 22)
     sequences = []
     for sampler in (optuna.samplers.TPESampler(seed=seed), make_independent_sampler(seed=seed, bounds=bounds)):
@@ -34,8 +32,6 @@ def test_full_fifth_order_search_preserves_every_proposal(seed):
 
 
 def test_quantiles_keep_each_parameter_convergence_and_tail_behavior():
-    if optuna.__version__ != "4.9.0":
-        pytest.skip("Optimized quantiles are qualified for Optuna 4.9.0")
     from optuna.samplers._tpe import _truncnorm
 
     rng = np.random.RandomState(4)
@@ -49,7 +45,12 @@ def test_quantiles_keep_each_parameter_convergence_and_tail_behavior():
     np.testing.assert_array_equal(_batch_quantiles(quantiles, lower, upper), expected)
 
 
-def test_other_optuna_version_keeps_stock_sampler(monkeypatch):
+def test_other_optuna_version_stops_at_import(monkeypatch):
+    """Another Optuna would change the broad search's proposals silently, so the sampler refuses to load."""
+    import importlib
+    import sys
+
     monkeypatch.setattr(optuna, "__version__", "5.0.0")
-    sampler = make_independent_sampler(seed=17, bounds=np.array([[-2, 2]]))
-    assert type(sampler) is optuna.samplers.TPESampler
+    monkeypatch.delitem(sys.modules, "quantem.gpu.direct_ptycho._tpe_independent")
+    with pytest.raises(ImportError, match="optuna==4.9.0"):
+        importlib.import_module("quantem.gpu.direct_ptycho._tpe_independent")

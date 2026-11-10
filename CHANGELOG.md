@@ -316,6 +316,16 @@ the first run after this change computes them again, as after any code change; t
 
 ### Changed
 
+- optuna is pinned to `==4.9.0` and the broad SSB search raises `ImportError` on any other version, instead of
+  silently falling back to stock TPE. The batched sampler reproduces stock Optuna 4.9.0 TPE bit for bit and is kept for
+  speed. Measured on one 256 x 256 Arina acquisition (192 x 192 detector, 8,878 BF pixels, RTX PRO 6000, seed 17,
+  `aberrations(search="broad")`, two alternating fresh sessions each):
+
+  | Sampler | Time (s) | Phase sha256 | C10 (nm) | C12 (nm) | phi12 (deg) | Tilt (mrad) | Depth spread (nm) |
+  |---|---|---|---|---|---|---|---|
+  | batched (kept) | 6.83, 6.47 | 3554dc96fee89d17 | 8.237179773 | 1.138139665 | -88.102549 | (6.6973, 0.1836) | 38.4994 |
+  | stock TPESampler | 11.33, 11.26 | 3554dc96fee89d17 | 8.237179773 | 1.138139665 | -88.102549 | (6.6973, 0.1836) | 38.4994 |
+
 - `movie.save_gif` and `movie.save_mp4` keep native panel pixels: `max_width` defaults to None instead of 1200, and a
   width the grid exceeds prints one line with the new panel size. `save_mp4(device="cpu")` and pre-rendered PIL frame
   input are removed (no caller); `device="auto"` still prints one line and encodes with ffmpeg when no GPU writer can

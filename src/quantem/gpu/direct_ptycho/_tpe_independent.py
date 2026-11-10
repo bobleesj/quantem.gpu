@@ -60,11 +60,17 @@ import optuna
 from optuna.distributions import FloatDistribution
 from optuna.trial import TrialState
 
-if optuna.__version__ == "4.9.0":
-    from optuna.samplers._tpe import _truncnorm
-    from optuna.samplers._tpe.sampler import _split_trials
+# The batched proposals reuse Optuna 4.9.0 internals and reproduce its stock TPE bit for bit (about 1.7x faster on a
+# broad fit); another version could change both silently, so any other version stops here.
+if optuna.__version__ != "4.9.0":
+    raise ImportError(
+        f"quantem.gpu's broad SSB search needs optuna==4.9.0, found {optuna.__version__}; "
+        'install it with pip install "optuna==4.9.0".'
+    )
+from optuna.samplers._tpe import _truncnorm  # noqa: E402
+from optuna.samplers._tpe.sampler import _split_trials  # noqa: E402
 
-    from ._tpe_gaussian import _central_log_cdf
+from ._tpe_gaussian import _central_log_cdf  # noqa: E402
 
 
 def _log_cdf(values):
@@ -230,7 +236,7 @@ class _IndependentSampler(optuna.samplers.TPESampler):
 
 
 def make_independent_sampler(*, seed: int, bounds: np.ndarray) -> optuna.samplers.TPESampler:
-    """Build a fixed-space sampler, retaining stock Optuna on other versions.
+    """Build the fixed-space sampler, which proposes exactly what stock Optuna 4.9.0 TPE proposes, in batches.
 
     Parameters
     ----------
@@ -241,7 +247,5 @@ def make_independent_sampler(*, seed: int, bounds: np.ndarray) -> optuna.sampler
         must request ``p0`` through ``p<n-1>`` in order, in every trial, with one
         worker. This private factory is used by the fixed broad SSB search.
     """
-    if optuna.__version__ != "4.9.0":
-        return optuna.samplers.TPESampler(seed=seed)
     space = {f"p{i}": FloatDistribution(float(low), float(high)) for i, (low, high) in enumerate(bounds)}
     return _IndependentSampler(seed=seed, space=space)
