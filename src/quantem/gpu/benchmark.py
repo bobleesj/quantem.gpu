@@ -233,7 +233,6 @@ def run_ssb_preview(
             "detector_sampling_mrad": list(ssb.detector_sampling_mrad),
             "scan_detector_rotation_flipped": ssb.scan_detector_rotation_flipped,
         },
-        "phase_estimator": "phase_of_mean",
         "preparation_s": preparation_s,
         "reconstruction_includes_host_delivery": backend == "mps",
         "browser_paint_measured": False,

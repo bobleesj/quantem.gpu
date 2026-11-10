@@ -170,7 +170,7 @@ def test_branch_panels_are_each_fit_at_the_auto_factor_while_the_fit_stays_nativ
     """Both branch panels are reconstructed at 2x auto (0.25 Å) from the session's G(q, k); fit and tests stay 1x.
 
     Each panel is the session's own preview at that branch's rotation, aberrations, tilt and depth spread; the session
-    is back on the kept fit afterwards. show_trials reconstructs at the same auto factor.
+    is back on the kept fit afterwards. show("trials") reconstructs at the same auto factor.
     """
     pytest.importorskip("mlx.core")
     import matplotlib
@@ -202,7 +202,7 @@ def test_branch_panels_are_each_fit_at_the_auto_factor_while_the_fit_stays_nativ
         assert [(branch.column_z, branch.phase_skewness) for branch in branches.branches] == tests
         figure = fitted.show("rotation")
         assert [axis.images[0].get_array().shape[:2] for axis in figure.axes if axis.images] == [(128, 128)] * 2
-        trials = session.show_trials(best=2)
+        trials = session.show("trials", best=2)
         assert "2× auto" in trials._suptitle.get_text()
         assert {axis.images[0].get_array().shape[:2] for axis in trials.axes if axis.images} == {(128, 128)}
 

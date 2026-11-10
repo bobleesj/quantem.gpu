@@ -192,7 +192,6 @@ class CudaSSBBackend:
         self._elapsed_refine: float = 0.0
         self._refine_method: str | None = None
         self._refine_nfev: int | None = None
-        self._num_trials: int | None = None
         self._trial_records: list[dict] = []
 
     def free(self) -> None:
@@ -320,7 +319,6 @@ class CudaSSBBackend:
             scan_detector_rotation_deg=math.degrees(self._scan_detector_rotation_rad),
             loss=loss,
             elapsed_s=elapsed_s if elapsed_s > 0 else None,
-            num_trials=self._num_trials,
             num_bright_field_pixels=len(self.bf_inds_row),
             refinement=self._refine_method,
             refine_nfev=self._refine_nfev,
@@ -332,7 +330,6 @@ class CudaSSBBackend:
             bright_field_radius_px=brightfield.bright_field_radius_px,
             bright_field_edge_radius_px=brightfield.bright_field_edge_radius_px,
             trial_records=self._trial_records,
-            phase_estimator="phase_of_mean",
             amplitude_estimated=False,
         )
 
@@ -359,12 +356,12 @@ class CudaSSBBackend:
         if aberrations is not None:
             self.aberrations = dict(aberrations)
         # a failed search leaves no previous fit's records or refinement attached to the new aberrations
-        self._trial_records, self._num_trials, self._refine_method, self._refine_nfev = [], int(trials), None, None
+        self._trial_records, self._refine_method, self._refine_nfev = [], None, None
         self._elapsed_optimize = self._elapsed_refine = 0.0
         accel = self._get_accelerator()
         started = time.perf_counter()
         try:
-            fit = fit_standard(accel, aberrations=aberrations, search_ranges=search_ranges, num_trials=int(trials),
+            fit = fit_standard(accel, aberrations=aberrations, search_ranges=search_ranges, trials=int(trials),
                                refine=refinement, refine_lock=refine_lock, seed=int(seed))
             best = {name: fit[name] for name in ("C10", "C12", "phi12")}
             search_s, refine_s = fit["timings"]["coarse_search_s"], fit["timings"]["refinement_s"]
@@ -381,7 +378,6 @@ class CudaSSBBackend:
         # Each call owns a new search record, including a zero-trial refinement.
         # Replacing the list preserves records already returned to the caller.
         self._trial_records = records
-        self._num_trials = int(trials)
         self._refine_method = refinement
         self._refine_nfev = nfev if refinement else None
         self._elapsed_optimize = search_s

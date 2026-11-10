@@ -599,7 +599,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     )
     full_phase, _ = full_engine.thick.run(*args, (0.0, 0.0), 0.0, compute_loss=False)
     _full_mean_phase, full_loss = full_engine.reconstruct_with_loss(*args)
-    assert herm_result.phase_estimator == "phase_of_mean" and not herm_result.amplitude_estimated
+    assert herm_result.reconstruction_method == "phase_of_mean" and not herm_result.amplitude_estimated
     phase_err = cp.abs(cp.angle(herm_result.object_wave * cp.exp(-1j * full_phase)))
     assert float(cp.percentile(phase_err, 99.9)) < 1e-4
     assert herm_result.loss is not None

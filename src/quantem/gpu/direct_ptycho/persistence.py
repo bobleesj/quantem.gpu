@@ -42,6 +42,9 @@ FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/3"
 # The same for a saved result record (ssb-aberrations.json, ssb-run.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
+# 14: the result holds no phase_estimator (reconstruction_method names the method) and no num_trials (its trial
+#     records count the trials); the aberrations signature names the search budget "trials", as the keyword does.
+#     scripts/rewrite_saved_records.py carries a version-12 or -13 folder over once.
 # 13: the files and signature operations are ssb-aberrations and ssb-run (ssb-aberrations and ssb-run
 #     before); the result field upsampling is upsample, reconstruction_method "ssb" is "phase_of_mean", and
 #     phase_damping, amplitude_damping, input_phase_damping and nominal_upsampling_requirement drop their -ing.
@@ -56,7 +59,7 @@ SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/3"
 #    column test, phase tail and native phases), replacing column_sign, initial_column_sign,
 #    initial_scan_detector_rotation_deg and rotation_check_phases.
 # 8: the result field refine_method is refinement, the name of the aberrations keyword it records.
-RESULT_VERSION = 13
+RESULT_VERSION = 14
 RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"
 
 

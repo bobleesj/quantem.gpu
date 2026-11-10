@@ -97,14 +97,14 @@ def _comparison_fits(result, compare):
     from collections.abc import Mapping
     from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
-    entries = [(f"{result.num_trials} trials", result)]
+    entries = [(f"{result._trial_count} trials", result)]
     if isinstance(compare, DirectPtychoResult):
-        entries.append((f"{compare.num_trials} trials", compare))
+        entries.append((f"{compare._trial_count} trials", compare))
     elif isinstance(compare, Mapping):
         entries = [(f"{key} trials" if isinstance(key, int) else str(key), fit)
                    for key, fit in compare.items()]
         if not any(fit is result for _, fit in entries):
-            entries.insert(0, (f"{result.num_trials} trials", result))
+            entries.insert(0, (f"{result._trial_count} trials", result))
     else:
         raise ValueError("compare must be a fit or a mapping such as {200: fit200, 400: fit400}.")
     unique = []

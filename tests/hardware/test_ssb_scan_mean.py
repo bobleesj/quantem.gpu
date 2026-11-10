@@ -53,7 +53,7 @@ def test_shared_default_retains_native_diagnostic_and_saved_policy(tmp_path):
         _, fine_loss = ssb.preview(coefs, **sample, upsample=3)
         assert fine_loss == native_loss
         saved = ssb.run(aberrations=coefs, upsample="auto", save_dir=tmp_path)
-        assert saved.phase_estimator == "phase_of_mean"
+        assert saved.reconstruction_method == "phase_of_mean"
         assert saved.metadata["signature"]["reconstruction"]["upsample_dc_policy"] == "single_origin"
 
 

@@ -473,7 +473,6 @@ def fit_fifth_order(
     chosen.optimizer["kept_start"] = start_name
     if consistency is not None:
         chosen.optimizer["higher_order_consistency"] = consistency
-    chosen.num_trials = trials
     chosen.optimizer.pop("newton_cap")
     chosen.refinement = refinement
     chosen.refine_nfev = nfev
@@ -488,7 +487,6 @@ def fit_fifth_order(
         "sample_agreement",
         "tilt_fit_gain",
         "optimizer",
-        "num_trials",
         "refinement",
         "refine_nfev",
         "refine_elapsed_s",

@@ -29,7 +29,6 @@ class _Backend:
             loss=0.125,
             elapsed_s=2.5,
             timings={"fit": 2.0, "run": 0.5},
-            num_trials=trials,
             num_bright_field_pixels=17,
             refinement=settings["refinement"],
             refine_nfev=23,
@@ -127,7 +126,7 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     assert second.timings == first.timings
     assert second.trial_records == first.trial_records
     assert second.saved_path == saved / "ssb-aberrations.npz"
-    assert second.metadata["signature"]["settings"]["num_trials"] == 200
+    assert second.metadata["signature"]["settings"]["trials"] == 200
     assert second.metadata["signature"]["software"]["ssb_source_sha256"]
     assert second.metadata["input"]["source"] == {"file_name": "scan.bin", "relative_path": None}
     assert second.metadata["result"]["loss"] == 0.125
@@ -617,7 +616,7 @@ def test_the_automatic_refinement_is_reused_and_none_is_its_own_result(tmp_path,
     settings = dict(tilt=tilt, save_dir=saved, check_rotation=False, verbose=False)
     first = _session(monkeypatch, source, backend).aberrations(search="primary", **settings)
     assert first.refinement == "newton"
-    assert first.num_trials == 200
+    assert first.metadata["signature"]["settings"]["trials"] == 200
     explicit = _session(monkeypatch, source, backend).aberrations(search="primary", refinement="auto", **settings)
     assert explicit.reused and explicit.refinement == "newton"
     assert explicit.metadata["signature"]["settings"]["refinement"] == "newton"
@@ -679,17 +678,17 @@ def test_save_dir_is_a_results_directory_and_refuses_a_file_name(tmp_path):
 
 
 def test_a_result_record_of_an_earlier_schema_is_refused_with_one_line(tmp_path, capsys):
-    """quantem.ssb-result/12 held the -ing names (upsampling, phase_damping); /13 reads only its own layout and says so."""
+    """quantem.ssb-result/12 held the -ing names (upsampling, phase_damping); /14 reads only its own layout and says so."""
     from quantem.gpu.direct_ptycho.persistence import RESULT_SCHEMA, load_result, result_paths
 
-    assert RESULT_SCHEMA == "quantem.ssb-result/13"
+    assert RESULT_SCHEMA == "quantem.ssb-result/14"
     paths = result_paths(tmp_path / "fit", "aberrations")
     paths[0].parent.mkdir()
     np.savez(paths[0], object_wave=np.ones((2, 2), np.complex64))
     paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/12", "signature": {}, "result": {"upsampling": 2}}))
     assert load_result(paths=paths, signature={}, backend="mps") is None
     out = capsys.readouterr().out
-    assert "'quantem.ssb-result/12' record" in out and "'quantem.ssb-result/13' only" in out
+    assert "'quantem.ssb-result/12' record" in out and "'quantem.ssb-result/14' only" in out
 
 
 def _absolute_paths(value, found=None):

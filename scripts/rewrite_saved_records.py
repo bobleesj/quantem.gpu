@@ -4,9 +4,12 @@ The library reads only the current layouts, with no reader for the old names. Th
 earlier versions saved:
 
 - ``quantem.ssb-result/12`` (``ssb-find_aberrations``, ``ssb-reconstruct`` and ``ssb-direct-*`` in a results
-  folder) becomes ``/13``: ``ssb-find_aberrations.{json,npz}`` is renamed ``ssb-aberrations``,
+  folder) becomes ``/14``: ``ssb-find_aberrations.{json,npz}`` is renamed ``ssb-aberrations``,
   ``ssb-reconstruct.{json,npz}`` is renamed ``ssb-run``, the signature operations follow, and the keys and
   values below take their new names. The arrays are renamed unchanged.
+- ``quantem.ssb-result/13`` becomes ``/14``: the result drops ``phase_estimator`` (``reconstruction_method``
+  names the method) and ``num_trials`` (the trial records count the trials), and the signature's settings name
+  the search budget ``trials`` (was ``num_trials``) and drop ``phase_estimator``.
 - ``quantem.ssb-stream-frame/4`` (``<save_dir>/stream/<frame>.json``) becomes ``/5`` with the same renames; the
   chain of previous-record hashes is computed again so the frames still link.
 - ``quantem.phase-refinement/1`` neural phase checkpoints (``.pt``) become ``/2``: ``upsampling`` is ``upsample``.
@@ -19,11 +22,16 @@ is upsample_mode; phase_damping, amplitude_damping and input_phase_damping drop 
 nominal_upsampling_requirement is nominal_upsample_requirement. A ``method`` or ``reconstruction_method`` of
 ``"ssb"`` is ``"phase_of_mean"``.
 
-ShowPtycho's ``calibration.json`` is carried by quantem.widget's ``scripts/rewrite_ssb_calibration.py`` and
-QuantEM Live's screening ``config.json`` by its ``tools/rewrite_screen_config.py``.
+- A ``quantem.ssb-calibration/8`` file that ``DirectPtychoResult.save_calibration`` wrote with
+  ``reconstruction_method`` beside ``reconstruction_options`` keeps its schema and holds them as ShowPtycho's one
+  ``reconstruction`` dict, ``{"method": ..., "phase_damp": ..., ...}``.
 
-Every rewritten file keeps its original beside it as ``<name>.before``; a file whose ``.before`` already exists
-is left alone. Records of any other schema are not touched.
+Earlier ShowPtycho calibrations (/4 to /7) are carried by quantem.widget's ``scripts/rewrite_ssb_calibration.py``
+and QuantEM Live's screening ``config.json`` by its ``tools/rewrite_screen_config.py``.
+
+Every rewritten file keeps its original beside it as ``<name>.before``. A file rewritten before (its
+``.before`` already there, from /12 to /13) keeps that older original and is carried on. Records of any other
+schema are not touched, so a second run changes nothing.
 
 Usage::
 
@@ -51,11 +59,14 @@ KEYS = {
 }
 METHOD_KEYS = ("method", "reconstruction_method")
 OPERATIONS = {"find_aberrations": "aberrations", "reconstruct": "run"}
-RESULT = ("quantem.ssb-result/12", "quantem.ssb-result/13")
+RESULT = (("quantem.ssb-result/12", "quantem.ssb-result/13"), "quantem.ssb-result/14")
+# result fields that repeat another: reconstruction_method names the method, the trial records count the trials
+DROPPED_RESULT_FIELDS = ("phase_estimator", "num_trials")
 FRAME = ("quantem.ssb-stream-frame/4", "quantem.ssb-stream-frame/5")
 CHECKPOINT = ("quantem.phase-refinement/1", "quantem.phase-refinement/2")
 PHASE = "quantem.ssb-phase/2"
 SCREEN = ("quantem.screen-acquisition/2", "quantem.screen-acquisition/3")
+CALIBRATION = "quantem.ssb-calibration/8"
 
 
 def renamed(value):
@@ -76,14 +87,20 @@ def renamed(value):
 
 
 def result_record(record):
-    """A /12 result record as /13."""
+    """A /12 or /13 result record as /14."""
     record = renamed(record)
     record["schema"] = RESULT[1]
+    for name in DROPPED_RESULT_FIELDS:
+        (record.get("result") or {}).pop(name, None)
     signature = record.get("signature") or {}
-    if signature.get("schema") == RESULT[0]:
+    if signature.get("schema") in RESULT[0]:
         signature["schema"] = RESULT[1]
     if signature.get("operation") in OPERATIONS:
         signature["operation"] = OPERATIONS[signature["operation"]]
+    settings = signature.get("settings") or {}
+    settings.pop("phase_estimator", None)
+    if "num_trials" in settings:
+        settings["trials"] = settings.pop("num_trials")
     return record
 
 
@@ -100,6 +117,15 @@ def screening_record(config):
     return config
 
 
+def calibration_record(record):
+    """A two-key /8 calibration with its method and options as one ``reconstruction`` dict, in place of the two."""
+    record = dict(record)
+    options = record.pop("reconstruction_options", None) or {}
+    method = record.pop("reconstruction_method", None) or options.get("method", "phase_of_mean")
+    record["reconstruction"] = {**options, "method": method}
+    return record
+
+
 class Rewriter:
     """Plans and applies each file's rewrite, keeping ``<name>.before``."""
 
@@ -111,13 +137,9 @@ class Rewriter:
         print(f"{'would rewrite' if self.dry_run else 'rewrote'} {path}: {note}")
 
     def keep(self, path):
-        """Copy ``path`` to ``<name>.before``; False when an earlier backup is already there."""
+        """Copy ``path`` to ``<name>.before``; an earlier rewrite's ``.before`` holds the older original and stays."""
         before = path.with_name(path.name + ".before")
-        if before.exists():
-            print(f"skipped {path}: {before.name} already exists")
-            self.skipped += 1
-            return False
-        if not self.dry_run:
+        if not self.dry_run and not before.exists():
             shutil.copy2(path, before)
         return True
 
@@ -155,7 +177,7 @@ class Rewriter:
             print(f"skipped {path}: {new_arrays.name} already exists")
             self.skipped += 1
             return
-        note = f"{RESULT[0]} -> {RESULT[1]}" + (f", renamed {name}.json" if target != path else "")
+        note = f"{record['schema']} -> {RESULT[1]}" + (f", renamed {name}.json" if target != path else "")
         if self.json(path, result_record(record), 2, note, target) and target != path and arrays.is_file():
             if not self.dry_run:
                 os.replace(arrays, new_arrays)
@@ -223,12 +245,14 @@ def main():
         except (UnicodeDecodeError, json.JSONDecodeError):
             continue
         schema = record.get("schema") if isinstance(record, dict) else None
-        if schema == RESULT[0]:
+        if schema in RESULT[0]:
             rewriter.result(path, record)
         elif schema == FRAME[0]:
             frames.setdefault(path.parent, []).append((path, record))
         elif schema == PHASE:
             rewriter.manifest(path, record)
+        elif schema == CALIBRATION and ("reconstruction_method" in record or "reconstruction_options" in record):
+            rewriter.json(path, calibration_record(record), 2, "reconstruction_method and reconstruction_options -> reconstruction")
     for folder, records in frames.items():
         rewriter.frames(folder, records)
     print(f"{rewriter.changed} file(s) {'to rewrite' if arguments.dry_run else 'rewritten'}, {rewriter.skipped} skipped.")

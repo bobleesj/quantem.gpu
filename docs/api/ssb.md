@@ -428,7 +428,7 @@ ptycho = DirectPtycho.open(
 )
 aberrations = ptycho.aberrations(tilt=True, save_dir="results/aberrations")
 aberrations.report()
-ptycho.show_trials(best=5)
+ptycho.show("trials", best=5)
 result = ptycho.run(aberrations, save_dir="results/native")
 shown = ptycho.run(aberrations, upsample="auto")
 shown.show()
@@ -443,7 +443,7 @@ aberrations, and so does the automatic fit of `run()`.
 Fits stay on the native scan grid; what you look at is reconstructed at
 `upsample="auto"`, the factor the scan sampling allows (at 300 kV
 and 30 mrad: 2× for the 0.264 Å step above, 3× at 0.373 Å, 4× for the 0.5 Å
-gold scan), and its title names the factor. `show_trials` and the branch
+gold scan), and its title names the factor. `show("trials")` and the branch
 panels of `scan_rotations` use the same factor. `result.show()`
 draws the phase a result holds; for a native fit one line names the auto
 factor and the call that shows it.
@@ -544,9 +544,9 @@ method, sampling, or scientific parameters invalidates saved-result reuse.
 ### Inspect and replay search trials
 
 ```python
-ptycho.show_trials(first=5)
-ptycho.show_trials(last=5)
-ptycho.show_trials(best=5)
+ptycho.show("trials", first=5)
+ptycho.show("trials", last=5)
+ptycho.show("trials", best=5)
 aberrations.trials  # DataFrame, indexed by stable trial ID
 aberrations["C10_nm"]  # defocus, nm
 aberrations["C12_nm"]  # twofold astigmatism, nm

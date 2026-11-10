@@ -36,7 +36,7 @@ def test_phase_of_mean_is_what_ssb_records(monkeypatch):
     phase, loss = session.preview(ABERRATIONS, compute_loss=False)
     assert phase.shape == (2, 2) and loss is None
     result = session.run(compute_loss=True)
-    assert result.phase_estimator == "phase_of_mean"
+    assert result.reconstruction_method == "phase_of_mean"
     assert not result.amplitude_estimated
     assert result.loss == 0.5
     assert backend.calls == [(1, False), (1, True)]

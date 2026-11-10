@@ -84,13 +84,10 @@ class DirectPtychoResult(Mapping[str, float]):
     reconstruction_diagnostics : dict[str, object]
         Model conventions and optional training prediction error. This is not
         the conventional phase-variance ``loss`` or an independent validation.
-    phase_estimator : str | None
-        ``phase_of_mean`` for SSB (the phase of the bright-field mean wave);
-        a regularized result records its method, ``phase`` or ``complex``.
-        None marks a backend fit's working image, which the session replaces
-        with its SSB phase.
     amplitude_estimated : bool
-        False for phase-only paths, whose complex wave has unit amplitude.
+        False for phase-only paths, whose complex wave has unit amplitude. A
+        ``phase_of_mean`` result that estimates its amplitude is a backend fit's
+        working image, which the session replaces with its SSB phase.
     loss : float | None
         Variance loss value.
     elapsed_s : float | None
@@ -132,7 +129,6 @@ class DirectPtychoResult(Mapping[str, float]):
     elapsed_s: float | None = None
     timings: dict[str, float] = field(default_factory=dict)
     optimizer: dict[str, object] = field(default_factory=dict)
-    num_trials: int | None = None
     num_bright_field_pixels: int | None = None
     refinement: str | None = None
     refine_nfev: int | None = None
@@ -144,7 +140,6 @@ class DirectPtychoResult(Mapping[str, float]):
     reconstruction_method: str = "phase_of_mean"
     reconstruction_options: dict[str, object] = field(default_factory=dict)
     reconstruction_diagnostics: dict[str, object] = field(default_factory=dict)
-    phase_estimator: str | None = None
     amplitude_estimated: bool = True
     source_path: str | None = None
     bright_field_center_px: tuple[float, float] | None = None
@@ -200,8 +195,6 @@ class DirectPtychoResult(Mapping[str, float]):
         method = self.reconstruction_method
         lines = ["SSB Result" if method == "phase_of_mean" else f"Direct {method} result"]
         lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsample}x output")
-        if self.phase_estimator is not None:
-            lines.append(f"  Estimator      {self.phase_estimator}")
         if not self.amplitude_estimated:
             lines.append("  Amplitude      not estimated (unit-amplitude phase representation)")
         if self.loss is not None:
@@ -210,8 +203,8 @@ class DirectPtychoResult(Mapping[str, float]):
             lines.append(f"  BF pixels      {self.num_bright_field_pixels}")
         if self.objective is not None:
             lines.append(f"  Objective      {self.objective}")
-        if self.num_trials is not None:
-            lines.append(f"  Trials         {self.num_trials}")
+        if self.trial_records is not None:
+            lines.append(f"  Trials         {self._trial_count}")
         lines.append(f"  SSB rotation   {self.scan_detector_rotation_deg:.2f}°")
         if self.rotation_refined:
             lines.append(f"  Refined from   {self.rotation_estimate_deg:.2f}° (estimate)")
@@ -232,6 +225,11 @@ class DirectPtychoResult(Mapping[str, float]):
                 + (" (reused)" if self.reused else "")
             )
         return "\n".join(lines)
+
+    @property
+    def _trial_count(self) -> int:
+        """Number of completed search trials, ``len(trials)``: refinement steps are not trials."""
+        return sum(record.get("stage", "search") == "search" for record in self.trial_records or ())
 
     @property
     def trials(self):
@@ -347,14 +345,18 @@ class DirectPtychoResult(Mapping[str, float]):
             ("elapsed_s", "Elapsed (s)"),
             ("sample_agreement", "Model agreement"),
             ("loss", "Variance diagnostic loss"),
-            ("num_trials", "Trials"),
+            ("trials", "Trials"),
             ("num_bright_field_pixels", "Bright-field pixels"),
             ("refinement", "Refinement"),
             ("refine_nfev", "Refinement evaluations"),
             ("refine_elapsed_s", "Refinement (s)"),
         )
         for name, _ in summary_fields:
-            value = getattr(self, name)
+            # the trials property is the trial table; its row is the number of search trials
+            if name == "trials":
+                value = None if self.trial_records is None else self._trial_count
+            else:
+                value = getattr(self, name)
             if value is not None:
                 record[name] = value
         if self.optimizer.get("stop") is not None:
@@ -893,7 +895,7 @@ class DirectPtychoSeriesResult:
     source_directory: Path
     results_directory: Path
     requested_backend: str
-    num_trials: int
+    trials: int
     refinement: str | None
 
     def metadata(self):
@@ -926,7 +928,7 @@ class DirectPtychoSeriesResult:
             [
                 ("Shape", " x ".join(str(value) for value in self.phase.shape)),
                 ("Requested backend", self.requested_backend),
-                ("Trials", self.num_trials),
+                ("Trials", self.trials),
                 ("Refinement", self.refinement or "none"),
                 ("Results reused", reused),
             ]

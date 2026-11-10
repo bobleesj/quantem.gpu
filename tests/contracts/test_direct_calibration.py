@@ -28,7 +28,7 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
         source_path=str(source), aberrations={"C10_nm": -8., "C12_nm": 0.2, "phi12_deg": 35.},
         sample_tilt_mrad=(1., -2.), depth_spread_nm=12., num_bright_field_pixels=17,
         voltage_kV=300., semiangle_mrad=30., object_sampling_A=(0.25, 0.25),
-        upsample=2, phase_estimator=method, amplitude_estimated=method == "complex",
+        upsample=2, amplitude_estimated=method == "complex",
         reconstruction_method=method, reconstruction_options=options,
         reconstruction_diagnostics={"training_relative_sse": 0.12, "normalization": "relative amplitude"},
     )
@@ -43,8 +43,8 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
     capture_calibration(session, result)
     original = json.loads(result.save_calibration(tmp_path / "calibration.json").read_text())
     assert "phase_estimator" not in original
-    assert original["reconstruction_method"] == method
-    assert original["reconstruction_options"] == options
+    assert original["reconstruction"] == {**options, "method": method}
+    assert "reconstruction_method" not in original and "reconstruction_options" not in original
     assert original["reconstruction_diagnostics"] == result.reconstruction_diagnostics
     assert original["upsample"] == 2
     assert original["upsample_mode"] == "explicit"
@@ -56,8 +56,8 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
     # Use host loading for this serialization contract, not an MPS solver claim.
     restored = load_result(paths=paths, signature=signature, backend="mps")
     reopened = json.loads(restored.save_calibration(tmp_path / "reopened.json").read_text())
-    for key in ("reconstruction_method", "reconstruction_options", "reconstruction_diagnostics",
+    for key in ("reconstruction", "reconstruction_diagnostics",
                 "upsample", "upsample_mode", "aberrations", "session_identity"):
         assert reopened[key] == original[key]
     np.testing.assert_array_equal(restored.object_wave, result.object_wave)
-    assert result.phase_estimator == method
+    assert restored.reconstruction_method == method

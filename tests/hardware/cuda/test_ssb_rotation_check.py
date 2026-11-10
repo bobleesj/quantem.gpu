@@ -224,7 +224,7 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
         assert fit_calls == [(rotation, False), ((rotation + 180.0) % 360.0, False)][:searches]
         assert result.scan_detector_rotation_deg == 0.0
         assert result.sample_tilt_mrad == pytest.approx((3.0, -4.0), abs=1.0)
-        assert len(result.trial_records) == searches * result.num_trials == searches * 200
+        assert len(result.trial_records) == len(result.trials) == searches * 200
         assert {record["scan_detector_rotation_deg"] for record in result.trial_records} == (
             {rotation} if mapped else {0.0, 180.0})
         kept = result.rotation_branches.branches[result.rotation_branches.kept]

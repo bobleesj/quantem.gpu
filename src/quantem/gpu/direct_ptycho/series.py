@@ -239,7 +239,7 @@ def run_series(
         source_directory=source_root,
         results_directory=results_root,
         requested_backend=backend,
-        num_trials=trials,
+        trials=trials,
         refinement=refinement,
     )
 
@@ -502,7 +502,7 @@ def screen_record_fit(config: dict[str, object]) -> dict[str, object]:
     if not plain or tilt.get("state") != "complete" or tilt.get("sample_tilt_mrad") is None:
         return plain
     keys = ("aberrations", "scan_detector_rotation_deg", "scan_detector_rotation_flipped", "sample_tilt_mrad",
-            "depth_spread_nm", "fit_gain", "loss", "phase_estimator", "objective")
+            "depth_spread_nm", "fit_gain", "loss", "objective")
     return {**plain, **{key: tilt[key] for key in keys if key in tilt}}
 
 

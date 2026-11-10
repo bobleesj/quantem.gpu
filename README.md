@@ -450,9 +450,9 @@ Advanced users can inspect search trials with shared phase contrast, shown at
 `upsample="auto"`:
 
 ```python
-ptycho.show_trials(best=5)     # five lowest-loss search trials
-ptycho.show_trials(last=5)     # five most recent search trials
-ptycho.show_trials(first=5)    # five earliest search trials
+ptycho.show("trials", best=5)     # five lowest-loss search trials
+ptycho.show("trials", last=5)     # five most recent search trials
+ptycho.show("trials", first=5)    # five earliest search trials
 ```
 
 The calibration above is an example; use your acquisition's values. A fitted

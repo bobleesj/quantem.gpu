@@ -61,7 +61,7 @@ The Mac SSB backend uses MLX and Metal. The NumPy-like indexing interface,
 such as `data[10, 12]`, returns PyTorch tensors, so quantem.gpu installs
 PyTorch 2.3 or newer. To use a particular CUDA build of PyTorch, install it
 before quantem.gpu. The static plotting examples, `result.show()` and
-`ssb.show_trials()` need the `plot` extra, which installs Matplotlib,
+`ssb.show("trials")` need the `plot` extra, which installs Matplotlib,
 IPython and QuantEM:
 
 ```bash

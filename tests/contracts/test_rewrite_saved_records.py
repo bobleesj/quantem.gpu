@@ -17,7 +17,7 @@ def rewrite(*arguments):
 
 
 def test_a_saved_fit_is_renamed_and_read_again(tmp_path):
-    """A /12 fit in ssb-fit/ssb-find_aberrations is /13 ssb-aberrations afterwards, which saved_fit reads."""
+    """A /12 fit in ssb-fit/ssb-find_aberrations is the current ssb-aberrations afterwards, which saved_fit reads."""
     from quantem.gpu.direct_ptycho.persistence import RESULT_SCHEMA
     from quantem.gpu.direct_ptycho.series import saved_fit
 
@@ -49,6 +49,33 @@ def test_a_saved_fit_is_renamed_and_read_again(tmp_path):
     assert record["result"]["reconstruction_diagnostics"] == {"nominal_upsample_requirement": 3.0}
     assert saved_fit(tmp_path)["aberrations"] == aberrations
     # a second run finds nothing of the earlier schema
+    assert rewrite(tmp_path).splitlines()[-1] == "0 file(s) rewritten, 0 skipped."
+
+
+def test_a_version_13_fit_drops_repeated_fields(tmp_path):
+    """A /13 fit loses phase_estimator and num_trials; its signature names the search budget trials."""
+    from quantem.gpu.direct_ptycho.persistence import RESULT_SCHEMA
+    from quantem.gpu.direct_ptycho.series import saved_fit
+
+    folder = tmp_path / "ssb-fit"
+    folder.mkdir()
+    aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": -0.5}
+    earlier = {"schema": "quantem.ssb-result/13",
+               "signature": {"schema": "quantem.ssb-result/13", "operation": "aberrations",
+                             "settings": {"num_trials": 200, "seed": 7}},
+               "result": {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0, "num_trials": 200,
+                          "phase_estimator": "phase_of_mean", "reconstruction_method": "phase_of_mean"}}
+    text = json.dumps(earlier, indent=2) + "\n"
+    (folder / "ssb-aberrations.json").write_text(text)
+    np.savez(folder / "ssb-aberrations.npz", object_wave=np.ones((2, 2), np.complex64))
+    assert saved_fit(tmp_path) is None
+    rewrite(tmp_path)
+    assert (folder / "ssb-aberrations.json.before").read_text() == text
+    record = json.loads((folder / "ssb-aberrations.json").read_text())
+    assert record["schema"] == record["signature"]["schema"] == RESULT_SCHEMA
+    assert record["signature"]["settings"] == {"trials": 200, "seed": 7}
+    assert "num_trials" not in record["result"] and "phase_estimator" not in record["result"]
+    assert saved_fit(tmp_path)["aberrations"] == aberrations
     assert rewrite(tmp_path).splitlines()[-1] == "0 file(s) rewritten, 0 skipped."
 
 
@@ -99,3 +126,15 @@ def test_a_neural_phase_checkpoint_names_its_factor_upsample(tmp_path):
     assert checkpoint["schema"] == NeuralPhaseModel._SCHEMA and checkpoint["upsample"] == 2
     assert "upsampling" not in checkpoint and checkpoint["training_record"] == {"upsample": 2}
     assert torch.equal(checkpoint["readout"], weights["readout"]) and (tmp_path / "model.pt.before").is_file()
+
+
+def test_a_two_key_calibration_holds_one_reconstruction_dict(tmp_path):
+    """A /8 calibration with reconstruction_method beside reconstruction_options holds ShowPtycho's one dict."""
+    earlier = {"schema": "quantem.ssb-calibration/8", "upsample": 2, "reconstruction_method": "phase",
+               "reconstruction_options": {"method": "phase", "phase_damp": 0.3}}
+    (tmp_path / "calibration.json").write_text(json.dumps(earlier))
+    rewrite(tmp_path)
+    record = json.loads((tmp_path / "calibration.json").read_text())
+    assert record == {"schema": "quantem.ssb-calibration/8", "upsample": 2,
+                      "reconstruction": {"method": "phase", "phase_damp": 0.3}}
+    assert rewrite(tmp_path).splitlines()[-1] == "0 file(s) rewritten, 0 skipped."

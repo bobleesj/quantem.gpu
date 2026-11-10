@@ -21,7 +21,7 @@ def fit_standard(
     *,
     aberrations: dict | None,
     search_ranges: dict | None,
-    num_trials: int,
+    trials: int,
     refine: str | None,
     refine_lock: list[str] | None,
     seed: int,
@@ -43,7 +43,7 @@ def fit_standard(
     start = None
     if aberrations:
         start = [float(aberrations[name]) for name in ("C10", "C12", "phi12")]
-    elif int(num_trials) == 0:
+    elif int(trials) == 0:
         start = [_DEFAULT_START[name] for name in ("C10", "C12", "phi12")]
     if start is not None:
         # C12 is a magnitude and phi12 has period pi: a start outside (-90, 90] degrees (typed, or a phase-variance
@@ -58,7 +58,7 @@ def fit_standard(
 
     fit = fit_standard_resident(
         lambda trial: accel.thick.fit_resident(trial, band_inv_A), backend="cuda", lower=lower, upper=upper,
-        trials=int(num_trials), seed=int(seed), polish=refine, lock=lock, start=start,
+        trials=int(trials), seed=int(seed), polish=refine, lock=lock, start=start,
         derivatives=None if refine is None else LowOrderDerivatives(accel, band_inv_A),
     )
     return {**fit, "band_inv_A": list(band_inv_A)}

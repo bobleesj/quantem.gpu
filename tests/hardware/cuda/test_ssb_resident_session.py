@@ -91,7 +91,7 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
                                       check_rotation=False, verbose=False)
         again = ssb.aberrations(search="primary", tilt=True, trials=0, compare_standard=False,
                                      check_rotation=False, verbose=False)
-        assert again.num_trials == 0 and again.trial_records == []
+        assert again.trial_records == [] and again.trials.empty
         assert abs(again.aberrations["C10_nm"] - fitted.aberrations["C10_nm"]) < 0.5
         options = dict(sample_tilt_mrad=again.sample_tilt_mrad, depth_spread_nm=again.depth_spread_nm,
                        compute_loss=False)

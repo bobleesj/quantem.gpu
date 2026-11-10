@@ -112,7 +112,7 @@ def test_tilt_refit_from_the_previous_scan_needs_no_search():
     following.depth_spread_nm = searched.depth_spread_nm
     refit = following.aberrations(search="primary", tilt=True, trials=0, check_rotation=False, verbose=False,
                                        compare_standard=False)
-    assert refit.num_trials == 0
+    assert refit.trials.empty
     assert abs(refit.sample_tilt_mrad[0] - searched.sample_tilt_mrad[0]) < 0.1
     assert abs(refit.sample_tilt_mrad[1] - searched.sample_tilt_mrad[1]) < 0.1
     assert abs(refit.aberrations["C10_nm"] - searched.aberrations["C10_nm"]) < 0.1

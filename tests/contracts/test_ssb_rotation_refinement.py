@@ -98,7 +98,7 @@ class _Backend:
         return DirectPtychoResult(object_wave=np.ones((2, 2), np.complex64), backend="mps",
                          aberrations={"C10": -101.0 + self.angle_deg, "C12": 4.0, "phi12": 0.25},
                          scan_detector_rotation_deg=self.angle_deg, loss=0.125, elapsed_s=1.0,
-                         num_trials=settings["trials"], refinement=settings["refinement"],
+                         refinement=settings["refinement"],
                          sample_agreement=self.peak(self.angle_deg),
                          trial_records=[{"params": {"C10_nm": -10.1, "C12_nm": 0.4}, "loss": 0.125}] * settings["trials"])
 
@@ -141,7 +141,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
     assert record["estimate_agreement"] == backend.peak(3.0) < record["refined_agreement"] == fit.sample_agreement
     assert record["evaluations"] == len(backend.fits) - 1 and len(record["evaluated_deg"]) == record["evaluations"]
     # the search trials of the fit stay; a polish adds none
-    assert fit.num_trials == 4 and len(fit.trial_records) == 4
+    assert len(fit.trials) == 4 and len(fit.trial_records) == 4
     assert f"SSB: refined rotation 3.00° → {fit.scan_detector_rotation_deg:.2f}° (+" in capsys.readouterr().out
     report = fit.report().iloc[:, 0]
     assert report["Estimated rotation (deg)"] == 3.0

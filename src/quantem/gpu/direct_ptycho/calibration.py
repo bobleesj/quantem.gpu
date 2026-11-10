@@ -11,7 +11,10 @@ from quantem.gpu.optics.physics import ssb_upsample_factor
 
 # 8: the output factor is "upsample" with "upsample_mode" (were "upsampling", "upsampling_mode"), the conventional
 #    method is "phase_of_mean" (was "ssb"), the direct strengths are phase_damp and amplitude_damp (were
-#    phase_damping and amplitude_damping), and "phase_estimator" is gone: reconstruction_method names the method.
+#    phase_damping and amplitude_damping), and "phase_estimator" is gone. The method and its options are one
+#    "reconstruction" dict, {"method": ..., "phase_damp": ..., ...}, as ShowPtycho's Save writes it (a first /8
+#    writer here put "reconstruction_method" beside "reconstruction_options"; scripts/rewrite_saved_records.py
+#    folds those into "reconstruction").
 # 7: the output factor is "upsampling" (was "upsampling_factor") and reconstruction_options names the direct
 #    strengths phase_damping and amplitude_damping (were phase_regularization and amplitude_regularization).
 # An earlier record is rewritten once with quantem.widget's scripts/rewrite_ssb_calibration.py.
@@ -112,8 +115,7 @@ def save_calibration(result, path):
             sample, scan_detector_rotation_deg=result.scan_detector_rotation_deg,
             scan_detector_rotation_flipped=result.scan_detector_rotation_flipped)),
         "loss": result.loss,
-        "reconstruction_method": method,
-        "reconstruction_options": deepcopy(result.reconstruction_options),
+        "reconstruction": {**deepcopy(result.reconstruction_options), "method": method},
         "reconstruction_diagnostics": deepcopy(result.reconstruction_diagnostics),
         "upsample": factor, "upsample_mode": "auto" if method == "phase_of_mean" else "explicit",
         "display_negate_phase": False,

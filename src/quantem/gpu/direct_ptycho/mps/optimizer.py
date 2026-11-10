@@ -62,7 +62,7 @@ def optimize(
     scan_sampling_A: float | tuple[float, float],
     aberrations: dict | None = None,
     search_ranges: dict | None = None,
-    num_trials: int = 200,
+    trials: int = 200,
     refine: str | None = "newton",
     refine_lock: list[str] | None = None,
     scan_detector_rotation_deg: float = 0.0,
@@ -73,7 +73,7 @@ def optimize(
 ) -> tuple[DirectPtychoResult, np.ndarray | None]:
     """Standard SSB fit of C10/C12/phi12 on Apple GPU, then the complex object and the phase at the fit.
 
-    ``num_trials`` trials of the resident search maximize the agreement with the sample tilt and depth spread at 0,
+    ``trials`` trials of the resident search maximize the agreement with the sample tilt and depth spread at 0,
     within ``search_ranges`` (engine keys; a value holds that coefficient in every trial); ``refine`` ("newton",
     "bfgs" or None) polishes from the best distinct trials, and from the session's ``aberrations`` when
     given. ``refine_lock`` (engine names) holds coefficients at the search's value through the refinement. Returns the
@@ -89,7 +89,7 @@ def optimize(
     start = None
     if aberrations:
         start = [float(aberrations[name]) for name in ("C10", "C12", "phi12")]
-    elif int(num_trials) == 0:
+    elif int(trials) == 0:
         start = [_DEFAULT_START[name] for name in ("C10", "C12", "phi12")]
     if start is not None:
         # the start obeys the search box: a held coefficient is every trial's and the result's value
@@ -99,7 +99,7 @@ def optimize(
 
     fit = fit_standard_resident(
         lambda trial: evaluate(prepared, trial, band_inv_A), backend="mps", lower=lower, upper=upper,
-        trials=int(num_trials), seed=int(seed), polish=refine, lock=lock, start=start,
+        trials=int(trials), seed=int(seed), polish=refine, lock=lock, start=start,
         derivatives=None if refine is None else LowOrderDerivatives(prepared, band_inv_A),
     )
     best = {name: fit[name] for name in ("C10", "C12", "phi12")}
@@ -137,7 +137,6 @@ def optimize(
         elapsed_s=time.perf_counter() - started,
         timings=timings,
         optimizer=dict(fit["optimizer"]),
-        num_trials=int(num_trials),
         num_bright_field_pixels=selection.size,
         refinement=refine,
         refine_nfev=int(fit["nfev"]),

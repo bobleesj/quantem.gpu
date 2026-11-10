@@ -15,7 +15,7 @@ def test_public_ssb_api_has_one_workflow() -> None:
         "open",
         "aberrations",
         "scan_rotations",
-        "show_trials",
+        "show",
         "run",
         "preview",
         "close",

@@ -248,12 +248,12 @@ def test_panels_need_the_session_that_fitted_the_branches():
 
 
 def test_display_helpers_default_to_the_auto_factor():
-    """show_trials and branch panels resolve "auto" as reconstruct does: 2x at 0.264 Å, 3x at 0.373 Å, 4x at 0.5 Å."""
+    """show("trials") and branch panels resolve "auto" as reconstruct does: 2x at 0.264 Å, 3x at 0.373 Å, 4x at 0.5 Å."""
     import inspect
 
     from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
-    assert inspect.signature(DirectPtycho.show_trials).parameters["upsample"].default == "auto"
+    assert inspect.signature(DirectPtycho._show_trials).parameters["upsample"].default == "auto"
     assert inspect.signature(RotationBranches.show).parameters["upsample"].default == "auto"
     assert inspect.signature(DirectPtycho.run).parameters["upsample"].default == 1   # the fit grid
     for step, factor in ((0.264, 2), (0.373, 3), (0.5, 4)):

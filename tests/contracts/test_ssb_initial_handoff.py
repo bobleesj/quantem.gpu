@@ -19,7 +19,7 @@ def _fit():
         aberrations={"C10_nm": 1.0, "C12_nm": 0.2, "phi12_deg": 17.0},
         sample_tilt_mrad=(0.1, -0.2), depth_spread_nm=10.0,
         scan_detector_rotation_deg=12.0, loss=0.25,
-        phase_estimator="phase_of_mean", amplitude_estimated=False,
+        amplitude_estimated=False,
         object_sampling_A=(0.5, 0.5), num_bright_field_pixels=9,
     )
 

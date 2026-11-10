@@ -50,7 +50,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
             assert -agreement == pytest.approx(record['loss'], rel=1e-5)
         assert ssb._reconstruction is native
         assert aberrations.trial_records == records
-        figure = ssb.show_trials(best=3)
+        figure = ssb.show("trials", best=3)
         image_axes = [axis for axis in figure.axes if axis.images and axis.get_visible()]
         best_records = sorted(records, key=lambda record: record['loss'])[:3]
         assert [axis.get_title() for axis in image_axes] == [
@@ -58,7 +58,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
         ]
         assert image_axes[0].get_position().x0 == pytest.approx(image_axes[2].get_position().x0)
         assert image_axes[0].get_position().y0 > image_axes[2].get_position().y0
-        row = ssb.show_trials(best=3, rows=1, size="small")
+        row = ssb.show("trials", best=3, rows=1, size="small")
         row_axes = [axis for axis in row.axes if axis.images and axis.get_visible()]
         assert len(row_axes) == 3
         assert len({round(axis.get_position().y0, 6) for axis in row_axes}) == 1
@@ -137,7 +137,7 @@ def test_joint_history_carries_tilt_depth_and_objective():
         np.testing.assert_allclose(cp.asnumpy(replay.phase[0]), expected, atol=1e-7)
         for invalid in ({}, {'best': 0}, {'first': -1}, {'best': 2, 'last': 2}):
             with pytest.raises(ValueError, match='one positive count'):
-                ssb.show_trials(**invalid)
+                ssb.show("trials", **invalid)
         with pytest.raises(ValueError, match='Unknown trial IDs'):
             ssb.run(aberrations, trial_ids=[1000])
     finally:
@@ -154,14 +154,13 @@ def test_zero_trial_search_does_not_relabel_previous_search():
         ssb.set_rotation(37.)
         second = ssb.aberrations(search="primary", tilt=False, trials=0, refinement=None,
                                        check_rotation=False, verbose=False)
-        assert second.num_trials == 0
         assert second.trials.empty
         assert second.refine_nfev is None
         assert second.refinement is None
         assert first.trial_records == history
         assert all(record['scan_detector_rotation_deg'] == 0. for record in history)
         with pytest.raises(ValueError, match='No completed trials'):
-            ssb.show_trials(best=5)
+            ssb.show("trials", best=5)
     finally:
         ssb.close()
 

@@ -158,7 +158,7 @@ class MpsSSBBackend:
             scan_sampling_A=self._scan_sampling,
             aberrations=aberrations,
             search_ranges=search_ranges,
-            num_trials=int(trials),
+            trials=int(trials),
             refine=refinement,
             refine_lock=refine_lock,
             scan_detector_rotation_deg=self._scan_detector_rotation_deg,

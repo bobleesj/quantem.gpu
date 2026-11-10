@@ -33,7 +33,7 @@ def test_inspect_all_fitted_coefficients_and_export_without_rounding():
         timings={"joint_fit_s": 12.345678901, "refinement_s": 7.123456789},
         sample_agreement=0.987654321,
         loss=0.044388994574546814,
-        num_trials=200,
+        trial_records=[{"params": {"C10_nm": 0.0}, "loss": 0.1}] * 200,
         refinement="newton",
         refine_nfev=250,
         optimizer={"stop": "evaluation limit"},
@@ -54,7 +54,7 @@ def test_inspect_all_fitted_coefficients_and_export_without_rounding():
     assert table.loc["Model agreement"].iloc[0] == record["sample_agreement"] == fit.sample_agreement
     assert table.loc["Variance diagnostic loss"].iloc[0] == record["loss"] == fit.loss
     assert record["stop_reason"] == "evaluation limit"
-    assert record["num_trials"] == 200 and record["refine_nfev"] == 250
+    assert record["trials"] == 200 and record["refine_nfev"] == 250
     assert record["timings"] == fit.timings
     assert json.loads(json.dumps(record))["aberrations"] == coefficients
     html = fit._repr_html_()

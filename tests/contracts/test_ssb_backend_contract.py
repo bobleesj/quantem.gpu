@@ -250,7 +250,6 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
         bright_field_center_px=selection.bright_field_center_px,
         bright_field_radius_px=selection.bright_field_radius_px,
         bright_field_edge_radius_px=selection.bright_field_edge_radius_px,
-        num_trials=200,
     )
 
     assert result.num_bright_field_pixels == 1

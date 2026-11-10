@@ -65,7 +65,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, depth, mo
             assert result.depth_spread_nm == depth
             assert not result.amplitude_estimated
             assert result.upsample == factor
-            assert result.phase_estimator == 'phase_of_mean'
+            assert result.reconstruction_method == 'phase_of_mean'
             assert np.isfinite(cp.asnumpy(result.phase)).all()
             results[factor] = cp.asnumpy(result.phase)
         np.testing.assert_allclose(results[1], native, atol=1e-7)
@@ -89,10 +89,10 @@ def test_default_correction_and_changed_sample_do_not_reuse_stale_phase():
     ssb, _ = _synthetic_session()
     try:
         correction = ssb.run(aberrations={'C10_nm': -8., 'C12_nm': 4., 'phi12_deg': math.degrees(-.7)})
-        assert correction.phase_estimator == 'phase_of_mean'
+        assert correction.reconstruction_method == 'phase_of_mean'
         expected, _ = ssb.preview(correction.aberrations)
         native = ssb.run(correction)
-        assert native.phase_estimator == 'phase_of_mean'
+        assert native.reconstruction_method == 'phase_of_mean'
         np.testing.assert_allclose(cp.asnumpy(native.phase), expected, atol=1e-7)
         ssb.depth_spread_nm = 12.
         ssb.sample_tilt_mrad = (2., -3.)

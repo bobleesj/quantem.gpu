@@ -407,7 +407,6 @@ def run(
         semiangle_mrad=session.semiangle_mrad,
         object_sampling_A=session._output_sampling(factor),
         upsample=factor,
-        phase_estimator=policy["method"],
         amplitude_estimated=policy["method"] == "complex",
         reconstruction_method=policy["method"],
         reconstruction_options=dict(policy),

@@ -1254,7 +1254,8 @@ class DirectPtycho:
 
     def _finish_fit(self, result: DirectPtychoResult) -> DirectPtychoResult:
         """Reconstruct a fit's SSB phase (the phase of the mean wave) at the native scan sampling and keep it on the result."""
-        if result.phase_estimator == "phase_of_mean" and result.upsample == 1:
+        # a backend fit that estimated the amplitude holds its working image, not the phase of the mean wave
+        if result.reconstruction_method == "phase_of_mean" and not result.amplitude_estimated and result.upsample == 1:
             result.phase_clim = result.phase_limits
             return self._accept_result(result)
         started = time.perf_counter()
@@ -1262,7 +1263,6 @@ class DirectPtycho:
         result.timings["final_native_reconstruction_s"] = time.perf_counter() - started
         result.object_wave = displayed.object_wave
         result.phase_clim = result.phase_limits
-        result.phase_estimator = displayed.phase_estimator
         result.amplitude_estimated = False
         return self._accept_result(result)
 
@@ -1329,7 +1329,7 @@ class DirectPtycho:
             first, object_wave=self._unit_wave(phase), aberrations=aberrations,
             sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
             scan_detector_rotation_deg=self.scan_detector_rotation_deg, sample_agreement=agreement,
-            loss=None if loss is None else float(loss), phase_estimator="phase_of_mean", phase_clim=None,
+            loss=None if loss is None else float(loss), phase_clim=None,
             amplitude_estimated=False, trial_records=[], tilt_fit_gain=None, elapsed_s=elapsed_s,
             timings={"mapped_branch_s": elapsed_s}, refine_nfev=0, refine_elapsed_s=0.0,
             optimizer={**dict(first.optimizer or {}),
@@ -1383,7 +1383,6 @@ class DirectPtycho:
             self._compare_standard = compare_standard
         if refined is not kept:
             refined.trial_records, refined.rotation_branches = kept.trial_records, kept.rotation_branches
-            refined.num_trials = kept.num_trials
             if kept.elapsed_s is not None:
                 refined.elapsed_s = kept.elapsed_s + record["seconds"]
             self.set_rotation(refined.scan_detector_rotation_deg)
@@ -1555,11 +1554,11 @@ class DirectPtycho:
             scan_detector_rotation_flipped=self.scan_detector_rotation_flipped,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
             object_sampling_A=self._output_sampling(upsample), upsample=upsample,
-            phase_estimator="phase_of_mean", amplitude_estimated=False, source_path=self.source_path,
+            amplitude_estimated=False, source_path=self.source_path,
             metadata={"trial_ids": [record["trial"] for record in records]},
         )
 
-    def show(self, view: Literal["interactive", "regularization", "depth", "tilt", "parameters", "focus"] = "interactive", *,
+    def show(self, view: Literal["interactive", "regularization", "depth", "tilt", "parameters", "focus", "trials"] = "interactive", *,
              size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
              rows: int | None = None, columns: int | None = None,
              cmap: str | None = None, save: str | Path | None = None,
@@ -1580,6 +1579,14 @@ class DirectPtycho:
         If no fit exists, the ordinary joint fit runs first. All unplotted
         parameters remain fixed; these are not spatial maps or uncertainties.
 
+        ``show("trials", best=5)`` (or ``last=5``, ``first=5``) shows search attempts of the latest
+        ``aberrations()`` as phase images with a compact parameter table. Supply exactly one positive count:
+        ``best`` selects the lowest search loss within the latest recorded search, ``last`` and ``first`` completed
+        attempts in time order; local refinement is not a trial. ``upsample`` (``"auto"`` by default, ``run``'s
+        rule) sets the shown phases' output factor; the trials were searched on the native grid and this never
+        reruns the search. ``size``, ``rows`` and ``columns`` lay out the panels (two columns by default);
+        ``axsize`` gives panel inches instead of ``size``.
+
         ``show("focus")`` displays actual reconstructed phase images in Show2D,
         varying focus and model depth spread around the joint fit. Use
         ``layout="stack"`` for Show3D: a depth panel per stack and a shared
@@ -1590,9 +1597,10 @@ class DirectPtycho:
 
         Parameters
         ----------
-        view : {"interactive", "depth", "tilt", "parameters", "focus"}, optional
+        view : {"interactive", "depth", "tilt", "parameters", "focus", "trials"}, optional
             The existing ShowPtycho widget, the focus-depth landscape, the
-            row-column tilt landscape, both landscapes, or reconstructed images.
+            row-column tilt landscape, both landscapes, reconstructed images,
+            or selected search trials.
         size : {"small", "medium", "large", "xlarge"}, int or None, optional
             Plot or focus-gallery panel size only; medium by default. Accepts
             a positive integer width in pixels, or presets corresponding to
@@ -1654,7 +1662,13 @@ class DirectPtycho:
         >>> ptycho.show("focus", layout="stack")  # doctest: +SKIP
         >>> ptycho.show("focus", columns=2, size="medium")  # doctest: +SKIP
         >>> ptycho.show("focus", mode="static", depth_spread_nm=15)  # doctest: +SKIP
+        >>> ptycho.show("trials", best=5)  # doctest: +SKIP
+        >>> ptycho.show("trials", last=5, size="medium", columns=2)  # doctest: +SKIP
         """
+        if view == "trials":
+            if any(value is not None for value in (cmap, save, region, mode)) or show_probe:
+                raise ValueError("show('trials') takes best, last or first, upsample, size, rows, columns and axsize.")
+            return self._show_trials(size=size, rows=rows, columns=columns, **options)
         if show_probe and view not in ("interactive", "regularization"):
             raise ValueError("Use show_probe=True with the interactive or regularization view.")
         if view == "regularization":
@@ -1729,46 +1743,13 @@ class DirectPtycho:
             return ProbeExplorer(self, **options)
         return ShowPtycho(self, **options)
 
-    def show_trials(self, *, best: int | None = None, last: int | None = None,
-                    first: int | None = None, upsample: int | Literal["auto"] = "auto",
-                    size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
-                    columns: int | None = None, rows: int | None = None,
-                    axsize: tuple[float, float] | None = None):
-        """Show selected attempts as phase images with a compact parameter table.
-
-        Parameters
-        ----------
-        best, last, first
-            Supply exactly one positive count. ``best`` selects the lowest
-            search loss within the latest recorded search; ``last`` and ``first``
-            select completed attempts in time order. Local refinement is not
-            an Optuna trial and is displayed separately in the final report.
-        upsample
-            Output factor of the shown phases, ``"auto"`` by default (``reconstruct``'s rule; the title names it).
-            The trials were searched, and their losses measured, on the native grid; this never reruns the search.
-        size
-            Per-panel size: small, medium (default), large, xlarge, or a
-            positive integer pixel width such as 900.
-        columns, rows
-            Images across or down the grid. Default is two columns with rows
-            calculated automatically. If both are given, all images must fit.
-        axsize
-            Advanced panel dimensions in inches instead of size.
-
-        Returns
-        -------
-        matplotlib.figure.Figure
-            Shared-contrast phase panels, calibrated scale bars and trial table.
-            The figure renders once as a bare notebook expression.
-
-        Examples
-        --------
-        >>> aberrations = ptycho.aberrations(tilt=True)
-        >>> ptycho.show_trials(best=5)
-        >>> ptycho.show_trials(last=5)
-        >>> ptycho.show_trials(first=5)
-        >>> ptycho.show_trials(best=5, size="medium", columns=2)
-        """
+    def _show_trials(self, *, best: int | None = None, last: int | None = None,
+                     first: int | None = None, upsample: int | Literal["auto"] = "auto",
+                     size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
+                     columns: int | None = None, rows: int | None = None,
+                     axsize: tuple[float, float] | None = None):
+        """``show("trials")``: the selected attempts as shared-contrast phase panels with calibrated scale bars and
+        a trial table, as a closed figure that renders once in a notebook."""
         from quantem.gpu.display._layout import panel_inches, resolve_columns
 
         if size is not None and axsize is not None:
@@ -2353,7 +2334,7 @@ class DirectPtycho:
             signature = self._result_signature(
                 "aberrations",
                 {
-                    "num_trials": int(trials),
+                    "trials": int(trials),
                     "refinement": refinement,
                     "search_ranges": requested["search_ranges"] if tilt else search_ranges,
                     "refine_lock": refine_lock,
@@ -2743,7 +2724,6 @@ class DirectPtycho:
         coefs = validate_aberrations({**coefs, **(aberrations or {})}, higher_order=True)
         settings = {
             "aberrations": coefs, "compute_loss": bool(compute_loss), "upsample": upsample,
-            "phase_estimator": "phase_of_mean",
             "sample_tilt_mrad": tilt, "depth_spread_nm": depth,
         }
         paths = signature = None
@@ -2766,7 +2746,7 @@ class DirectPtycho:
         if (not force and save_dir is None and parameters is None and aberrations is None
                 and cached is not None and cached.reconstruction_method == "phase_of_mean"
                 and cached.upsample == upsample
-                and cached.phase_estimator == "phase_of_mean"
+                and not cached.amplitude_estimated
                 and cached.scan_detector_rotation_deg == self.scan_detector_rotation_deg
                 and cached.aberrations == coefs
                 and cached.sample_tilt_mrad == tilt
@@ -2791,7 +2771,7 @@ class DirectPtycho:
             loss=loss, elapsed_s=time.perf_counter() - started, num_bright_field_pixels=self.num_bright_field_pixels,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
             object_sampling_A=self._output_sampling(upsample), upsample=upsample,
-            phase_estimator="phase_of_mean", amplitude_estimated=False,
+            amplitude_estimated=False,
             phase_clim=correction.phase_limits if correction is not None else None,
             fit_scan_region=correction.fit_scan_region if correction is not None else None,
             **evidence,
@@ -3329,10 +3309,10 @@ class DirectPtycho:
             })
         return DirectPtychoResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
                          timings=timings, optimizer=dict(fit.get("optimizer", {})), depth_spread_nm=depth_spread_nm, sample_agreement=float(fit["fit"]) / backend.band_power(tuple(fit["band_inv_A"])), tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
-                         amplitude_estimated=False, phase_estimator="phase_of_mean",
+                         amplitude_estimated=False,
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),
-                         elapsed_s=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
+                         elapsed_s=time.perf_counter() - started, num_bright_field_pixels=self.num_bright_field_pixels,
                          refinement=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                          object_sampling_A=self.scan_sampling_A)
 

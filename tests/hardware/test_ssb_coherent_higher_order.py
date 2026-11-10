@@ -132,7 +132,7 @@ def test_auto_sampling_preserves_higher_orders_when_saving_and_reloading(tmp_pat
         ssb.sample_tilt_mrad = (-9., 5.)
         ssb.depth_spread_nm = 18.
         saved = ssb.run(aberrations=COEFS, upsample="auto", save_dir=tmp_path / "result")
-        assert saved.phase_estimator == "phase_of_mean"
+        assert saved.reconstruction_method == "phase_of_mean"
         assert saved.upsample == 4
         assert saved.aberrations == COEFS
         loaded = ssb.run(aberrations=COEFS, upsample="auto", save_dir=tmp_path / "result")

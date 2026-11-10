@@ -17,7 +17,7 @@ def _fit():
     return DirectPtychoResult(
         object_wave=np.exp(1j * np.arange(16).reshape(4, 4) / 100).astype(np.complex64),
         backend="mps", aberrations={"C10_nm": -8., "C12_nm": 0.2, "phi12_deg": 35., "C50_nm": 10_000.},
-        sample_tilt_mrad=(1., -2.), depth_spread_nm=12., phase_estimator="phase_of_mean",
+        sample_tilt_mrad=(1., -2.), depth_spread_nm=12.,
         num_bright_field_pixels=17, loss=0.2, voltage_kV=300., semiangle_mrad=30.,
         object_sampling_A=(.5, .5), elapsed_s=3., refinement="newton",
         optimizer={"coarse_scores": [.1, .3, .2], "refinement_trace": [[1, .3, 0.], [100, .4, 1.]],
@@ -121,7 +121,7 @@ def test_timed_budget_overlay_uses_one_clock_and_common_objective(tmp_path):
     fits = {}
     for count, normalization in ((200, 2.), (400, 4.), (600, 8.)):
         fit = _fit()
-        fit.num_trials = count
+        fit.trial_records = [{"params": {}, "loss": 0.1}] * count
         fit.optimizer.update(
             coarse_scores=[.1 / normalization, .3 / normalization, .2 / normalization],
             refinement_trace=[[1, .3 / normalization, 0.1], [100, .4 / normalization, 1.]],
