@@ -50,6 +50,23 @@ def test_profile_selects_explicit_cuda_device(monkeypatch: pytest.MonkeyPatch) -
     assert result["available_devices"] == ["cuda:0", "cuda:1"]
 
 
+def test_profile_takes_a_gpu_number(monkeypatch: pytest.MonkeyPatch) -> None:
+    """device=1 is the second visible CUDA GPU; on a Mac device=0 is the Apple GPU."""
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    assert device.profile(device=1)["device"] == "cuda:1"
+    assert device.profile(device=0)["device"] == "cuda:0"
+    with pytest.raises(ValueError, match=r"2 CUDA device\(s\) are visible"):
+        device.profile(device=2)
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert device.profile(device=0)["device"] == "mps"
+
+
 def test_profile_rejects_cuda_index_outside_visible_devices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

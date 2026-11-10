@@ -20,7 +20,7 @@ INSTALL_WIDGET_MPS = 'pip install "quantem.widget[mps]"'
 _printed: set[str] = set()
 
 
-def resolve_device(device: str | None = "auto") -> str:
+def resolve_device(device: int | str | None = "auto") -> str:
     """Resolve ``device=`` to a Torch device string, the same way in every caller that accepts CPU.
 
     ``"auto"`` (or ``None``) picks the best available device, CUDA, then
@@ -181,7 +181,7 @@ def release_cached_memory(verbose: bool = False) -> float:
     return 0.0
 
 
-def profile(device: str | None = None) -> dict[str, str | list[str] | None]:
+def profile(device: int | str | None = None) -> dict[str, str | list[str] | None]:
     """Return a notebook-friendly summary of the active compute environment.
 
     With no argument, choose CUDA device 0, MPS, or CPU automatically and never
@@ -213,6 +213,9 @@ def profile(device: str | None = None) -> dict[str, str | list[str] | None]:
         # a broken Torch install is reported as torch=None, never raised
         torch_version = None
 
+    if isinstance(device, int) and not isinstance(device, bool):
+        # device=0 or 1 names a visible GPU: CUDA device N, or on a Mac the one Apple GPU.
+        device = "mps" if device == 0 and mps_available and not cuda_available else f"cuda:{device}"
     requested = "auto" if device is None else str(device).strip().lower()
     if requested in {"", "auto"} and cuda_available:
         backend = "cuda"
@@ -253,7 +256,7 @@ def profile(device: str | None = None) -> dict[str, str | list[str] | None]:
         resolved_device = f"cuda:{cuda_index}"
     else:
         raise ValueError(
-            f"Unknown device {device!r}; use 'auto', 'cuda:N', 'mps', or 'cpu'."
+            f"Unknown device {device!r}; use 'auto', a GPU number (0, 1), 'cuda:N', 'mps', or 'cpu'."
         )
 
     if cuda_count:
