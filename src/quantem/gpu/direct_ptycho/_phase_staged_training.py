@@ -345,13 +345,16 @@ def train(
     ):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{name} must be a positive integer.")
-    regions = _regions(ptycho.scan_shape, patch_size)
+    shape = (ptycho._input_dataset.shape[0], ptycho._input_dataset.shape[1])
+    regions = _regions(shape, patch_size)
     factor = ptycho._resolve_upsample(upsample)
     sampling = ptycho._output_sampling(factor)
-    limits = annular_limits(
-        annulus_mrad or (1.05 * ptycho.semiangle_mrad, 1.5 * ptycho.semiangle_mrad)
-    )
     pixel_margin = max(np.broadcast_to(ptycho.detector_sampling_mrad, (2,)))
+    # The annulus starts clear of the bright-field disk by two detector pixels, and grows
+    # with the pixel size when one pixel is a large fraction of the convergence angle.
+    inner = max(1.05 * ptycho.semiangle_mrad, ptycho.semiangle_mrad + 2 * pixel_margin)
+    outer = max(1.5 * ptycho.semiangle_mrad, inner + 2 * pixel_margin)
+    limits = annular_limits(annulus_mrad or (inner, outer))
     if limits[0] < ptycho.semiangle_mrad + pixel_margin:
         raise ValueError(
             "Choose an annulus outside the bright-field disk plus one detector pixel for detector-held-out training."

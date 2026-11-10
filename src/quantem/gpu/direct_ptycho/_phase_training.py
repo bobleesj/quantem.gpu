@@ -49,14 +49,29 @@ def _regions(shape, size):
         raise ValueError(
             "Use a supported native CUDA scan patch (128, 256, 512 or 1024) to avoid FFT padding."
         )
-    if rows < size or cols < 2 * size:
-        raise ValueError(
-            f"A {size}-pixel training and validation patch requires at least "
-            f"{size} rows and {2 * size} columns; got {shape}. Choose a smaller supported patch or a larger acquisition."
-        )
-    row = (rows - size) // 2
-    left, right = (cols // 2 - size) // 2, cols // 2 + (cols - cols // 2 - size) // 2
-    return [(row, row + size, c, c + size) for c in (left, right)]
+    if rows >= size and cols >= 2 * size:
+        row = (rows - size) // 2
+        left, right = (cols // 2 - size) // 2, cols // 2 + (cols - cols // 2 - size) // 2
+        return [(row, row + size, c, c + size) for c in (left, right)]
+    if cols >= size and rows >= 2 * size:
+        col = (cols - size) // 2
+        top, bottom = (rows // 2 - size) // 2, rows // 2 + (rows - rows // 2 - size) // 2
+        return [(r, r + size, col, col + size) for r in (top, bottom)]
+    if rows >= size and cols >= size:
+        # One patch fits: train and hold out complementary electron halves of the
+        # same detector patch. Weaker than two spatial regions, and recorded.
+        row, col = (rows - size) // 2, (cols - size) // 2
+        region = (row, row + size, col, col + size)
+        return [region, region]
+    if rows >= 64 and cols >= 64:
+        # Smaller scan: the whole field is the single patch; the backend pads it
+        # to the next FFT size, as it does for the phase solve.
+        region = (0, rows, 0, cols)
+        return [region, region]
+    raise ValueError(
+        f"A {size}-pixel training patch needs at least {size} rows and {size} columns; "
+        f"two spatial regions need {size} rows and {2 * size} columns. Got {shape}."
+    )
 
 
 @dataclass
