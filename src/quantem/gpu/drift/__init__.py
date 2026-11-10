@@ -11,6 +11,9 @@ Translation only: the frames are compared on their own pixel grids, displacement
 against frame 0, I_f(r) = I_0(r - d_f)."""
 
 from quantem.gpu.drift.registration import bands, peaks, prepared, register, register_spectra, spots
+from quantem.gpu.drift.simulation import simulate_drift, simulate_feedback
 from quantem.gpu.drift.series import Drift, drift, footprint, running, shifted
 
-__all__ = ["Drift", "bands", "drift", "footprint", "peaks", "prepared", "register", "register_spectra", "running", "shifted", "spots"]
+__all__ = [
+    "simulate_drift",
+    "simulate_feedback","Drift", "bands", "drift", "footprint", "peaks", "prepared", "register", "register_spectra", "running", "shifted", "spots"]

@@ -605,7 +605,8 @@ class DirectPtychoResult(Mapping[str, float]):
 
         return save_calibration(self, path)
 
-    def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt", "convergence", "damping", "probe_phase"] = "phase", *,
+    def show(self, view: Literal["phase", "amplitude", "probe", "rotation", "parameters", "depth", "tilt",
+                                 "convergence", "damping", "probe_phase"] = "phase", *,
              axsize: tuple[float, float] | None = None,
              compare: Self | Sequence[Self] | Mapping[object, Self] | None = None,
              x: Literal["auto", "time", "evaluations"] = "auto",
@@ -686,8 +687,9 @@ class DirectPtychoResult(Mapping[str, float]):
             magnitude displays, not independent-resolution FRC curves.
         fft_limit_inv_A : float or None, optional
             Display only the common Fourier band within this frequency on each
-            axis. By default, the aperture limit 2*alpha/lambda, so every
-            upsample factor shows the same physical region. Neural comparisons use full-field log10 amplitude with shared
+            axis. By default, the square inscribed in the aperture,
+            (2*alpha/lambda)/sqrt(2), so every upsample factor shows the same
+            physical region and the measured disc fills the panel. Neural comparisons use full-field log10 amplitude with shared
             1–99.8 percentile limits and magma colors. Only displayed frequency
             support is restricted; stored reconstruction arrays are unchanged.
         clim : pair of float, optional
@@ -853,10 +855,12 @@ class DirectPtychoResult(Mapping[str, float]):
             if save is not None:
                 figure.savefig(save, dpi="figure", bbox_inches="tight")
             return figure
-        if view == "phase":
+        if view in ("phase", "amplitude"):
+            if view == "amplitude" and self.amplitude is None:
+                raise ValueError("Amplitude needs method='complex'; this result estimated phase only.")
             column_sampling = float(self.object_sampling_A[1])
-            arrays = host_array(self.phase)
-            titles = _phase_title(self)
+            arrays = host_array(self.phase if view == "phase" else self.amplitude)
+            titles = _phase_title(self) if view == "phase" else f"Relative amplitude\n{self.upsample}× upsample"
             bars = scalebar(column_sampling, "Å", arrays.shape[0], axsize[0])
             panel_size = (12, 12)
         elif view == "probe":
@@ -866,7 +870,7 @@ class DirectPtychoResult(Mapping[str, float]):
                     scalebar(self.probe_sampling_mrad[1], "mrad", arrays[1].shape[0], axsize[0])]
             panel_size = (6, 6)
         else:
-            raise ValueError(f"Choose view='phase', 'probe', 'rotation', 'parameters', 'depth', 'tilt' or 'convergence'; "
+            raise ValueError(f"Choose view='phase', 'amplitude', 'probe', 'rotation', 'parameters', 'depth', 'tilt' or 'convergence'; "
                              f"got {view!r}.")
         if rows is not None or columns is not None:
             frames = arrays if isinstance(arrays, list) else ([arrays] if arrays.ndim == 2 else list(arrays))
@@ -1216,7 +1220,10 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
         limit = fft_limit_inv_A
         if limit is None and all(result.voltage_kV is not None and result.semiangle_mrad is not None
                                  for result in results):
-            limit = 2 * (results[0].semiangle_mrad / 1000.0) / wavelength_A_from_kV(results[0].voltage_kV)
+            # The square inscribed in the aperture: every pixel shown is measured,
+            # and the disc reaches the frame corners instead of leaving them black.
+            aperture = 2 * (results[0].semiangle_mrad / 1000.0) / wavelength_A_from_kV(results[0].voltage_kV)
+            limit = aperture / 2 ** 0.5
         spectra, frequency_sampling = _phase_spectra(
             phases if neural_comparison else crops, sampling,
             log_amplitude=neural_comparison, limit_inv_A=limit,
