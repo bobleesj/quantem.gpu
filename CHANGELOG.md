@@ -47,7 +47,7 @@ Saved records use the new names, under new versions. The readers accept only the
 | Result record (`save_dir`) | `quantem.ssb-result/13` | files `ssb-aberrations.{npz,json}` (were `ssb-find_aberrations`) and `ssb-run.{npz,json}` (were `ssb-reconstruct`); signature operations `aberrations`, `run`; fields and keys as in the table above |
 | Stream frame record (`<save_dir>/stream/<frame>.json`) | `quantem.ssb-stream-frame/5` | shared settings key `upsample` |
 | Neural phase checkpoint (`.pt`) | `quantem.phase-refinement/2` | key `upsample` |
-| ShowPtycho calibration (`calibration.json`) | `quantem.ssb-calibration/8` | `upsample`, `upsample_mode`, `reconstruction_method` `"phase_of_mean"`, `phase_damp`, `amplitude_damp` |
+| ShowPtycho calibration (`calibration.json`) | `quantem.ssb-calibration/8` | `upsample`, `upsample_mode`, `reconstruction_method` `"phase_of_mean"`, `phase_damp`, `amplitude_damp`; no `phase_estimator` key |
 | QuantEM Live screening record (`config.json`) | `quantem.screen-acquisition/3` | the fit block is `computed.phase_of_mean` (was `computed.ssb`); `quantem.ssb-fit/7` inside is unchanged |
 
 Rewrite existing files once, offline; each rewritten file keeps its original as `<name>.before`:

@@ -42,7 +42,7 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
     )
     capture_calibration(session, result)
     original = json.loads(result.save_calibration(tmp_path / "calibration.json").read_text())
-    assert original["phase_estimator"] == "phase_of_mean"  # Conventional comparison view.
+    assert "phase_estimator" not in original
     assert original["reconstruction_method"] == method
     assert original["reconstruction_options"] == options
     assert original["reconstruction_diagnostics"] == result.reconstruction_diagnostics
@@ -57,7 +57,7 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
     restored = load_result(paths=paths, signature=signature, backend="mps")
     reopened = json.loads(restored.save_calibration(tmp_path / "reopened.json").read_text())
     for key in ("reconstruction_method", "reconstruction_options", "reconstruction_diagnostics",
-                "phase_estimator", "upsample", "upsample_mode", "aberrations", "session_identity"):
+                "upsample", "upsample_mode", "aberrations", "session_identity"):
         assert reopened[key] == original[key]
     np.testing.assert_array_equal(restored.object_wave, result.object_wave)
     assert result.phase_estimator == method

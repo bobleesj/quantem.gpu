@@ -10,8 +10,8 @@ from quantem.gpu.geometry import sample_to_propagator_tilt
 from quantem.gpu.optics.physics import ssb_upsample_factor
 
 # 8: the output factor is "upsample" with "upsample_mode" (were "upsampling", "upsampling_mode"), the conventional
-#    method is "phase_of_mean" (was "ssb"), and the direct strengths are phase_damp and amplitude_damp (were
-#    phase_damping and amplitude_damping).
+#    method is "phase_of_mean" (was "ssb"), the direct strengths are phase_damp and amplitude_damp (were
+#    phase_damping and amplitude_damping), and "phase_estimator" is gone: reconstruction_method names the method.
 # 7: the output factor is "upsampling" (was "upsampling_factor") and reconstruction_options names the direct
 #    strengths phase_damping and amplitude_damping (were phase_regularization and amplitude_regularization).
 # An earlier record is rewritten once with quantem.widget's scripts/rewrite_ssb_calibration.py.
@@ -112,9 +112,6 @@ def save_calibration(result, path):
             sample, scan_detector_rotation_deg=result.scan_detector_rotation_deg,
             scan_detector_rotation_flipped=result.scan_detector_rotation_flipped)),
         "loss": result.loss,
-        # ShowPtycho's conventional SSB view, the phase of the mean wave, whatever image the result holds (a result
-        # saved with a retired estimator included); the regularized solver is recorded separately below.
-        "phase_estimator": "phase_of_mean",
         "reconstruction_method": method,
         "reconstruction_options": deepcopy(result.reconstruction_options),
         "reconstruction_diagnostics": deepcopy(result.reconstruction_diagnostics),
