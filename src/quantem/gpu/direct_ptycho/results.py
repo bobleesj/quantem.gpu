@@ -543,6 +543,34 @@ class DirectPtychoResult(Mapping[str, float]):
             raise ValueError("A trial stack has several probes. Reconstruct one trial's parameters first.")
         return model_probe(self, space=space)
 
+    def save(self, path: str | Path = "phase.npz") -> Path:
+        """Write this result's host arrays to one ``.npz``.
+
+        Writes ``phase``, ``amplitude`` when the method estimated it, and
+        ``neural_phase`` when the model applied one. The device arrays stay on
+        the GPU; the file holds plain NumPy arrays, so no CuPy import is needed
+        at the call site.
+
+        Parameters
+        ----------
+        path
+            Destination; ``.npz`` is appended when missing.
+
+        Returns
+        -------
+        pathlib.Path
+            The file written.
+        """
+        target = Path(path).with_suffix(".npz")
+        arrays = {"phase": host_array(self.phase)}
+        if self.amplitude is not None:
+            arrays["amplitude"] = host_array(self.amplitude)
+        if self.neural_phase is not None:
+            arrays["neural_phase"] = host_array(self.neural_phase)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(target, **arrays)
+        return target
+
     def save_calibration(self, path: str | Path = "calibration.json") -> Path:
         """Save this fitted model for reuse in ShowPtycho without fitting again.
 

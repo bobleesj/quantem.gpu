@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import torch
+from tqdm.auto import tqdm
 from torch import nn
 
 from quantem.gpu import detector
@@ -192,7 +193,7 @@ def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsample, annulus_mr
         selected = 0
         best = (deepcopy(unet.state_dict()), deepcopy(head.state_dict()), readout.detach().clone())
         trace = [dict(step=0, validation_gain=0.0)]
-        for step in range(1, steps + 1):
+        for step in tqdm(range(1, steps + 1), desc="correction", leave=False):
             optimizer.zero_grad(set_to_none=True)
             loss = -evaluate(training, step % 2) * 1e5
             loss.backward()

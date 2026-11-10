@@ -94,3 +94,45 @@ def _frame_count(filepath: str) -> int | None:
         return total
     except (OSError, KeyError, ValueError, TypeError):
         return None
+
+
+def newest(
+    folder: str,
+    *,
+    pattern: str = "*_master.h5",
+    recursive: bool = True,
+) -> str:
+    """Return the most recently written file matching pattern below folder.
+
+    Parameters
+    ----------
+    folder
+        Root folder to search.
+    pattern
+        Filename glob, ``"*.qem"`` for a saved acquisition.
+    recursive
+        Search child folders when ``True``.
+
+    Returns
+    -------
+    str
+        Absolute path of the newest match.
+
+    Raises
+    ------
+    FileNotFoundError
+        When nothing below folder matches pattern.
+    """
+    from pathlib import Path
+
+    root = Path(folder)
+    found = list(root.rglob(pattern) if recursive else root.glob(pattern))
+    found = [path for path in found if path.is_file() and not path.name.startswith(".")]
+    if not found:
+        raise FileNotFoundError(f"no {pattern} under {folder}")
+    return str(max(found, key=modified_time))
+
+
+def modified_time(path) -> float:
+    """Seconds since the epoch when path last changed."""
+    return path.stat().st_mtime

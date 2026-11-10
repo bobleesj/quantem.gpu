@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from tqdm.auto import tqdm
 from torch import nn
 
 from quantem.gpu.device.cuda_runtime import cp
@@ -159,7 +160,7 @@ def _fit_unet(training, validation, steps, trace):
     best, selected, saved = 0.0, 0, deepcopy(network.state_dict())
     checks = {0, 5, 10, 25, 50, 100, 200, 400, steps}
     began = time.perf_counter()
-    for step in range(steps + 1):
+    for step in tqdm(range(steps + 1), desc="correction", leave=False):
         if step in checks or step % 100 == 0:
             with torch.no_grad():
                 gain = float(
@@ -289,7 +290,7 @@ def _fit_head(training, validation, steps, seed, trace):
     optimizer = torch.optim.AdamW(head.parameters(), lr=0.002, weight_decay=0.0001)
     best, selected, saved = 0.0, 0, deepcopy(head.state_dict())
     significant, last_change = 0.0, 0
-    for step in range(steps + 1):
+    for step in tqdm(range(steps + 1), desc=f"head {seed}", leave=False):
         if step % 100 == 0 or step == steps:
             with torch.no_grad():
                 gain = float(torch.stack([_direction_gain(c, head) for c in validation]).mean())

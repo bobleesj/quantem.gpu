@@ -8,7 +8,7 @@ decoders, metadata parsers and scheduling helpers remain private to the I/O
 domain.
 """
 
-from quantem.gpu.io.discover import discover
+from quantem.gpu.io.discover import discover, newest
 from quantem.gpu.io.inspect import inspect
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.paired import PairedLoader
@@ -18,4 +18,4 @@ from quantem.gpu.io.report import report
 from quantem.gpu.io.save import save
 
 # Keep inspect available for existing readiness/metadata consumers.
-__all__ = ["DataRepresentation", "Dataset4dstemGPU", "PairedLoader", "discover", "load", "report", "save"]
+__all__ = ["DataRepresentation", "Dataset4dstemGPU", "PairedLoader", "discover", "load", "newest", "report", "save"]
