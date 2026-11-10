@@ -41,7 +41,7 @@ def run(
     bright_field_center_px: tuple[int, int] | None = None,
     bright_field_radius_px: float | None = None,
     upsample_factor: int = 2,
-    fit_aberrations: bool = False,
+    aberrations: bool = False,
     scan_sampling_A: float | tuple[float, float] | None = None,
     semiangle_mrad: float | None = None,
     detector_sampling_mrad: tuple[float, float] | None = None,
@@ -53,7 +53,7 @@ def run(
     a slightly tilted beam, so defocus and astigmatism shift its scan image in
     proportion to that tilt. The shifts are measured by cross-correlation and
     undone, and the images are summed into one phase-contrast image. With
-    ``fit_aberrations=True`` the shift pattern also gives defocus, two-fold
+    ``aberrations=True`` the shift pattern also gives defocus, two-fold
     astigmatism and the scan-detector rotation, in the units and convention
     ``SSB`` takes.
 
@@ -80,7 +80,7 @@ def run(
         image's scan samples are placed at their measured sub-pixel shifts
         on the finer grid, so where the shifts differ (defocus) the images
         interleave and resolve detail finer than the scan step.
-    fit_aberrations
+    aberrations
         Fit ``C10_nm``, ``C12_nm``, ``phi12_deg`` and the scan-detector rotation from
         the shifts. Needs ``scan_sampling_A`` and the detector calibration,
         ``semiangle_mrad`` or ``detector_sampling_mrad``.
@@ -114,7 +114,7 @@ def run(
         If the acquisition is on an Apple GPU (MPS); parallax has no MPS
         implementation.
     ValueError
-        If the acquisition is not on a CUDA GPU, ``fit_aberrations`` is
+        If the acquisition is not on a CUDA GPU, ``aberrations()`` is
         requested without the scan or detector calibration, or
         ``scan_sampling_A`` or ``detector_sampling_mrad`` is neither one
         number nor a ``(row, col)`` pair.
@@ -123,7 +123,7 @@ def run(
     --------
     >>> from quantem.gpu import DirectPtycho, io, parallax
     >>> data = io.load("scan_master.h5", backend="cuda")
-    >>> result = parallax.run(data, fit_aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
+    >>> result = parallax.run(data, aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
     >>> ssb = DirectPtycho(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
     ...           aberrations=result.aberrations, scan_detector_rotation_deg=result.scan_detector_rotation_deg)
     """
@@ -143,9 +143,9 @@ def run(
             f"Parallax runs on a CUDA GPU, but this acquisition is on {device}. "
             "Load it with io.load(path, backend='cuda')."
         )
-    if fit_aberrations and (scan_sampling_A is None or (semiangle_mrad is None and detector_sampling_mrad is None)):
+    if aberrations and (scan_sampling_A is None or (semiangle_mrad is None and detector_sampling_mrad is None)):
         raise ValueError(
-            "fit_aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
+            "aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
             "calibration: semiangle_mrad, or detector_sampling_mrad in mrad per detector pixel."
         )
     # A sampling is a (row, col) pair, as SSB reads it: one number was broadcast to both axes here,
@@ -183,7 +183,7 @@ def run(
         torch.cuda.empty_cache()
 
         aberrations = scan_detector_rotation_deg = None
-        if fit_aberrations:
+        if aberrations:
             # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
             if detector_sampling_mrad is None:
                 mean_pattern = detector.mean(data) if mean_pattern is None else mean_pattern
@@ -193,7 +193,7 @@ def run(
             pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)
             # a step per axis: row shifts in row steps, column shifts in column steps
             angles_rad = (pixels - pixels.mean(axis=0)) * np.asarray(detector_sampling_mrad, dtype=np.float64) * 1e-3
-            aberrations, signed_rotation_deg = fit_aberrations_from_shifts(
+            aberrations, signed_rotation_deg = aberrations_from_shifts(
                 cp.asnumpy(global_shifts).astype(np.float64) * np.asarray(scan_sampling_A, dtype=np.float64), angles_rad
             )
             # The fit keeps its angle within 90 degrees of zero; a result states the physical rotation in
@@ -209,7 +209,7 @@ def run(
         )
 
 
-def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float], float]:
+def aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float], float]:
     """Fit defocus, two-fold astigmatism and the scan-detector rotation to parallax shifts.
 
     With SSB's aberration function ``chi = (pi / lambda) alpha^T A alpha``,
@@ -220,10 +220,10 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     symmetric aberration matrix, then the scan-detector rotation ``R``. A
     least-squares fit of ``M`` and its polar decomposition ``M = R P`` (``P =
     R^T A R``, the aberrations in the scan frame) separate the two, as
-    QuantEM's ``fit_aberrations_from_shifts`` does. The half turn ``(R, P) ->
+    QuantEM's ``aberrations_from_shifts`` does. The half turn ``(R, P) ->
     (-R, -P)`` fits equally well; the rotation is kept within 90 degrees of
     zero and the aberrations take its sign, the 180-degree ambiguity that
-    ``DirectPtycho.fit_aberrations(check_rotation=True)`` settles.
+    ``DirectPtycho.aberrations(check_rotation=True)`` settles.
 
     Parameters
     ----------

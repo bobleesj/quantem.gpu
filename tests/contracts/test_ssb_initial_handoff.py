@@ -173,7 +173,7 @@ def test_initial_and_final_auto_views_preserve_native_fit(handoff):
     assert result.upsample == 1
     assert session._aberration_search is result
     assert session._reconstruction is result
-    assert session.aberrations == result.aberrations
+    assert session.known_aberrations == result.aberrations
     assert session.sample_tilt_mrad == result.sample_tilt_mrad
 
 

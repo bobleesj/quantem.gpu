@@ -102,12 +102,12 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     saved = tmp_path / "result"
     backend = _Backend()
 
-    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
+    first = _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
         num_trials=200,
         save_dir=saved,
         verbose=False,
     )
-    second = _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
+    second = _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
         num_trials=200,
         save_dir=saved,
         verbose=False,
@@ -145,16 +145,16 @@ def test_saved_fit_without_diagnostic_does_not_satisfy_a_loss_request(tmp_path, 
     backend = _Backend()
     options = dict(tilt=False, num_trials=200, save_dir=tmp_path / "result",
                    verbose=False)
-    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary",
+    first = _session(monkeypatch, source, backend).aberrations(search="primary",
         **options, compute_loss=False,
     )
-    reopened = _session(monkeypatch, source, backend).fit_aberrations(search="primary",
+    reopened = _session(monkeypatch, source, backend).aberrations(search="primary",
         **options, compute_loss=False,
     )
     assert reopened.reused and reopened.loss is None and first.loss is None
     assert backend.fit_calls == 1
     np.testing.assert_array_equal(reopened.phase, first.phase)
-    diagnostic = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **options)
+    diagnostic = _session(monkeypatch, source, backend).aberrations(search="primary", **options)
     assert not diagnostic.reused and diagnostic.loss == 0.125
     assert backend.fit_calls == 2
 
@@ -167,14 +167,14 @@ def test_changed_fit_settings_or_source_recompute(tmp_path, monkeypatch) -> None
     saved = tmp_path / "result"
     backend = _Backend()
 
-    _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
         num_trials=200, save_dir=saved, verbose=False
     )
-    _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
         num_trials=201, save_dir=saved, verbose=False
     )
     source.write_bytes(b"different detector counts")
-    _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
         num_trials=201, save_dir=saved, verbose=False
     )
 
@@ -193,16 +193,16 @@ def test_changed_calibration_recomputes(tmp_path, monkeypatch) -> None:
 
     first = _session(monkeypatch, source, backend)
     first.calibration_path = str(calibration)
-    first.fit_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
+    first.aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
 
     same = _session(monkeypatch, source, backend)
     same.calibration_path = str(calibration)
-    reused = same.fit_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
+    reused = same.aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
 
     calibration.write_text('{"rotation": 2}', encoding="utf-8")
     changed = _session(monkeypatch, source, backend)
     changed.calibration_path = str(calibration)
-    recomputed = changed.fit_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
+    recomputed = changed.aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
 
     assert reused.reused
     assert not recomputed.reused
@@ -217,8 +217,8 @@ def test_force_recomputes_matching_fit(tmp_path, monkeypatch) -> None:
     saved = tmp_path / "result"
     backend = _Backend()
 
-    _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
-    forced = _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False, save_dir=saved, verbose=False)
+    forced = _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False,
         save_dir=saved, force=True, verbose=False
     )
 
@@ -276,7 +276,7 @@ def test_saved_result_requires_source_identity(tmp_path, monkeypatch) -> None:
     import pytest
 
     with pytest.raises(ValueError, match="requires source_path"):
-        session.fit_aberrations(search="primary", tilt=False, save_dir=tmp_path / "result", verbose=False)
+        session.aberrations(search="primary", tilt=False, save_dir=tmp_path / "result", verbose=False)
 
 
 def test_array_inputs_never_reuse_saved_results_by_source_path(tmp_path, monkeypatch):
@@ -288,7 +288,7 @@ def test_array_inputs_never_reuse_saved_results_by_source_path(tmp_path, monkeyp
         session = _session(monkeypatch, source, backend)
         session.source_kind = "array"
         session._data[...] = offset
-        search = session.fit_aberrations(search="primary", tilt=False, save_dir=tmp_path / "search", verbose=False)
+        search = session.aberrations(search="primary", tilt=False, save_dir=tmp_path / "search", verbose=False)
         result = session.run(save_dir=tmp_path / "fixed")
         assert not search.reused
         assert not result.reused
@@ -306,9 +306,9 @@ def test_changed_refinement_start_invalidates_saved_search(tmp_path, monkeypatch
     session = _session(monkeypatch, source, backend)
     settings = dict(tilt=False, num_trials=0, refinement=None, check_rotation=False,
                     save_dir=tmp_path / "search", verbose=False)
-    first = session.fit_aberrations(search="primary", **settings)
+    first = session.aberrations(search="primary", **settings)
     session.run(aberrations={"C10_nm": 12.0})
-    second = session.fit_aberrations(search="primary", **settings)
+    second = session.aberrations(search="primary", **settings)
     assert not second.reused
     assert backend.fit_calls == 2
     assert first.metadata["signature"]["settings"]["starting_aberrations"]["C10_nm"] == 0.0
@@ -326,10 +326,10 @@ def test_cuda_reuse_restores_object_wave_to_cuda(tmp_path, monkeypatch) -> None:
     saved = tmp_path / "result"
     backend = _Backend("cuda")
 
-    _session(monkeypatch, source, backend, device="cuda").fit_aberrations(search="primary", tilt=False,
+    _session(monkeypatch, source, backend, device="cuda").aberrations(search="primary", tilt=False,
         save_dir=saved, verbose=False
     )
-    reused = _session(monkeypatch, source, backend, device="cuda").fit_aberrations(search="primary", tilt=False,
+    reused = _session(monkeypatch, source, backend, device="cuda").aberrations(search="primary", tilt=False,
         save_dir=saved, verbose=False
     )
 
@@ -615,12 +615,12 @@ def test_a_retired_refinement_reuses_the_automatic_result(tmp_path, monkeypatch,
 
     backend.fit_sample = fit_sample
     settings = dict(tilt=tilt, save_dir=saved, check_rotation=False, verbose=False)
-    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **settings)
+    first = _session(monkeypatch, source, backend).aberrations(search="primary", **settings)
     assert first.refinement == "newton"
     assert first.num_trials == 200
     capsys.readouterr()
     for method in ("newton", "nelder-mead", "bfgs"):
-        explicit = _session(monkeypatch, source, backend).fit_aberrations(
+        explicit = _session(monkeypatch, source, backend).aberrations(
             search="primary", refinement=method, **settings)
         assert explicit.reused and explicit.refinement == "newton"
         assert explicit.metadata["signature"]["settings"]["refinement"] == "newton"
@@ -631,7 +631,7 @@ def test_a_retired_refinement_reuses_the_automatic_result(tmp_path, monkeypatch,
         assert joint_calls[0]["polish"] == "newton" and joint_calls[0]["polish_starts"] == 3
     else:
         assert backend.fit_calls == 1
-    unrefined = _session(monkeypatch, source, backend).fit_aberrations(search="primary",
+    unrefined = _session(monkeypatch, source, backend).aberrations(search="primary",
         refinement=None, **settings,
     )
     assert not unrefined.reused
@@ -657,14 +657,14 @@ def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_
     optics = {"C10_nm": -10.1, "C12_nm": .4, "phi12_deg": 15.0}
     settings = dict(tilt=True, fixed_aberrations=optics, save_dir=tmp_path / "result",
                     check_rotation=False, compare_standard=False, verbose=False)
-    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **settings)
-    second = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **settings)
+    first = _session(monkeypatch, source, backend).aberrations(search="primary", **settings)
+    second = _session(monkeypatch, source, backend).aberrations(search="primary", **settings)
     assert first.sample_agreement == second.sample_agreement == 0.9
     assert second.reused and len(calls) == 1
     assert calls[0]["polish"] == "newton"
     assert calls[0]["fixed_aberrations"]["C10"] == -101.0
     settings["fixed_aberrations"] = {**optics, "C10_nm": -9.0}
-    changed = _session(monkeypatch, source, backend).fit_aberrations(search="primary", **settings)
+    changed = _session(monkeypatch, source, backend).aberrations(search="primary", **settings)
     assert not changed.reused and len(calls) == 2
 
 
@@ -724,7 +724,7 @@ def test_saved_result_is_reused_after_its_folder_moves_and_holds_no_absolute_pat
     source.parent.mkdir(parents=True)
     source.write_bytes(b"detector counts")
     backend = _Backend()
-    first = _session(monkeypatch, source, backend).fit_aberrations(search="primary", tilt=False, save_dir=folder, verbose=False)
+    first = _session(monkeypatch, source, backend).aberrations(search="primary", tilt=False, save_dir=folder, verbose=False)
     record = json.loads((folder / "ssb-find_aberrations.json").read_text(encoding="utf-8"))
     assert record["input"]["source"] == {"file_name": "scan.bin", "relative_path": "data/scan.bin"}
     assert _absolute_paths(record) == []
@@ -736,12 +736,12 @@ def test_saved_result_is_reused_after_its_folder_moves_and_holds_no_absolute_pat
     moved = tmp_path / "elsewhere" / "session"
     moved.parent.mkdir()
     shutil.move(folder, moved)
-    again = _session(monkeypatch, moved / "data" / "scan.bin", backend).fit_aberrations(search="primary",
+    again = _session(monkeypatch, moved / "data" / "scan.bin", backend).aberrations(search="primary",
         tilt=False, save_dir=moved, verbose=False)
     assert again.reused and backend.fit_calls == 1
     np.testing.assert_array_equal(again.object_wave, first.object_wave)
 
     (moved / "data" / "scan.bin").write_bytes(b"other detector counts")
-    other = _session(monkeypatch, moved / "data" / "scan.bin", backend).fit_aberrations(search="primary",
+    other = _session(monkeypatch, moved / "data" / "scan.bin", backend).aberrations(search="primary",
         tilt=False, save_dir=moved, verbose=False)
     assert not other.reused and backend.fit_calls == 2

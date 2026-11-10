@@ -90,14 +90,19 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
     initial = {"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0}
 
     class Candidate:
+        def __init__(self):
+            self.known_aberrations = dict(initial)
+            self.sample_tilt_mrad = None
+            self.depth_spread_nm = None
+
         def set_rotation(self, angle):
             self.scan_detector_rotation_deg = angle
 
-        def fit_aberrations(self, **options):
-            calls.append((self.scan_detector_rotation_deg, dict(self.aberrations),
+        def aberrations(self, **options):
+            calls.append((self.scan_detector_rotation_deg, dict(self.known_aberrations),
                           self.sample_tilt_mrad, self.depth_spread_nm, options))
             # A completed fit changes state; none of it may seed the next case.
-            self.aberrations = {"C10_nm": 13.0, "C12_nm": 2.0, "phi12_deg": 37.0}
+            self.known_aberrations = {"C10_nm": 13.0, "C12_nm": 2.0, "phi12_deg": 37.0}
             self.sample_tilt_mrad, self.depth_spread_nm = (3.0, 4.0), 9.0
             self.latest = SimpleNamespace(case=len(calls))
             return self.latest
@@ -117,7 +122,7 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
             closed.append(True)
 
     parent = SimpleNamespace(input_scan_shape=(128, 128), scan_detector_rotation_deg=340.0,
-                             select_region=select_region, aberrations={"C10_nm": 4.0})
+                             select_region=select_region, known_aberrations={"C10_nm": 4.0})
     comparison = compare_rotation_defocus(parent, num_trials=200, refinement="newton", verbose=False)
     assert len(selections) == len(closed) == 1
     assert selections[0][0] == (0, 128, 0, 128)
@@ -127,4 +132,4 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
     assert all(row[4]["num_trials"] == 200 and row[4]["refinement"] == "newton" for row in calls)
     assert [result.case for result in comparison.fits] == [1, 2, 3, 4]
     assert comparison.status.startswith("Unresolved")
-    assert parent.scan_detector_rotation_deg == 340.0 and parent.aberrations == {"C10_nm": 4.0}
+    assert parent.scan_detector_rotation_deg == 340.0 and parent.known_aberrations == {"C10_nm": 4.0}

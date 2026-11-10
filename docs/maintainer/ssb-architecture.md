@@ -18,7 +18,7 @@ with DirectPtycho.open(
     scan_sampling_A=(0.5, 0.5),
     scan_detector_rotation_deg=351.8,
 ) as ptycho:
-    result = ptycho.fit_aberrations(save_dir="results/ssb")
+    result = ptycho.aberrations(save_dir="results/ssb")
 ```
 
 The public units are fixed: kV, mrad, angstrom, nanometres for `C10_nm` and
@@ -36,14 +36,14 @@ not exported from `quantem.gpu` or `quantem.gpu.direct_ptycho`.
 
 The scientific defaults are 200 trials, the least-squares agreement of the SSB
 model with the full-BF evidence fitted with the sample tilt and depth spread
-(`fit_aberrations()`), refinement on exact derivatives (`refinement="auto"`),
+(`aberrations()`), refinement on exact derivatives (`refinement="auto"`),
 float32 real values, and complex64 object values. One vocabulary names the fit
 methods, on every backend that fits:
 
 | Call | Objective | Search and refinement | Code |
 | --- | --- | --- | --- |
-| `fit_aberrations()` (default) | agreement, tilt and depth spread fitted, through fifth order | resident TPE, exact-Hessian Newton, then exact-gradient BFGS through fifth order | `_resident_search.fit_resident`, `_exact_newton`, `fifth_order_fit`, `_gradient_refinement` |
-| `fit_aberrations(search="primary", tilt=False)` | agreement, tilt and depth spread held at 0 | resident TPE, exact-Hessian Newton | `_resident_search.fit_standard_resident` (CUDA and MPS) |
+| `aberrations()` (default) | agreement, tilt and depth spread fitted, through fifth order | resident TPE, exact-Hessian Newton, then exact-gradient BFGS through fifth order | `_resident_search.fit_resident`, `_exact_newton`, `fifth_order_fit`, `_gradient_refinement` |
+| `aberrations(search="primary", tilt=False)` | agreement, tilt and depth spread held at 0 | resident TPE, exact-Hessian Newton | `_resident_search.fit_standard_resident` (CUDA and MPS) |
 
 The phase-variance search (`objective="phase_variance"`) and the
 finite-difference and Nelder–Mead refinements are retired. `objective` is a
@@ -52,7 +52,7 @@ the optional diagnostic `result.loss`. A backend may reject a job it cannot
 execute, but may not switch to CPU, crop or subsample the BF evidence, quantize
 values, or change the objective silently.
 
-`fit_aberrations()` and `run()` own saved-result reuse through the same `save_dir`
+`aberrations()` and `run()` own saved-result reuse through the same `save_dir`
 and `force` controls. Reuse requires an exact scientific signature and restores
 one `DirectPtychoResult`; there is no cache manager, persistence session, or second
 workflow API. The NPZ owns the complex object wave, and its JSON companion owns

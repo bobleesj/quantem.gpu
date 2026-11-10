@@ -13,7 +13,7 @@ torch = pytest.importorskip("torch")
 
 from quantem.gpu.parallax.cuda.correlation import cross_correlation_shift_batch_cp
 from quantem.gpu.parallax.cuda.alignment import bin_mapping
-from quantem.gpu.parallax.workflow import fit_aberrations_from_shifts
+from quantem.gpu.parallax.workflow import aberrations_from_shifts
 
 
 QUANTEM_SRC_ENV = "QUANTEM_ORIGINAL_SRC"
@@ -175,7 +175,7 @@ def test_bin_mapping_matches_original_quantem(bin_factor: int) -> None:
 
 
 def test_aberration_fit_matches_original_quantem() -> None:
-    """Same shifts, same coefficients and rotation as QuantEM's fit_aberrations_from_shifts.
+    """Same shifts, same coefficients and rotation as QuantEM's aberrations_from_shifts.
 
     QuantEM takes a corner-centred mask and its detector frequencies and reports Angstrom and degrees; the beam
     angles are those frequencies times the wavelength, and quantem.gpu reports nm. The shifts carry a 25-degree
@@ -194,10 +194,10 @@ def test_aberration_fit_matches_original_quantem() -> None:
     rotation = np.array([[np.cos(turn), -np.sin(turn)], [np.sin(turn), np.cos(turn)]])
     shifts_ang = angles_rad @ np.array([[60.0, 5.0], [5.0, 40.0]]) @ rotation
 
-    ref = dpu.fit_aberrations_from_shifts(
+    ref = dpu.aberrations_from_shifts(
         torch.from_numpy(shifts_ang.astype(np.float32)), torch.from_numpy(mask_np), wavelength, gpts, sampling,
     )
-    aberrations, rotation_angle_deg = fit_aberrations_from_shifts(shifts_ang, angles_rad)
+    aberrations, rotation_angle_deg = aberrations_from_shifts(shifts_ang, angles_rad)
 
     np.testing.assert_allclose(aberrations["C10_nm"] * 10, ref["C10"], rtol=1e-6)
     np.testing.assert_allclose(aberrations["C12_nm"] * 10, ref["C12"], rtol=1e-6)

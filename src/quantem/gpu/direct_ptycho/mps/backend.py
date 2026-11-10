@@ -255,7 +255,7 @@ class MpsSSBBackend:
         result = fit_sample(self._prepared, **options)
         result.setdefault("timings", {})["fft_preparation_s"] = preparation_s
         # Reuse allocator buffers for the following phase diagnostic and for
-        # repeated fits (both 180-degree branches); DirectPtycho.fit_aberrations calls
+        # repeated fits (both 180-degree branches); DirectPtycho.aberrations calls
         # release_cache() when the fit is done, and close() clears it too.
         return result
 

@@ -33,7 +33,7 @@ def test_compare_methods_and_change_only_regularization(acquisition):
 
     source, calibration = acquisition
     with DirectPtycho.open(source, backend="cuda", **calibration) as full, full.select_region((64, 112, 64, 112)) as ptycho:
-        optics = ptycho.fit_aberrations(
+        optics = ptycho.aberrations(
             tilt=True,
             trials=12,
             search="primary",
@@ -113,7 +113,7 @@ def test_saved_alternatives_survive_and_reload_without_solving(
     source, calibration = acquisition
     options = dict(backend="cuda", **calibration)
     with DirectPtycho.open(source, **options) as full, full.select_region((64, 112, 64, 112)) as ptycho:
-        optics = ptycho.fit_aberrations(
+        optics = ptycho.aberrations(
             tilt=True,
             trials=12,
             search="primary",

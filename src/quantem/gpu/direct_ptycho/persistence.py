@@ -49,7 +49,7 @@ SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 # 9: the rotation check is rotation_branches, both 180-degree branches fitted independently (their aberrations, loss,
 #    column test, phase tail and native phases), replacing column_sign, initial_column_sign,
 #    initial_scan_detector_rotation_deg and rotation_check_phases.
-# 8: the result field refine_method is refinement, the name of the fit_aberrations keyword it records.
+# 8: the result field refine_method is refinement, the name of the aberrations keyword it records.
 # 12: sample_agreement is the fraction of the agreement band's power the fit explains (it was the raw agreement).
 RESULT_VERSION = 12
 RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"

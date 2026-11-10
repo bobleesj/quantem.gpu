@@ -1,14 +1,14 @@
 # Native SSB: the model-based, tilt-corrected fit
 
-`MetalDirectPtychoKernels` runs Python's `SSB.fit_aberrations` on a prepared native session: the same transfer model,
+`MetalDirectPtychoKernels` runs Python's `SSB.aberrations` on a prepared native session: the same transfer model,
 objective, search and branch test, so a native app gives the Python MPS result. The app owns selection and
 presentation; the shared Swift package owns count extraction, Fourier preparation, the model, the fit and saved
 numerical state. Python is not needed at runtime.
 
 | `DirectPtychoFitOptions` | Python | Method |
 | --- | --- | --- |
-| `DirectPtychoFitOptions()` | `fit_aberrations()` | model agreement, tilt-corrected (sample tilt and depth spread) |
-| `DirectPtychoFitOptions(tilt: false)` | `fit_aberrations(search="primary", tilt=False)` | model agreement, tilt and depth held at 0 |
+| `DirectPtychoFitOptions()` | `aberrations()` | model agreement, tilt-corrected (sample tilt and depth spread) |
+| `DirectPtychoFitOptions(tilt: false)` | `aberrations(search="primary", tilt=False)` | model agreement, tilt and depth held at 0 |
 | `DirectPtychoFitOptions(tilt: false, objective: .phaseVariance)` | `objective="phase_variance"` (retired in Python too) | retired (2026-10-25): saved options decode, `validate()` refuses a fit |
 
 ## Minimal workflow

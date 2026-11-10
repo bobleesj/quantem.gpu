@@ -693,7 +693,7 @@ def test_series_without_a_fit_fits_this_session_once_and_uses_that_fit(monkeypat
     from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
     fitted, calls, used = object(), [], []
-    session = SimpleNamespace(_device=None, fit_aberrations=lambda **options: calls.append(options) or fitted)
+    session = SimpleNamespace(_device=None, aberrations=lambda **options: calls.append(options) or fitted)
     monkeypatch.setattr(stream_module, "series", lambda ptycho, sources, fit, **options: used.append(fit) or "series")
     assert DirectPtycho.series(session, ["a", "b"], verbose=False) == "series"
     assert calls == [{"show": False, "verbose": False}] and used == [fitted]
@@ -745,21 +745,21 @@ def test_a_live_scan_is_named_by_its_acquisition(monkeypatch, tmp_path):
 
 @pytest.mark.usefixtures("cuda_runtime")
 def test_full_refit_fits_every_scan_independently(monkeypatch, tmp_path):
-    """refit="full" runs fit_aberrations on each scan's session, rotation kept, and reconstructs at that fit's
+    """refit="full" runs aberrations on each scan's session, rotation kept, and reconstructs at that fit's
     optics; the low-order refit is not run, and saving records (which resume a defocus refit) is refused."""
     from quantem.gpu.direct_ptycho import stream as stream_module
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     fits = []
 
-    def fit_aberrations(self, **options):
+    def aberrations(self, **options):
         fits.append(options)
         value = 0.1 * len(fits)
         return SimpleNamespace(aberrations={"C10_nm": value, "C12_nm": -value, "phi12_deg": 10 * value},
                                sample_tilt_mrad=(0.0, 0.0), depth_spread_nm=1.0,
                                optimizer={"coordinates": np.zeros(28).tolist(), "evaluations": 7})
 
-    monkeypatch.setattr(FakeSession, "fit_aberrations", fit_aberrations, raising=False)
+    monkeypatch.setattr(FakeSession, "aberrations", aberrations, raising=False)
     monkeypatch.setattr(stream_module, "_objective", lambda *args, **kwargs: pytest.fail("the low-order refit ran"))
     series, _ = streamed(sources, fit, None, refit="full")
     assert len(fits) == len(sources) and all(options["check_rotation"] is False for options in fits)
@@ -783,7 +783,7 @@ def test_fixed_fit_reconstructs_each_scan_without_changing_any_optics(monkeypatc
         pytest.fail("fixed optics must not enter either fit")
 
     monkeypatch.setattr(stream_module, "_objective", unexpected)
-    monkeypatch.setattr(FakeSession, "fit_aberrations", unexpected, raising=False)
+    monkeypatch.setattr(FakeSession, "aberrations", unexpected, raising=False)
     whole, calls = streamed(sources, fit, None, refit="none", method=("phase_of_mean", "phase", "complex"))
     assert calls == 0
     for used in whole.fits:

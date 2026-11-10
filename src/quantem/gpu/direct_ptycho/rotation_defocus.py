@@ -293,13 +293,13 @@ def compare_rotation_defocus(
                     candidate.set_rotation(angle)
                 for interval in focus_ranges:
                     # Keep each numerical search independent; only source Fourier data are reused.
-                    candidate.aberrations = initial.copy()
+                    candidate.known_aberrations = initial.copy()
                     candidate.sample_tilt_mrad = None
                     candidate.depth_spread_nm = None
                     case = f"{angle:.1f}°, C10 [{interval[0]:g}, {interval[1]:g}] nm"
                     refinement_label = "" if refinement is None else f" + {refinement} refinement"
                     progress.set_postfix_str(f"{case} | Fitting: {num_trials} trials{refinement_label}")
-                    fitted = candidate.fit_aberrations(
+                    fitted = candidate.aberrations(
                         search="primary",
                         tilt=tilt, num_trials=num_trials, refinement=refinement,
                         search_ranges={**ranges, "C10_nm": interval}, seed=seed,

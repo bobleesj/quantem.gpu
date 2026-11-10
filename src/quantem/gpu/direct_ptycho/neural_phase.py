@@ -31,7 +31,7 @@ class NeuralPhaseModel:
 
     Examples
     --------
-    >>> fit = ptycho.fit_aberrations(tilt=True)
+    >>> fit = ptycho.aberrations(tilt=True)
     >>> model = NeuralPhaseModel.fit(ptycho, fit)
     >>> reconstruction = ptycho.run(fit, method="phase", neural_model=model,
     ...                                    upsample="auto")
@@ -261,7 +261,7 @@ class NeuralPhaseModel:
 
         Examples
         --------
-        >>> optics = ptycho.fit_aberrations(tilt=True)
+        >>> optics = ptycho.aberrations(tilt=True)
         >>> model = NeuralPhaseModel.fit(ptycho, optics)
         >>> reconstruction = ptycho.run(optics, method="phase",
         ...                                    neural_model=model, upsample="auto")

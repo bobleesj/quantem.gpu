@@ -108,7 +108,7 @@ Each panel uses independent contrast: square-root for BF/ADF and linear for DPC.
 
 DPC estimates the scan–detector rotation, known only modulo 180 degrees. This
 Gold acquisition reports `scan_detector_rotation_flipped=False`, so pass the angle and the
-flag directly to SSB; `fit_aberrations(check_rotation=True)` settles the
+flag directly to SSB; `aberrations(check_rotation=True)` settles the
 180-degree branch. SSB raises if `scan_detector_rotation_flipped` is True. For other data,
 check that value first: a detector-axis swap must be resolved before reusing
 the angle. SSB does not run DPC automatically.
@@ -128,7 +128,7 @@ ptycho = DirectPtycho(
     scan_detector_rotation_deg=dpc_result.scan_detector_rotation_mod180_deg,  # degrees
     scan_detector_rotation_flipped=dpc_result.scan_detector_rotation_flipped,
 )
-aberrations = ptycho.fit_aberrations()
+aberrations = ptycho.aberrations()
 result = ptycho.run(aberrations, upsample=1)
 show_2d(
     result.phase, title="Gold SSB phase (rad)", cmap="inferno", cbar=True,
@@ -136,7 +136,7 @@ show_2d(
 )
 ```
 
-SSB finds the bright-field disk automatically. `fit_aberrations()` is the
+SSB finds the bright-field disk automatically. `aberrations()` is the
 default model-based, tilt-corrected fit: on the native grid it fits defocus and
 twofold astigmatism together with the sample tilt and a depth spread, keeping
 the parameters whose predicted bright-field data agree best with the
@@ -145,8 +145,8 @@ search. Voltage, sampling, and convergence angle stay fixed.
 
 | Call | Method | Use it for |
 |---|---|---|
-| `fit_aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
-| `fit_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
+| `aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
 
 Both refine on exact derivatives of the model agreement
 ({ref}`SSB fit methods <ssb-fit-methods>`).

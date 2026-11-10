@@ -88,7 +88,7 @@ def reconstruct_series(
     num_trials : int, optional
         Compatibility alias for ``trials``. Supply only one of them.
     refinement : str or None, default "auto"
-        ``"auto"``, the exact-derivative fit (``fit_aberrations``), or None for no local refinement; another value
+        ``"auto"``, the exact-derivative fit (``aberrations()``), or None for no local refinement; another value
         is retired and prints one line.
     backend : {"auto", "cuda", "mps"}, default "auto"
         Accelerated SSB backend. CPU is never used.
@@ -148,7 +148,7 @@ def reconstruct_series(
                     f"Raw probe-reference acquisition not found: {source}"
                 )
             with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
-                reference_result = ssb.fit_aberrations(
+                reference_result = ssb.aberrations(
                     search="primary", num_trials=num_trials,
                     refinement=refinement,
                     save_dir=reference_path / "ssb-fit",
@@ -195,7 +195,7 @@ def reconstruct_series(
                     verbose=False,
                 )
             else:
-                result = ssb.fit_aberrations(
+                result = ssb.aberrations(
                     search="primary", num_trials=num_trials,
                     refinement=refinement,
                     save_dir=screen_path / "ssb-fit",

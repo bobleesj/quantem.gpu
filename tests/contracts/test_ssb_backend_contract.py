@@ -230,7 +230,7 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
         **common,
     )
 
-    assert default.aberrations == explicit.aberrations
+    assert default.known_aberrations == explicit.known_aberrations
     assert not default._aberrations_explicit
     assert explicit._aberrations_explicit
 
@@ -392,4 +392,4 @@ def test_removed_class_alias_and_fit_display_default():
     assert not hasattr(gpu, "SSB")
     assert not hasattr(direct_ptycho, "SSB")
     assert not hasattr(direct_ptycho.DirectPtycho, "find_aberrations")
-    assert inspect.signature(gpu.DirectPtycho.fit_aberrations).parameters["columns"].default == 2
+    assert inspect.signature(gpu.DirectPtycho.aberrations).parameters["columns"].default == 2

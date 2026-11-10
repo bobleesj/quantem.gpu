@@ -218,7 +218,7 @@ def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method=
     ``"phase"``, ``"complex"`` or a tuple of them) at the same optics, the regularized ones with
     ``strengths`` (``run``'s ``phase_damp``, ``amplitude_damp``, ``smoothness_inv_A``,
     ``detector_weighting``). ``fit`` must be a fifth-order fit (``search="standard"`` or ``"broad"``) of
-    the reference session. ``refit="full"`` instead fits every frame independently (``fit_aberrations``,
+    the reference session. ``refit="full"`` instead fits every frame independently (``aberrations()``,
     standard search, the reference rotation kept): the baseline the defocus refit is compared with.
     ``refit="none"`` holds every aberration, sample tilt and depth at the initial fit, without fitting.
 
@@ -380,7 +380,7 @@ class DirectPtychoSeries:
         """An empty series on ``ptycho``'s calibration; ``frames`` sizes the image stacks when known."""
         if refit not in ("none", "defocus", "full"):
             raise ValueError(f'refit={refit!r}: use "defocus" (C10, C12, phi12 from the frame before) or "full" '
-                             '(fit_aberrations on every frame), or "none" (the complete initial fit, unchanged).')
+                             '(aberrations on every frame), or "none" (the complete initial fit, unchanged).')
         if max_frames is not None and (isinstance(max_frames, bool) or not isinstance(max_frames, int) or max_frames < 1):
             raise ValueError(f"max_frames must be a positive integer or None for complete history; got {max_frames!r}.")
         records = None if save_dir is None else Path(save_dir).expanduser() / "stream"
@@ -561,7 +561,7 @@ class DirectPtychoSeries:
                 clock["setup_s"] = time.perf_counter() - began
                 began = time.perf_counter()
                 # The reference rotation is kept: the session is opened with it and a flipped frame is another calibration.
-                fitted = session.fit_aberrations(check_rotation=False, compute_loss=False, show=False, verbose=False)
+                fitted = session.aberrations(check_rotation=False, compute_loss=False, show=False, verbose=False)
                 clock["refit_s"] = time.perf_counter() - began
                 coordinates, evaluations = np.array(fitted.optimizer["coordinates"]), fitted.optimizer.get("evaluations")
                 stop = fitted.optimizer.get("stop", "full fit")

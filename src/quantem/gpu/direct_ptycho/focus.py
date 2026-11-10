@@ -46,7 +46,7 @@ def show_focus(
     if offsets.ndim != 1 or not offsets.size or not np.isfinite(offsets).all():
         raise ValueError("Give finite focus_offsets_nm, for example (-5, 0, 5), relative to the joint fit.")
     if fit.sample_tilt_mrad is None or fit.depth_spread_nm is None:
-        raise ValueError("Focus/depth images require a joint fit. Run ssb.fit_aberrations(tilt=True) first.")
+        raise ValueError("Focus/depth images require a joint fit. Run ssb.aberrations(tilt=True) first.")
     depths = (
         np.unique(np.maximum(0.0, fit.depth_spread_nm + np.array([-5.0, 0.0, 5.0])))
         if depth_spread_nm is None else np.atleast_1d(np.asarray(depth_spread_nm, dtype=float))

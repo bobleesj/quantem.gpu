@@ -102,14 +102,14 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
         with DirectPtycho(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True) as session:
             assert session._data is data and session._compute is None
             region = (173, 301, 251, 379)
-            fitted = session.fit_aberrations(search="primary", tilt=False, scan_region=region, num_trials=0,
+            fitted = session.aberrations(search="primary", tilt=False, scan_region=region, num_trials=0,
                 refinement=None, check_rotation=False, verbose=False)
             assert fitted.phase.shape == (128, 128)
             assert fitted.fit_scan_region == region
             assert fitted.bright_field_center_px == SETTINGS["bright_field_center_px"]
             with DirectPtycho(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True,
                      scan_region=region) as explicit:
-                expected_fit = explicit.fit_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
+                expected_fit = explicit.aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
                     check_rotation=False, verbose=False)
                 cp.testing.assert_array_equal(fitted.phase, expected_fit.phase)
             result = session.run(fitted, compute_loss=False)

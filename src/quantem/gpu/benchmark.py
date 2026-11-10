@@ -437,7 +437,7 @@ def run_ssb(
             with ssb:
                 fitted, seconds = _timed(
                     partial(
-                        ssb.fit_aberrations,
+                        ssb.aberrations,
                         search="standard",
                         num_trials=num_trials,
                         seed=seed,
@@ -514,7 +514,7 @@ def run_ssb(
                     with regional:
                         local, fit_s = _timed(
                             partial(
-                                regional.fit_aberrations,
+                                regional.aberrations,
                                 search="standard",
                                 num_trials=num_trials,
                                 seed=seed,

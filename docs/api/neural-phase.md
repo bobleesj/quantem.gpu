@@ -16,7 +16,7 @@ direct/neural phase comparison.
 from quantem.gpu import DirectPtycho
 
 with DirectPtycho(reference_scan) as ptycho:
-    optics = ptycho.fit_aberrations(show=False)
+    optics = ptycho.aberrations(show=False)
     model = ptycho.train_neural_phase(optics)
     scores = model.score(ptycho, optics, partition="detector")
 ```
@@ -35,7 +35,7 @@ seed=42`; `score(partition="electron")` retains its three-way comparison.
 The advanced notebook, in the same private repository, covers damping, probe
 phase and measured-pattern exploration.
 
-The public fitting method is `DirectPtycho.fit_aberrations()`. Older examples used
+The public fitting method is `DirectPtycho.aberrations()`. Older examples used
 `find_aberrations()`, which is no longer a public method. Saved fit files
 retain the historical `ssb-find_aberrations` prefix. The native Swift
 entry point is `DirectPtychoModelFit.findAberrations`.
@@ -45,7 +45,7 @@ entry point is `DirectPtychoModelFit.findAberrations`.
 ```python
 model = DirectPtycho.load_neural_phase("phase-model.pt")
 with DirectPtycho(reference_scan) as ptycho:
-    fit = ptycho.fit_aberrations(show=False)
+    fit = ptycho.aberrations(show=False)
     series = ptycho.series(fit=fit, method="phase", neural_model=model,
                            max_frames=2, show=False)
 
@@ -88,7 +88,7 @@ measured acquisition; both series use the same optical refit policy.
 
 ```python
 with DirectPtycho(reference_scan) as ptycho:
-    fit = ptycho.fit_aberrations(show=False)
+    fit = ptycho.aberrations(show=False)
     control = ptycho.series([scan], fit=fit, method="phase",
                             annulus_mrad=model.annulus_mrad, show=False)
     learned = ptycho.series([scan], fit=fit, method="phase",

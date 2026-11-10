@@ -173,7 +173,7 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.movie.cuda_mp4` | `quantem.gpu.movie.cuda` |  |
 | `quantem.gpu.movie.mps_mp4` | `quantem.gpu.movie.mps` |  |
 | `quantem.gpu.optics.aberration` | deleted | 5 of 5 names deleted |
-| `quantem.gpu.optics.aberration_fitting` | deleted | 5 of 5 names deleted; `quantem.gpu.parallax.workflow.fit_aberrations_from_shifts` fits parallax shifts |
+| `quantem.gpu.optics.aberration_fitting` | deleted | 5 of 5 names deleted; `quantem.gpu.parallax.workflow.aberrations_from_shifts` fits parallax shifts |
 | `quantem.gpu.optics.physics` | `quantem.gpu.optics.physics` | 5 of 12 names deleted |
 | `quantem.gpu.parallax.backends` | deleted |  |
 | `quantem.gpu.parallax.backends.cuda` | deleted |  |

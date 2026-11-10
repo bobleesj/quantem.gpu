@@ -94,7 +94,7 @@ tradeoffs and the rotation-reuse experiment that was not enabled.
 
 ## Conditional joint rotation check, 2026-10-04
 
-`fit_aberrations(tilt=True, check_rotation=True)` first fits the native-grid
+`aberrations(tilt=True, check_rotation=True)` first fits the native-grid
 joint model once. It measures polarity from that phase; only a finite score
 below -0.2 tests the other 180-degree branch. CUDA now reuses the joint solution
 with reversed C10, C12 and tilt signs instead of repeating the entire search.
@@ -136,7 +136,7 @@ of the simulated tilt, save/reload, and an unresolved scan without a flip.
 ## Joint CUDA calibration, 2026-10-04
 
 Joint aberration, specimen-tilt, and depth-spread calibration uses
-`SSB.fit_aberrations(tilt=True, num_trials=200)`. It evaluates the depth-aware
+`SSB.aberrations(tilt=True, num_trials=200)`. It evaluates the depth-aware
 least-squares objective. The standard phase-variance search in the following
 section is a different operation; its timing must not stand in for joint
 calibration.
@@ -399,7 +399,7 @@ evidence. They are native-size kernel microscopes, not acquisition benchmarks.
 
 The reproducible harness is
 `scripts/benchmark_ssb_mps_scaling.py` (the phase-variance search,
-`fit_aberrations(tilt=False, objective="phase_variance")`; both retired, the script is in git history),
+`aberrations(tilt=False, objective="phase_variance")`; both retired, the script is in git history),
 and the compact machine-readable signoff is
 [`ssb-mps-scaling-2026-08-01.json`](ssb-mps-scaling-2026-08-01.json).
 The harness records the full fit before repeated pair/parity probes. The

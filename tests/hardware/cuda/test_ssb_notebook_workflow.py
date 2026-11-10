@@ -26,7 +26,7 @@ def test_auto_grid_matches_explicit_grid_without_refitting(monkeypatch):
         def forbidden(*args, **kwargs):
             raise AssertionError("Output sampling must not search aberrations")
 
-        monkeypatch.setattr(ssb, "fit_aberrations", forbidden)
+        monkeypatch.setattr(ssb, "aberrations", forbidden)
         native = ssb.run(upsample=1)
         explicit = ssb.run(upsample=factor)
         automatic = ssb.run(upsample="auto")
@@ -49,7 +49,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, depth, mo
     np.save(source, cp.asnumpy(ssb._data))
     ssb.source_path = str(source)
     try:
-        correction = ssb.fit_aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
+        correction = ssb.aberrations(search="primary", tilt=False, num_trials=0, refinement=None,
                                           check_rotation=False, verbose=False)
         correction = replace(correction, sample_tilt_mrad=(2., -3.), depth_spread_nm=depth)
         native, loss = ssb.preview(correction.aberrations, sample_tilt_mrad=correction.sample_tilt_mrad,
@@ -71,7 +71,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, depth, mo
         np.testing.assert_allclose(results[1], native, atol=1e-7)
         def forbidden(*args, **kwargs):
             raise AssertionError('Reconstruction must not refit')
-        monkeypatch.setattr(ssb, 'fit_aberrations', forbidden)
+        monkeypatch.setattr(ssb, 'aberrations', forbidden)
         for factor in (4, 3, 2, 1):
             saved = ssb.run(correction, upsample=factor, save_dir=tmp_path / f'x{factor}')
             # A source path cannot identify the direct array's crop or edits.

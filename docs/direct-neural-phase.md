@@ -3,7 +3,7 @@
 Use one completed acquisition and the regular `DirectPtycho.run` call:
 
 ```python
-optics = ptycho.fit_aberrations(tilt=True, show=False)
+optics = ptycho.aberrations(tilt=True, show=False)
 model = ptycho.train_neural_phase(optics)
 reconstruction = ptycho.run(
     optics, method="phase", neural_model=model, phase_damp=0.03, upsample="auto"

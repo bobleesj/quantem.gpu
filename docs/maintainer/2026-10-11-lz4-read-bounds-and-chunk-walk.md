@@ -92,8 +92,8 @@ rc15 against the final tree, processes alternating, best time of the rounds.
 | SSB session (bright-field crop and Fourier preparation), s | 0.641 | 0.632 | same |
 | SSB reconstruct, s | 0.037 | 0.033 | same |
 | SSB reconstruct with loss, s | 0.085 | 0.095 | same |
-| `fit_aberrations`, 200 trials and Nelder-Mead, s | 14.36 | 12.79 | same |
-| `fit_aberrations(tilt=True)`, s | 8.72 | 8.31 | rc15 differs between repeats; final repeats bit for bit |
+| `aberrations`, 200 trials and Nelder-Mead, s | 14.36 | 12.79 | same |
+| `aberrations(tilt=True)`, s | 8.72 | 8.31 | rc15 differs between repeats; final repeats bit for bit |
 | `dpc.run`, s | 0.237 | 0.252 | same |
 | `parallax.run` with the aberration fit, s | 0.727 | 0.782 | image, density and shifts same; fitted aberrations differ (the corrected fit) |
 | `io.load` (encoded resident), ms | 984 | 955 | same counts |

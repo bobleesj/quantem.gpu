@@ -332,10 +332,10 @@ def run(
     """Apply one regularized method with explicit provenance and saved reuse."""
     if parameters is not None and not isinstance(parameters, DirectPtychoResult):
         raise TypeError(
-            "Pass the result of fit_aberrations(), or coefficients through aberrations={...}."
+            "Pass the result of aberrations(), or coefficients through aberrations={...}."
         )
     if parameters is None and aberrations is None and not session._aberrations_explicit:
-        parameters = session.fit_aberrations(verbose=verbose)
+        parameters = session.aberrations(verbose=verbose)
     correction = parameters
     if correction is not None:
         coefs, tilt, depth = (

@@ -29,7 +29,7 @@ counts?
 
 ## Results
 
-Parallax (`voltage_kV=300`, `scan_sampling=0.5`, `fit_aberrations=True`,
+Parallax (`voltage_kV=300`, `scan_sampling=0.5`, `aberrations=True`,
 `upsample_factor=2`):
 
 | Case | Mean pattern, detected disk | BF stack | Shifts, image, aberrations |

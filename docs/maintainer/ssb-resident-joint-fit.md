@@ -1,6 +1,6 @@
 # Resident joint SSB fitting
 
-`SSB.fit_aberrations(search="primary", tilt=True)` runs the six-parameter
+`SSB.aberrations(search="primary", tilt=True)` runs the six-parameter
 adaptive search and refinement on the session's MPS or CUDA device. The model
 jointly fits defocus, two-fold astigmatism and angle, both sample-tilt components,
 and depth spread. No extra notebook optimizer is needed.

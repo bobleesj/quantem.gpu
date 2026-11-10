@@ -65,7 +65,7 @@ class DirectPtychoResult(Mapping[str, float]):
     Read coefficients directly with ``aberrations["C10_nm"]``,
     ``aberrations["C12_nm"]`` (nm), and ``aberrations["phi12_deg"]`` (degrees).
     ``dict(aberrations)`` copies the coefficients. Tilt, rotation, phase, and
-    trial history remain properties. After ``fit_aberrations(tilt=True)``,
+    trial history remain properties. After ``aberrations(tilt=True)``,
     C10 is the defocus at the model's mid-depth. Use reconstruction overrides
     to explore changed coefficients without modifying the fitted result.
 
@@ -80,7 +80,7 @@ class DirectPtychoResult(Mapping[str, float]):
     annular_counts : array or None
         Measured guide on the native scan grid, when a neural phase model is used.
     sample_tilt_mrad : tuple[float, float] | None
-        Sample tilt (row, col) in mrad, scan frame, from ``fit_aberrations(tilt=True)``; None for standard SSB.
+        Sample tilt (row, col) in mrad, scan frame, from ``aberrations(tilt=True)``; None for standard SSB.
     depth_spread_nm : float | None
         Depth over which the tilted columns spread in the thick-sample model (a model parameter, not a measured
         thickness); None for standard SSB.
@@ -93,14 +93,14 @@ class DirectPtychoResult(Mapping[str, float]):
         (> 1: the tilt explains more); None when ``compare_standard=False``.
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees, in [0, 360). The CoM curl fixes it only modulo 180 degrees;
-        for an estimated rotation ``fit_aberrations`` fits both branches and keeps one (``rotation_branches``).
+        for an estimated rotation ``aberrations()`` fits both branches and keeps one (``rotation_branches``).
     scan_detector_rotation_flipped : bool
         Whether the detector axes were exchanged before applying the rotation.
     rotation_branches : RotationBranches | None
         Both 180-degree branches, fitted independently, with the atomic-column and phase-tail evidence and the branch
         kept; ``show("rotation")`` draws it. None when no comparison ran (a given or recorded rotation).
     rotation_refined : bool
-        Whether ``fit_aberrations(refine_rotation=True)`` refined the estimated rotation; ``scan_detector_rotation_deg``
+        Whether ``aberrations(refine_rotation=True)`` refined the estimated rotation; ``scan_detector_rotation_deg``
         is then the refined angle.
     rotation_estimate_deg : float | None
         The estimated rotation (on the kept 180-degree branch) the refinement started from; None when not refined.
@@ -137,7 +137,7 @@ class DirectPtychoResult(Mapping[str, float]):
     optimizer : dict[str, object]
         Numerical search/refinement device, precision, and Newton diagnostics.
     objective : str | None
-        What ``fit_aberrations`` maximized: ``"agreement"`` (the least-squares agreement of the SSB model with the
+        What ``aberrations()`` maximized: ``"agreement"`` (the least-squares agreement of the SSB model with the
         data, with or without tilt) or ``"broad_fifth_agreement"`` (the same through fifth order); None for a result
         that was not fitted. Results saved by earlier versions may say ``"phase_variance"`` (a retired search).
     refinement : str | None
@@ -204,7 +204,7 @@ class DirectPtychoResult(Mapping[str, float]):
     _calibration_source: dict[str, object] | None = field(default=None, repr=False, compare=False)
     sample_agreement: float | None = None
     objective: str | None = None
-    # fit_aberrations(refine_rotation=True): the estimate it started from and the search (rotation_refinement.py)
+    # aberrations(refine_rotation=True): the estimate it started from and the search (rotation_refinement.py)
     rotation_refined: bool = False
     rotation_estimate_deg: float | None = None
     rotation_refinement: dict[str, object] | None = None
@@ -220,7 +220,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> aberrations = ssb.fit_aberrations()
+        >>> aberrations = ssb.aberrations()
         >>> defocus_nm = aberrations["C10_nm"]
         """
         return self.aberrations[coefficient]
@@ -342,7 +342,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> fit = ptycho.fit_aberrations()  # doctest: +SKIP
+        >>> fit = ptycho.aberrations()  # doctest: +SKIP
         >>> fit.report()  # doctest: +SKIP
         >>> fit.report(columns=2)  # doctest: +SKIP
         >>> parameters = fit.report(to_dict=True)  # doctest: +SKIP
@@ -569,7 +569,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> fit = ssb.fit_aberrations(search="broad")
+        >>> fit = ssb.aberrations(search="broad")
         >>> fit.show("convergence")
         >>> fit.save_calibration("ssb-results/calibration.json")
         """

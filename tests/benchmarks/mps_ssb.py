@@ -33,7 +33,7 @@ p90 of its repeats. The metrics, all in milliseconds:
 - ``search_candidate``: one candidate of the aberration search, timed as a
   batch of eight agreement trials at depth spread 0 (the standard fit's
   objective, ``thick_fit_batch``) and divided by eight;
-- ``find_aberrations``: the historical key for ``fit_aberrations()``, single shot. The rotation is
+- ``find_aberrations``: the historical key for ``aberrations()``, single shot. The rotation is
   estimated, so it runs the tilt-corrected joint fit on both 180-degree
   branches and keeps one;
 - ``find_aberrations_standard``: one standard
@@ -397,7 +397,7 @@ def measure(master, reps=20, load_reps=3, log=print):
     synchronize()
     with PeakMemory() as fit_memory:
         started = time.perf_counter()
-        fit = ssb.fit_aberrations(search="standard", verbose=False)
+        fit = ssb.aberrations(search="standard", verbose=False)
         synchronize()
         metrics["find_aberrations"] = summary([1e3 * (time.perf_counter() - started)])
     memory["fit_peak"] = round(fit_memory.peak - encoded, 2)
@@ -413,7 +413,7 @@ def measure(master, reps=20, load_reps=3, log=print):
     ssb.preview(base, compute_loss=False)
     synchronize()
     started = time.perf_counter()
-    fit = ssb.fit_aberrations(search="primary", tilt=False, verbose=False)
+    fit = ssb.aberrations(search="primary", tilt=False, verbose=False)
     synchronize()
     metrics["find_aberrations_standard"] = summary([1e3 * (time.perf_counter() - started)])
     report["values"]["fit_standard"] = fit_values(fit)

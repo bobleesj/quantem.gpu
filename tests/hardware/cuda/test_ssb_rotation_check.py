@@ -1,4 +1,4 @@
-"""fit_aberrations settles the 180-degree ambiguity of an estimated scan-detector rotation.
+"""aberrations settles the 180-degree ambiguity of an estimated scan-detector rotation.
 
 The centre-of-mass rotation search cannot tell omega from omega + 180 degrees, and SSB fits both equally well: the second
 is the negated phase with the opposite defocus. For an estimated rotation the fit runs twice, independently, at both
@@ -89,10 +89,10 @@ def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp
 
     _require_cuda()
     monkeypatch.setattr(workflow, "MAP_OPPOSITE_BRANCH", mapped)
-    direct = _simulated(0.0).fit_aberrations(search="primary", check_rotation=False, verbose=False)
+    direct = _simulated(0.0).aberrations(search="primary", check_rotation=False, verbose=False)
     estimate(180.0)
     session = _estimated()
-    checked = session.fit_aberrations(search="primary", verbose=False)
+    checked = session.aberrations(search="primary", verbose=False)
     branches = checked.rotation_branches
     assert [branch.scan_detector_rotation_deg for branch in branches.branches] == [180.0, 0.0]
     assert branches.kept == branches.chosen == 1
@@ -129,8 +129,8 @@ def test_simulated_crystal_estimated_on_the_right_branch_is_left_exactly_as_fitt
     """Estimated at the right rotation, the kept branch is the first fit: same result as check_rotation=False."""
     _require_cuda()
     estimate(0.0)
-    kept = _estimated().fit_aberrations(search="primary", verbose=False)
-    direct = _simulated(0.0).fit_aberrations(search="primary", check_rotation=False, verbose=False)
+    kept = _estimated().aberrations(search="primary", verbose=False)
+    direct = _simulated(0.0).aberrations(search="primary", check_rotation=False, verbose=False)
     assert kept.rotation_branches.kept == 0 and kept.scan_detector_rotation_deg == 0.0
     np.testing.assert_array_equal(_host(kept.phase), _host(direct.phase))
     assert kept.aberrations == direct.aberrations
@@ -142,7 +142,7 @@ def test_a_given_rotation_is_kept():
     _require_cuda()
     from quantem.gpu.direct_ptycho.results import column_sign
 
-    result = _simulated(180.0).fit_aberrations(search="primary", verbose=False)
+    result = _simulated(180.0).aberrations(search="primary", verbose=False)
     assert result.scan_detector_rotation_deg == pytest.approx(180.0, abs=1e-9)
     assert result.rotation_branches is None
     assert column_sign(result.phase) < -0.8
@@ -218,7 +218,7 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
 
     monkeypatch.setattr(session, "_fit_tilt", measured_fit)
     try:
-        result = session.fit_aberrations(search="primary", tilt=True, save_dir=tmp_path / "joint", verbose=False)
+        result = session.aberrations(search="primary", tilt=True, save_dir=tmp_path / "joint", verbose=False)
         searches = 1 if mapped else 2
         # one search, or two, neither started from the other's fit
         assert fit_calls == [(rotation, False), ((rotation + 180.0) % 360.0, False)][:searches]

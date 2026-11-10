@@ -15,7 +15,7 @@ def test_all_reuses_one_fit_and_matches_separate_calls(monkeypatch):
     session.backend = "cuda"
     session._aberrations_explicit = False
     fit = object()
-    session.fit_aberrations = Mock(return_value=fit)
+    session.aberrations = Mock(return_value=fit)
     session._resolve_upsample = lambda value: 3
     calls = []
 
@@ -32,7 +32,7 @@ def test_all_reuses_one_fit_and_matches_separate_calls(monkeypatch):
     monkeypatch.setattr(direct_workflow, "run", direct)
     images = session.run(method="all", upsample="auto", compute_loss=False,
                                  phase_damp=.05, amplitude_damp=.1)
-    session.fit_aberrations.assert_called_once_with(compute_loss=False, verbose=False)
+    session.aberrations.assert_called_once_with(compute_loss=False, verbose=False)
     assert list(images) == ["phase_of_mean", "phase", "complex"]
     assert all(parameters is fit for _, parameters, _ in calls)
     assert calls[1][2]["policy"]["phase_damp"] == .05
@@ -44,7 +44,7 @@ def test_all_reuses_one_fit_and_matches_separate_calls(monkeypatch):
         if method == "complex":
             options["amplitude_damp"] = .1
         assert session.run(fit, method=method, **options) == images[method]
-    assert session.fit_aberrations.call_count == 1
+    assert session.aberrations.call_count == 1
     assert not hasattr(session, "find_aberrations")
     assert not hasattr(session, "compare_rotation_branches")
     assert not hasattr(session, "compare_rotation_defocus")
@@ -54,7 +54,7 @@ def test_all_rejects_invalid_options_before_fitting():
     session = object.__new__(DirectPtycho)
     session._device = None
     session.backend = "cuda"
-    session.fit_aberrations = Mock()
+    session.aberrations = Mock()
     with pytest.raises(ValueError, match="positive"):
         session.run(method="all", phase_damp=-1)
     with pytest.raises(ValueError, match="trial_ids"):
@@ -62,7 +62,7 @@ def test_all_rejects_invalid_options_before_fitting():
     session.backend = "other"
     with pytest.raises(NotImplementedError, match="CUDA"):
         session.run(method="all")
-    session.fit_aberrations.assert_not_called()
+    session.aberrations.assert_not_called()
 
 
 def test_named_method_comparison_displays_each_result_once():

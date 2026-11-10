@@ -13,7 +13,7 @@ def test_public_ssb_api_has_one_workflow() -> None:
 
     for name in (
         "open",
-        "fit_aberrations",
+        "aberrations",
         "scan_rotations",
         "show_trials",
         "run",
@@ -37,7 +37,7 @@ def test_ssb_operations_share_saved_result_controls() -> None:
 
     from quantem.gpu import DirectPtycho
 
-    for operation in (DirectPtycho.fit_aberrations, DirectPtycho.run):
+    for operation in (DirectPtycho.aberrations, DirectPtycho.run):
         signature = inspect.signature(operation)
         assert signature.parameters["save_dir"].default is None
         assert signature.parameters["force"].default is False
@@ -146,7 +146,7 @@ def test_reconstruct_series_reuses_only_exact_results(
                 reused=True,
             )
 
-        def fit_aberrations(self, **kwargs):
+        def aberrations(self, **kwargs):
             assert kwargs["save_dir"].name == "ssb-fit"
             assert kwargs["num_trials"] == 200
             return self._result(0.1 * self.index)
@@ -261,7 +261,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
         def __exit__(self, *args):
             return None
 
-        def fit_aberrations(self, **kwargs):
+        def aberrations(self, **kwargs):
             rotation = self.kwargs["scan_detector_rotation_deg"]
             return DirectPtychoResult(object_wave=np.ones((4, 4), np.complex64), backend="mps",
                              aberrations={"C10_nm": 15.8, "C12_nm": 6.7, "phi12_deg": 17.5},
@@ -386,7 +386,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
         def __exit__(self, *args):
             return None
 
-        def fit_aberrations(self, **kwargs):
+        def aberrations(self, **kwargs):
             return DirectPtychoResult(
                 object_wave=np.exp(
                     1j * np.full((2, 3), 0.1 * self.index, dtype=np.float32)
@@ -463,7 +463,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
             return DirectPtychoResult(object_wave=np.ones((2, 3), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                              scan_detector_rotation_deg=12.0, loss=0.25)
 
-        def fit_aberrations(self, **kwargs):
+        def aberrations(self, **kwargs):
             fits.append(self.name)
             return self._result(fitted)
 
@@ -638,7 +638,7 @@ files:
         def __exit__(self, *args):
             return None
 
-        def fit_aberrations(self, **kwargs):
+        def aberrations(self, **kwargs):
             return DirectPtychoResult(
                 object_wave=np.full((3, 4), 1 + 1j, dtype=np.complex64),
                 backend="cuda",

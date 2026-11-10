@@ -3,7 +3,7 @@
 Standard SSB treats the sample as one plane at the probe defocus. A crystal of thickness t tilted by theta sees a range of
 defoci and shifts through its depth; averaging the SSB transfer terms over that depth gives each its own sinc weight (see
 ``kernels/engine.py``). ``ThickSample`` evaluates that model on one engine's prepared bright-field spectra ``G_qk``:
-phase images for previews and reconstruction, and the agreement that ``fit_aberrations(tilt=True)`` maximises.
+phase images for previews and reconstruction, and the agreement that ``aberrations(tilt=True)`` maximises.
 """
 
 import math

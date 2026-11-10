@@ -14,7 +14,7 @@ This API is available in the development source candidate. See the
 from quantem.gpu import DirectPtycho
 
 ptycho = DirectPtycho.open("scan.qem")
-optics = ptycho.fit_aberrations(tilt=True)
+optics = ptycho.aberrations(tilt=True)
 
 ssb = ptycho.run(optics, upsample="auto")
 phase = ptycho.run(
@@ -55,7 +55,7 @@ changes only the table layout; dictionary exports retain the same structure.
 To see convergence while fitting in Jupyter, request it on the fitting call:
 
 ```python
-fit = ptycho.fit_aberrations(
+fit = ptycho.aberrations(
     search="broad", compute_loss=False, size="large", show_convergence=True,
 )
 ```
@@ -70,7 +70,7 @@ a 100-DPI reference. Browser fitting and HiDPI display can scale the rendered
 figure. These settings do not alter reconstruction sampling. For example:
 
 ```python
-fit = ptycho.fit_aberrations(
+fit = ptycho.aberrations(
     search="broad", scan_region=scan_region, compute_loss=False,
     size=900, show_convergence=True, columns=1,
 )
@@ -104,7 +104,7 @@ phase-strength changes reuse the prepared phase equations.
 To fit only a selected part of a loaded acquisition:
 
 ```python
-fit = ptycho.fit_aberrations(
+fit = ptycho.aberrations(
     search="broad", scan_region=(128, 384, 128, 384),
     compute_loss=False, size="large", show_convergence=True,
 )
@@ -246,7 +246,7 @@ images with shared display scales.
 ## Reconstruct a recorded time series
 
 ```python
-fit = ptycho.fit_aberrations(search="broad", save_dir="results")
+fit = ptycho.aberrations(search="broad", save_dir="results")
 series = ptycho.series(frames, fit, method=("phase", "complex"), save_dir="results")
 series.report()
 drift = series.align()
@@ -377,7 +377,7 @@ Read `series.latest` for the current scan; `series.show()` displays the register
 ## Migration
 
 Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.
-The public methods are `fit_aberrations()`, `run()`, and `scan_rotations()`.
+The public methods are `aberrations()`, `run()`, and `scan_rotations()`.
 Update old `find_aberrations()`, `run()`, and rotation-comparison calls to these
 names; the renamed methods do not retain aliases. Saved calibration/result
 schemas and their reading paths remain unchanged. The series entry point is
@@ -439,5 +439,5 @@ explore a model at its fitted reference plane; they do not measure a separate
 probe or establish specimen depth resolution. Reset All restores launch settings.
 
 The Python workflow is `DirectPtycho`; the former `SSB` class alias has been
-removed. Use `fit_aberrations()` for optical fitting. The scientific algorithm
+removed. Use `aberrations()` for optical fitting. The scientific algorithm
 name `method="phase_of_mean"` remains available alongside `"phase"` and `"complex"`.

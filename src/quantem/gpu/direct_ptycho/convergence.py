@@ -27,7 +27,7 @@ def plot_convergence(result, *, axsize, rows=None, columns=None, compare=None, x
                 groups.setdefault(key, []).append(record)
     if not groups:
         raise ValueError("This result has no recorded search history. Use the result returned by "
-                         "ssb.fit_aberrations(), or reload a fit saved with its history.")
+                         "ssb.aberrations(), or reload a fit saved with its history.")
     if "broad" in groups and x == "time" and not _broad_history(result)[-1]:
         raise ValueError("This fit has no complete elapsed-time history. Use x='evaluations', or rerun it.")
     count = len(groups)

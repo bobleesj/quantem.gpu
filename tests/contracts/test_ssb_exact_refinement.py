@@ -445,7 +445,7 @@ def test_higher_order_limit_is_recorded_and_checked_before_computation(monkeypat
             SimpleNamespace(backend="cuda", _find_aberrations=Mock()), search="standard", trials=200, seed=42,
             save_dir=None, force=False, verbose=False, show=False,
             primary_options={"check_rotation": False, "refine_rotation": False}, higher_order_limit=5)
-    call = inspect.unwrap(DirectPtycho.fit_aberrations)
+    call = inspect.unwrap(DirectPtycho.aberrations)
     with pytest.raises(ValueError, match="search='primary'"):
         call(SimpleNamespace(), search="primary", higher_order_limit=20)
     with pytest.raises(ValueError, match="search='primary'"):

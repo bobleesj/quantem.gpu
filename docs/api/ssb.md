@@ -8,7 +8,7 @@ This page covers parameters, calibration, ownership, and backend limits.
 
 ## Choose a search
 
-`ptycho.fit_aberrations()` defaults to `search="standard"`: 200 TPE trials
+`ptycho.aberrations()` defaults to `search="standard"`: 200 TPE trials
 for initial defocus, astigmatism, tilt and depth, including its Newton polish
 on the exact gradient and Hessian, then the joint refinement through fifth order
 on exact gradients. No additional fifth-order
@@ -56,7 +56,7 @@ The method returns only after final refinement.
 Keep the returned result to inspect and reuse the fitted model:
 
 ```python
-fit = ptycho.fit_aberrations()
+fit = ptycho.aberrations()
 fit.report()                         # optics, geometry, objective, counts and timing
 fit.report(columns=2)                # two parameter/value groups, less scrolling
 parameters = fit.report(to_dict=True)  # coefficients and geometry as a dictionary
@@ -94,7 +94,7 @@ and returns the same vertical pandas table. Plotting uses recorded history
 only; absent history raises an error
 explaining how to obtain it. Export and plotting are separate calls:
 `to_dict=True` cannot be combined with `show_convergence=True`. Reports add no
-fit callbacks, image transfers or history collection. `fit_aberrations(show=False)`
+fit callbacks, image transfers or history collection. `aberrations(show=False)`
 disables the live phase preview; normal scalar fit history still belongs to the
 fitter and supports result inspection later.
 
@@ -109,7 +109,7 @@ is reported as a budget stop, rather than proof of convergence.
 For an optional broad-search study, use a sequence of trial counts:
 
 ```python
-fits = ptycho.fit_aberrations(search="broad", trials=(200, 400, 600), seed=17)
+fits = ptycho.aberrations(search="broad", trials=(200, 400, 600), seed=17)
 fits[200].show("convergence", compare=fits)
 ```
 
@@ -147,7 +147,7 @@ or loss; file fingerprinting and writing happen only when called. It requires
 a calibrated file-backed session and selects Auto sampling for the viewer.
 Use the widget's own `save_calibration()` to save subsequent interactive edits.
 This JSON contains the correction and calibration, not the reconstructed
-image or the convergence history; `fit_aberrations(save_dir=...)` saves the
+image or the convergence history; `aberrations(save_dir=...)` saves the
 complete fit for reuse.
 
 (ssb-fit-methods)=
@@ -162,8 +162,8 @@ default everywhere.
 
 | Call | Method | Use it for |
 |---|---|---|
-| `fit_aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
-| `fit_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
+| `aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
 
 Each method searches 200 seeded trials and then refines on exact derivatives
 of the agreement with `refinement="auto"` (above). `result.objective` records
@@ -184,8 +184,8 @@ the true C10 ([the standard-fit objective](../performance/ssb/reports/2026-10-20
 
 | Method | MPS | CUDA | Browser |
 |---|---|---|---|
-| `fit_aberrations()` | yes | yes | no fit |
-| `fit_aberrations(search="primary", tilt=False)` | yes | yes | no fit |
+| `aberrations()` | yes | yes | no fit |
+| `aberrations(search="primary", tilt=False)` | yes | yes | no fit |
 
 The browser engine has no aberration search.
 
@@ -236,7 +236,7 @@ overrides affect the session without rewriting `data.metadata`.
 [0, 360). Omitted, SSB uses the acquisition's recorded rotation, else estimates
 it from the curl of the centre-of-mass field and prints one line. The curl knows
 the angle only modulo 180 degrees; for an estimated angle `run()` and
-`fit_aberrations(check_rotation=True)` fit both 180-degree branches and keep
+`aberrations(check_rotation=True)` fit both 180-degree branches and keep
 the one whose atomic columns have positive phase (see
 [Settle the 180° branch](#settle-the-180-branch)). A given or recorded angle is
 fitted once and never moved. `scan_detector_rotation_flipped=True` means the
@@ -245,13 +245,13 @@ rotation can produce; it is estimated with the angle, or False when an angle is
 given. Reported centers stay in the original detector axes. Give a calibrated
 angle to skip the estimate: `DirectPtycho(data, scan_detector_rotation_deg=12.3)`.
 
-`run()` fits the aberrations with `fit_aberrations()` defaults (the
+`run()` fits the aberrations with `aberrations()` defaults (the
 tilt-corrected joint fit) when the session has none, then reuses them. For custom
-primary bounds or fixed coefficients, call `fit_aberrations(search="primary", ...)`
+primary bounds or fixed coefficients, call `aberrations(search="primary", ...)`
 first. This fits defocus, astigmatism, tilt and depth without the default
 fifth-order stage. The primary joint fit takes a `C10_nm` range or value and a `C12_nm` range from 0, or
 holds `C12_nm=0`:
-`ptycho.fit_aberrations(search="primary", tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})`.
+`ptycho.aberrations(search="primary", tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})`.
 It searches `phi12_deg` over its whole period, so a `phi12_deg` range or a
 nonzero held `C12_nm` alone raises and names what to pass; holding all three
 coefficients needs `check_rotation=False`. The joint fit searches depth
@@ -293,7 +293,7 @@ prepared Fourier data. After editing the array, construct a new `DirectPtycho` s
 SSB Fourier-stack preparation and reconstruction are additional work; they
 are not included in a detector-viewer loading-time claim.
 
-`fit_aberrations()` returns one `DirectPtychoResult`. Its primary field is the complex64
+`aberrations()` returns one `DirectPtychoResult`. Its primary field is the complex64
 `object_wave` with shape `(scan_row, scan_column)`. `phase` and `amplitude` are
 derived as `angle(object_wave)` and `abs(object_wave)`. The result also records
 the backend, fitted aberrations, rotation, loss, trial counts, the local
@@ -343,7 +343,7 @@ and Newton with the sample tilt and depth spread held at 0, on CUDA and MPS
 
 This is the implemented calibration workflow; Levenberg–Marquardt is not an
 available refinement mode. The browser SSB engine has no aberration search:
-run `fit_aberrations()` on CUDA or MPS. The browser never substitutes fewer
+run `aberrations()` on CUDA or MPS. The browser never substitutes fewer
 trials or a reduced objective.
 
 ## Fit a region, reconstruct a large encoded scan
@@ -373,7 +373,7 @@ with io.load("acquisition.qem", backend="cuda") as data:
         detector_sampling_mrad=(0.55, 0.55),
         scan_detector_rotation_deg=12,
     ) as ssb:
-        fitted = ptycho.fit_aberrations(
+        fitted = ptycho.aberrations(
             scan_region=(256, 768, 256, 768),
             tilt=True,
         )
@@ -428,7 +428,7 @@ ptycho = DirectPtycho.open(
     semiangle_mrad=30,  # mrad
     scan_sampling_A=(0.264, 0.264),  # Å per scan pixel, (row, col)
 )
-aberrations = ptycho.fit_aberrations(tilt=True, save_dir="results/aberrations")
+aberrations = ptycho.aberrations(tilt=True, save_dir="results/aberrations")
 aberrations.report()
 ptycho.show_trials(best=5)
 result = ptycho.run(aberrations, save_dir="results/native")
@@ -437,7 +437,7 @@ shown.show()
 ```
 
 The numbers above illustrate the units; use your acquisition's calibration.
-SSB here is model-based and tilt-corrected: `fit_aberrations()` (`tilt=True`,
+SSB here is model-based and tilt-corrected: `aberrations()` (`tilt=True`,
 the default) jointly estimates specimen tilt and model depth spread as well as
 aberrations, and so does the automatic fit of `run()`.
 `search="primary", tilt=False` holds the tilt and depth spread at 0
@@ -531,7 +531,7 @@ against the full acquisition. Joint fitting requires measured spatial-frequency
 support in its fitting band; unsupported scans raise a corrective error instead
 of returning a zero-agreement fit.
 
-`fit_aberrations()` searches on the native scan grid.
+`aberrations()` searches on the native scan grid.
 `run()` applies the supplied parameters without
 searching. CUDA and MPS use `phase_of_mean` at every output factor, including
 all 14 higher-order terms. Both return phase-only complex waves with unit amplitude,
@@ -735,7 +735,7 @@ Reconstruction carries those limits from the supplied aberration result, so its
 phase, rotation diagnostics and finer outputs use the same linear mapping. The
 results must cover the same physical field; this view does not align images.
 
-`fit_aberrations()` has no `upsample` argument: the search stays at 1×.
+`aberrations()` has no `upsample` argument: the search stays at 1×.
 The {ref}`Gold comparison <gold-upsample>` shows 1× and 4× outputs with shared
 contrast and a matched crop. That Gold result has visible bands at 4×;
 the example does not establish improved resolution.
@@ -743,7 +743,7 @@ the example does not establish improved resolution.
 ## Fit a region and reconstruct the full scan
 
 ```python
-aberrations = ptycho.fit_aberrations(
+aberrations = ptycho.aberrations(
     scan_region=(128, 384, 128, 384),  # row start/stop, column start/stop; scan pixels
     tilt=True,
 )
@@ -773,7 +773,7 @@ The centre-of-mass curl fixes the scan-detector rotation only modulo 180°: the
 angle and the angle plus 180° reverse every CoM vector and both leave the field
 curl-free. SSB fits both equally well, the second as the conjugate object with
 C10 of the opposite sign. For a rotation the session estimated, `run()`
-and `fit_aberrations()` therefore fit twice, at the estimate and at the
+and `aberrations()` therefore fit twice, at the estimate and at the
 estimate plus 180°: two independent searches with the same settings (tilt,
 ranges, trials, seed), neither started from the other. The branch is decided on
 tilt-corrected SSB, by positive phase at the atomic columns located on the dark
@@ -818,12 +818,12 @@ result.show("rotation")                     # the same figure from the result
 aberration fit, such as `trials`, `tilt`, and `refinement`. Use `region` to select
 the fitting area; `check_rotation` is not needed. A rotation given to
 `DirectPtycho(...)` or recorded with the acquisition is the user's calibration:
-`run()` and `fit_aberrations()` fit it once and never move it, and
+`run()` and `aberrations()` fit it once and never move it, and
 `scan_rotations()` on it reports the evidence and keeps the given
-angle unless called with `apply=True`. `fit_aberrations(check_rotation=False)`
+angle unless called with `apply=True`. `aberrations(check_rotation=False)`
 fits once at the session's rotation, estimated or not.
 
-`fit_aberrations(refine_rotation=True)` (off by default) also refines an
+`aberrations(refine_rotation=True)` (off by default) also refines an
 estimated angle after the branch decision. G(q, k) does not depend on the
 rotation, only the bright-field k vectors do, so each angle costs one polish of
 the fit from the nearest angle's fit (`set_rotation` retargets the k geometry
@@ -949,7 +949,7 @@ Rerun the aberration search for older records; the loader does not guess their u
 
 ## Provenance and exact reuse
 
-`save_dir` names a results directory. `fit_aberrations` writes
+`save_dir` names a results directory. `aberrations` writes
 `ssb-find_aberrations.npz` and `.json` there, `reconstruct` writes
 `ssb-reconstruct.npz` and `.json`; a path ending in `.npz` or `.json` is
 refused. It writes the complex object and a readable signature containing source
@@ -977,7 +977,7 @@ with DirectPtycho.open(
     semiangle_mrad=30,
     scan_sampling_A=(0.264, 0.264),
 ) as batch_ssb:
-    batch_aberrations = batch_ptycho.fit_aberrations(save_dir="results/aberrations")
+    batch_aberrations = batch_ptycho.aberrations(save_dir="results/aberrations")
     result = batch_ptycho.run(batch_aberrations, save_dir="results/native")
 ```
 
@@ -1072,8 +1072,8 @@ adds more optical terms, so it is a separate comparison:
 ```python
 import pandas as pd
 
-standard = ptycho.fit_aberrations(search="primary", tilt=False)  # C10_nm, C12_nm, phi12_deg; same objective, tilt held at 0
-tilted = ptycho.fit_aberrations(search="primary")  # + specimen tilt and depth spread, jointly
+standard = ptycho.aberrations(search="primary", tilt=False)  # C10_nm, C12_nm, phi12_deg; same objective, tilt held at 0
+tilted = ptycho.aberrations(search="primary")  # + specimen tilt and depth spread, jointly
 
 tilted.sample_tilt_mrad   # (row, col) mrad, scan frame
 tilted.depth_spread_nm    # model depth spread, not a measured thickness
