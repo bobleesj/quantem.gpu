@@ -278,8 +278,6 @@ parts:
         title: CUDA pool retention (2026-10-04)
       - file: maintainer/2026-10-05-restructure
         title: Package restructure (2026-10-05)
-      - file: maintainer/downstream-sync
-        title: Downstream sync after the restructure (2026-10-05)
       - file: maintainer/2026-10-05-ssb-detector-sampling
         title: SSB detector sampling and fit state (2026-10-05)
       - file: maintainer/2026-10-05-parallax-rotation-encoded-input
@@ -317,7 +315,7 @@ parts:
       - file: maintainer/native-metal-ssb-migration
         title: Native Metal SSB migration
       - file: maintainer/ssb-performance
-        title: SSB performance notes (to 2026-10-18)
+        title: SSB performance targets
       - file: maintainer/history/index
         title: Historical experiments
         sections:
@@ -325,6 +323,10 @@ parts:
           title: WebGPU G(q,k) memory history
         - file: maintainer/history/webgpu-frame-coop-u16-clip8-2026-07-25
           title: WebGPU frame-cooperative decode
+        - file: maintainer/history/ssb-performance-to-2026-10-18
+          title: SSB performance notes (to 2026-10-18)
+        - file: maintainer/history/platform-profile-2026-08
+          title: Platform profile (2026-08)
       - file: integrations/experimental-resident-ans
         title: Experimental resident ANS
       - file: api/experimental_metal_entropy_series

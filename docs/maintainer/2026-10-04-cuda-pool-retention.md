@@ -6,7 +6,7 @@ Paths and line numbers below are those of 2026-10-04, before the restructure.
 `resident/cuda/precision.py`, `io/_precision.py` is `io/precision.py`,
 `io/_array_resident.py` is `io/arrays.py`, `io/_streamed_file.py` is
 `io/qem.py`, and `backends/cuda/packed.py` and `backends/cuda/_ans.py` are
-gone. [Downstream sync](downstream-sync.md) maps every module.
+gone.
 
 ## Question
 
