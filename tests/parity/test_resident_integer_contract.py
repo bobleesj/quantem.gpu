@@ -5,7 +5,7 @@ import hashlib
 import numpy as np
 import pytest
 
-from quantem.gpu import detector, io
+from quantem.gpu import detector
 from tests.parity.resident_integer_assertions import (
     _assert_frozen_products,
     _assert_invalid_requests,
@@ -18,6 +18,7 @@ from tests.parity.resident_integer_oracle import (
     _sum_mask,
     _working_source,
 )
+from tests.parity import cpu_reference
 
 
 def _session(source: np.ndarray, runner: str):
@@ -109,10 +110,7 @@ def test_full_uint16_file_switching_preserves_counts_above_float32(
             )
         paths.append(master)
     for index in (0, 1, 0):
-        with io.load(
-            paths[index], device="cpu", representation="dense",
-            scan_shape=(1, 2), dtype="native", verbose=False,
-        ) as loaded:
+        with cpu_reference.load(paths[index], scan_shape=(1, 2)) as loaded:
             result = detector.prepare(loaded).masked_sum_exact(
                 np.ones((17, 17), dtype=np.uint8)
             )

@@ -53,7 +53,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("masters", nargs="+", help="HDF5 master files.")
     parser.add_argument(
-        "--backend", default="cuda", choices=("cuda", "mps", "cpu", "auto")
+        "--backend", default="cuda", choices=("cuda", "mps", "auto")
     )
     parser.add_argument("--hot-pixel-correction", choices=("none", "zero", "median"), default="none")
     parser.add_argument("--dtype", default=None, help="Optional browse dtype, e.g. u8.")
@@ -238,7 +238,7 @@ def _load_once(master: Path, args: argparse.Namespace):
     from quantem.gpu.io import load
 
     kwargs: dict[str, Any] = {
-        "backend": args.backend,
+        "device": args.backend,
         "verbose": False,
     }
     if args.dtype is not None:
@@ -249,8 +249,6 @@ def _load_once(master: Path, args: argparse.Namespace):
         kwargs["apply_mask"] = bool(args.apply_mask)
     if hasattr(args, "hot_pixel_correction"):
         kwargs["hot_pixel_correction"] = args.hot_pixel_correction
-    if hasattr(args, "auto_narrow"):
-        kwargs["auto_narrow"] = bool(args.auto_narrow)
     if args.scan_region is not None:
         kwargs["scan_region"] = args.scan_region
     return load(str(master), **kwargs)

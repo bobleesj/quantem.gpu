@@ -13,8 +13,8 @@ explicit uint16 literal profile for incompressible columns. Dimensions are
 
 ## Package ownership
 
-`io.save(path, counts, format="quantem", compression="ans", backend="cpu")` is the explicit
-reference encoder. It accepts four-dimensional NumPy arrays or memory maps,
+`quantem.gpu.formats.qem.reference.save_array(path, counts)` is the reference
+encoder the tests use; `io.save` writes only GPU residents. It accepts four-dimensional NumPy arrays or memory maps,
 uses bounded scan blocks, records source geometry and 64 MiB body-block checksums,
 and publishes a new file atomically without overwriting an existing file.
 No quantization, crop, binning or invalid-pixel replacement occurs. This is a
@@ -51,8 +51,7 @@ exactly, authenticated, and reopened by native Metal. The complete logical
 volume was not materialized. This validates the workflow boundary, not a
 full-acquisition or first-load performance claim.
 
-The public loader supports exact CUDA and MPS residency and explicitly requested
-CPU reference materialization. The returned dataset keeps its encoded buffers
+The public loader supports exact CUDA and MPS residency; it has no CPU route. The returned dataset keeps its encoded buffers
 until `close()`. Indexing returns a device tensor, and
 `detector.prepare(...).masked_sum_exact(...)` returns exact `uint64` sums. No
 dense acquisition is allocated when `representation="encoded"` is selected:
@@ -64,7 +63,7 @@ with io.load(saved.path, representation="encoded", device=0) as loaded:
     pattern = loaded[0, 0]
     image = detector.prepare(loaded).masked_sum_exact(binary_detector_mask)
 
-reference_counts = io.load(saved.path, device="cpu", representation="dense").data
+reference_counts, _ = reference.load_array(saved.path)  # quantem.gpu.formats.qem.reference, for tests
 ```
 
 Downstream browser viewers consume canonical files through the package WebGPU

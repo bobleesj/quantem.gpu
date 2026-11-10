@@ -9,8 +9,8 @@ import hdf5plugin
 import numpy as np
 import pytest
 
-from quantem.gpu import io
 from quantem.gpu.resident.hot_pixels import fill_flagged, hot_pixel_record, median_plan
+from tests.parity import cpu_reference
 
 
 def test_even_neighbor_count_rounds_half_to_even():
@@ -52,7 +52,7 @@ def test_every_pixel_flagged_is_refused():
 
 
 def test_median_is_the_default_and_the_cpu_reference_applies_it(tmp_path, capsys):
-    """io.load's default fills flagged pixels; the CPU reference stores what fill_flagged gives, and says so."""
+    """The default fills flagged pixels; the CPU reference stores what fill_flagged gives, and says so."""
     counts = np.random.default_rng(5).integers(0, 1000, (12, 16, 16), dtype=np.uint16)
     mask = np.zeros((16, 16), np.uint32)
     mask[0, 0] = mask[8, 8] = 1
@@ -67,11 +67,11 @@ def test_median_is_the_default_and_the_cpu_reference_applies_it(tmp_path, capsys
         handle["entry/data/data_000001"] = h5py.ExternalLink(str(data), "/entry/data/data")
         handle["entry/instrument/detector/detectorSpecific/ntrigger"] = np.uint32(len(counts))
         handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
-    loaded = io.load(master, device="cpu", representation="dense", scan_shape=(3, 4))
+    loaded = cpu_reference.load(master, scan_shape=(3, 4), verbose=True)
     record = loaded.metadata["hot_pixel_correction"]
     assert (record["method"], record["applied"], record["pixel_count"], record["largest_window_px"]) == ("median", True, 11, 5)
     assert "11 bad pixels replaced by neighbor median, windows up to 5 x 5" in capsys.readouterr().out
     expected = fill_flagged(counts.copy(), median_plan(mask), "median")
     np.testing.assert_array_equal(np.asarray(loaded.data).reshape(counts.shape), expected)
-    raw = io.load(master, device="cpu", representation="dense", scan_shape=(3, 4), hot_pixel_correction="none")
+    raw = cpu_reference.load(master, scan_shape=(3, 4), hot_pixel_correction="none")
     np.testing.assert_array_equal(np.asarray(raw.data).reshape(counts.shape), counts)

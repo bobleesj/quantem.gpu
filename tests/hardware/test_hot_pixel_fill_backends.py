@@ -14,6 +14,7 @@ import pytest
 
 from quantem.gpu import io
 from quantem.gpu.resident.hot_pixels import fill_flagged, median_plan
+from tests.parity import cpu_reference
 
 
 def _backend():
@@ -82,7 +83,7 @@ def test_encoded_load_matches_the_cpu_reference_load(tmp_path):
     counts = np.random.default_rng(9).integers(0, 8, (8 * 9, *shape), dtype=np.uint16)
     counts[:, mask != 0] = 65535
     master = _write_master(tmp_path, counts, mask)
-    reference = io.load(master, device="cpu", representation="dense", scan_shape=(8, 9), verbose=False)
+    reference = cpu_reference.load(master, scan_shape=(8, 9))
     with io.load(master, device=backend, scan_shape=(8, 9), verbose=False) as loaded:
         record = loaded.metadata["hot_pixel_correction"]
         assert (record["method"], record["applied"], record["largest_window_px"]) == ("median", True, 5)

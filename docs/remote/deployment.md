@@ -29,7 +29,7 @@ host driver.
 ```bash
 conda run -n quantem-gpu-remote quantem-gpu --help
 conda run -n quantem-gpu-remote python -c \
-  "import quantem.gpu as qgpu; print(qgpu.__version__, qgpu.device.detect())"
+  "import quantem.gpu as qgpu; print(qgpu.__version__, qgpu.device.resolve('auto'))"
 ```
 
 For a recorded deployment, also capture the Git revision or wheel hash,

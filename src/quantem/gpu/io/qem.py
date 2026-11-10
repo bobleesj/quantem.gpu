@@ -28,9 +28,7 @@ from quantem.gpu.device.metal_runtime import (
     release_buffer,
     upload_shared,
 )
-from quantem.gpu.device.select import resolve_backend
 from quantem.gpu.formats.qem import metadata as qem_metadata
-from quantem.gpu.formats.qem.reference import load_array
 from quantem.gpu.formats.qem.snapshot import (
     ARRAY_DTYPES,
     BIT_CODEC,
@@ -44,7 +42,6 @@ from quantem.gpu.formats.qem.snapshot import (
     write_envelope,
 )
 from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
-from quantem.gpu.io.hdf5.cpu import record_dense_representation
 from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts
 from quantem.gpu.resident.float_ans import FloatANSResident
@@ -128,20 +125,9 @@ def save_bits(path: str | Path, source: BitANSResident, metadata: dict | None = 
 
 
 def load_streamed(path, *, backend, representation, scan_shape, device, verbose):
-    """Reopen a saved ``.qem`` copy as the resident it was saved from, without encoding.
-
-    ``backend="cpu"`` decodes the CPU reference array instead.
-    """
-    if backend == "cpu":
-        if representation not in (None, "dense"):
-            raise ValueError("CPU QEM reference loading returns dense data; use representation='dense'.")
-        data, metadata = load_array(path)
-        if scan_shape is not None and tuple(scan_shape) != data.shape[:2]:
-            raise ValueError("scan_shape disagrees with the saved QEM file.")
-        return record_dense_representation(Dataset4dstem(data, metadata))
-    selected_backend = resolve_backend(backend)
-    if selected_backend not in ("cuda", "mps") or representation not in (None, "encoded"):
-        raise NotImplementedError("ANS snapshots reopen as encoded counts; choose backend='cuda' or 'mps'.")
+    """Reopen a saved ``.qem`` copy as the resident it was saved from, without encoding, on ``backend`` (``"cuda"`` or ``"mps"``)."""
+    if representation not in (None, "encoded"):
+        raise NotImplementedError("ANS snapshots reopen as encoded counts; omit representation.")
     started = time.perf_counter()
     # The authenticated header binds the payload checksum table as well.
     header, start, header_digest = read_header_with_digest(path)
@@ -149,15 +135,14 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
     if scan_shape is not None and tuple(scan_shape) != shape[:2]:
         raise ValueError("scan_shape disagrees with the saved acquisition; omit scan_shape.")
     if header["codec"] in (FLOAT_CODEC, BIT_CODEC):
-        return _load_bits(path, header, start, selected_backend, device)
+        return _load_bits(path, header, start, backend, device)
     if header["codec"] == SCALED_CODEC:
-        if selected_backend != "mps":
+        if backend != "mps":
             raise NotImplementedError(
-                "Scaled uint16 .qem results reopen on Apple GPUs (backend='mps'), or "
-                "as a dense CPU reference with backend='cpu'."
+                "Scaled uint16 .qem results reopen on Apple GPUs (device='mps')."
             )
         return _load_scaled_mps(path, header, start, verbose)
-    if selected_backend == "mps":
+    if backend == "mps":
         dataset = _load_counts_mps(path, header, start, verbose)
     else:
         dataset = _load_counts_cuda(path, header, start, device, verbose, started)
@@ -477,7 +462,7 @@ def _load_scaled_mps(path, header, start, verbose):
         scientific_metadata=header["scientific_metadata"],
         container=header["container"],
         container_version=header["container_version"],
-        # a merged result's records parsed, under the keys the CPU and HDF5 readers give them
+        # a merged result's records parsed, under the keys the reference and HDF5 readers give them
         **qem_metadata.maped_records(header.get("attributes", {})),
         precision=report,
         conversion_report_origin="saved",

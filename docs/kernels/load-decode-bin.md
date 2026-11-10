@@ -190,7 +190,7 @@ The resulting array is binned evidence, not native-resolution evidence.
 | CUDA and Python MPS ANS residents | `src/quantem/gpu/resident/cuda` and `src/quantem/gpu/resident/mps` |
 | WebGPU local-file decode | `src/quantem/gpu/io/hdf5/webgpu` |
 | Native IO and Metal load plans | `native/swift/Sources/Native4DSTEMIO` and `Metal4DSTEMKernels` |
-| Independent reference | `src/quantem/gpu/io/hdf5/cpu.py` |
+| Independent reference (tests only) | `tests/parity/cpu_reference.py` |
 
 Acceptance covers exact decoded counts, odd detector shapes, incomplete edge
 bins, bad pixels, dtype/overflow behavior, full source identity, memory-budget

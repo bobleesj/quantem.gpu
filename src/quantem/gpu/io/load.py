@@ -27,7 +27,6 @@ from quantem.gpu.formats.float8 import FLOAT8_DTYPES, is_float8
 from quantem.gpu.formats.qem.snapshot import is_qem_file
 from quantem.gpu.io import arrays, digitalmicrograph, encoded, paired, qem
 from quantem.gpu.io.dataset import Dataset4dstem, drop_unread_calibration
-from quantem.gpu.io.hdf5 import cpu
 from quantem.gpu.io.precision import load_precision, precision_name, saved_precision
 from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.resident.hot_pixels import (
@@ -46,7 +45,6 @@ def load(
     detector_region: tuple[int, int, int, int] | None = None,
     apply_mask: bool | None = None,
     hot_pixel_correction: str = "median",
-    auto_narrow: bool = False,
     stack: bool | None = None,
     device: int | str | None = None,
     verbose: bool = True,
@@ -56,7 +54,7 @@ def load(
     Supported original acquisitions default to bounded ANS ingestion
     on CUDA and MPS. Real numeric sources retain their 8/16/32/64-bit integer
     or 16/32/64-bit floating dtype and original bits at native detector geometry. Use ``scan_shape`` for
-    headerless EMPAD RAW. CPU reference access is explicit, never a fallback.
+    headerless EMPAD RAW. Nothing is loaded on the CPU.
     Generic HDF5 layouts use bounded storage reads where the direct compressed
     chunk decoder cannot apply. Saved copies retain calibration and provenance.
 
@@ -106,16 +104,12 @@ def load(
     ``representation="paired"`` streams complete uint16
     acquisitions (one path or a list, each returned as its own source) into
     the CUDA paired-count tANS resident layout, and a saved paired resident
-    form reopens under the same name without decoding. CPU reference expansion
-    requires ``device="cpu", representation="dense"``. Unsupported conversions
-    raise instead of silently loading HDF5, expanding densely, or using CPU.
-    The CPU reference reads the stored detector mask unless ``apply_mask=False``
-    and treats its pixels with ``hot_pixel_correction``, bit for bit as the GPU
-    loads do. Saved compact sources retain the correction already recorded in
-    their metadata.
+    form reopens under the same name without decoding. Unsupported conversions
+    raise instead of silently loading HDF5 or expanding densely. Saved compact
+    sources retain the pixel correction already recorded in their metadata.
     File format and compression are detected from contents, independently of
     resident representation.
-    Without ``device`` the load selects CUDA or MPS and never selects CPU silently.
+    Without ``device`` the load selects CUDA or MPS (``quantem.gpu.device.resolve``).
 
     A flagged pixel's stored value (dead, hot, or a marker such as 65535) is not
     a measurement and biases anything summed over the detector. The default
@@ -125,8 +119,7 @@ def load(
     other value; the load line says how many, and the change is recorded in the
     metadata and any saved copy. ``"none"`` keeps every stored value, markers
     included: detector products then exclude the flagged pixels without
-    changing storage. ``"zero"`` writes 0. ``auto_narrow`` applies only to an
-    explicitly selected dense CPU reader. On MPS a bitshuffle master's uint16
+    changing storage. ``"zero"`` writes 0. On MPS a bitshuffle master's uint16
     or uint32 counts are held as uint8 or uint16 when every value fits; they
     read back unchanged, one printed line names the stored type, and
     ``dtype="native"`` reads them in the file's dtype.
@@ -156,13 +149,12 @@ def load(
         detector coverage, binning, calibration, or scientific dtype.
     device
         Omit (or ``"auto"``) to load onto CUDA or MPS, whichever this machine
-        has, never the CPU. ``"cpu"`` loads the explicit dense CPU reference,
-        ``"mps"`` the Apple GPU, ``"cuda"`` or ``"cuda:N"`` (or the integer
-        ``N``) a CUDA GPU.
+        has; ``"mps"`` names the Apple GPU, ``"cuda"`` or ``"cuda:N"`` (or the
+        integer ``N``) a CUDA GPU. ``"cpu"`` raises ``ValueError``: there is no
+        CPU load.
     stack
         Omit to retain compressed or independently calibrated acquisitions as
-        a list, while stacking CPU reference arrays. Use ``False``
-        to request independent acquisitions explicitly.
+        a list. Use ``False`` to request independent acquisitions explicitly.
     scan_shape
         Optional full scan shape as ``(row, col)``.
     scan_region, detector_region
@@ -174,20 +166,17 @@ def load(
     Dataset4dstem or list[Dataset4dstem]
         Data stays backend-resident.
     """
-    backend, device = _device_backend(device)
     # Residency policy does not depend on whether a device is available.
-    if (
-        representation is not None
-        and DataRepresentation.parse(representation) is DataRepresentation.DENSE
-        and backend in (None, "auto", "cuda", "mps")
-    ):
+    if representation is not None and DataRepresentation.parse(representation) is DataRepresentation.DENSE:
         raise NotImplementedError(
             "GPU acquisitions must remain ANS encoded; omit representation "
             "or use representation='encoded'. Read bounded regions from the "
-            "loaded acquisition instead of expanding the full cube. "
-            "Tiny reference arrays require device='cpu'."
+            "loaded acquisition instead of expanding the full cube."
         )
     hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
+    # The loaders take the backend name and, on CUDA, the device index (None: the current device).
+    backend, _, index = select.resolve(device).partition(":")
+    device = int(index) if index else None
     # One path, array or generated block source is one acquisition; a list or
     # tuple names several, each returned as its own result.
     single = isinstance(source, (str, os.PathLike)) or not isinstance(source, Sequence)
@@ -208,12 +197,11 @@ def load(
             raise ValueError("Load the original 4D FP8 array without conversion or selection options; use read() for a region.")
         if representation not in (None, "encoded"):
             raise ValueError("FP8 acquisitions require encoded residency; omit representation.")
-        selected_backend = select.resolve_backend(backend)
         return arrays.load_array_resident(
             tuple(source.shape), source.dtype,
             lambda first, stop: arrays.read_frame_block(source, source.shape, first, stop),
             {"source_kind": "array", "source_dtype": str(source.dtype).removeprefix("torch.")},
-            backend=selected_backend, device=device, verbose=verbose,
+            backend=backend, device=device, verbose=verbose,
         )
 
     # NumPy, EMPAD and saved QuantEM Zarr arrays: complete measurements, encoded on the GPU.
@@ -222,13 +210,8 @@ def load(
                           or zarr_zip.is_zarr_zip(path))
                      for path in sources]
     if any(array_sources) and not precision:
-        array_backend = select.resolve_backend(backend)
-        allowed = (None, "dense") if array_backend == "cpu" else (None, "encoded")
-        if not all(array_sources) or representation not in allowed:
-            raise NotImplementedError(
-                "Load NumPy/EMPAD/Zarr separately with encoded GPU residency; "
-                "CPU dense access is explicit reference-only."
-            )
+        if not all(array_sources) or representation not in (None, "encoded"):
+            raise NotImplementedError("Load NumPy/EMPAD/Zarr separately with encoded GPU residency.")
         if (any(value is not None for value in (dataset_path, scan_region, detector_region))
                 or dtype not in (None, "native") or apply_mask):
             raise ValueError(
@@ -242,44 +225,41 @@ def load(
             for path in sources:
                 reader = zarr_zip if zarr_zip.is_zarr_zip(path) else empad
                 data, metadata = reader.load_array_source(path, scan_shape)
-                if array_backend == "cpu":
-                    results.append(Dataset4dstem(data, metadata))
-                else:
-                    try:
-                        source_files = {Path(path)}
-                        if getattr(data, "filename", None):
-                            source_files.add(Path(data.filename))
-                        if metadata.get("source_metadata_path"):
-                            source_files.add(Path(metadata["source_metadata_path"]))
-                        signatures = {
-                            file: (file.stat().st_size, file.stat().st_mtime_ns)
-                            for file in source_files
-                        }
-                        results.append(arrays.load_array_resident(
-                            data.shape,
-                            data.dtype,
-                            lambda first, stop, data=data: arrays.read_frame_block(
-                                data, data.shape, first, stop
-                            ),
-                            metadata,
-                            backend=array_backend,
-                            device=device,
-                            hot_pixel_correction=hot_pixel_correction,
-                            verbose=verbose,
-                        ))
-                        for file, signature in signatures.items():
-                            status = file.stat()
-                            if (status.st_size, status.st_mtime_ns) != signature:
-                                raise ValueError(
-                                    "Source changed during ANS ingestion; "
-                                    "reopen the acquisition."
-                                )
-                    finally:
-                        # Array sources are NumPy memory maps; close the file
-                        # mapping now rather than when garbage is collected.
-                        mapping = getattr(data, "_mmap", None)
-                        if mapping is not None:
-                            mapping.close()
+                try:
+                    source_files = {Path(path)}
+                    if getattr(data, "filename", None):
+                        source_files.add(Path(data.filename))
+                    if metadata.get("source_metadata_path"):
+                        source_files.add(Path(metadata["source_metadata_path"]))
+                    signatures = {
+                        file: (file.stat().st_size, file.stat().st_mtime_ns)
+                        for file in source_files
+                    }
+                    results.append(arrays.load_array_resident(
+                        data.shape,
+                        data.dtype,
+                        lambda first, stop, data=data: arrays.read_frame_block(
+                            data, data.shape, first, stop
+                        ),
+                        metadata,
+                        backend=backend,
+                        device=device,
+                        hot_pixel_correction=hot_pixel_correction,
+                        verbose=verbose,
+                    ))
+                    for file, signature in signatures.items():
+                        status = file.stat()
+                        if (status.st_size, status.st_mtime_ns) != signature:
+                            raise ValueError(
+                                "Source changed during ANS ingestion; "
+                                "reopen the acquisition."
+                            )
+                finally:
+                    # Array sources are NumPy memory maps; close the file
+                    # mapping now rather than when garbage is collected.
+                    mapping = getattr(data, "_mmap", None)
+                    if mapping is not None:
+                        mapping.close()
         except BaseException:
             for result in results:
                 result.close()
@@ -328,9 +308,6 @@ def load(
     if precision or any(saved):
         if any(saved) and dtype not in (None, "native") and precision is None:
             raise ValueError("Saved precision includes intensity scaling. Omit dtype to restore its units, or request scaled_uint16 explicitly; raw-code casts are not supported.")
-        precision_backend = select.resolve_backend(backend)
-        if precision_backend not in {"cuda", "mps"}:
-            raise NotImplementedError("Precision loading requires CUDA or Metal; no CPU conversion is used.")
         storage_types = {precision} if precision else {item["storage"] for item in saved if item}
         if storage_types != {"scaled_uint16"}:
             raise NotImplementedError(
@@ -350,7 +327,7 @@ def load(
                 loaded.append(load_precision(path, dtype=dtype, device=device,
                     scan_shape=scan_shape, dataset_path=dataset_path,
                     scan_region=scan_region, detector_region=detector_region, verbose=verbose,
-                    backend=precision_backend))
+                    backend=backend))
         except BaseException:
             for item in loaded:
                 item.close()
@@ -362,15 +339,10 @@ def load(
         DataRepresentation.detect_source(path) is DataRepresentation.DENSE
         for path in sources
     ):
-        resolved_backend = select.resolve_backend(backend)
-        representation = (
-            DataRepresentation.ENCODED
-            if resolved_backend in {"cuda", "mps"}
-            else DataRepresentation.DENSE
-        )
+        representation = DataRepresentation.ENCODED
     selected_representation = _selected_representation(sources, representation)
     if selected_representation is DataRepresentation.PAIRED:
-        if select.resolve_backend(backend) != "cuda":
+        if backend != "cuda":
             raise NotImplementedError("The paired resident layout requires a CUDA device.")
         if any(value is not None for value in (dataset_path, scan_region, detector_region)):
             raise ValueError("The paired layout preserves complete native acquisitions; remove selection options.")
@@ -386,9 +358,6 @@ def load(
                                            verbose=verbose, hot_pixel_correction=hot_pixel_correction)
         return drop_unread_calibration(loaded[0] if single else loaded, sources)
     if selected_representation is DataRepresentation.ENCODED:
-        ans_backend = select.resolve_backend(backend)
-        if ans_backend not in {"cuda", "mps"}:
-            raise NotImplementedError("H5-to-ANS loading requires CUDA or MPS.")
         if scan_region is not None or detector_region is not None:
             raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection options, then use read() for a region.")
         if len(sources) > 1 and stack:
@@ -398,8 +367,6 @@ def load(
             )
         if dtype not in {None, "native"} or apply_mask:
             raise ValueError("H5-to-ANS preserves raw native counts; use dtype='native' and apply_mask=False.")
-        if ans_backend == "mps" and device not in (None, "mps"):
-            raise ValueError("Metal ANS runs on the one Apple GPU; use device='mps' or omit device.")
         results = []
         try:
             for path in sources:
@@ -408,9 +375,9 @@ def load(
                         path,
                         scan_shape=scan_shape,
                         dataset_path=dataset_path,
-                        device=None if ans_backend == "mps" else device,
+                        device=device,
                         verbose=verbose,
-                        backend=ans_backend,
+                        backend=backend,
                         hot_pixel_correction=hot_pixel_correction,
                     )
                 )
@@ -421,32 +388,8 @@ def load(
         results = [_reads_in_source_dtype(item) if dtype == "native" else item for item in results]
         return drop_unread_calibration(results[0] if single else results, sources)
 
-    # The explicit CPU reference.
-    if scan_region is not None or detector_region is not None:
-        raise RuntimeError(
-            "scan_region= and detector_region= select bounded precision storage on "
-            "CUDA and MPS; the CPU reference loads complete acquisitions."
-        )
-    if dataset_path is not None or device is not None:
-        raise ValueError(
-            "The CPU reference decodes Arina master chunks on the host; "
-            "remove dataset_path and device."
-        )
-    if dtype not in (None, "native"):
-        raise ValueError("The CPU reference returns stored counts; omit dtype.")
-    if not sources:
-        raise ValueError("Empty file list")
-    return drop_unread_calibration(cpu.load_reference(
-        sources,
-        single=single,
-        scan_shape=scan_shape,
-        apply_mask=True if apply_mask is None else apply_mask,
-        hot_pixel_correction=hot_pixel_correction,
-        auto_narrow=auto_narrow,
-        # Unlike compressed acquisitions, CPU reference arrays stack by default.
-        stack=True if stack is None else stack,
-        verbose=verbose,
-    ), sources)
+    # A requested dense representation was refused above, so only an empty source list remains.
+    raise ValueError("Empty file list")
 
 
 def _reads_in_source_dtype(dataset):
@@ -532,23 +475,6 @@ def bin(data, factor: int = 2, axes: str = "detector", dtype=None, reduction: st
     if is_torch:
         return blocks.mean(dim=reduced, dtype=dtype) if reduction == "mean" else blocks.sum(dim=reduced, dtype=dtype)
     return blocks.mean(axis=tuple(reduced), dtype=dtype) if reduction == "mean" else blocks.sum(axis=tuple(reduced), dtype=dtype)
-
-
-def _device_backend(device: int | str | None) -> tuple[str, int | str | None]:
-    """Turn ``device=`` into the backend the loaders take and the CUDA device they place the data on.
-
-    None or ``"auto"`` (or a GPU number, which the loaders place) leaves the backend ``"auto"``: CUDA or MPS,
-    never the CPU, which is loaded only when named.
-    """
-    if device is None or isinstance(device, int):
-        return "auto", device
-    requested = str(device).strip().lower()
-    if requested == "auto":
-        return "auto", None
-    implied = "cuda" if requested.startswith("cuda") else requested
-    if implied not in {"cuda", "mps", "cpu"}:
-        raise ValueError(f"Unknown device {device!r}; use 'auto', 'cuda', 'cuda:N', 'mps', or 'cpu'.")
-    return implied, (requested if requested.startswith("cuda:") else None)
 
 
 def _selected_representation(

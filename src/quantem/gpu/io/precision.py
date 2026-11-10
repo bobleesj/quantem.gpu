@@ -118,13 +118,9 @@ def save_precision(
             "Save with dtype='scaled_uint16' for calibrated scaled uint16 storage, "
             "or omit dtype to keep float32."
         )
-    backend = select.resolve_backend(backend)
-    if backend == "mps":
-        resident_type = metal.PrecisionSource
-    elif backend == "cuda":
-        resident_type = cuda.PrecisionSource
-    else:
-        raise NotImplementedError("Precision exporting requires CUDA or Metal; no CPU conversion is used.")
+    # the writer runs on the data's own GPU, so only the backend of the resolved device matters
+    backend = select.resolve(backend).partition(":")[0]
+    resident_type = metal.PrecisionSource if backend == "mps" else cuda.PrecisionSource
     if format != "arina" or compression not in {
         "auto",
         "lz4",

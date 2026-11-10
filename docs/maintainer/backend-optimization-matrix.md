@@ -143,7 +143,7 @@ Implementation checklist:
 | MPS `uint8` display compressed save | Done | Full no-bin save `1.42-1.55 s`, exact agreement against `min(uint16, 255)`. |
 | MPS `float32` compressed save | Done | Implemented and covered by synthetic exact round-trip; slower than integer save and not the demo default. |
 | CUDA compressed save | Done | Existing CUDA writer remains the CUDA path for CuPy arrays. |
-| Portable reference save | Done | `backend="cpu"` explicitly selects the portable compressed writer for tests. |
+| Portable reference save | Done | Tests write fixtures through `tests/parity/cpu_reference.py`; `io.save` has no CPU writer. |
 | Public API collision guard | Done | Regression test keeps `quantem.gpu.io.save(...)` callable after the `quantem.gpu.io.save` submodule is imported. |
 | Same-real-MAPED CUDA-vs-MPS save timing | Open | Needed before publishing exact cross-backend save-speed claims. |
 | End-to-end seven-tilt stream/merge/save under 20 s | Open | Save stage is inside target; remaining work is alignment/merge pipeline overlap and single-pass acquisition staging. |

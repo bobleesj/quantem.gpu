@@ -133,7 +133,7 @@ requiring the original acquisition or re-encoding a dense cube. Point DPs,
 binary-mask detector images, mean/selected DPs and CoM run on the accelerator.
 Each decoded window is limited to 32 MiB; reductions may use
 additional bounded temporary buffers, so this is not a total-memory limit.
-The explicit CPU reference remains available for small interoperability checks.
+The reference codec in `formats/qem/reference.py` serves small interoperability checks in the tests.
 The Python CUDA and Metal/MPS implementations accept rectangular detectors.
 The Swift native reader (`NativeEMPADSource.openQEM`) takes the detector shape
 from the header rather than assuming 128×128; do not assume that an installed
@@ -257,8 +257,9 @@ reading the arrays straight into GPU memory: `MetalPackedSource.loadQEM` and Pyt
 `io.load(path)` on Apple GPUs keep the streams ANS encoded and restore values only
 inside queries, bit-identical between the two. Masked sums add the integer codes of
 the listed pixels and calibrate once per scan, `float32(scale * sum + offset * n)`.
-`io.load(path, device="cpu")` is the dense NumPy reference; CUDA reading is not
-implemented and fails with that explanation.
+The reference codec (`formats.qem.reference.load_array`) is the dense NumPy
+decoder the tests compare against; CUDA reading is not implemented and fails
+with that explanation.
 
 ## Conformance and extension policy
 

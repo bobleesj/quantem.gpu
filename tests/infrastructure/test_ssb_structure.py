@@ -58,7 +58,7 @@ def test_ssb_auto_backend_never_falls_back_to_cpu(monkeypatch) -> None:
     from quantem.gpu.device import select as device
     from quantem.gpu.direct_ptycho import workflow
 
-    monkeypatch.setattr(device, "_cuda_probe", lambda: (False, "no CUDA device"))
+    monkeypatch.setattr(device, "_cuda_probe", lambda: (0, "no CUDA device"))
     monkeypatch.setattr(device, "_mps_probe", lambda: (False, "no Apple GPU"))
 
     with pytest.raises(RuntimeError, match="No QuantEM GPU backend is available"):

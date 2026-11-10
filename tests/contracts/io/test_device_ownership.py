@@ -94,7 +94,7 @@ def io_contexts(monkeypatch):
     monkeypatch.setattr(runtime, "_MODULES", {})
     monkeypatch.setattr(decoder, "cp", fake_cupy)
     monkeypatch.setattr(
-        "quantem.gpu.device.select.resolve_backend", lambda _backend: "cuda"
+        "quantem.gpu.device.select.resolve", lambda _device: "cuda"
     )
     return decoder, contexts
 

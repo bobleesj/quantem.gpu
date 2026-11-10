@@ -110,8 +110,8 @@ The additional MIT-licensed `tests/data/qem-v2/` bundle is entirely synthetic:
 
 The integer examples cross 512 scans and include detector edge tiles and extreme
 counts. Float examples retain signed zero, infinities, NaN payloads and subnormals.
-Compare floats by their uint32 bits. The explicit CPU reference tests require no
-GPU and compare every decoded measurement, not just the header:
+Compare floats by their uint32 bits. The reference codec tests require no GPU
+and compare every decoded measurement, not just the header:
 
 ```sh
 pytest -q tests/test_qem_reference.py tests/test_qem_metadata.py tests/test_qem_validation.py
@@ -133,29 +133,30 @@ not replace them.
 These are developer conformance and provenance examples. For ordinary GPU use,
 see [Save and share your data](qem-python.md).
 
-### Small synthetic CPU reference
+### Small synthetic file with the reference codec
 
 ```python
 import numpy as np
-from quantem.gpu import io
+from quantem.gpu.formats.qem.reference import load_array, save_array
 
 # Synthetic counts: (scan row, scan column, detector row, detector column).
 counts = np.random.default_rng(7).poisson(2, (8, 12, 16, 16)).astype(np.uint16)
-io.save("example.qem", counts, backend="cpu", metadata={
+save_array("example.qem", counts, {
     "scan_sampling_A": [0.4, 0.4],
     "voltage_kV": 300,
     "source_metadata": {"data_origin": "synthetic example"},
 })
 
-with io.load("example.qem", device="cpu") as acquisition:
-    np.testing.assert_array_equal(acquisition.data, counts)
-    print(acquisition.metadata["scientific_metadata"])
+restored, metadata = load_array("example.qem")
+np.testing.assert_array_equal(restored, counts)
+print(metadata["scientific_metadata"])
 ```
 
-An existing destination is never overwritten. CPU reference encoding is for
-portability and verification, not a claim of GPU-like speed. It uses bounded
-encoding chunks; dense CPU decoding still requires RAM for the decoded array.
-For large acquisitions, retain the accelerated encoded path where supported.
+An existing destination is never overwritten. The reference codec is for
+portability and verification, not a claim of GPU-like speed, and `io.load` and
+`io.save` never use it. It uses bounded encoding chunks; dense decoding still
+requires RAM for the decoded array. Scientific work loads `.qem` files on the
+GPU with `io.load`.
 
 ### Inspect metadata without a GPU or full decode
 
@@ -194,8 +195,8 @@ needed to decode the saved measurements.
 ### Export measurements again
 
 ```python
-with io.load("example.qem", device="cpu") as acquisition:
-    np.save("restored.npy", acquisition.data)
+restored, _ = load_array("example.qem")
+np.save("restored.npy", restored)
 ```
 
 NumPy does not carry the full QEM scientific record. Export

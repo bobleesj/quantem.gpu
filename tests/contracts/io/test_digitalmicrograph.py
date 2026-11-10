@@ -68,11 +68,12 @@ def test_dm_matches_independent_reader(tmp_path, dtype, version):
     """Read the calibrated 4D image, retaining rectangular axes and native counts."""
     from ncempy.io import dm
     from quantem.gpu import io
+    from tests.parity import cpu_reference
 
     values = np.arange(5 * 7 * 12 * 16).reshape(5, 7, 12, 16).astype(dtype)
     path = write_dm(tmp_path / f"camera.dm{version}", values, version=version)
     info = io.inspect(path)
-    with io.load(path, device="cpu", representation="dense") as loaded:
+    with cpu_reference.load(path) as loaded:
         with dm.fileDM(path) as reference:
             expected = reference.getDataset(0)["data"]
         np.testing.assert_array_equal(loaded.data, expected)
@@ -88,13 +89,13 @@ def test_dm_detector_step_reads_the_same_before_and_after_saving(tmp_path):
 
     The loaded file used to report the file's own 1/nm, ten times the number its saved copy reported.
     """
-    from quantem.gpu import io
+    from tests.parity import cpu_reference
 
     path = write_dm4(tmp_path / "camera.dm4", np.zeros((5, 7, 12, 16), np.uint16))
-    with io.load(path, device="cpu", representation="dense") as loaded:
+    with cpu_reference.load(path) as loaded:
         before = loaded.sampling, loaded.units
-        io.save(tmp_path / "camera.qem", loaded, backend="cpu")
-    with io.load(tmp_path / "camera.qem", device="cpu") as reopened:
+        cpu_reference.save(tmp_path / "camera.qem", loaded)
+    with cpu_reference.load(tmp_path / "camera.qem") as reopened:
         assert (reopened.sampling, reopened.units) == before
     assert before == ((2.5, 2.5, 0.025, 0.025), ("angstrom", "angstrom", "1/angstrom", "1/angstrom"))
 
@@ -144,14 +145,17 @@ def test_camera_mask_plan_matches_signed_reference():
                 np.testing.assert_array_equal(actual[offset + 1][order], expected[offset + 1])
 
 
-def test_dm4_rejects_geometry_changes_and_truncated_payload(tmp_path):
+def test_dm4_rejects_geometry_changes_and_truncated_payload(tmp_path, monkeypatch):
     """Opening never silently reshapes an acquisition or accepts a partial transfer."""
     from quantem.gpu import io
+    from quantem.gpu.device import select
 
+    # both refusals come before any GPU work, so the device is pinned to keep this off the GPU
+    monkeypatch.setattr(select, "resolve", lambda requested: "cuda")
     values = np.zeros((5, 7, 12, 16), np.uint8)
     path = write_dm4(tmp_path / "camera.dm4", values)
     with pytest.raises(ValueError, match="disagrees with DM geometry"):
-        io.load(path, device="cpu", scan_shape=(7, 5))
+        io.load(path, scan_shape=(7, 5))
     with pytest.raises(NotImplementedError, match="complete acquisition"):
         io.load(path, device="cuda", scan_region=(0, 2, 0, 2))
     path.write_bytes(path.read_bytes()[:-200])

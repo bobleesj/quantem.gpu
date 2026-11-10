@@ -160,7 +160,7 @@ def test_master_with_a_non_square_frame_count_asks_for_the_scan_shape(monkeypatc
     """Six complete frames are no square raster: loading says how to supply one."""
     from tests.hardware.test_screening_products import write_master
     # the geometry check runs before any decoding, so pin the backend to keep this off the GPU
-    monkeypatch.setattr(select, "resolve_backend", lambda requested: "cuda")
+    monkeypatch.setattr(select, "resolve", lambda requested: "cuda")
 
     master = write_master(tmp_path, np.ones((2, 3, 4, 5), np.uint16), np.zeros((4, 5), np.uint32))
     info = io.inspect(master)

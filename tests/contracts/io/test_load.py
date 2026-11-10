@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from quantem.gpu.device import cuda_runtime as memory_module
+from tests.parity import cpu_reference
 
 
 @pytest.mark.parametrize("apply_mask", [False, True])
@@ -13,16 +14,14 @@ def test_cpu_reference_records_source_and_actual_mask_policy(tmp_path, apply_mas
     """
     import h5py
 
-    from quantem.gpu import io
-
     counts = np.full((2, 3, 8, 8), 17, dtype=np.uint16)
     master = tmp_path / "source_master.h5"
-    io.save(master, counts, backend="cpu", verbose=False)
+    cpu_reference.save(master, counts)
     mask = np.zeros((8, 8), dtype=np.uint32)
     mask[2, 4] = 16
     with h5py.File(master, "r+") as handle:
         handle.create_dataset("entry/instrument/detector/detectorSpecific/pixel_mask", data=mask)
-    with io.load(master, device="cpu", apply_mask=apply_mask, verbose=False) as loaded:
+    with cpu_reference.load(master, apply_mask=apply_mask) as loaded:
         assert loaded.metadata["source_path"] == str(master)
         correction = loaded.metadata["hot_pixel_correction"]
         assert correction["backend"] == "cpu"
@@ -67,19 +66,18 @@ def test_qem_of_a_master_holds_no_hdf5_layout_attributes(tmp_path) -> None:
     """
     import h5py
 
-    from quantem.gpu import io
     from quantem.gpu.formats.hdf5.master import get_metadata
     from quantem.gpu.formats.qem.validation import read_envelope
 
     counts = np.random.default_rng(1).poisson(3, (2, 3, 8, 8)).astype(np.uint16)
     master = tmp_path / "scan_master.h5"
-    io.save(master, counts, backend="cpu", verbose=False)
+    cpu_reference.save(master, counts)
     layout = {"NX_class", "signal", "data_file_frame_ranges"}
     with h5py.File(master, "r") as handle:
         assert layout <= set(handle["entry/data"].attrs)
     assert not layout & set(get_metadata(str(master)))
-    with io.load(master, device="cpu", verbose=False) as loaded:
-        io.save(tmp_path / "scan.qem", loaded, backend="cpu", verbose=False)
+    with cpu_reference.load(master) as loaded:
+        cpu_reference.save(tmp_path / "scan.qem", loaded)
     assert not layout & set(read_envelope(tmp_path / "scan.qem")[0]["metadata"])
 
 
@@ -95,32 +93,30 @@ def test_load_names_master_calibration_attributes_it_does_not_read(tmp_path) -> 
 
     import h5py
 
-    from quantem.gpu import io
-
     counts = np.random.default_rng(1).poisson(3, (2, 3, 8, 8)).astype(np.uint16)
     master = tmp_path / "scan_master.h5"
-    io.save(master, counts, backend="cpu", verbose=False, metadata={"detector_sampling_inv_A": [0.02, 0.03]})
+    cpu_reference.save(master, counts, metadata={"detector_sampling_inv_A": [0.02, 0.03]})
     # a master of this version: nothing to say, on a quiet or a verbose load
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         for verbose in (False, True):
-            with io.load(master, device="cpu", verbose=verbose) as current:
+            with cpu_reference.load(master, verbose=verbose) as current:
                 assert current.sampling == (None, None, 0.02, 0.03)
     with h5py.File(master, "r+") as handle:
         handle.attrs["scan_sampling_A"] = 0.264
         handle.attrs["detector_sampling"] = [0.2, 0.3]
         handle.attrs["detector_sampling_unit"] = "mrad"
     for verbose in (False, True):
-        with pytest.warns(UserWarning, match="Calibration not read") as caught, io.load(master, device="cpu", verbose=verbose) as loaded:
+        with pytest.warns(UserWarning, match="Calibration not read") as caught, cpu_reference.load(master, verbose=verbose) as loaded:
             # nothing is converted: the scan axes are uncalibrated, and the pair this version reads is kept
             assert loaded.sampling == (None, None, 0.02, 0.03)
             assert not {"scan_sampling_A", "detector_sampling", "detector_sampling_unit"} & set(loaded.metadata)
             if verbose:
-                io.save(tmp_path / "copy.qem", loaded, backend="cpu", verbose=False)
+                cpu_reference.save(tmp_path / "copy.qem", loaded)
         assert len(caught) == 1
         for name in ("scan_master.h5", "scan_sampling_A (not a [row, col] pair)", "detector_sampling,", "detector_sampling_unit"):
             assert name in str(caught[0].message)
-    with io.load(tmp_path / "copy.qem", device="cpu", verbose=False) as copy:
+    with cpu_reference.load(tmp_path / "copy.qem") as copy:
         assert copy.sampling == (None, None, 0.02, 0.03)
         np.testing.assert_array_equal(copy.data, counts)
 
@@ -151,29 +147,6 @@ def test_get_libc_returns_none_when_posix_fadvise_is_unavailable(monkeypatch) ->
 
     assert memory_module._get_libc() is None
     assert memory_module._LIBC is False
-
-
-@pytest.mark.parametrize(
-    "selector",
-    [
-        {"scan_region": (0, 1, 0, 1)},
-    ],
-)
-def test_selective_scan_loading_rejects_cpu_backend(monkeypatch, selector) -> None:
-    """The public CPU loader must not pretend to implement selective GPU IO."""
-    from importlib import import_module
-    load_module = import_module("quantem.gpu.io.load")
-
-    monkeypatch.setattr("quantem.gpu.device.select.resolve_backend", lambda _backend: "cpu")
-
-    with pytest.raises(RuntimeError, match="CUDA and MPS"):
-        load_module.load(
-            "scan_master.h5", representation="dense",
-            device="cpu",
-            scan_shape=(1, 1),
-            verbose=False,
-            **selector,
-        )
 
 
 def test_pinned_buffer_release_prunes_redundant_smaller_size(monkeypatch) -> None:

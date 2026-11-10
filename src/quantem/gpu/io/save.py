@@ -13,7 +13,6 @@ import torch
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE
 from quantem.gpu.formats.qem.metadata import HOT_PIXEL_SCHEMA, MAPED_RECORDS, json_metadata
-from quantem.gpu.formats.qem.reference import save_array
 from quantem.gpu.io import qem
 from quantem.gpu.io.dataset import Dataset4dstem
 from quantem.gpu.io.hdf5.write import (
@@ -112,11 +111,9 @@ def save(
 
     ``format="quantem"`` instead writes one self-contained ``.qem`` copy, not an
     HDF5 master/shard set. A complete encoded CUDA or MPS/Metal resident saves
-    its existing bytes without re-encoding. Explicit ``backend="cpu"`` accepts
-    a 4D NumPy real integer or floating array through 64 bits, using the
-    portable reference encoder. Calibration is retained and an
+    its existing bytes without re-encoding. Calibration is retained and an
     existing destination is never replaced. Saved copies reopen on CUDA or
-    MPS/Metal as encoded counts, or explicitly on CPU as original dense measurements.
+    MPS/Metal as encoded counts.
     The HDF5-specific options and discussion below do not apply to ``.qem``.
     ``compression="auto"`` preserves the existing default encoding: ANS for
     QuantEM files and bitshuffle/LZ4 for Arina files.
@@ -130,8 +127,8 @@ def save(
     Output: a master HDF5 file pointing to ``*_data_NNNNNN.h5`` external files
     with per-frame HDF5 chunks. Matches Arina row/column native chunking. The
     public compression method is Bitshuffle/LZ4; ``backend="auto"`` chooses the
-    CUDA or MPS/Metal implementation from the input data. The CPU reference
-    writer is available only when requested explicitly.
+    CUDA or MPS/Metal implementation from the input data. Host arrays are not
+    written: load them through ``io.load`` first.
     Complete CUDA integer ANS datasets decode in bounded GPU batches when
     exported to HDF5; no dense acquisition is allocated. Keep the dataset
     resident until this call returns before releasing it.
@@ -214,7 +211,7 @@ def save(
         Output file layout. ``"arina"`` writes the QuantEM/Arina-style
         master/data layout. ``"quantem"`` writes the standalone ``.qem`` copy of
         an encoded resident.
-    backend : {"auto", "cuda", "mps", "cpu"}
+    backend : {"auto", "cuda", "mps"}
         Compression/write backend. ``"auto"`` keeps CUDA CuPy arrays on CUDA
         and MPS tensors on Metal.
     compression : {"auto", "ans", "lz4", "bslz4", "bitshuffle_lz4"}
@@ -287,10 +284,7 @@ def save(
                 data = cp.from_dlpack(data.detach())
         if dtype is not None or scan_shape is not None or source_master is not None:
             raise ValueError("Saving a native 4D acquisition preserves its own geometry; remove dtype, scan_shape, and source_master controls.")
-        if backend == "cpu" and isinstance(data, np.ndarray):
-            save_array(filepath, data, metadata, chunk_scans=512 if batch_size is None else batch_size)
-            saved_backend = "cpu"
-        elif isinstance(data, BitANSResident):
+        if isinstance(data, BitANSResident):
             if backend not in ("auto", data.backend) or batch_size is not None:
                 raise ValueError("Save the float resident on its own backend without batch_size.")
             qem.save_bits(filepath, data, metadata)
@@ -334,8 +328,8 @@ def save(
     elif isinstance(data, Dataset4dstem) and isinstance(data.data, StreamedCounts):
         data = _CountBlocks(data, batch_size)
     normalized_backend = str(backend).lower()
-    if normalized_backend not in {"auto", "cuda", "mps", "cpu"}:
-        raise ValueError("backend must be 'auto', 'cuda', 'mps', or 'cpu'")
+    if normalized_backend not in {"auto", "cuda", "mps"}:
+        raise ValueError("backend must be 'auto', 'cuda' or 'mps'")
 
     if callable(getattr(data, "blocks", None)):
         return _save_blocks(
@@ -351,12 +345,11 @@ def save(
         else:
             raise RuntimeError(
                 "backend='auto' could not infer an accelerated writer from the "
-                "input. Pass a CuPy CUDA array or MPS tensor, or request "
-                "backend='cpu' explicitly for the reference writer."
+                "input. Pass a CuPy CUDA array or MPS tensor; host arrays load "
+                "onto the GPU through io.load first."
             )
 
-    if normalized_backend in {"mps", "cpu"}:
-        compression_backend = "mps" if normalized_backend == "mps" else "hdf5"
+    if normalized_backend == "mps":
         save_compressed_arina_h5(
             filepath,
             data,
@@ -366,7 +359,7 @@ def save(
             batch_size=_DEFAULT_BATCH_SIZE if batch_size is None else int(batch_size),
             frames_per_file=frames_per_file,
             source_master=source_master,
-            compression_backend=compression_backend,
+            compression_backend="mps",
         )
         if verbose:
             elapsed_s = time.perf_counter() - started
@@ -376,8 +369,8 @@ def save(
 
     if not _is_cuda_array(data):
         raise ValueError(
-            "backend='cuda' requires a CuPy CUDA array. Use backend='auto', "
-            "'mps', or 'cpu' for non-CUDA inputs."
+            "backend='cuda' requires a CuPy CUDA array. Use backend='auto' or "
+            "'mps' for an MPS tensor."
         )
 
     cuda_batch_size = 4096 if batch_size is None else int(batch_size)

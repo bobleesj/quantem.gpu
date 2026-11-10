@@ -19,7 +19,7 @@ the entry-point and implementation map.
 
 | Count representation workflow | Implementation | Qualification |
 |---|---|---|
-| QuantEM encoded file to dense counts | Explicit CPU reference | Bounded exact integer tests |
+| QuantEM encoded file to dense counts | Reference codec, tests only | Bounded exact integer tests |
 | QuantEM encoded file to encoded resident | Python MPS | Physical small-file integer parity |
 | QuantEM encoded file to encoded resident | CUDA | Bounded physical GPU integer parity |
 | Complete H5 to runtime encoded with spatial indexes | CUDA | Bounded real and adversarial count parity |
@@ -104,7 +104,7 @@ still needs paired real-fixture, peak-memory, load, and interaction evidence.
 | MPS / Python | Explicit arrays and bounded reads, not acquisition loading | Public acquisition loading |
 | Swift / Metal | Native indexed and resident loaders | Native encoded sources; native packed loader and producer |
 | WebGPU | Local-file HDF5 loader in `io/hdf5/webgpu/local-h5.ts` | Browser `.qem` count acquisitions (`RansResidentSet.loadQemFiles`) |
-| CPU reference | `io.load(..., device="cpu", representation="dense")` | Explicit `.qem` reference decoder |
+| CPU reference (tests only) | `tests/parity/cpu_reference.py` | `.qem` reference decoder in `formats/qem/reference.py` |
 
 Python detector calls reuse the resident kernels of the loaded source:
 

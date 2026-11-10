@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from quantem.gpu import io
+from tests.parity import cpu_reference
 
 
 @pytest.mark.parametrize("device", ["cuda", "mps"])
@@ -64,14 +65,14 @@ def test_cpu_masked_counts_keep_tilt_identity_and_correction(tmp_path):
     counts_t = torch.arange(4 * 4 * 8 * 8).reshape(4, 4, 8, 8).to(torch.uint16)
     counts_t[:, :, 2, 3] = 65535
     path = tmp_path / "tilt_-17.0x_0.0y_master.h5"
-    io.save(path, counts_t, backend="cpu", verbose=False)
+    cpu_reference.save(path, counts_t)
     mask_t = torch.zeros((8, 8), dtype=torch.uint32)
     mask_t[2, 3] = 16
     with h5py.File(path, "a") as handle:
         handle.create_dataset(
             "entry/instrument/detector/detectorSpecific/pixel_mask", data=mask_t.numpy()
         )
-    with io.load(path, device="cpu", hot_pixel_correction="zero", verbose=False) as loaded:
+    with cpu_reference.load(path, hot_pixel_correction="zero") as loaded:
         expected_t = counts_t.clone()
         expected_t[:, :, 2, 3] = 0
         assert torch.equal(loaded.read(), expected_t)
@@ -81,7 +82,7 @@ def test_cpu_masked_counts_keep_tilt_identity_and_correction(tmp_path):
         assert correction["coordinates_row_col"] == [[2, 3]]
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda", "mps"])
+@pytest.mark.parametrize("device", ["cuda", "mps"])
 def test_dense_float_dataset_regions_and_hdf5_roundtrip(tmp_path, device):
     """Signed fractional values and calibration survive region reads and saving."""
     if device == "cuda" and not torch.cuda.is_available():

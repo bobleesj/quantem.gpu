@@ -215,7 +215,7 @@
             "reference-oracle-is-separate"
           ],
           "gates": [
-            "src/quantem/gpu/io/hdf5/cpu.py",
+            "tests/parity/cpu_reference.py",
             "tests/contracts/io/test_load.py"
           ]
         },
