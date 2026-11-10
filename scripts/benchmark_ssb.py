@@ -161,7 +161,7 @@ def run(arguments, stages) -> None:
             times, hashes = [], []
             for _ in range(arguments.repeats):
                 result, seconds = timed(lambda: parallax.run(
-                    data, bright_field_radius_px=20, upsample_factor=2, aberrations=True,
+                    data, bright_field_radius_px=20, upsample=2, aberrations=True,
                     scan_sampling_A=(arguments.scan_sampling_A, arguments.scan_sampling_A), semiangle_mrad=arguments.semiangle_mrad))
                 times.append(seconds)
                 hashes.append(f"image {digest(result.image)} density {digest(result.density)} "
