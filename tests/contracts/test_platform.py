@@ -40,13 +40,13 @@ def test_extras_are_explicit_cuda_mps_and_cpu() -> None:
     assert extras["cuda"] == [
         "cupy-cuda13x[ctk]>=14.0; sys_platform != 'darwin' and platform_machine != 'ARM64'",
         "torch>=2.11; sys_platform != 'darwin'",
-        "optuna<5",
+        "optuna==4.9.0",
         "scipy",
     ]
     assert extras["mps"] == [
         "mlx; sys_platform == 'darwin' and platform_machine == 'arm64'",
         "pyobjc-framework-Metal; sys_platform == 'darwin' and platform_machine == 'arm64'",
-        "optuna<5",
+        "optuna==4.9.0",
         "scipy",
     ]
     assert "gpu" not in extras
