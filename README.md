@@ -390,13 +390,10 @@ in quantem is heading.
 
 | Call | Method | Use it for |
 |---|---|---|
-| `fit_aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
-| `fit_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `aberrations()` | model-based, tilt-corrected, refined through fifth order | **the default**: every fit |
+| `aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
 
-Both refine on exact derivatives of the model agreement. The earlier
-phase-variance search (`objective="phase_variance"`), which scored how well the
-bright-field pixels' phase images agree instead of predicting the data, is
-retired. Backend support and evidence: [SSB fit methods](docs/api/ssb.md#fit-methods-model-based-by-default).
+Both refine on exact derivatives of the model agreement. Backend support and evidence: [SSB fit methods](docs/api/ssb.md#fit-methods-model-based-by-default).
 
 ### Find the aberrations, then reconstruct
 
@@ -412,8 +409,8 @@ ptycho = DirectPtycho.open(
     semiangle_mrad=30,  # mrad
     scan_sampling_A=(0.264, 0.264),  # Å per scan pixel, (row, column)
 )
-aberrations = ptycho.fit_aberrations()  # on the native scan grid
-result = ptycho.reconstruct(aberrations, upsampling="auto")
+aberrations = ptycho.aberrations()  # on the native scan grid
+result = ptycho.run(aberrations, upsample="auto")
 result.show()  # large phase image at the factor the sampling allows (2x here)
 ```
 
@@ -430,7 +427,7 @@ internally; these settings do not change the scientific sampling.
 
 The rotation is opened with the file's or the given angle, else estimated
 modulo 180° from the centre-of-mass curl. For an estimated angle,
-`fit_aberrations()` fits both 180° branches independently and keeps the one
+`aberrations()` fits both 180° branches independently and keeps the one
 whose dark-field atomic columns have positive phase (the larger phase tail
 when no columns are resolved); a given or recorded angle is fitted once and
 kept. See the evidence in a separate cell:
@@ -450,7 +447,7 @@ axsize=(7, 7))`. The library marks matching central crops on the full images.
 The [SSB API](docs/api/ssb.md#settle-the-180-branch) explains the branch test.
 
 Advanced users can inspect search trials with shared phase contrast, shown at
-`upsampling="auto"`:
+`upsample="auto"`:
 
 ```python
 ptycho.show_trials(best=5)     # five lowest-loss search trials
@@ -474,8 +471,8 @@ result.object_sampling_A  # Å per output pixel, (row, column)
 probe = result.probe()  # centered complex real-space model probe
 probe_fourier = result.probe(space="fourier")  # centered complex reciprocal-space probe
 result.probe_sampling_A  # Å per probe pixel, (row, column)
-result = ptycho.reconstruct(aberrations, upsampling=4)  # CUDA: same parameters, finer output
-adjusted = ptycho.reconstruct(aberrations, aberrations={"C10_nm": 12.5})  # nm
+result = ptycho.run(aberrations, upsample=4)  # CUDA: same parameters, finer output
+adjusted = ptycho.run(aberrations, aberrations={"C10_nm": 12.5})  # nm
 ptycho.close()
 ```
 

@@ -6,6 +6,64 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+### Renamed (no aliases)
+
+One vocabulary across quantem.gpu, quantem.widget and quantem.live. The old names below are removed: no alias,
+deprecated keyword or reader of an old saved key remains for them.
+
+| Old | New | Where |
+|---|---|---|
+| `DirectPtycho.reconstruct(...)` | `DirectPtycho.run(...)` | method |
+| `DirectPtycho.reconstruct_series(...)` | `DirectPtycho.run_series(...)` | class method |
+| `DirectPtycho.fit_aberrations(...)`, `find_aberrations(...)` | `DirectPtycho.aberrations(...)` | method |
+| `num_trials=` (beside `trials=` on `aberrations`, `run_series`, `scan_rotations`; `benchmark.run_ssb`) | `trials=` | keyword |
+| session's known optics mapping `session.aberrations` | `session.known_aberrations` | attribute |
+| `SSB`, `SSBResult` | `DirectPtycho`, `DirectPtychoResult` | classes |
+| `method="ssb"`, `"reconstruction_method": "ssb"` | `"phase_of_mean"` | argument and saved value |
+| `upsampling=`, `upsampling_factor`, output-grid `upsample_factor` (backend `preview_upsampled`, `ThickSample.run`, streamed `phase`), record keys `"upsampling"`, `"ssb_upsampling_factor"` | `upsample` | keyword, attribute, record key |
+| `upsampling_mode` | `upsample_mode` | record key |
+| `auto_upsampling_factor`, `auto_upsample_factor` | `auto_upsample` | widget trait, attribute |
+| `ssb_upsampling_factor()`, `ssb_upsampling_requirement()` | `ssb_upsample_factor()`, `ssb_upsample_requirement()` | functions |
+| `phase_damping`, `amplitude_damping` | `phase_damp`, `amplitude_damp` | keyword, record key |
+| `NeuralPhaseModel.input_phase_damping`, `nominal_upsampling_requirement` | `input_phase_damp`, `nominal_upsample_requirement` | attribute, diagnostic key |
+| WebGPU `WebGPUReconstructionOptions.upsampling` | `upsample` | option |
+| `scripts/benchmark_ssb.py --stages reconstruct` | `--stages run` | stage name |
+| `tests/benchmarks/mps_ssb.py` metrics `find_aberrations`, `find_aberrations_standard` | `aberrations`, `aberrations_standard` | benchmark keys (the M5 Max baseline follows) |
+
+Retired keywords that only printed a line or raised with a replacement are removed: `run(phase_estimator=)` and
+`preview(phase_estimator=)` (`method=` is the one control), `aberrations(objective=)`, `aberrations(higher_order=)`
+and the same in `scan_rotations(**fit_options)`. `refinement` takes `"auto"` or None and raises on another value. A
+saved result that names `mean_phase` or `complex_wave` loads without a notice.
+
+The subpixel `upsample_factor` of cross-correlation (Guizar-Sicairos DFT upsampling) and `parallax.run(upsample_factor=)`
+name other quantities and keep their names.
+
+### Saved records
+
+Saved records use the new names, under new versions. The readers accept only the new versions.
+
+| Record | New version | What changed |
+|---|---|---|
+| Result record (`save_dir`) | `quantem.ssb-result/13` | files `ssb-aberrations.{npz,json}` (were `ssb-find_aberrations`) and `ssb-run.{npz,json}` (were `ssb-reconstruct`); signature operations `aberrations`, `run`; fields and keys as in the table above |
+| Stream frame record (`<save_dir>/stream/<frame>.json`) | `quantem.ssb-stream-frame/5` | shared settings key `upsample` |
+| Neural phase checkpoint (`.pt`) | `quantem.phase-refinement/2` | key `upsample` |
+| ShowPtycho calibration (`calibration.json`) | `quantem.ssb-calibration/8` | `upsample`, `upsample_mode`, `reconstruction_method` `"phase_of_mean"`, `phase_damp`, `amplitude_damp` |
+| QuantEM Live screening record (`config.json`) | `quantem.screen-acquisition/3` | the fit block is `computed.phase_of_mean` (was `computed.ssb`); `quantem.ssb-fit/7` inside is unchanged |
+
+Rewrite existing files once, offline; each rewritten file keeps its original as `<name>.before`:
+
+```bash
+python scripts/rewrite_saved_records.py --dry-run <results folder or checkpoint> ...
+python scripts/rewrite_saved_records.py <results folder or checkpoint> ...
+```
+
+It carries result records, stream frame records (their hash chain computed again), neural phase checkpoints, and the
+screening record kept inside a `quantem.ssb-phase/2` manifest (`run_metadata`). Calibrations are carried by
+quantem.widget's `scripts/rewrite_ssb_calibration.py` and screening records by QuantEM Live's
+`tools/rewrite_screen_config.py`. Result and stream records are reused only by the source they were computed with, so
+the first run after this change computes them again, as after any code change; the rewrite keeps them readable by
+`saved_fit` and other readers.
+
 ### Native Direct Ptycho
 
 - Add explicit bounded native rotation refinement around a supplied prior, preserving the full initial trial search, fifth-order refinement, cancellation, timing provenance and boundary warnings. The default automatic branch workflow is unchanged.
@@ -19,14 +77,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
-- The conventional reconstruction is requested as `method="phase_of_mean"`; the `"ssb"`
-  value is retired and raises with the replacement named. Saved results and screening
-  records keep the historical storage key, so existing files stay readable.
+- The conventional reconstruction is requested as `method="phase_of_mean"`; `"ssb"` is
+  not accepted. Saved results, calibrations and screening records name it
+  `"phase_of_mean"` too; see Saved records above for the rewrite of existing files.
 
 - The direct ptychography result is `DirectPtychoResult`; `SSBResult` is retired, because one
   object now holds SSB, phase and complex reconstructions. The neural phase model is trained
   through `DirectPtycho.train_neural_phase(optics)` and loaded through
-  `DirectPtycho.load_neural_phase(path)`; `reconstruct` and `series` take it as `neural_model`.
+  `DirectPtycho.load_neural_phase(path)`; `run` and `series` take it as `neural_model`.
   `NeuralPhaseModel` is not exported from `quantem.gpu`.
 
 - Direct ptychography series can reuse a phase model trained on measured counts. A completed

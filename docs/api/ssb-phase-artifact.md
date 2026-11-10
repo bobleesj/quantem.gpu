@@ -44,7 +44,7 @@ phase is 1,048,704 bytes as NumPy v1, plus its small JSON record.
   including higher-order settings when recorded.
 
 The exporter reads only a stored fit block of the current fit schema
-(`computed.ssb` with `"schema": "quantem.ssb-fit/7"`); another block is
+(`computed.phase_of_mean` with `"schema": "quantem.ssb-fit/7"`); another block is
 refused with the reason.
 
 Publish NumPy first and JSON last. Never overwrite a different result. Repeating
@@ -60,8 +60,8 @@ and `read_result`. The source-identity exporter currently supports ARINA masters
 with external data members. It exports the record's tilt-corrected fit, the
 default SSB result, with its original phase: `ssb_phase_tilt.npy` with
 `computed.ssb_tilt` when the record also holds an ordinary fit (QuantEM Live's
-`--ssb-mode both`), else `ssb_phase.npy` with `computed.ssb`. The beam, sampling
-and bright-field calibration are `computed.ssb`'s, which both fits share. It
+`--ssb-mode both`), else `ssb_phase.npy` with `computed.phase_of_mean`. The beam, sampling
+and bright-field calibration are `computed.phase_of_mean`'s, which both fits share. It
 never substitutes a calibrated, picked, locked or denoised image with different
 settings.
 

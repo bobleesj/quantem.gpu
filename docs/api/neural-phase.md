@@ -36,8 +36,8 @@ The advanced notebook, in the same private repository, covers damping, probe
 phase and measured-pattern exploration.
 
 The public fitting method is `DirectPtycho.aberrations()`. Older examples used
-`find_aberrations()`, which is no longer a public method. Saved fit files
-retain the historical `ssb-find_aberrations` prefix. The native Swift
+`find_aberrations()` or `fit_aberrations()`, which are no longer public methods.
+Saved fit files are `ssb-aberrations.npz` and `.json`. The native Swift
 entry point is `DirectPtychoModelFit.findAberrations`.
 
 ## Reuse the model

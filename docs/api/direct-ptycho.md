@@ -162,11 +162,9 @@ by weighted aperture power. Both strengths are absolute dimensionless controls;
 the amplitude value is **not a multiplier** of the phase value. Larger values
 suppress poorly measured components more strongly, and can also suppress real
 features. The default strength is 0.03 for each applicable channel.
-These are Tikhonov (damped least-squares) strengths, hence the names. The
-earlier spellings `phase_regularization`, `amplitude_regularization` and
-`upsample_factor` still work during a transition and raise a
-`DeprecationWarning` naming the new keyword; passing both spellings raises
-`TypeError`.
+These are Tikhonov (damped least-squares) strengths, hence the names. Earlier
+spellings are not accepted; the CHANGELOG lists each old name and its
+replacement.
 
 The default smoothness prior is `D(q) = (1 + (q/q0)²)²` with
 `q0 = smoothness_inv_A = 1` in inverse Angstrom. Use `smoothness_inv_A=0`
@@ -378,17 +376,16 @@ Read `series.latest` for the current scan; `series.show()` displays the register
 
 Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.
 The public methods are `aberrations()`, `run()`, and `scan_rotations()`.
-Update old `find_aberrations()`, `run()`, and rotation-comparison calls to these
-names; the renamed methods do not retain aliases. Saved calibration/result
-schemas and their reading paths remain unchanged. The series entry point is
+Update old `fit_aberrations()`, `reconstruct()`, and rotation-comparison calls to these
+names; the renamed methods do not retain aliases. Saved records take the new
+names too (`quantem.ssb-result/13`, `quantem.ssb-calibration/8`); the CHANGELOG
+names the script that rewrites existing files once. The series entry point is
 `DirectPtycho.series(...)`; there is no `stream(...)` spelling.
 The package is `quantem.gpu.direct_ptycho` (for example
 `from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA`); there is no
 `quantem.gpu.ssb` alias.
-The established `DirectPtychoResult` type holds all three direct methods. The older SSB
-phase estimators are retired: `phase_estimator="mean_phase"` raises naming
-`method="phase"`, and `"complex_wave"` naming `method="complex"`. Results saved
-with them still load as saved, with a one-line notice.
+The established `DirectPtychoResult` type holds all three direct methods; `method=`
+is the one control of which reconstruction runs.
 
 Iterative object/probe refinement is the separate `myptycho.IterativePtycho`
 workflow, also using `.run(...)`. Slices belong to its object model. Optical

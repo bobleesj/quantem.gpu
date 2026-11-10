@@ -21,12 +21,11 @@ should select `"primary"` explicitly.
 
 Every fit uses `refinement="auto"`: the exact-derivative refinements on CUDA
 and MPS, with a ceiling of 400 full-data objectives per start at fifth order.
-Choosing the method is retired: `"newton"`, `"bfgs"` or `"nelder-mead"` print
-one line and run `"auto"`; `refinement=None` keeps the best trial of a
+Another value raises; `refinement=None` keeps the best trial of a
 `search="primary"` fit unrefined. A `search="primary", tilt=False` fit that
 locks a coefficient (`refine_lock`), bounds phi12 or holds a nonzero C12 refines
 on the exact gradient in (C10, C12, phi12), where those limits are bounds
-(`result.refinement == "bfgs"`); Nelder-Mead is retired. An evaluation cap is
+(`result.refinement == "bfgs"`). An evaluation cap is
 not proof of convergence.
 Scientific objective/reconstruction work stays on the GPU; the optimizer's
 candidate generation and float64 control run on the CPU.
@@ -173,9 +172,7 @@ fitting skips it by default; pass `compute_loss=True` to calculate it. The same
 names pass through `scan_rotations(...)` and are part of a saved
 fit's settings.
 
-The phase-variance search (`objective="phase_variance"`) is retired: that value
-raises, since a silent agreement fit would land elsewhere, and
-`objective="agreement"` prints one line and fits as the default. It chose
+Every fit maximizes the model agreement. The earlier phase-variance search chose
 the aberrations under which the corrected phase images of all bright-field
 pixels agree best, so it scored images instead of predicting the data, could
 not see sample tilt or depth spread, and was about 10x slower; on simulated
@@ -303,7 +300,8 @@ the two 180-degree branches records them as `rotation_branches` (a
 `RotationBranches`); `run()` keeps it on its result whenever it applies
 that fit's coefficients, so `report()` shows the suggested rotation and
 `result.show("rotation")` draws the evidence. Saved results (`save_dir`) are
-`quantem.ssb-result/10` records; a `/9` record is computed again. A record
+`quantem.ssb-result/13` records; a record of another version is computed again
+(`scripts/rewrite_saved_records.py` carries a `/12` folder over once). A record
 holds no absolute path: it names its source by file name (and its path
 relative to the results folder when the data lives under it), and it is reused
 when the acquisition's portable identity matches
@@ -318,7 +316,7 @@ copied with its data is therefore reused; another acquisition is fitted again.
 - complex result: `object_wave[scan_row, scan_column]`, complex64, on the session's output grid;
 - `bright_field_center_px`: `(detector_row, detector_column)`;
 - `scan_sampling_A` and `object_sampling_A`: `(row, col)` pairs, in Å; every
-  entry point (`DirectPtycho`, `DirectPtycho.open`, `reconstruct_series`, `parallax.run`) also
+  entry point (`DirectPtycho`, `DirectPtycho.open`, `run_series`, `parallax.run`) also
   takes one number for both axes and stores and reports the pair;
 - `C10_nm` and `C12_nm`: nm; and
 - `phi12_deg`: degrees.
@@ -937,7 +935,6 @@ Rerun the aberration search for older records; the loader does not guess their u
   dataset has no bounded read of its own. Pass the dataset, `DirectPtycho(data, ...)`, or
   open the file with `DirectPtycho.open(path, ...)`.
 - `trials` is the search budget per rotation branch (default 200), before refinement.
-  `num_trials` remains a compatibility alias; supply only one keyword.
   `trials` must be non-negative and `refinement` is `"auto"` or `None` (a
   `search="primary"` fit's best trial, unrefined). With `tilt=True` and
   `trials=0` the session's previous joint fit is refined. Use
@@ -950,8 +947,8 @@ Rerun the aberration search for older records; the loader does not guess their u
 ## Provenance and exact reuse
 
 `save_dir` names a results directory. `aberrations` writes
-`ssb-find_aberrations.npz` and `.json` there, `reconstruct` writes
-`ssb-reconstruct.npz` and `.json`; a path ending in `.npz` or `.json` is
+`ssb-aberrations.npz` and `.json` there, `run` writes
+`ssb-run.npz` and `.json`; a path ending in `.npz` or `.json` is
 refused. It writes the complex object and a readable signature containing source
 identity, source and output shapes/dtypes, calibration, physical parameters,
 optimizer settings/history, bright-field geometry, loss, timings, backend,
@@ -1032,14 +1029,9 @@ Fitting never runs inside `preview`. The diagnostic loss is the native-grid
 per-detector phase variance at every output factor. Use `compute_loss=False`
 when only the image is needed.
 
-The per-detector phase average (`phase_estimator="mean_phase"`) and the 1x
-complex object (`phase_estimator="complex_wave"`) were retired on 2026-10-25.
-Asking for either raises an error naming its replacement, the regularized
-`method="phase"` or `method="complex"` (see
-[Choose a direct reconstruction](direct-ptycho.md)). Saved results and
-records that name a retired estimator still load as they were saved, with a
-one-line notice; `run()` recomputes them with SSB. `phase_estimator`
-otherwise accepts only `"phase_of_mean"`, the default.
+The per-detector phase average and the 1x complex object are not computed; the
+regularized `method="phase"` and `method="complex"` replace them (see
+[Choose a direct reconstruction](direct-ptycho.md)).
 
 Reduced contrast compression from wave averaging does not establish
 quantitative phase accuracy. Known-phase controls still show amplitude
@@ -1131,7 +1123,7 @@ bright-field centre and radius, aberrations), and
 `series.open_screen_record(record, source=None, backend="auto")` opens the
 session at that fit, so `ptycho.show()` opens ShowPtycho there. The fit is the
 record's tilt-corrected fit when it has one (`series.screen_record_fit`:
-`computed.ssb_tilt` beside an ordinary fit, else `computed.ssb`), and the
+`computed.ssb_tilt` beside an ordinary fit, else `computed.phase_of_mean`), and the
 session also takes its sample tilt and depth spread
 (`series.screen_record_sample`).
 `quantem.gpu.formats.dataset_yaml.file_entry(document, master)` finds an
@@ -1141,8 +1133,8 @@ acquisition's `files` entry by QuantEM Live's rules (its master name, a
 `acquisition_scan_sampling_A(document, master, ...)` resolves its step.
 
 A fit stored in `live/screen/<dataset>/config.json` is read only when its
-`computed.ssb` block carries `"schema": "quantem.ssb-fit/7"`
-(`quantem.gpu.direct_ptycho.persistence.FIT_SCHEMA`), which `reconstruct_series` writes
+`computed.phase_of_mean` block carries `"schema": "quantem.ssb-fit/7"`
+(`quantem.gpu.direct_ptycho.persistence.FIT_SCHEMA`), which `run_series` writes
 with every fit. A block with another schema or none is treated as absent: its
 aberrations, rotation and recorded settings are not read or converted, the
 probe reference is fitted again, and the physical settings come from
@@ -1150,10 +1142,10 @@ probe reference is fitted again, and the physical settings come from
 [stored fit schema](../maintainer/2026-10-11-stored-fit-schema.md).
 
 That `config.json` is QuantEM Live's screening record, which Live reads only
-with `"schema": "quantem.screen-acquisition/2"` at its top level
+with `"schema": "quantem.screen-acquisition/3"` at its top level
 (`quantem.gpu.direct_ptycho.persistence.SCREEN_ACQUISITION_SCHEMA`). A record that
-`reconstruct_series` creates carries that key. In a record that exists it
-changes nothing outside `computed.ssb`; a record with another top-level
+`run_series` creates carries that key. In a record that exists it
+changes nothing outside `computed.phase_of_mean`; a record with another top-level
 schema, or none, raises `ValueError` before anything is written and names
 QuantEM Live's `tools/rewrite_screen_config.py`.
 
