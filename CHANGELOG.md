@@ -178,6 +178,8 @@ the first run after this change computes them again, as after any code change; t
 
 ### Removed
 
+- `direct_ptycho.torch_agreement` (the float64 plain-torch reference of the fit's agreement and derivatives) moves to
+  `tests/parity/torch_agreement.py`: only tests used it.
 - Test-only helpers leave the package: `mps.hardware.exact_pair_row_policy_512`, `mps.prepared.bf_storage_chunk_packs`,
   `DirectPtycho.supports_tilt` (both backends fit tilt) and `_gradient_refinement.projected_gradient` (now in its
   test). The retired higher-order agreement batch (`direct_ptycho/higher_order_fit.py`,

@@ -1,4 +1,4 @@
-"""The plain-torch SSB agreement (``direct_ptycho.torch_agreement``): float64 CPU ground truth for the fit's derivatives.
+"""The plain-torch SSB agreement (``tests.parity.torch_agreement``): float64 CPU ground truth for the fit's derivatives.
 
 The scene is the weak-phase simulation of ``tests/hardware/thin_object`` (64 x 64 scan, known probe), built on the
 CPU; no GPU is used. The kernels and searches are checked against this reference in
@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from quantem.gpu.direct_ptycho.fifth_order_parameters import Coordinates
-from quantem.gpu.direct_ptycho.torch_agreement import TorchAgreement, band_frequencies, fifth_from_low
+from tests.parity.torch_agreement import TorchAgreement, band_frequencies, fifth_from_low
 from tests.hardware.thin_object import SIDE, STEP_A, TRUTH, simulate
 
 

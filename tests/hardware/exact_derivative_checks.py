@@ -1,4 +1,4 @@
-"""Checks of a backend's exact-derivative fit against the plain-torch float64 reference (``direct_ptycho.torch_agreement``).
+"""Checks of a backend's exact-derivative fit against the plain-torch float64 reference (``tests.parity.torch_agreement``).
 
 Used by ``tests/hardware/{cuda,mps}/test_ssb_exact_derivatives.py`` on the weak-phase simulation of ``thin_object``.
 The reference reads the session's own float32 G, k and band (``TorchAgreement.from_session``) and computes in float64
@@ -17,7 +17,7 @@ LOW_SCALE = np.array([100.0, 100.0, 100.0, 5.0, 5.0, 100.0])
 
 
 def reference(ssb, chunk=256):
-    from quantem.gpu.direct_ptycho.torch_agreement import TorchAgreement
+    from tests.parity.torch_agreement import TorchAgreement
 
     return TorchAgreement.from_session(ssb, chunk=chunk)
 
@@ -89,7 +89,7 @@ def check_band_halves(ssb):
 
 def check_low_order_derivatives(ssb):
     """Value, exact gradient and exact Hessian of the low-order kernel against float64 autograd."""
-    from quantem.gpu.direct_ptycho.torch_agreement import fifth_from_low
+    from tests.parity.torch_agreement import fifth_from_low
 
     low = low_order(ssb)
     phi = math.radians(TRUTH["phi12_deg"] + 7) * 2
