@@ -116,7 +116,7 @@ def test_timer_excludes_product_check_and_releases_loaded_owner(monkeypatch) -> 
             released.append(True)
 
     def load(path, **kwargs):
-        assert kwargs == {"backend": "cuda", "representation": "encoded",
+        assert kwargs == {"device": "cuda", "representation": "encoded",
                           "hot_pixel_correction": "none", "verbose": False}
         clock[0] += 3
         return Loaded()

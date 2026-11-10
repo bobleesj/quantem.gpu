@@ -30,14 +30,42 @@ deprecated keyword or reader of an old saved key remains for them.
 | WebGPU `WebGPUReconstructionOptions.phaseEstimator` (`"mean_phase"`) | removed: `reconstruct` returns the phase of the mean wave; `computeLoss` adds the native-grid loss | option |
 | `scripts/benchmark_ssb.py --stages reconstruct` | `--stages run` | stage name |
 | `tests/benchmarks/mps_ssb.py` metrics `find_aberrations`, `find_aberrations_standard` | `aberrations`, `aberrations_standard` | benchmark keys (the M5 Max baseline follows) |
+| `DirectPtychoResult.num_trials`, result record key `"num_trials"` | removed: `len(result.trials)` counts the search trials (`report()` row and key `trials`) | attribute, record key |
+| aberrations signature setting `"num_trials"` | `"trials"` | record key |
+| `DirectPtychoSeriesResult.num_trials` | `trials` | attribute |
+| `DirectPtychoResult.phase_estimator`, result record key `"phase_estimator"`, run signature setting `"phase_estimator"` | removed: `reconstruction_method` names the method | attribute, record key |
+| `DirectPtycho.show_trials(best=, last=, first=, ...)` | `DirectPtycho.show("trials", best=, last=, first=, ...)` | method |
+| calibration `"reconstruction_method"` beside `"reconstruction_options"` | one `"reconstruction": {"method": ..., "phase_damp": ..., ...}`, as ShowPtycho writes it | record keys |
+| `parallax.run(upsample_factor=)` | `upsample=` | keyword (output grid) |
+| `detector.fit_bright_field_disk(...)`, `BrightFieldDiskFit` | `detector.bright_field_disk(...)`, `BrightFieldDisk` (adds `bright_field_radius_px`, the equal-area selection radius) | function, class |
+| `detector.fit_probe(data)` | removed: `detector.bright_field_disk(data)`, its `bright_field_center_px` and `bright_field_radius_px` | function |
+| `data.calibration.fit_detector_sampling()` | `data.calibration.detector_sampling()` | method |
+| `DetectorSession.mean_dp()`, `ScreeningResult.mean_diffraction_pattern` | `DetectorSession.mean_pattern()`, `ScreeningResult.mean_pattern` | method, attribute |
+| `detector.masked_sum(data, det_mask)` | `detector.masked_sum(data, mask)` | keyword |
+| `Dataset4dstemGPU` | `Dataset4dstem` | class (`quantem.gpu.io`) |
+| `io.load(backend=, device=)` | `io.load(device=)`: omit it or `"auto"` for CUDA or MPS (never the CPU), `"cpu"`, `"mps"`, `"cuda"`, `"cuda:N"` or a GPU number | keyword |
+| `movie.save_mp4(backend=, gpu_id=)` | `movie.save_mp4(device=)`: `"auto"`, `"cpu"`, `"mps"`, `"cuda"`, `"cuda:N"` or a GPU number | keyword |
+| `movie.save_gif(cols=)`, `movie.save_mp4(cols=)` | `columns=` | keyword |
+| `remote.create_app(gpus=)`, `remote.BrowseService(gpus=)`, `ResidentAcquisition.gpu` | `devices=`, `ResidentAcquisition.device` | keyword, attribute |
+| `quantem-gpu serve --gpu N`, `--gpus` | `--device N`, `--devices` | CLI flags |
+| `quantem-gpu convert --out DIR` | `--save-dir DIR` | CLI flag |
+| `quantem-gpu benchmark-ssb --out FILE` | `--output FILE` | CLI flag |
+| `formats.ssb_phase.export_result(output_folder=)` | `save_dir=` | keyword |
+| `Dataset4dstem.from_blocks(save_to=)` | `path=` (one HDF5 file) | keyword |
+| `drift.simulate_drift(num_scans=)` | `scans=` | keyword |
+| `remote.BrowsePlan.positions(cols=)` | `columns=` | keyword |
+| `RotationBranches.num_columns` | removed: `len(branches.columns)` | attribute |
+| `BrightFieldDisk.show(figsize=)` | removed: `size=` | keyword |
 
 Retired keywords that only printed a line or raised with a replacement are removed: `run(phase_estimator=)` and
 `preview(phase_estimator=)` (`method=` is the one control), `aberrations(objective=)`, `aberrations(higher_order=)`
 and the same in `scan_rotations(**fit_options)`. `refinement` takes `"auto"` or None and raises on another value. A
 saved result that names `mean_phase` or `complex_wave` loads without a notice.
 
-The subpixel `upsample_factor` of cross-correlation (Guizar-Sicairos DFT upsampling) and `parallax.run(upsample_factor=)`
-name other quantities and keep their names.
+The subpixel `upsample_factor` of cross-correlation (Guizar-Sicairos DFT upsampling) names another quantity and keeps
+its name. `tests/contracts/test_vocabulary.py` fails when a public signature, CLI flag or saved-record writer uses a
+retired name; its `EXCEPTIONS` list names the few that stay for now (`num_bright_field_pixels`, `num_frames`,
+`backend`) with the reason.
 
 ### Saved records
 
@@ -45,10 +73,11 @@ Saved records use the new names, under new versions. The readers accept only the
 
 | Record | New version | What changed |
 |---|---|---|
-| Result record (`save_dir`) | `quantem.ssb-result/13` | files `ssb-aberrations.{npz,json}` (were `ssb-find_aberrations`) and `ssb-run.{npz,json}` (were `ssb-reconstruct`); signature operations `aberrations`, `run`; fields and keys as in the table above |
+| Result record (`save_dir`) | `quantem.ssb-result/14` | files `ssb-aberrations.{npz,json}` (were `ssb-find_aberrations`) and `ssb-run.{npz,json}` (were `ssb-reconstruct`); signature operations `aberrations`, `run`; fields and keys as in the table above; /14 drops `phase_estimator` and `num_trials` and names the search budget `trials` |
 | Stream frame record (`<save_dir>/stream/<frame>.json`) | `quantem.ssb-stream-frame/5` | shared settings key `upsample` |
 | Neural phase checkpoint (`.pt`) | `quantem.phase-refinement/2` | key `upsample` |
-| ShowPtycho calibration (`calibration.json`) | `quantem.ssb-calibration/8` | `upsample`, `upsample_mode`, `reconstruction_method` `"phase_of_mean"`, `phase_damp`, `amplitude_damp`; no `phase_estimator` key |
+| ShowPtycho calibration (`calibration.json`) | `quantem.ssb-calibration/8` | `upsample`, `upsample_mode`, one `reconstruction` dict `{"method": "phase_of_mean" \| "phase" \| "complex", "phase_damp", "amplitude_damp", "smoothness_inv_A", "detector_weighting"}` (no `reconstruction_method` or `reconstruction_options` beside it); no `phase_estimator` key |
+| Screening cache (`<master>.screening-v10.npz`) | `quantem.screening-cache/10` | `mean_pattern` (was `mean_diffraction_pattern`) and `mean_pattern_divisor`; a cache is rebuilt, never rewritten |
 | QuantEM Live screening record (`config.json`) | `quantem.screen-acquisition/3` | the fit block is `computed.phase_of_mean` (was `computed.ssb`); `quantem.ssb-fit/7` inside is unchanged |
 
 Rewrite existing files once, offline; each rewritten file keeps its original as `<name>.before`:
@@ -58,8 +87,10 @@ python scripts/rewrite_saved_records.py --dry-run <results folder or checkpoint>
 python scripts/rewrite_saved_records.py <results folder or checkpoint> ...
 ```
 
-It carries result records, stream frame records (their hash chain computed again), neural phase checkpoints, and the
-screening record kept inside a `quantem.ssb-phase/2` manifest (`run_metadata`). Calibrations are carried by
+It carries result records (/12 and /13 to /14), stream frame records (their hash chain computed again), neural phase
+checkpoints, the screening record kept inside a `quantem.ssb-phase/2` manifest (`run_metadata`), and a
+`quantem.ssb-calibration/8` file written with `reconstruction_method` beside `reconstruction_options`, which becomes the
+one `reconstruction` dict. A file rewritten once keeps its first original as `<name>.before`. Calibrations are carried by
 quantem.widget's `scripts/rewrite_ssb_calibration.py` and screening records by QuantEM Live's
 `tools/rewrite_screen_config.py`. Result and stream records are reused only by the source they were computed with, so
 the first run after this change computes them again, as after any code change; the rewrite keeps them readable by
