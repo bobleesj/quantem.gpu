@@ -87,16 +87,11 @@ class RotationDefocusComparison:
     def _repr_html_(self) -> str:
         return self.report()._repr_html_()
 
-    def show(self, *, view_fraction: float | None = None, zoom: float | None = None,
-             size: str | int = "medium", cmap: str = "inferno") -> "Figure":
-        """Show matched phase images above native-pixel histograms.
+    def show(self, *, zoom: float | None = None, size: str | int = "medium", cmap: str = "inferno") -> "Figure":
+        """Show matched full-field phase images above native-pixel histograms.
 
         Parameters
         ----------
-        view_fraction : float, optional
-            Central fraction of each scan axis to display. Use 1 for the full
-            field. Legacy crop-only display, default 0.25 when zoom is omitted.
-            Cannot be combined with zoom.
         zoom : float, optional
             Show full fitted fields above boxed central magnifications. 1 shows
             only the full fields. Histograms use the whole fitted region; all
@@ -113,7 +108,7 @@ class RotationDefocusComparison:
 
         Examples
         --------
-        >>> comparison.show(view_fraction=1)  # doctest: +SKIP
+        >>> comparison.show(zoom=3)  # doctest: +SKIP
         """
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
@@ -123,11 +118,6 @@ class RotationDefocusComparison:
         width_in = panel_inches(size)
         if zoom is not None:
             zoom_bounds((1, 1), zoom)
-            if view_fraction is not None:
-                raise ValueError("Use zoom or the legacy view_fraction, not both.")
-            view_fraction = 1.0
-        elif view_fraction is None:
-            view_fraction = 0.25
         cases = [
             {"angle": fit.scan_detector_rotation_deg,
              "C10_nm": fit.aberrations["C10_nm"],
@@ -140,18 +130,10 @@ class RotationDefocusComparison:
         ]
         focus_ranges = self.focus_ranges
 
-        if not 0 < view_fraction <= 1:
-            raise ValueError("Set view_fraction between 0 and 1.")
         images, histograms = [], []
         for case in cases:
-            native_height, native_width = case["native_phase"].shape
             for key, collection in (("phase", images), ("native_phase", histograms)):
-                phase = case[key]
-                height, width = phase.shape
-                scale = case["upsample"] if key == "phase" else 1
-                top = int(native_height * (1 - view_fraction) / 2) * scale
-                left = int(native_width * (1 - view_fraction) / 2) * scale
-                region = host_array(phase[top:height - top, left:width - left])
+                region = host_array(case[key])
                 collection.append(region - np.median(region))
         limit = np.percentile(np.abs(np.concatenate([p.ravel() for p in images])), 99)
         bins = np.linspace(min(p.min() for p in histograms),

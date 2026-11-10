@@ -10,7 +10,7 @@ from quantem.gpu.direct_ptycho.rotation_defocus import RotationDefocusComparison
 
 
 def test_review_shares_contrast_and_retains_unresolved_phase_evidence():
-    """A four-case review keeps phase polarity and shows the same physical ROI."""
+    """A four-case review keeps phase polarity and shows the whole field by default, never a crop."""
     import matplotlib.pyplot as plt
 
     rows, cols = np.mgrid[:32, :32]
@@ -31,19 +31,17 @@ def test_review_shares_contrast_and_retains_unresolved_phase_evidence():
             ))
     review = RotationDefocusComparison(tuple(fits), tuple(reconstructions), ((-30, 0), (0, 30)))
     originals = [result.phase.copy() for result in reconstructions]
-    figure = review.show(view_fraction=0.5)
+    figure = review.show()
     panels = [axis.images[0] for axis in figure.axes if axis.images]
     assert len(panels) == 4
     assert len({panel.get_clim() for panel in panels}) == 1
-    assert all(panel.get_array().shape == (32, 32) for panel in panels)
+    assert all(panel.get_array().shape == (64, 64) for panel in panels)
     for panel, original in zip(panels, originals, strict=True):
-        region = original[16:48, 16:48]
-        np.testing.assert_array_equal(panel.get_array(), region - np.median(region))
+        np.testing.assert_array_equal(panel.get_array(), original - np.median(original))
     for result, original in zip(reconstructions, originals, strict=True):
         np.testing.assert_array_equal(result.phase, original)
     assert review.status.startswith("Unresolved")
     assert not plt.fignum_exists(figure.number)  # Returned once, no implicit duplicate display.
-    assert review.show(view_fraction=1).axes[0].images[0].get_array().shape == (64, 64)
 
 
 def test_comparison_defaults_to_table_and_show_displays_one_figure(monkeypatch):

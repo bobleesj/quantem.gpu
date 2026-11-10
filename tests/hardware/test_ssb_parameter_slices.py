@@ -104,7 +104,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
         from quantem.gpu.direct_ptycho.rotation_defocus import RotationDefocusComparison
 
         comparison = RotationDefocusComparison((fit,) * 4, (shown,) * 4, ((-30, 0), (0, 30)))
-        review = comparison.show(view_fraction=1)
+        review = comparison.show()
         expected = host_array(shown.phase)
         np.testing.assert_array_equal(
             review.axes[0].images[0].get_array(), expected - np.median(expected)

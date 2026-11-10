@@ -304,6 +304,13 @@ the first run after this change computes them again, as after any code change; t
 
 ### Changed
 
+- `movie.save_gif` and `movie.save_mp4` keep native panel pixels: `max_width` defaults to None instead of 1200, and a
+  width the grid exceeds prints one line with the new panel size. `save_mp4(device="cpu")` and pre-rendered PIL frame
+  input are removed (no caller); `device="auto"` still prints one line and encodes with ffmpeg when no GPU writer can
+  take the movie.
+- `RotationDefocusComparison.show()` shows the whole fitted field; the default central 25% crop and the
+  `view_fraction=` keyword are removed. `zoom=` adds the boxed central magnification.
+
 - Direct ptychography uses `fit_aberrations()`, `reconstruct()`, and `scan_rotations()`; the former fitting, run, and rotation-comparison method names are removed. `reconstruct(method="all")` returns SSB, phase-only, and complex results from one shared optical fit. Existing saved-fit files remain readable.
 
 - `DirectPtycho.run`, `preview` and `stream` take `phase_damping` and `amplitude_damping` (were `phase_regularization` and `amplitude_regularization`): the strengths are Tikhonov damping of a damped least-squares solve. The output factor is `upsampling` (was `upsampling_factor`) on `run`, `preview`, `stream`, `show_trials` and `RotationBranches.show` / `upsampled_phases`, and `result.upsampling` / `branches.upsampling` replace `upsampling_factor`. The old keywords and attributes keep working with a `DeprecationWarning`; passing both spellings raises `TypeError`. Saved calibrations are `quantem.ssb-calibration/7` (keys `upsampling`, `phase_damping`, `amplitude_damping`); ShowPtycho still reads `/6` files. The WebGPU engine option `upsamplingFactor` is `upsampling`.

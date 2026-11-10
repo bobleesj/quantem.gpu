@@ -68,8 +68,8 @@ def _imports() -> tuple[object, object, object]:
     except ImportError as exc:
         raise RuntimeError(
             "CUDA movie export requires cupy, imageio-ffmpeg, and "
-            "PyNvVideoCodec. Use backend='cpu' or install the NVIDIA "
-            "movie dependencies in a CUDA environment."
+            "PyNvVideoCodec. Install the NVIDIA movie dependencies "
+            "in a CUDA environment."
         ) from exc
     if cp.cuda.runtime.getDeviceCount() <= 0:
         raise RuntimeError("CUDA movie export requires an NVIDIA CUDA device.")
@@ -331,7 +331,7 @@ def save_mp4(
             )
         except nvc.PyNvVCException as exc:
             # NVENC refuses some frame sizes and runs out of sessions only here;
-            # a RuntimeError lets backend="auto" fall back to the CPU writer.
+            # a RuntimeError lets device="auto" fall back to the ffmpeg writer.
             raise RuntimeError(
                 f"NVENC could not start an H.264 encoder for {out_width} x {out_height} frames: {exc}"
             ) from exc

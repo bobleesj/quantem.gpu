@@ -241,7 +241,7 @@ def _encode_nv12(
             subprocess.run(command, check=True)
             return
         except FileNotFoundError as exc:
-            # A RuntimeError lets save_mp4's "auto" backend fall back to the CPU writer.
+            # A RuntimeError lets save_mp4's "auto" device fall back to the ffmpeg writer.
             raise RuntimeError(
                 "MPS MP4 export needs ffmpeg: pip install imageio-ffmpeg, or put ffmpeg on PATH"
             ) from exc

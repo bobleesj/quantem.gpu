@@ -11,17 +11,9 @@ from PIL import Image, ImageDraw
 from quantem.gpu.movie import cuda, mps
 from quantem.gpu.movie.layout import grid_layout, label_font, label_font_size
 
-MovieData = np.ndarray | Sequence[np.ndarray] | Sequence[Image.Image]
+MovieData = np.ndarray | Sequence[np.ndarray]
 
 _CUDA_NVENC_MIN_EDGE_PX = 256
-
-
-def _is_pil_frame_sequence(data: object) -> bool:
-    return (
-        isinstance(data, Sequence)
-        and len(data) > 0
-        and all(isinstance(item, Image.Image) for item in data)
-    )
 
 
 def _as_stack_list(data: MovieData) -> list[np.ndarray]:
@@ -147,16 +139,12 @@ def _movie_frames(
     ref_stacks: Sequence[np.ndarray] | None,
     percentile: tuple[float, float],
 ) -> list[Image.Image]:
-    """Render the portable CPU writer's RGB frames: the movies tiled in a labeled grid.
+    """Render the portable writer's RGB frames: the movies tiled in a labeled grid.
 
-    Pre-rendered PIL frames pass through unchanged apart from RGB conversion.
-    Array stacks are scaled to 8 bits with their display ranges, resized with
-    Lanczos when the grid exceeds ``max_width``, and labeled
+    Stacks are scaled to 8 bits with their display ranges, resized with Lanczos
+    when the caller set a ``max_width`` the grid exceeds, and labeled
     ``"<name> [frame/frames]"`` above each panel.
     """
-    if _is_pil_frame_sequence(data):
-        return [frame.convert("RGB") for frame in data]
-
     stacks = _as_stack_list(data)
     n_frames, height, width = _validate_stacks(stacks)
     names = (
@@ -216,6 +204,31 @@ def _movie_frames(
     return frames
 
 
+def _announce_max_width(
+    data: MovieData,
+    name: str,
+    *,
+    gap: int,
+    label_height: int,
+    max_width: int | None,
+    columns: int | None,
+) -> None:
+    """Print one line when ``max_width`` shrinks the panels, since the movie then no longer shows native pixels.
+
+    Without it a wide grid would be resampled with no sign that each frame lost resolution.
+    """
+    if max_width is None:
+        return
+    stacks = _as_stack_list(data)
+    _, height, width = _validate_stacks(stacks)
+    layout = grid_layout(
+        len(stacks), height, width, columns=columns, gap=gap, label_height=label_height, max_width=max_width
+    )
+    if (layout.frame_height, layout.frame_width) != (height, width):
+        print(f"{name}: max_width={max_width} resizes each {height} x {width} panel to "
+              f"{layout.frame_height} x {layout.frame_width} pixels; pass max_width=None for native resolution.")
+
+
 def save_gif(
     data: MovieData,
     path: str | Path,
@@ -224,13 +237,17 @@ def save_gif(
     fps: float = 10,
     gap: int = 12,
     label_height: int = 28,
-    max_width: int | None = 1200,
+    max_width: int | None = None,
     columns: int | None = None,
     shared_contrast: bool = True,
     ref_stacks: Sequence[np.ndarray] | None = None,
     percentile: tuple[float, float] = (1.0, 99.0),
 ) -> Path:
-    """Save one or more grayscale movie stacks as an animated GIF."""
+    """Save one or more grayscale movie stacks as an animated GIF.
+
+    Panels keep their native pixels; ``max_width`` shrinks the grid to that many pixels and prints one line saying so.
+    """
+    _announce_max_width(data, "save_gif", gap=gap, label_height=label_height, max_width=max_width, columns=columns)
     frames = _movie_frames(
         data, labels=labels, gap=gap, label_height=label_height, max_width=max_width, columns=columns,
         shared_contrast=shared_contrast, ref_stacks=ref_stacks, percentile=percentile,
@@ -246,7 +263,7 @@ def save_mp4(
     fps: float = 10,
     gap: int = 12,
     label_height: int = 28,
-    max_width: int | None = 1200,
+    max_width: int | None = None,
     columns: int | None = None,
     shared_contrast: bool = True,
     ref_stacks: Sequence[np.ndarray] | None = None,
@@ -258,29 +275,27 @@ def save_mp4(
 
     Parameters
     ----------
-    device : {"auto", "cuda", "cuda:N", "mps", "cpu"} or int
+    max_width : int or None
+        Panels keep their native pixels by default. A width shrinks the grid to that many pixels and prints one line
+        saying so.
+    device : {"auto", "cuda", "cuda:N", "mps"} or int
         Where the movie is written. ``"auto"`` uses the NVIDIA CUDA/NVENC writer
         on CUDA device 0 when it is available and the frame is at least 256
         pixels on each side, then the Apple Metal writer. When neither writes
-        the movie it prints one line saying why and uses the CPU writer, whose
-        frames differ from the GPU writers' (Lanczos instead of nearest-neighbour
-        resizing, unoutlined labels). A GPU number ``N`` or ``"cuda:N"`` selects
-        the NVENC writer on CUDA device N; ``"cuda"`` is device 0. A named GPU
-        writer raises instead of using another. Pre-rendered PIL frames always
-        use the CPU writer.
+        the movie it prints one line saying why and encodes the frames with
+        ffmpeg, whose frames differ from the GPU writers' (Lanczos instead of
+        nearest-neighbour resizing, unoutlined labels). A GPU number ``N`` or
+        ``"cuda:N"`` selects the NVENC writer on CUDA device N; ``"cuda"`` is
+        device 0. A named GPU writer raises instead of using another.
     """
     backend, index = _movie_device(device)
-    if backend in {"cuda", "mps"} and _is_pil_frame_sequence(data):
-        raise ValueError(
-            f"device={device!r} requires array movie data; rendered PIL frames "
-            "must use device='cpu'"
-        )
+    _announce_max_width(data, "save_mp4", gap=gap, label_height=label_height, max_width=max_width, columns=columns)
     # the grid and contrast options every writer takes
     grid = dict(labels=labels, gap=gap, label_height=label_height, max_width=max_width, columns=columns)
     contrast = dict(percentile=percentile, shared_contrast=shared_contrast, ref_stacks=ref_stacks)
-    # why "auto" did not reach a GPU writer, announced before the CPU writer runs
+    # why "auto" did not reach a GPU writer, announced before the ffmpeg writer runs
     fallback = "no CUDA/NVENC or Apple Metal movie writer is available"
-    if backend in {"auto", "cuda"} and not _is_pil_frame_sequence(data):
+    if backend in {"auto", "cuda"}:
         try_cuda = backend == "cuda"
         if backend == "auto":
             stacks = _as_stack_list(data)
@@ -306,7 +321,7 @@ def save_mp4(
                 if backend == "cuda":
                     raise
                 fallback = f"the CUDA/NVENC writer failed ({error})"
-    if backend in {"auto", "mps"} and not _is_pil_frame_sequence(data):
+    if backend in {"auto", "mps"}:
         try_mps = backend == "mps" or (backend == "auto" and mps.is_available())
         if try_mps:
             stacks, limits = _stacks_with_limits(data, **contrast)
@@ -316,15 +331,14 @@ def save_mp4(
                 if backend == "mps":
                     raise
                 fallback = f"the Apple Metal writer failed ({error})"
-    if backend == "auto" and not _is_pil_frame_sequence(data):
-        print(f"save_mp4: {fallback}; writing with the CPU writer, which resizes with Lanczos and draws "
-              "unoutlined labels. Pass device='cuda' or 'mps' to get an error instead.")
+    print(f"save_mp4: {fallback}; encoding with ffmpeg, which resizes with Lanczos and draws "
+          "unoutlined labels. Pass device='cuda' or 'mps' to get an error instead.")
     return _write_mp4(_movie_frames(data, **grid, **contrast), path, float(fps), crf=int(crf))
 
 
 def _movie_device(device: int | str) -> tuple[str, int]:
-    """``save_mp4``'s ``device`` as the writer it names, ``"auto"``, ``"cuda"``, ``"mps"`` or ``"cpu"``, and the CUDA
-    device index of the NVENC writer."""
+    """``save_mp4``'s ``device`` as the writer it names, ``"auto"``, ``"cuda"`` or ``"mps"``, and the CUDA device index
+    of the NVENC writer."""
     if isinstance(device, int) and not isinstance(device, bool):
         # a GPU number is CUDA device N; 0 on a Mac is its one Apple GPU, as quantem.gpu.device reads it
         if device == 0 and not cuda.is_available() and mps.is_available():
@@ -333,8 +347,8 @@ def _movie_device(device: int | str) -> tuple[str, int]:
     name = str(device).strip().lower()
     if name.startswith("cuda:") and name[5:].isdigit():
         return "cuda", int(name[5:])
-    if name not in {"auto", "cuda", "mps", "cpu"}:
-        raise ValueError(f"unknown movie device {device!r}; use 'auto', a GPU number, 'cuda:N', 'mps', or 'cpu'")
+    if name not in {"auto", "cuda", "mps"}:
+        raise ValueError(f"unknown movie device {device!r}; use 'auto', a GPU number, 'cuda:N' or 'mps'")
     return name, 0
 
 

@@ -70,28 +70,30 @@ def test_save_movie_dispatches_by_suffix(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(export, "_write_mp4", fake_write_mp4)
 
-    out = movie.save_movie(_stack(), tmp_path / "movie.mp4", fps=7, crf=21, device="cpu")
+    from quantem.gpu.movie import cuda, mps
+
+    monkeypatch.setattr(cuda, "is_available", lambda: False)
+    monkeypatch.setattr(mps, "is_available", lambda: False)
+    out = movie.save_movie(_stack(), tmp_path / "movie.mp4", fps=7, crf=21)
 
     assert out.read_bytes() == b"mp4"
     assert captured == {"frames": 3, "fps": 7.0, "crf": 21}
 
 
-def test_save_mp4_accepts_rendered_pil_frames(tmp_path: Path, monkeypatch) -> None:
-    captured = {}
-
-    def fake_write_mp4(frames, path, fps, *, crf=18):
-        captured["sizes"] = [frame.size for frame in frames]
-        path = Path(path)
-        path.write_bytes(b"mp4")
-        return path
-
-    monkeypatch.setattr(export, "_write_mp4", fake_write_mp4)
-    frames = [Image.new("RGB", (11, 9), (idx, idx, idx)) for idx in range(2)]
-
-    out = movie.save_mp4(frames, tmp_path / "frames.mp4", fps=12)
-
-    assert out.read_bytes() == b"mp4"
-    assert captured["sizes"] == [(11, 9), (11, 9)]
+def test_movie_keeps_native_pixels_unless_max_width_is_given(tmp_path: Path, capsys) -> None:
+    """A wide grid is not resampled by default; a max_width that shrinks it prints one line naming the new size."""
+    wide = np.stack([np.full((10, 1500), value, np.float32) for value in range(2)])
+    native = movie.save_gif(wide, tmp_path / "native.gif", label_height=0)
+    with Image.open(native) as img:
+        assert img.size == (1500, 10)
+    assert capsys.readouterr().out == ""
+    shrunk = movie.save_gif(wide, tmp_path / "shrunk.gif", label_height=0, max_width=750)
+    with Image.open(shrunk) as img:
+        assert img.size == (750, 6)
+    assert capsys.readouterr().out.splitlines() == [
+        "save_gif: max_width=750 resizes each 10 x 1500 panel to 5 x 750 pixels; pass max_width=None for native "
+        "resolution."
+    ]
 
 
 def test_save_mp4_rejects_unknown_device(tmp_path: Path) -> None:
@@ -133,8 +135,8 @@ def test_save_mp4_auto_uses_cuda_backend_when_available(tmp_path: Path, monkeypa
     assert captured == {"shape": (3, 256, 256), "labels": ["raw"], "qp": 22}
 
 
-def test_save_mp4_auto_announces_the_cpu_writer_when_no_gpu_writer_exists(tmp_path: Path, monkeypatch, capsys) -> None:
-    """The CPU writer's frames differ from the GPU writers' (Lanczos resize, plain labels), so "auto" says so."""
+def test_save_mp4_auto_announces_the_ffmpeg_writer_when_no_gpu_writer_exists(tmp_path: Path, monkeypatch, capsys) -> None:
+    """The ffmpeg writer's frames differ from the GPU writers' (Lanczos resize, plain labels), so "auto" says so."""
     from quantem.gpu.movie import cuda
     from quantem.gpu.movie import mps
 
@@ -156,20 +158,9 @@ def test_save_mp4_auto_announces_the_cpu_writer_when_no_gpu_writer_exists(tmp_pa
     assert captured == {"frames": 3}
     printed = capsys.readouterr().out.splitlines()
     assert printed == [
-        "save_mp4: no CUDA/NVENC or Apple Metal movie writer is available; writing with the CPU writer, which "
+        "save_mp4: no CUDA/NVENC or Apple Metal movie writer is available; encoding with ffmpeg, which "
         "resizes with Lanczos and draws unoutlined labels. Pass device='cuda' or 'mps' to get an error instead."
     ]
-
-
-def test_cuda_backend_rejects_rendered_frames(tmp_path: Path) -> None:
-    frames = [Image.new("RGB", (11, 9), (idx, idx, idx)) for idx in range(2)]
-
-    try:
-        movie.save_mp4(frames, tmp_path / "frames.mp4", device="cuda")
-    except ValueError as exc:
-        assert "requires array movie data" in str(exc)
-    else:
-        raise AssertionError("CUDA backend should reject pre-rendered frames")
 
 
 @pytest.mark.skipif(
@@ -269,7 +260,7 @@ def test_cuda_movie_reports_an_unencodable_frame_size_as_runtime_error(tmp_path:
         )
 
 
-def test_save_mp4_auto_falls_back_to_cpu_when_the_gpu_writer_fails(
+def test_save_mp4_auto_falls_back_to_ffmpeg_when_the_gpu_writer_fails(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     from quantem.gpu.movie import cuda, mps
@@ -291,12 +282,12 @@ def test_save_mp4_auto_falls_back_to_cpu_when_the_gpu_writer_fails(
 
     assert out.read_bytes() == b"cpu"
     assert capsys.readouterr().out.startswith(
-        "save_mp4: the CUDA/NVENC writer failed (NVENC could not start); writing with the CPU writer"
+        "save_mp4: the CUDA/NVENC writer failed (NVENC could not start); encoding with ffmpeg"
     )
 
 
 def test_save_mp4_auto_lets_programming_errors_rise(tmp_path: Path, monkeypatch) -> None:
-    """Only encoder failures fall back to the CPU writer; a bug in the GPU writer is reported."""
+    """Only encoder failures fall back to the ffmpeg writer; a bug in the GPU writer is reported."""
     from quantem.gpu.movie import cuda
 
     def broken_cuda_writer(stacks, path, **kwargs):
@@ -309,11 +300,11 @@ def test_save_mp4_auto_lets_programming_errors_rise(tmp_path: Path, monkeypatch)
         movie.save_mp4(_nvenc_stack(), tmp_path / "broken.mp4", label_height=0, max_width=None)
 
 
-@pytest.mark.parametrize("backend", ["cpu", "cuda", "mps"])
+@pytest.mark.parametrize("backend", ["gif", "cuda", "mps"])
 def test_movie_labels_have_one_size_on_every_backend(
     tmp_path: Path, monkeypatch, backend: str
 ) -> None:
-    """The CPU, CUDA and Metal writers draw labels at one point size (Metal drew 8 points smaller)."""
+    """The portable, CUDA and Metal writers draw labels at one point size (Metal drew 8 points smaller)."""
     from quantem.gpu.movie import cuda, layout, mps
 
     if backend == "cuda" and not cuda.is_available():
@@ -329,7 +320,7 @@ def test_movie_labels_have_one_size_on_every_backend(
 
     for module in (export, cuda, mps):
         monkeypatch.setattr(module, "label_font", recording_font)
-    if backend == "cpu":
+    if backend == "gif":
         movie.save_gif(_nvenc_stack(), tmp_path / "labels.gif", labels=["raw"])
     else:
         movie.save_mp4(_nvenc_stack(), tmp_path / "labels.mp4", labels=["raw"], device=backend)
@@ -370,17 +361,6 @@ def test_save_mp4_auto_uses_mps_when_cuda_unavailable(tmp_path: Path, monkeypatc
         "labels": ["raw"],
         "crf": 20,
     }
-
-
-def test_mps_backend_rejects_rendered_frames(tmp_path: Path) -> None:
-    frames = [Image.new("RGB", (11, 9), (idx, idx, idx)) for idx in range(2)]
-
-    try:
-        movie.save_mp4(frames, tmp_path / "frames.mp4", device="mps")
-    except ValueError as exc:
-        assert "requires array movie data" in str(exc)
-    else:
-        raise AssertionError("MPS backend should reject pre-rendered frames")
 
 
 @pytest.mark.skipif(
@@ -498,7 +478,7 @@ def test_mps_movie_releases_every_metal_buffer(tmp_path: Path, monkeypatch, fail
 
 
 @pytest.mark.parametrize(("width", "panels", "max_width"), [(21, 3, 61), (10, 4, 25), (13, 2, None)])
-def test_cpu_movie_frames_use_the_gpu_writers_grid(width: int, panels: int, max_width: int | None) -> None:
+def test_portable_movie_frames_use_the_gpu_writers_grid(width: int, panels: int, max_width: int | None) -> None:
     """The portable writer's canvas and panel placement equal grid_layout, as the CUDA and MPS writers use.
 
     It used to round the whole canvas separately from the panels, so a scaled grid could clip its last
@@ -523,7 +503,7 @@ def test_cpu_movie_frames_use_the_gpu_writers_grid(width: int, panels: int, max_
 
 
 def test_mps_movie_without_ffmpeg_raises_the_error_auto_falls_back_on(tmp_path, monkeypatch):
-    """No ffmpeg on PATH and no imageio-ffmpeg: a RuntimeError naming the fix, so device="auto" uses the CPU writer."""
+    """No ffmpeg on PATH and no imageio-ffmpeg: a RuntimeError naming the fix, so device="auto" uses the ffmpeg writer."""
     from quantem.gpu.movie import mps
 
     monkeypatch.setenv("PATH", str(tmp_path))
