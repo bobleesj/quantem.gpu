@@ -102,7 +102,7 @@ src/quantem/gpu/                  # layers import downward only:
   ssb/
     __init__.py                   # one SSB workflow and result contract
     contract.py, cuda/, mps/, webgpu/
-  geometry/cuda.py
+  geometry/frames.py
   parallax/cuda/
   optics/physics.py
   movie/{export,cuda,mps}.py

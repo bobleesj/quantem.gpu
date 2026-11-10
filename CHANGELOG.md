@@ -178,6 +178,10 @@ the first run after this change computes them again, as after any code change; t
 
 ### Removed
 
+- `geometry.rotate_scan` with its CUDA kernels (`geometry/rotation.py`, `geometry/cuda.py`) and its tests: no caller
+  in any consumer, and its arbitrary-angle path interpolated measured counts. `geometry` keeps the scan-detector frame
+  arithmetic. The parity fixture `parity/scan_rotation_v1.json` stays until the Swift `MetalScanRotator` that reads
+  it is removed.
 - Python SSB: a plain `find_aberrations(search="primary", higher_order=...)` (no `tilt=False`, ranges, locks, fixed
   coefficients, tilt limit or `refinement=None`) runs `search="standard"`, the fifth-order fit with coma, trefoil and
   C30, and its one printed line says so; with a primary-only control the primary fit still holds them at 0. The MPS
