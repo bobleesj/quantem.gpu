@@ -44,18 +44,18 @@ def test_reconstruction_keeps_model_probe_and_saves_calibration(tmp_path):
 
     ssb, _ = _synthetic_session()
     try:
-        native = ssb.reconstruct(aberrations={"C10_nm": -3, "C12_nm": 0.5, "phi12_deg": math.degrees(0.4)})
-        fine = ssb.reconstruct(native, upsampling=4)
-        automatic = ssb.reconstruct(native, upsampling="auto")
-        explicit = ssb.reconstruct(native, upsampling=2)
-        assert automatic.upsampling == 2
+        native = ssb.run(aberrations={"C10_nm": -3, "C12_nm": 0.5, "phi12_deg": math.degrees(0.4)})
+        fine = ssb.run(native, upsample=4)
+        automatic = ssb.run(native, upsample="auto")
+        explicit = ssb.run(native, upsample=2)
+        assert automatic.upsample == 2
         cp.testing.assert_array_equal(automatic.object_wave, explicit.object_wave)
         assert automatic.phase_limits == native.phase_limits
         cp.testing.assert_array_equal(fine.probe(), native.probe())
         assert fine.probe_sampling_A == native.probe_sampling_A
-        changed = ssb.reconstruct(native, aberrations={"C10_nm": 5})
+        changed = ssb.run(native, aberrations={"C10_nm": 5})
         assert not cp.allclose(changed.probe(), native.probe())
-        paths = result_paths(tmp_path / "saved", "reconstruct")
+        paths = result_paths(tmp_path / "saved", "run")
         save_result(changed, paths=paths, signature={"test": "probe"}, input_metadata={})
         restored = load_result(paths=paths, signature={"test": "probe"}, backend="cuda")
         cp.testing.assert_array_equal(restored.probe(), changed.probe())
@@ -112,7 +112,7 @@ def test_phase_and_probe_views_keep_data_and_calibration():
     from dataclasses import replace
 
     fine = replace(result, object_wave=cp.repeat(cp.repeat(result.object_wave, 4, axis=0), 4, axis=1),
-                   upsampling=4, object_sampling_A=(0.1, 0.125))
+                   upsample=4, object_sampling_A=(0.1, 0.125))
     figure = result.show(compare=fine, axsize=(7, 7))
     image_axes = [axis for axis in figure.axes if axis.images]
     assert len(image_axes) == 4

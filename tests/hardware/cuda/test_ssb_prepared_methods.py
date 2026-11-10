@@ -89,16 +89,16 @@ def test_prepared_systems_match_previous_implementation(ptycho):
 
 def test_switching_methods_keeps_both_prepared(ptycho):
     """phase -> complex -> phase at one optics prepares each method once; the third call reuses the first."""
-    first = ptycho.reconstruct(method="phase", upsampling=3, compute_loss=False)
-    ptycho.reconstruct(method="complex", upsampling=3, compute_loss=False)
+    first = ptycho.run(method="phase", upsample=3, compute_loss=False)
+    ptycho.run(method="complex", upsample=3, compute_loss=False)
     assert set(ptycho._prepared_direct[1]) == {"phase", "complex"}
     cp.cuda.Device().synchronize()
     start = time.perf_counter()
-    third = ptycho.reconstruct(method="phase", upsampling=3, compute_loss=False)
+    third = ptycho.run(method="phase", upsample=3, compute_loss=False)
     cp.cuda.Device().synchronize()
     assert time.perf_counter() - start < 0.1
     cp.testing.assert_array_equal(third.object_wave, first.object_wave)
-    ptycho.reconstruct(method="phase", aberrations={**ABERRATIONS, "C10_nm": 13.0}, upsampling=3, compute_loss=False)
+    ptycho.run(method="phase", aberrations={**ABERRATIONS, "C10_nm": 13.0}, upsample=3, compute_loss=False)
     assert set(ptycho._prepared_direct[1]) == {"phase"}
 
 
@@ -296,15 +296,15 @@ def test_detector_holdout_matches_explicit_forward_error(ptycho):
 
 def test_damping_selection_returns_full_data_phase(ptycho):
     """A scientist can inspect both validation directions and reproduce the selected solve."""
-    result = ptycho.validate_damping(phase_dampings=[.01, .03, .1], upsampling=3)
+    result = ptycho.validate_damping(phase_damps=[.01, .03, .1], upsample=3)
     evidence = result.reconstruction_diagnostics["damping_validation"]
     assert len(evidence["records"]) == 3
     assert sum(evidence["detector_pixels"]) == ptycho.num_bright_field_pixels
     best = min(evidence["records"], key=lambda row: row["mean"])
-    assert evidence["selected_phase_damping"] == best["phase_damping"]
+    assert evidence["selected_phase_damp"] == best["phase_damp"]
     for row in evidence["records"]:
         assert row["mean"] == pytest.approx((row["a_to_b"] + row["b_to_a"]) / 2)
-    expected = ptycho.reconstruct(method="phase", phase_damping=best["phase_damping"],
-                                  upsampling=3, compute_loss=False)
+    expected = ptycho.run(method="phase", phase_damp=best["phase_damp"],
+                                  upsample=3, compute_loss=False)
     cp.testing.assert_array_equal(result.phase, expected.phase)
     assert len(result.show("damping").axes) == 2

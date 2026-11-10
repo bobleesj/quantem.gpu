@@ -176,14 +176,14 @@ def test_rotation_plus_180_is_the_conjugate_object_with_every_aberration_flipped
     _require_cuda()
     aberrations = {"C10_nm": 1.5, "C12_nm": 0.8, "phi12_deg": math.degrees(0.4)}
     flipped = {"C10_nm": -1.5, "C12_nm": -0.8, "phi12_deg": math.degrees(0.4)}
-    measured = _simulated(0.0).reconstruct(aberrations=aberrations)
+    measured = _simulated(0.0).run(aberrations=aberrations)
     reversed_ = _simulated(0.0)
     reversed_.set_rotation(180.0)
-    conjugate = reversed_.reconstruct(aberrations=flipped)
+    conjugate = reversed_.run(aberrations=flipped)
     assert reversed_.scan_detector_rotation_deg == 180.0
     assert conjugate.scan_detector_rotation_deg == 180.0
     assert _correlation(conjugate.phase, -_host(measured.phase)) > 0.9999
-    same = _simulated(180.0).reconstruct(aberrations=flipped)     # a session built at the same physical rotation
+    same = _simulated(180.0).run(aberrations=flipped)     # a session built at the same physical rotation
     np.testing.assert_array_equal(_host(same.phase), _host(conjugate.phase))
 
 
@@ -238,7 +238,7 @@ def test_joint_fit_searches_once_or_twice(rotation, mapped, estimate, monkeypatc
         assert restored.sample_tilt_mrad == result.sample_tilt_mrad
         assert restored.rotation_branches.summary == result.rotation_branches.summary
         np.testing.assert_array_equal(_host(restored.phase), _host(result.phase))
-        finer = session.reconstruct(restored, upsampling=2)
+        finer = session.run(restored, upsample=2)
         assert finer.phase.shape == tuple(2 * size for size in result.phase.shape)
         assert finer.rotation_branches is restored.rotation_branches
         assert len(fit_calls) == (1 if mapped else 2)

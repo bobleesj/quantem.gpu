@@ -5,7 +5,7 @@ Status: implemented 2026-10-25 (`ssb-direct` v0.2). Port of Python's CUDA `DragW
 
 ## Problem
 
-`.phase` and `.complex` (`MetalSSBJointModel.reconstruct(_:upsamplingFactor:method:regularization:)`) solve, per scan
+`.phase` and `.complex` (`MetalSSBJointModel.run(_:upsampleFactor:method:regularization:)`) solve, per scan
 frequency, the damped normal equations of every supported output alias. The normal equations depend on the optics:
 every aberration, tilt or depth change prepares them again from all BF pixels. On an Apple M5 Max at 3x on a
 512 x 512 scan that takes about 0.17 s (phase) and 0.17-0.19 s (complex) per change, so a slider drag redraws at about
@@ -46,9 +46,9 @@ public enum SSBDragControl: Hashable, Codable, Sendable {
 public struct SSBDragWindowState { control, built, total, range, ready }
 public struct SSBDragPreview: Codable { control, center, halfWidth, order }
 extension MetalSSBJointModel {
-  func buildDragWindow(along:at:upsamplingFactor:method:regularization:nodes:isCancelled:) throws -> SSBDragWindowState
-  func dragWindowState(along:at:upsamplingFactor:method:regularization:) -> SSBDragWindowState?
-  func dragPreview(_:along:upsamplingFactor:method:regularization:) throws -> MetalSSBJointPhase?  // nil: no window
+  func buildDragWindow(along:at:upsampleFactor:method:regularization:nodes:isCancelled:) throws -> SSBDragWindowState
+  func dragWindowState(along:at:upsampleFactor:method:regularization:) -> SSBDragWindowState?
+  func dragPreview(_:along:upsampleFactor:method:regularization:) throws -> MetalSSBJointPhase?  // nil: no window
   func releaseDragWindows()
 }
 // MetalSSBJointPhase.preview: SSBDragPreview?  (nil for exact results)

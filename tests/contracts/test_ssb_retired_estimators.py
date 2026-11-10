@@ -17,9 +17,9 @@ class _Backend:
     def __init__(self):
         self.calls = []
 
-    def preview_upsampled(self, aberrations, *, upsampling_factor, compute_loss, **kwargs):
+    def preview_upsampled(self, aberrations, *, upsample_factor, compute_loss, **kwargs):
         assert "phase_estimator" not in kwargs
-        self.calls.append((upsampling_factor, compute_loss))
+        self.calls.append((upsample_factor, compute_loss))
         return np.zeros((2, 2), dtype=np.float32), 0.5 if compute_loss else None
 
 
@@ -39,11 +39,11 @@ def _session(monkeypatch):
 def test_a_retired_estimator_raises_naming_its_replacement(monkeypatch, estimator, replacement):
     session, backend = _session(monkeypatch)
     with pytest.raises(ValueError, match=f"{estimator}' was retired.*{replacement}"):
-        session.reconstruct(phase_estimator=estimator)
+        session.run(phase_estimator=estimator)
     with pytest.raises(ValueError, match=f"{estimator}' was retired.*{replacement}"):
         session.preview(ABERRATIONS, phase_estimator=estimator)
     with pytest.raises(ValueError, match=f"{estimator}' was retired"):
-        session.reconstruct(method="phase", phase_estimator=estimator)
+        session.run(method="phase", phase_estimator=estimator)
     assert backend.calls == []
 
 
@@ -57,7 +57,7 @@ def test_phase_of_mean_is_what_ssb_records_and_still_accepted(monkeypatch):
     session, backend = _session(monkeypatch)
     phase, loss = session.preview(ABERRATIONS, phase_estimator="phase_of_mean", compute_loss=False)
     assert phase.shape == (2, 2) and loss is None
-    result = session.reconstruct(compute_loss=True)
+    result = session.run(compute_loss=True)
     assert result.phase_estimator == "phase_of_mean"
     assert not result.amplitude_estimated
     assert result.loss == 0.5
@@ -68,8 +68,8 @@ def test_a_result_saved_with_a_retired_estimator_loads_with_a_notice(tmp_path, c
     from quantem.gpu.direct_ptycho.persistence import load_result, result_paths, save_result
     from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
-    paths = result_paths(tmp_path, "reconstruct")
-    signature = {"operation": "reconstruct"}
+    paths = result_paths(tmp_path, "run")
+    signature = {"operation": "run"}
     saved = DirectPtychoResult(object_wave=np.exp(1j * np.ones((2, 2), np.float32)), backend="mps",
                       aberrations=dict(ABERRATIONS), phase_estimator="phase_of_mean", amplitude_estimated=False)
     save_result(saved, paths=paths, signature=signature, input_metadata={})

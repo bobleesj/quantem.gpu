@@ -117,12 +117,12 @@ class _Case:
 
 def _pair(ptycho, optics, region, factor, sampling, guide, scan_basis):
     with ptycho.select_region(region) as selected:
-        baseline = selected.reconstruct(
+        baseline = selected.run(
             optics,
             method="phase",
-            phase_damping=0.03,
+            phase_damp=0.03,
             scan_basis=scan_basis,
-            upsampling=factor,
+            upsample=factor,
             compute_loss=False,
         )
         engine, settings, _ = direct_workflow._inputs(
@@ -327,7 +327,7 @@ def train(
     direction_steps,
     patch_size,
     seed,
-    upsampling,
+    upsample,
     annulus_mrad,
     scan_basis,
 ):
@@ -345,7 +345,7 @@ def train(
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{name} must be a positive integer.")
     regions = _regions(ptycho.scan_shape, patch_size)
-    factor = ptycho._resolve_upsampling(upsampling)
+    factor = ptycho._resolve_upsample(upsample)
     sampling = ptycho._output_sampling(factor)
     limits = annular_limits(
         annulus_mrad or (1.05 * ptycho.semiangle_mrad, 1.5 * ptycho.semiangle_mrad)
@@ -405,7 +405,7 @@ def train(
                 voltage_kV=ptycho.voltage_kV,
                 semiangle_mrad=ptycho.semiangle_mrad,
                 object_sampling_A=sampling,
-                upsampling=factor,
+                upsample=factor,
                 annulus_mrad=limits,
                 training_record=record,
             )
@@ -468,7 +468,7 @@ def held_scores(model, ptycho, optics, region, scan_basis):
         table.attrs.update(
             scan_region=region,
             partition="detector blocks",
-            phase_damping=0.03,
+            phase_damp=0.03,
             conditioning="Fixed full-data optical fit and shared disjoint annular guide.",
         )
         return table

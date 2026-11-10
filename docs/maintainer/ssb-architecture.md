@@ -52,7 +52,7 @@ the optional diagnostic `result.loss`. A backend may reject a job it cannot
 execute, but may not switch to CPU, crop or subsample the BF evidence, quantize
 values, or change the objective silently.
 
-`fit_aberrations()` and `reconstruct()` own saved-result reuse through the same `save_dir`
+`fit_aberrations()` and `run()` own saved-result reuse through the same `save_dir`
 and `force` controls. Reuse requires an exact scientific signature and restores
 one `DirectPtychoResult`; there is no cache manager, persistence session, or second
 workflow API. The NPZ owns the complex object wave, and its JSON companion owns
@@ -70,7 +70,7 @@ The same call does not return the same phase image on CUDA and MPS:
 - the agreement and loss reduction orders differ.
 
 Each result records its backend, `phase_of_mean` and output factor
-(`result.phase_estimator`, `result.upsampling`).
+(`result.phase_estimator`, `result.upsample`).
 
 ## Ownership boundaries
 

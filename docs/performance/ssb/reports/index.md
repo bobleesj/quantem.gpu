@@ -49,7 +49,7 @@ Nelder–Mead or finite-difference refinement, the `mean_phase` and
 - [MPS slider correction and interruptible diagnostics](2026-10-17-mps-interruptible-preview.md)
 - [Coherent SSB reduction on Metal](2026-10-17-mps-coherent-reduction.md)
 - [Coherent SSB reconstruction and scan-mean aliases](2026-10-16-ssb-coherent-reconstruction.md)
-- [MPS SSB sampling and search, 2026-10-15](2026-10-15-mps-ssb-upsampling.md)
+- [MPS SSB sampling and search, 2026-10-15](2026-10-15-mps-ssb-upsample.md)
 - [CUDA SSB refinement batching](2026-10-15-cuda-batched-refinement.md)
 - [Later SSB performance checkpoints](2026-09-11-ssb-performance-checkpoints.md)
 

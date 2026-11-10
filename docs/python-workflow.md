@@ -7,7 +7,7 @@ acquisition throughout. No QEM conversion is required first.
 Follow the [installation guide](install.md) and install `huggingface_hub` for
 the download. QuantEM selects the available GPU automatically.
 For probe images, fitted coefficients,
-search trials, upsampling, and saved results, use the
+search trials, upsample, and saved results, use the
 {ref}`advanced Gold tutorial <gold-advanced>`.
 
 ## Development API installation
@@ -129,7 +129,7 @@ ptycho = DirectPtycho(
     scan_detector_rotation_flipped=dpc_result.scan_detector_rotation_flipped,
 )
 aberrations = ptycho.fit_aberrations()
-result = ptycho.reconstruct(aberrations, upsampling=1)
+result = ptycho.run(aberrations, upsample=1)
 show_2d(
     result.phase, title="Gold SSB phase (rad)", cmap="inferno", cbar=True,
     scalebar={"sampling": result.object_sampling_A[1], "units": "Å"},
@@ -140,7 +140,7 @@ SSB finds the bright-field disk automatically. `fit_aberrations()` is the
 default model-based, tilt-corrected fit: on the native grid it fits defocus and
 twofold astigmatism together with the sample tilt and a depth spread, keeping
 the parameters whose predicted bright-field data agree best with the
-measurement. `reconstruct()` uses those parameters without repeating the
+measurement. `run()` uses those parameters without repeating the
 search. Voltage, sampling, and convergence angle stay fixed.
 
 | Call | Method | Use it for |
@@ -158,7 +158,7 @@ This is the 512 × 512 native reconstruction: 0.5 Å per output pixel and a
 known specimen potential here; the image does not establish quantitative phase
 accuracy in the thicker particles. **Use 1× for this example:** the current
 4× implementation produces stripes. The
-{ref}`advanced comparison <gold-upsampling>` shows the same region at both factors.
+{ref}`advanced comparison <gold-upsample>` shows the same region at both factors.
 
 Data axes are `(scan_rows, scan_cols, detector_rows, detector_cols)`.
 To view one measured pattern, use
@@ -176,7 +176,7 @@ Keep the session open for the {ref}`advanced tutorial <gold-advanced>`:
 |---|---|
 | Fitted coefficients and search candidates | {ref}`Read the aberration search <gold-ssb-reconstruction>` |
 | Phase beside the model probe | {ref}`Build the probe image <gold-model-probe>` |
-| Native versus 4× phase | {ref}`Compare the same field and particle <gold-upsampling>` |
+| Native versus 4× phase | {ref}`Compare the same field and particle <gold-upsample>` |
 | Measurements and calibration in one file | [Save as QEM](api/qem-python.md) |
 
 When finished, close the session before its acquisition:

@@ -147,8 +147,8 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
     assert report["Estimated rotation (deg)"] == 3.0
     assert report["SSB-selected rotation (deg)"] == pytest.approx(5.0, abs=0.1)
     assert "Refined from   3.00° (estimate)" in repr(fit)
-    # reconstruct() applies the refined fit and carries its record
-    applied = session.reconstruct(fit)
+    # run() applies the refined fit and carries its record
+    applied = session.run(fit)
     assert applied.rotation_refined and applied.rotation_estimate_deg == 3.0
 
     calls = len(backend.fits)

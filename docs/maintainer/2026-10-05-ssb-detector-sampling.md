@@ -130,7 +130,7 @@ is deleted (section 6).
 `MpsSSBBackend.fit` called `optimizer.optimize(source, ...)`, which recomputed the mean pattern, the selection and the
 whole G(q, k) stack with its own DC rule, then replaced the session's prepared state. `optimize` now takes the session's
 prepared state and selection, so previews before and after a fit and the fit itself read one preparation
-(`test_mps_fit_reads_the_prepared_session_evidence`). The test-only `direct_ptycho.mps.reconstruct.reconstruct`, a second
+(`test_mps_fit_reads_the_prepared_session_evidence`). The test-only `direct_ptycho.mps.reconstruct.run`, a second
 from-source preparation, is deleted with its environment-gated test (that test passed an encoded resident, which SSB
 refuses since the restructure).
 

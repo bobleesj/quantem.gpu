@@ -18,8 +18,8 @@ let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)  // the
 let fit = try DirectPtychoModelFit.findAberrations(
   model: model, rotationDegrees: rotation, darkField: darkField,
   scanSampling: (stepRow, stepColumn))                    // both 180-degree branches
-let phase = try model.reconstruct(
-  fit.fit.point, upsamplingFactor: calibration.ssbUpsamplingFactor())  // phase_of_mean, auto factor
+let phase = try model.run(
+  fit.fit.point, upsampleFactor: calibration.ssbUpsamplingFactor())  // phase_of_mean, auto factor
 ```
 
 `DirectPtychoRotationBranches.curlRotationDegrees` gives the rotation from exact centre-of-mass moments
@@ -45,7 +45,7 @@ joint models; `retarget` moves a model to another rotation without gathering its
 | Half-band check | Default for a ±20 fit (`DirectPtychoFitOptions.checkHigherOrderConsistency`, `DirectPtychoFit.higherOrderConsistency`, `DirectPtychoHigherOrderConsistency`), the same definition on Metal, CUDA and MPS: the fit's band frequencies are split by ring parity floor(\|q\| / 0.05 1/A) mod 2 (q and -q in the same half); for each parity the fifth order is refitted at ±20 with the other half's band weights 0, both from the same full-data low-order start as the ±20 fit; the statistic is the rms over the aperture (\|k\| <= alpha, 96 x 96 samples of the unit disk), piston removed, of chi_A - chi_B through fifth order (C10 and C12 included, tilt and depth not). Trusted when <= 0.5 rad: the ±20 fit is kept. Otherwise the ±2 fit is returned (`options.higherOrderLimit` 2) with its higher orders marked not trusted (thick crystals give spurious terms at ±2 too), and the record keeps the checked ±20 fit. Record names as Python: `half_band_rms_rad`, `trusted`, `shown_limit`. Measured data: 0.16-0.35 rad on four frames of a thin two-dimensional crystal, about 1.33 rad on a thick crystal. Cost: two ±20 fits, a third (±2) on fallback; timings `higher_order_consistency_s`, `higher_order_fallback_s` |
 | Final phase | `phase_of_mean` (corrected waves summed, one phase; scan-mean replicas zero). At 1x-4x the interactive redraw kernel (`ssb_redraw.metal`) serves every term through C56, tilt and depth for cached and streamed spectra: the anti-Hermitian half is evaluated and mirrored, each source frequency visits its output aliases per batch of 32 BF pixels, chi is a per-row Horner polynomial, and SIMD groups skip BF pixels with closed sidebands. It agrees with the earlier per-term kernel within 1e-5 rad (observed about 5e-8 on the synthetic test scene, 4e-6 on the full-size synthetic benchmark). 8x keeps the per-term kernel |
 | Reconstruction methods | `DirectPtychoReconstructionMethod`, ShowPtycho's three: `.ssb` (the final phase above), `.phase` and `.complex` (regularized direct solves, below). The `mean_phase` and `complex_wave` estimators are retired (2026-10-25): their kernels and API are removed; the app opens results saved with them as saved and reconstructs edits with one of the three |
-| Phase | `.phase` (Python `method="phase"`): the linear weak-phase model T = exp(i phi) ~ 1 + i phi solved per scan frequency for every supported output alias q (|q| < (2 semiangle + max angular sampling) / wavelength), with the same tilted, finite-depth transfer and fitted terms as SSB: (T^H W T + phase_damping S diag((1 + q^2/q0^2)^2)) x = T^H W G / dose, S = sum_k w_k A(k)^4; the DC family and, on even grids, the Nyquist row and column are excluded; aliases fill the output spectrum (times factor^2 with Hermitian mirrors) before one inverse FFT; result `angle(exp(i phi))`. Normal equations float32 per BF pixel (CUDA's expressions) and float-float across BF batches on Metal, systems solved in float64 on the CPU (`ssb-direct`). CUDA parity: below 2e-7 rad rms on every measured fixture and preset |
+| Phase | `.phase` (Python `method="phase"`): the linear weak-phase model T = exp(i phi) ~ 1 + i phi solved per scan frequency for every supported output alias q (|q| < (2 semiangle + max angular sampling) / wavelength), with the same tilted, finite-depth transfer and fitted terms as SSB: (T^H W T + phase_damp S diag((1 + q^2/q0^2)^2)) x = T^H W G / dose, S = sum_k w_k A(k)^4; the DC family and, on even grids, the Nyquist row and column are excluded; aliases fill the output spectrum (times factor^2 with Hermitian mirrors) before one inverse FFT; result `angle(exp(i phi))`. Normal equations float32 per BF pixel (CUDA's expressions) and float-float across BF batches on Metal, systems solved in float64 on the CPU (`ssb-direct`). CUDA parity: below 2e-7 rad rms on every measured fixture and preset |
 | Complex | `.complex` (Python `method="complex"`): the relative log-amplitude eta and the phase phi of T = exp(eta + i phi) solved together (columns t1 + t2 and i (t1 - t2)), amplitude damping on eta; `amplitude` = exp(eta) (relative; zero-mean eta). CUDA parity: phase as `.phase`, amplitude below 2e-7 of its mean |
 | Regularization | `DirectPtychoRegularization`: `phaseDamping` and `amplitudeDamping` (> 0, default 0.03), `smoothnessInverseAngstroms` q0 (>= 0, default 1; 0 = frequency-independent prior), `detectorWeighting` `.uniform` or `.inverseMean` (1 / max(mean count, 5 % of the median), normalized to mean 1 over every selected BF pixel, those outside the aperture's support included, as Python). `validate(for:)` gives Python's messages; `.ssb` ignores it. Results record `method` and `regularization` |
 | Caching | The layout (frequencies, aliases, priors, weights, dose) is kept per data, factor, q0 and weighting; the normal equations per optics, rotation and layout, one per method (a complex system also serves `.phase`). A damping change solves again only (about 1–7 ms at 512 x 512, 1–3x); an optics change prepares again (about 0.17 s phase, 0.17-0.19 s complex at 3x on an Apple M5 Max; complex systems of two or more aliases use one thread per frequency and alias, `direct_normal_tiled`) |
@@ -106,7 +106,7 @@ SSB_DIRECT_FIXTURE=... [SSB_DIRECT_ALL=1] swift test -c release -Xswiftc -enable
 
 The joint fixtures (`SSB_JOINT_REFERENCE`, `SSB_JOINT_CALIBRATED_REFERENCE`) gate the objective (loss relative
 error < 5e-5). Their phase images were of the retired `mean_phase` estimator; they are not compared, and
-`scripts/build_metal_ssb_joint_reference.py` no longer writes them (nor needs an upsampling source). Missing
+`scripts/build_metal_ssb_joint_reference.py` no longer writes them (nor needs an upsample source). Missing
 external fixtures are reported as skips, never passes. Keep acquisitions, screenshots and raw logs outside this
 repository.
 
@@ -114,7 +114,7 @@ repository.
 
 The engine's own non-model SSB and the phase-variance fit were removed on 2026-10-25; native SSB is model-based
 only. `MetalDirectPtychoEngine` keeps Fourier preparation, the joint-model bridge and the saved-run phase conversion.
-Removed: `MetalDirectPtychoEngine.reconstruct(aberrations:scanDetectorRotationDegrees:)`, `phaseVariance`, `optimize`,
+Removed: `MetalDirectPtychoEngine.run(aberrations:scanDetectorRotationDegrees:)`, `phaseVariance`, `optimize`,
 `MetalSSBPhaseVarianceResult`, `SSBOptimizer` with `SSBOptimizationProgress`, the phase-variance branch of
 `DirectPtychoModelFit` (and its `engine:` argument), `DirectPtychoFit.phaseVarianceLoss`, the `metal-ssb-benchmark` product, the
 standalone `tests/metal` SSB harnesses and the frozen phase-variance fit trajectory. Their `ssb.metal` kernels

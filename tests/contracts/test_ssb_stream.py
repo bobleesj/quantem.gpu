@@ -183,19 +183,19 @@ class FakeSession:
         FakeSession.open -= self.data is not None
         self.data = None
 
-    def _resolve_upsampling(self, upsampling):
+    def _resolve_upsample(self, upsample):
         from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
-        return DirectPtycho._resolve_upsampling(self, upsampling)
+        return DirectPtycho._resolve_upsample(self, upsample)
 
-    def reconstruct(self, chosen, *, method, **options):
+    def run(self, chosen, *, method, **options):
         import cupy
 
         strengths = {name: value for name, value in options.items() if name not in (
-            "upsampling", "compute_loss", "force", "verbose")}
+            "upsample", "compute_loss", "force", "verbose")}
         FakeSession.runs.append(SimpleNamespace(frame=self.data.name, method=method, chosen=chosen,
                                                 optics=dict(chosen.aberrations), strengths=strengths,
-                                                factor=options["upsampling"]))
+                                                factor=options["upsample"]))
         if method == "phase_of_mean":
             return SimpleNamespace(phase=self.data.phase, object_sampling_A=(0.2, 0.2))
         generator = cupy.random.default_rng(sum(map(ord, self.data.name)) * 3 + "spc".index(method[0]))
@@ -360,8 +360,8 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
     import cupy
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
-    series, _ = streamed(sources, fit, None, method=("phase", "complex"), phase_damping=0.07,
-                         amplitude_damping=0.2)
+    series, _ = streamed(sources, fit, None, method=("phase", "complex"), phase_damp=0.07,
+                         amplitude_damp=0.2)
     assert list(series.images) == ["phase", "complex", "amplitude"]
     assert list(series.combined) == ["phase", "complex", "amplitude"]
     assert series.methods == ("phase", "complex")
@@ -372,7 +372,7 @@ def test_stream_reconstructs_each_requested_method_at_the_frames_optics(monkeypa
         assert run.chosen is series.fits[index]
         assert run.optics == series.aberrations[index] == series.fits[index].aberrations
         assert run.strengths == ({} if run.method == "phase_of_mean" else
-                                 {"phase_damping": 0.07, "amplitude_damping": 0.2})
+                                 {"phase_damp": 0.07, "amplitude_damp": 0.2})
     assert "evaluations" not in series.aberrations[0] and set(series.refits[0]) == {"evaluations", "stop", "resumed"}
     assert series.phase.shape == series.images["phase"].shape == (5, 256, 256)
     latest = series.latest
@@ -396,12 +396,12 @@ def test_a_capped_auto_factor_is_announced_once_per_series(monkeypatch, tmp_path
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     monkeypatch.setattr(FakeSession, "scan_sampling_A", 1.0)
-    for requested, factor, notice in (("auto", 4, "SSB: auto upsampling capped at 4× (the scan sampling supports "
-                                                  "8×); pass upsampling=8 for the full factor.\n"),
+    for requested, factor, notice in (("auto", 4, "SSB: auto upsample capped at 4× (the scan sampling supports "
+                                                  "8×); pass upsample=8 for the full factor.\n"),
                                       (8, 8, "")):
         FakeSession.runs, FakeSession.open = [], 0
         capsys.readouterr()
-        series(FakeSession(), sources, fit, upsampling=requested, show=False, verbose=False)
+        series(FakeSession(), sources, fit, upsample=requested, show=False, verbose=False)
         assert capsys.readouterr().out == notice
         assert {run.factor for run in FakeSession.runs} == {factor}
 
@@ -424,20 +424,20 @@ def test_registration_uses_the_ssb_phase_whatever_the_method(monkeypatch, tmp_pa
 
 @pytest.mark.usefixtures("cuda_runtime")
 def test_reconstruct_rebuilds_a_method_from_the_saved_optics_and_shifts(monkeypatch, tmp_path):
-    """After a stream, reconstruct("phase", ...) reloads each frame, runs the phase method once per
+    """After a stream, run("phase", ...) reloads each frame, runs the phase method once per
     frame at fits[k] with the new strength, and places it at shifts_A; nothing is refit."""
     import cupy
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     series, _ = streamed(sources, fit, None)
     FakeSession.runs, FrameObjective.calls = [], 0
-    combined = series.reconstruct("phase", phase_damping=0.05)
+    combined = series.run("phase", phase_damp=0.05)
     assert FrameObjective.calls == 0
     assert [(run.frame, run.method, run.strengths) for run in FakeSession.runs] == [
-        (source.name, "phase", {"phase_damping": 0.05}) for source in sources]
+        (source.name, "phase", {"phase_damp": 0.05}) for source in sources]
     assert all(run.chosen is chosen for run, chosen in zip(FakeSession.runs, series.fits, strict=True))
     assert list(combined) == ["phase"] and series.methods == ("phase_of_mean", "phase")
-    assert "phase damping 0.05" in series.show("phase").axes[0].get_title()
+    assert "phase damp 0.05" in series.show("phase").axes[0].get_title()
     cupy.testing.assert_array_equal(combined["phase"], series.combined["phase"])
     cupy.testing.assert_array_equal(series.combined["phase"],
                                     placed_by_hand(series.images["phase"], series.shifts_A, series.placed))
@@ -481,8 +481,8 @@ def test_show_draws_each_combined_image_and_the_drift(monkeypatch, tmp_path):
     assert [axis.get_title().split("\n")[0] for axis in images] == [
         "Direct phase", "Complex-fit phase", "Relative amplitude"]
     assert len({round(axis.get_position().x0, 3) for axis in images}) == 2
-    assert "phase damping 0.3" in images[0].get_title()
-    assert "amplitude damping 0.3" in images[2].get_title()
+    assert "phase damp 0.3" in images[0].get_title()
+    assert "amplitude damp 0.3" in images[2].get_title()
     assert images[0].images[0].get_clim() == fit.phase_limits != images[2].images[0].get_clim()
     assert len(series.show("phase").axes) == len(figure.axes) - 4
     single, _ = streamed(sources[:1], fit, None, method=("phase", "complex"))
@@ -503,7 +503,7 @@ def test_every_session_is_closed_before_the_next_frame(monkeypatch, tmp_path):
     sources, fit = fake_stream(monkeypatch, tmp_path)
     series, _ = streamed(sources, fit, None, method="phase")
     assert FakeSession.open == 0
-    series.reconstruct("complex")
+    series.run("complex")
     assert FakeSession.open == 0
     assert not [item for item in gc.get_objects() if type(item) is FakeSession and item.data is not None]
 
@@ -525,12 +525,12 @@ def test_frame_failure_closes_workspace_and_preserves_borrowed_counts(monkeypatc
     monkeypatch.setattr(stream_module, "cp", SimpleNamespace(cuda=SimpleNamespace(
         runtime=SimpleNamespace(getDevice=lambda: 0), Device=lambda: SimpleNamespace(synchronize=lambda: None))))
     monkeypatch.setattr(stream_module.io, "load", lambda *args, **kwargs: data)
-    monkeypatch.setattr(FakeSession, "_resolve_upsampling", lambda self, upsampling: 1)
+    monkeypatch.setattr(FakeSession, "_resolve_upsample", lambda self, upsample: 1)
     monkeypatch.setattr(stream_module, "_combined", lambda canvas: np.ones((2, 2)))
     monkeypatch.setattr(stream_module.DirectPtychoSeries, "_store",
                         lambda *args: (np.ones((1, 2, 2)), {"phase": np.ones((1, 2, 2))}))
 
-    def reconstruct(*args):
+    def run(*args):
         if stage == "reconstruction":
             raise RuntimeError(stage)
         return fit, {"phase_of_mean": np.ones((2, 2)), "phase": np.ones((2, 2))}, (1., 1.), {"ssb_s": 0., "phase_s": 0.}
@@ -544,14 +544,14 @@ def test_frame_failure_closes_workspace_and_preserves_borrowed_counts(monkeypatc
     def redraw(self):
         raise RuntimeError("view")
 
-    monkeypatch.setattr(stream_module._FrameStep, "reconstruct", reconstruct)
+    monkeypatch.setattr(stream_module._FrameStep, "run", run)
     monkeypatch.setattr(stream_module._FrameStep, "place", place)
     monkeypatch.setattr(stream_module.DirectPtychoSeries, "_redraw", redraw)
     FakeSession.open = 0
     source = data if resident else tmp_path / "one_master.h5"
     with pytest.raises(RuntimeError, match=stage):
         stream_module.series(FakeSession(), [source], fit, refit="none", method="phase",
-                             upsampling=1, show=False, verbose=False)
+                             upsample=1, show=False, verbose=False)
     assert FakeSession.open == 0
     assert closed == ([] if resident else ["file input"])
 
@@ -610,7 +610,7 @@ def test_reconstruct_after_align_places_every_frame_at_the_pairwise_shifts(monke
     sources, fit = fake_stream(monkeypatch, tmp_path, noise_frames=(3,))
     series, _ = streamed(sources, fit, None)
     found = series.align()
-    combined = series.reconstruct("phase")
+    combined = series.run("phase")
     assert series.placed == (True,) * 5
     np.testing.assert_array_equal(series.shifts_A, found.displacement_A)
     cupy.testing.assert_array_equal(combined["phase"], placed_by_hand(series.images["phase"], found.displacement_A,
@@ -627,7 +627,7 @@ def test_reconstruct_ssb_keeps_phase_the_ssb_stack_and_methods_are_unique(monkey
     sources, fit = fake_stream(monkeypatch, tmp_path)
     series, _ = streamed(sources, fit, None, method=("phase_of_mean", "phase", "phase_of_mean", "phase"))
     assert series.methods == ("phase_of_mean", "phase") and len(FakeSession.runs) == 2 * len(sources)
-    series.reconstruct("phase_of_mean")
+    series.run("phase_of_mean")
     assert series.phase is series.images["phase_of_mean"]
 
 
@@ -680,7 +680,7 @@ def test_resident_scans_give_the_series_of_their_files_and_stay_the_callers(monk
     from_scans, _ = streamed(scans, fit, None, method="phase")
     assert_same_stream(from_files, from_scans)
     assert from_scans.frames == tuple(f"scan {index + 1}" for index in range(len(scans)))
-    from_scans.reconstruct("complex")
+    from_scans.run("complex")
     assert closed == [] and FakeSession.open == 0
     with pytest.raises(ValueError, match="resident scans"):
         streamed(scans, fit, tmp_path / "records")
@@ -713,7 +713,7 @@ def test_a_series_built_scan_by_scan_equals_the_series_of_all_scans(monkeypatch,
     sources, fit = fake_stream(monkeypatch, tmp_path)
     at_once, _ = streamed(sources, fit, None, method="phase")
     FakeSession.runs, FakeSession.open = [], 0
-    growing = DirectPtychoSeries._begin(FakeSession(), fit, refit="defocus", method="phase", upsampling="auto", save_dir=None,
+    growing = DirectPtychoSeries._begin(FakeSession(), fit, refit="defocus", method="phase", upsample="auto", save_dir=None,
                                show=False, strengths={})
     rows = [growing.add(sources[0])]
     viewer = growing.show(interactive=True)
@@ -806,11 +806,11 @@ def test_fixed_fit_reconstructs_each_scan_without_changing_any_optics(monkeypatc
 
 
 @pytest.mark.usefixtures("cuda_runtime")
-def test_no_scan_is_added_after_align_or_reconstruct(monkeypatch, tmp_path):
+def test_no_scan_is_added_after_align_or_run(monkeypatch, tmp_path):
     """align and reconstruct rebuild the stacks and shifts adding a scan would extend: adding then stops clearly."""
     sources, fit = fake_stream(monkeypatch, tmp_path)
     series, _ = streamed(sources[:3], fit, None)
-    series.reconstruct("phase_of_mean")
+    series.run("phase_of_mean")
     with pytest.raises(RuntimeError, match="start a new series"):
         series.add(sources[3])
 
@@ -838,7 +838,7 @@ def rolling_bookkeeping(monkeypatch):
     monkeypatch.setattr(stream_module, "shifted", lambda image, shift: np.array(image, dtype=np.float64))
     monkeypatch.setattr(stream_module, "hot_pixel_outcome", lambda record: str(record))
     monkeypatch.setattr(FakeSession, "_device", None, raising=False)
-    monkeypatch.setattr(FakeSession, "_resolve_upsampling", lambda self, upsampling: 1)
+    monkeypatch.setattr(FakeSession, "_resolve_upsample", lambda self, upsample: 1)
     fit = SimpleNamespace(optimizer={"coordinates": [0.] * 28, "bounds": [(-1., 1.)] * 28},
                           aberrations={"C10_nm": 0., "C12_nm": 0., "phi12_deg": 0.},
                           sample_tilt_mrad=(0., 0.), depth_spread_nm=0.,
@@ -855,7 +855,7 @@ def rolling_bookkeeping(monkeypatch):
         def close(self):
             pytest.fail("resident counts belong to the caller")
 
-    def reconstruct(step, session, optics, tilt, depth, *args):
+    def run(step, session, optics, tilt, depth, *args):
         image = np.arange(16, dtype=np.float32).reshape(4, 4) + 100 * session.data.index
         chosen = SimpleNamespace(**vars(fit))
         chosen.source_index = session.data.index
@@ -876,7 +876,7 @@ def rolling_bookkeeping(monkeypatch):
                 canvas.last = stream_module._positioned(phase, shift)
         return shift, score
 
-    monkeypatch.setattr(stream_module._FrameStep, "reconstruct", reconstruct)
+    monkeypatch.setattr(stream_module._FrameStep, "run", run)
     monkeypatch.setattr(stream_module, "_place", place)
     FakeSession.open = 0
 
@@ -1111,7 +1111,7 @@ def test_latest_keeps_native_detector_counts_separate_from_registered_phase(monk
         return counts[scan.name]
 
     monkeypatch.setattr(stream, "annular_counts", measure)
-    series, _ = streamed([], fit, None, method="phase", max_frames=1, annulus_mrad=(32, 45), phase_damping=0.07)
+    series, _ = streamed([], fit, None, method="phase", max_frames=1, annulus_mrad=(32, 45), phase_damp=0.07)
     assert series.latest is None
     series.add(sources[0])
     first = series.latest
@@ -1121,7 +1121,7 @@ def test_latest_keeps_native_detector_counts_separate_from_registered_phase(monk
     assert first.index == 0 and current.index == 1 and current.aberrations == series.fits[0].aberrations
     current.aberrations.clear()
     assert series.latest.aberrations == series.fits[0].aberrations != {}
-    assert current.phase_damping == 0.07 and current.neural_phase is None
+    assert current.phase_damp == 0.07 and current.neural_phase is None
     cupy.testing.assert_array_equal(first.annular_counts, counts[sources[0].name])
     cupy.testing.assert_array_equal(current.annular_counts, counts[sources[1].name])
     assert "annular_counts" not in series.combined

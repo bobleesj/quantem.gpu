@@ -479,8 +479,8 @@ def fit_fifth_order(
     chosen.refine_nfev = nfev
     chosen.refine_elapsed_s = refine_elapsed_s
     reconstruction_started = time.perf_counter()
-    result = ssb.reconstruct(
-        chosen, upsampling=1, compute_loss=compute_loss, force=True
+    result = ssb.run(
+        chosen, upsample=1, compute_loss=compute_loss, force=True
     )
     # reconstruct carries fit provenance only when compatible; assign the new fit explicitly.
     for field in (

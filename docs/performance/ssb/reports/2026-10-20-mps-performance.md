@@ -271,7 +271,7 @@ cache that the newer preview kernels leave, not the search.
    either side means rerun on a quiet GPU before blaming the change.
 2. Rerun the one failing metric's stage two or three times. A real
    regression repeats; contention does not.
-3. A slower `preview_*` points at `direct_ptycho/mps/upsampling.py`; a slower
+3. A slower `preview_*` points at `direct_ptycho/mps/upsample.py`; a slower
    `search_candidate` or `find_aberrations` at `direct_ptycho/mps/thick_sample.py` (the agreement kernel) and
    `direct_ptycho/_resident_search.py`; a slower `*_phase_variance` at `direct_ptycho/mps/loss.py` and the row and column kernels; `detector_*` at `detector/counts.py` and
    `resident/mps/spatial.py`; `ssb_session` at the rotation estimate and the
@@ -283,7 +283,7 @@ cache that the newer preview kernels leave, not the search.
 ### Deeper profiles
 
 - Interleave the old and new implementation in one process (a module flag
-  such as `upsampling._SEPARABLE`), alternating calls, and compare p50s: two
+  such as `upsample._SEPARABLE`), alternating calls, and compare p50s: two
   separate processes minutes apart see different GPU contention.
 - `cProfile` around one call separates Python, Metal command completion and
   `torch.mps.synchronize`; many short waits mean many small launches.

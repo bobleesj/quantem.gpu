@@ -51,7 +51,7 @@ def retired_estimator_note(phase_estimator: object, record: str) -> str | None:
     if method is None:
         return None
     return (f"SSB: {record} was saved with the retired {phase_estimator} estimator and loads as saved; "
-            f"reconstruct(method='ssb') reconstructs the phase of the mean wave, reconstruct(method='{method}') replaces "
+            f"run(method='ssb') reconstructs the phase of the mean wave, run(method='{method}') replaces "
             f"{phase_estimator}.")
 
 
@@ -107,11 +107,11 @@ class DirectPtychoResult(Mapping[str, float]):
     rotation_refinement : dict | None
         The refinement's record: ``estimate_deg``, ``refined_deg``, the agreement (``estimate_agreement``,
         ``refined_agreement``) and loss at both, the angles evaluated, ``evaluations`` and ``seconds``.
-    upsampling : int
+    upsample : int
         Output factor relative to the native scan grid. ``object_sampling_A``
         records output pixel spacing, preserving the physical field of view.
     object_sampling_A : tuple[float, float] | None
-        Pixel size of the reconstructed image in Angstrom, (row, col): the scan step divided by ``upsampling``.
+        Pixel size of the reconstructed image in Angstrom, (row, col): the scan step divided by ``upsample``.
     reconstruction_method : str
         ``ssb``, ``phase`` or ``complex``. The regularized methods are experimental.
     reconstruction_options : dict[str, object]
@@ -177,7 +177,7 @@ class DirectPtychoResult(Mapping[str, float]):
     voltage_kV: float | None = None
     semiangle_mrad: float | None = None
     object_sampling_A: tuple[float, float] | None = None
-    upsampling: int = 1
+    upsample: int = 1
     reconstruction_method: str = "phase_of_mean"
     reconstruction_options: dict[str, object] = field(default_factory=dict)
     reconstruction_diagnostics: dict[str, object] = field(default_factory=dict)
@@ -236,7 +236,7 @@ class DirectPtychoResult(Mapping[str, float]):
     def __repr__(self) -> str:
         method = self.reconstruction_method
         lines = ["SSB Result" if method in ("phase_of_mean", "phase_of_mean") else f"Direct {method} result"]
-        lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsampling}x output")
+        lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsample}x output")
         if self.phase_estimator is not None:
             lines.append(f"  Estimator      {self.phase_estimator}")
         if not self.amplitude_estimated:
@@ -399,15 +399,15 @@ class DirectPtychoResult(Mapping[str, float]):
         if self.timings:
             record["timings"] = dict(self.timings)
         if None not in (self.voltage_kV, self.semiangle_mrad, self.object_sampling_A):
-            from quantem.gpu.optics import ssb_upsampling_requirement
+            from quantem.gpu.optics import ssb_upsample_requirement
 
-            required = ssb_upsampling_requirement(
+            required = ssb_upsample_requirement(
                 voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-                scan_sampling_A=tuple(float(step) * self.upsampling for step in self.object_sampling_A),
+                scan_sampling_A=tuple(float(step) * self.upsample for step in self.object_sampling_A),
             )
-            if self.upsampling < required - 1e-12:
-                record["upsampling"] = self.upsampling
-                record["nominal_upsampling_requirement"] = required
+            if self.upsample < required - 1e-12:
+                record["upsample"] = self.upsample
+                record["nominal_upsample_requirement"] = required
         if to_dict:
             return record
 
@@ -434,9 +434,9 @@ class DirectPtychoResult(Mapping[str, float]):
         if "stop_reason" in record:
             row["Stopping reason"] = record["stop_reason"]
         row.update({f"Timing: {name} (s)": seconds for name, seconds in self.timings.items()})
-        if "nominal_upsampling_requirement" in record:
-            row["Output sampling (×)"] = record["upsampling"]
-            row["Nominal requirement (×)"] = record["nominal_upsampling_requirement"]
+        if "nominal_upsample_requirement" in record:
+            row["Output sampling (×)"] = record["upsample"]
+            row["Nominal requirement (×)"] = record["nominal_upsample_requirement"]
         model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
         table = pd.DataFrame.from_dict(row, orient="index", columns=[model]).rename_axis("Parameter")
         columns = resolve_columns(len(table), columns=columns, default=1)
@@ -488,7 +488,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         The model grid resolves the aperture and expands for defocus and
         astigmatism. It is independent of detector binning, scan spacing,
-        and reconstruction upsampling.
+        and reconstruction upsample.
 
         Examples
         --------
@@ -533,7 +533,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.reconstruct(aberrations)
+        >>> result = ssb.run(aberrations)
         >>> probe = result.probe()
         >>> probe_fourier = result.probe(space="fourier")
         """
@@ -607,7 +607,7 @@ class DirectPtychoResult(Mapping[str, float]):
             aberrations are encoded in the complex Fourier probe's phase.
             ``rotation`` draws the 180-degree branch evidence of an estimated
             rotation (``rotation_branches.show()``): both branches' fits at
-            ``upsampling="auto"`` above their native phase distributions. A phase view coarser than
+            ``upsample="auto"`` above their native phase distributions. A phase view coarser than
             ``"auto"`` (a native fit) is shown as reconstructed, and one line
             names the auto factor.
             ``depth`` shows the conditional focus-depth agreement slice;
@@ -692,7 +692,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.reconstruct(aberrations, upsampling="auto")
+        >>> result = ssb.run(aberrations, upsample="auto")
         >>> result.show()
         >>> result.show("probe")
         >>> result.show(size="large")
@@ -1001,20 +1001,20 @@ def _is_cupy_array(value: object) -> bool:
 
 
 def _announce_below_auto(result: DirectPtychoResult) -> None:
-    """Say in one line when a shown phase is coarser than ``upsampling="auto"`` and how to get the auto one."""
-    from quantem.gpu.optics.physics import ssb_upsampling_factor
+    """Say in one line when a shown phase is coarser than ``upsample="auto"`` and how to get the auto one."""
+    from quantem.gpu.optics.physics import ssb_upsample_factor
 
     if None in (result.voltage_kV, result.semiangle_mrad, result.object_sampling_A):
         return
     try:
-        auto = ssb_upsampling_factor(
+        auto = ssb_upsample_factor(
             voltage_kV=result.voltage_kV, semiangle_mrad=result.semiangle_mrad,
-            scan_sampling_A=tuple(float(step) * result.upsampling for step in result.object_sampling_A))
+            scan_sampling_A=tuple(float(step) * result.upsample for step in result.object_sampling_A))
     except ValueError:
         return
-    if result.upsampling < auto:
-        print(f"SSB: showing this phase at {result.upsampling}x, the grid it was reconstructed on; "
-              f"ssb.reconstruct(result, upsampling='auto') shows it at {auto}x.")
+    if result.upsample < auto:
+        print(f"SSB: showing this phase at {result.upsample}x, the grid it was reconstructed on; "
+              f"ssb.run(result, upsample='auto') shows it at {auto}x.")
 
 
 @cache
@@ -1069,18 +1069,18 @@ def _phase_title(result: DirectPtychoResult, area: str = "Full field", *, neural
         detail = "No damping"
     else:
         heading = "Regularized phase-only" if method == "phase" else "Amplitude + phase"
-        strength = options.get("phase_damping")
+        strength = options.get("phase_damp")
         phase = "not recorded" if strength is None else f"{strength:g}"
         detail = f"Phase damping {phase}"
         if method == "complex":
-            strength = options.get("amplitude_damping")
+            strength = options.get("amplitude_damp")
             amplitude = "not recorded" if strength is None else f"{strength:g}"
             detail = f"Damping: phase {phase}, amplitude {amplitude}"
     if neural:
         heading = "Neural phase: U-Net + ADF + bounded correction"
-        strength = options["neural_phase_model"]["input_phase_damping"]
+        strength = options["neural_phase_model"]["input_phase_damp"]
         detail = f"Input phase damping {strength:g}"
-    return f"{heading}\n{detail}\n{area} · {result.upsampling}× upsampling · phase (rad)"
+    return f"{heading}\n{detail}\n{area} · {result.upsample}× upsample · phase (rad)"
 
 
 def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "inferno",
@@ -1105,7 +1105,7 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
                for shape, step in zip(shapes[1:], sampling[1:], strict=True)):
         raise ValueError("Compare results of the same physical scan field; their shape × sampling differs.")
     if interactive and not all(np.array_equal(shapes[0], shape) for shape in shapes[1:]):
-        raise ValueError("Interactive comparisons need the same pixel grids; use matching upsampling or interactive=False.")
+        raise ValueError("Interactive comparisons need the same pixel grids; use matching upsample or interactive=False.")
 
     all_bounds = []
     crops = phases

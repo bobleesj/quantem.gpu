@@ -1,6 +1,6 @@
 # Direct ptychography API
 
-Use `DirectPtycho` from Python on MPS or CUDA. The default `.reconstruct()` method is conventional SSB. See [regularized phase and complex reconstruction](direct-ptycho.md) for the experimental regularized methods (CUDA and MPS). Find aberrations once, inspect the search,
+Use `DirectPtycho` from Python on MPS or CUDA. The default `.run()` method is conventional SSB. See [regularized phase and complex reconstruction](direct-ptycho.md) for the experimental regularized methods (CUDA and MPS). Find aberrations once, inspect the search,
 and reuse those parameters for reconstruction. Start with the
 {ref}`Python workflow <reconstruct-phase>` for a short example.
 For actual images and saved outputs, run the {ref}`Gold notebook <gold-ssb-reconstruction>`.
@@ -118,7 +118,7 @@ curves. Each budget starts independently from the same session state and uses
 all selected data. The parent session is unchanged; choose a fit explicitly:
 
 ```python
-image = ptycho.reconstruct(fits[400], upsampling="auto")
+image = ptycho.run(fits[400], upsample="auto")
 ```
 
 A scalar `trials=400` still returns one fit. The default is one 200-trial initial fit followed by joint refinement.
@@ -223,7 +223,7 @@ In the next cell, pass that same dataset to SSB and reconstruct:
 
 ```python
 ptycho = DirectPtycho(data)
-result = ptycho.reconstruct()   # fits the aberrations once when none are known
+result = ptycho.run()   # fits the aberrations once when none are known
 ```
 
 Both file-backed entry points use the loaded `voltage_kV`, `semiangle_mrad`,
@@ -235,7 +235,7 @@ overrides affect the session without rewriting `data.metadata`.
 `scan_detector_rotation_deg` is the physical scan-to-detector rotation, kept in
 [0, 360). Omitted, SSB uses the acquisition's recorded rotation, else estimates
 it from the curl of the centre-of-mass field and prints one line. The curl knows
-the angle only modulo 180 degrees; for an estimated angle `reconstruct()` and
+the angle only modulo 180 degrees; for an estimated angle `run()` and
 `fit_aberrations(check_rotation=True)` fit both 180-degree branches and keep
 the one whose atomic columns have positive phase (see
 [Settle the 180° branch](#settle-the-180-branch)). A given or recorded angle is
@@ -245,7 +245,7 @@ rotation can produce; it is estimated with the angle, or False when an angle is
 given. Reported centers stay in the original detector axes. Give a calibrated
 angle to skip the estimate: `DirectPtycho(data, scan_detector_rotation_deg=12.3)`.
 
-`reconstruct()` fits the aberrations with `fit_aberrations()` defaults (the
+`run()` fits the aberrations with `fit_aberrations()` defaults (the
 tilt-corrected joint fit) when the session has none, then reuses them. For custom
 primary bounds or fixed coefficients, call `fit_aberrations(search="primary", ...)`
 first. This fits defocus, astigmatism, tilt and depth without the default
@@ -256,7 +256,7 @@ It searches `phi12_deg` over its whole period, so a `phi12_deg` range or a
 nonzero held `C12_nm` alone raises and names what to pass; holding all three
 coefficients needs `check_rotation=False`. The joint fit searches depth
 spreads in `quantem.gpu.direct_ptycho.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ptycho.aberrations = {...}` to
-state a known calibration, which `reconstruct()` then applies without fitting.
+state a known calibration, which `run()` then applies without fitting.
 `detector_sampling_mrad` is detector angular sampling in
 mrad per pixel, `(row, col)`. Calibrate it as its own step before SSB:
 
@@ -300,7 +300,7 @@ the backend, fitted aberrations, rotation, loss, trial counts, the local
 `refinement` applied (None when a `search="primary"` fit kept its best trial), bright-field
 geometry, timings, reuse state, and provenance metadata. A fit that compared
 the two 180-degree branches records them as `rotation_branches` (a
-`RotationBranches`); `reconstruct()` keeps it on its result whenever it applies
+`RotationBranches`); `run()` keeps it on its result whenever it applies
 that fit's coefficients, so `report()` shows the suggested rotation and
 `result.show("rotation")` draws the evidence. Saved results (`save_dir`) are
 `quantem.ssb-result/10` records; a `/9` record is computed again. A record
@@ -326,12 +326,12 @@ copied with its data is therefore reused; another acquisition is fitted again.
 For a dense CUDA input, native supported scan shapes are 128×128, 256×256,
 512×512 and 1024×1024. Other smaller scan shapes are padded with the mean
 diffraction pattern to a supported square. For example, a 32×32 input currently
-produces a 128×128 working grid before any requested upsampling. Check
+produces a 128×128 working grid before any requested upsample. Check
 `ptycho.scan_shape` and `result.phase.shape`; padded pixels are not additional
 measured scan positions; the session prints one line naming the padded size.
 Dense CUDA arrays larger than 1024 along either axis are unsupported. Use the
 encoded acquisition for the bounded-memory large-scan workflow below.
-Computational padding is separate from `reconstruct(..., upsampling=2)`.
+Computational padding is separate from `run(..., upsample=2)`.
 
 The default fit evaluates 200 seeded TPE candidates of the least-squares
 agreement of the SSB model with the full active bright field, keeps the best,
@@ -377,7 +377,7 @@ with io.load("acquisition.qem", backend="cuda") as data:
             scan_region=(256, 768, 256, 768),
             tilt=True,
         )
-        result = ptycho.reconstruct(fitted, compute_loss=False)
+        result = ptycho.run(fitted, compute_loss=False)
         # Native 2048 input produces 2048 output here, with unchanged field of view.
 ```
 
@@ -409,7 +409,7 @@ memory cost. Those operations are unsupported above 1024. Fit diagnostics remain
 region. A full 1024 fit remains available, but an explicit smaller region avoids
 keeping its entire Fourier stack during optimization.
 
-`upsampling="auto"` or an explicit factor changes output sampling and
+`upsample="auto"` or an explicit factor changes output sampling and
 memory requirements, **not the measured field of view**. A 4096 output from a
 512 scan is distinct from a native 4096 scan. Large output arrays can still
 exceed available GPU memory. Borrowed resident inputs without a persistent
@@ -431,19 +431,19 @@ ptycho = DirectPtycho.open(
 aberrations = ptycho.fit_aberrations(tilt=True, save_dir="results/aberrations")
 aberrations.report()
 ptycho.show_trials(best=5)
-result = ptycho.reconstruct(aberrations, save_dir="results/native")
-shown = ptycho.reconstruct(aberrations, upsampling="auto")
+result = ptycho.run(aberrations, save_dir="results/native")
+shown = ptycho.run(aberrations, upsample="auto")
 shown.show()
 ```
 
 The numbers above illustrate the units; use your acquisition's calibration.
 SSB here is model-based and tilt-corrected: `fit_aberrations()` (`tilt=True`,
 the default) jointly estimates specimen tilt and model depth spread as well as
-aberrations, and so does the automatic fit of `reconstruct()`.
+aberrations, and so does the automatic fit of `run()`.
 `search="primary", tilt=False` holds the tilt and depth spread at 0
 ({ref}`Fit methods <ssb-fit-methods>`).
 Fits stay on the native scan grid; what you look at is reconstructed at
-`upsampling="auto"`, the factor the scan sampling allows (at 300 kV
+`upsample="auto"`, the factor the scan sampling allows (at 300 kV
 and 30 mrad: 2× for the 0.264 Å step above, 3× at 0.373 Å, 4× for the 0.5 Å
 gold scan), and its title names the factor. `show_trials` and the branch
 panels of `scan_rotations` use the same factor. `result.show()`
@@ -532,14 +532,14 @@ support in its fitting band; unsupported scans raise a corrective error instead
 of returning a zero-agreement fit.
 
 `fit_aberrations()` searches on the native scan grid.
-`reconstruct()` applies the supplied parameters without
+`run()` applies the supplied parameters without
 searching. CUDA and MPS use `phase_of_mean` at every output factor, including
 all 14 higher-order terms. Both return phase-only complex waves with unit amplitude,
 recorded as `amplitude_estimated=False`. That amplitude is not a measured
-specimen transmission. Use `reconstruct(method="complex")` when amplitude is needed
+specimen transmission. Use `run(method="complex")` when amplitude is needed
 ([Choose a direct reconstruction](direct-ptycho.md)).
 
-`result.upsampling` and `result.object_sampling_A` record the output factor and
+`result.upsample` and `result.object_sampling_A` record the output factor and
 `(row, col)` pixel spacing. Input sampling stays in the saved signature. Changing the
 method, sampling, or scientific parameters invalidates saved-result reuse.
 
@@ -566,7 +566,7 @@ The report table labels its angle column `phi12 (deg)`.
 
 Supply exactly one positive selector. Images share phase contrast and include
 scale bars and a parameter table. They are reconstructed at
-`upsampling="auto"` by default (the title names the factor); the search
+`upsample="auto"` by default (the title names the factor); the search
 losses in the table are native-grid values. Trials are replayed from their
 recorded settings rather than stored as a large image stack. Browsing preserves the
 active reconstruction. `best` ranks the latest search only.
@@ -575,9 +575,9 @@ active reconstruction. `best` ranks the latest search only.
 its final result appears in `report()`.
 
 ```python
-attempts = ptycho.reconstruct(aberrations, trial_ids=aberrations.trials.tail(5).index)
+attempts = ptycho.run(aberrations, trial_ids=aberrations.trials.tail(5).index)
 attempts.phase  # radians; axes (trial, row, column)
-adjusted = ptycho.reconstruct(aberrations, aberrations={"C10_nm": 12.5})  # nm
+adjusted = ptycho.run(aberrations, aberrations={"C10_nm": 12.5})  # nm
 ```
 
 Overrides preserve unspecified coefficients, tilt, depth spread and rotation.
@@ -695,7 +695,7 @@ the usual zoom, FFT and `viewer.export_html(...)` methods.
 Fit at native sampling, then reuse the fitted parameters for a finer preview:
 
 ```python
-result = ptycho.reconstruct(aberrations, upsampling="auto")
+result = ptycho.run(aberrations, upsample="auto")
 ```
 
 `"auto"` selects the smallest supported factor (1, 2, 3, 4 or 8) whose output
@@ -705,7 +705,7 @@ must be at most `wavelength / (4 * semiangle)`, with semiangle in radians.
 This uses the calibrated voltage, convergence semiangle and scan spacing.
 It is a numerical grid criterion, not a measured resolution: detector coverage,
 noise, coherence, aberrations and alias separation can reduce useful bandwidth.
-See the [direct-ptychography upsampling paper](https://arxiv.org/abs/2507.18610).
+See the [direct-ptychography upsample paper](https://arxiv.org/abs/2507.18610).
 More than 8× raises an explicit limit error. CUDA and MPS support all 14
 aberration terms at every listed factor, with or without specimen tilt and
 depth correction. Both reconstruct the phase of the mean wave (`phase_of_mean`).
@@ -715,8 +715,8 @@ replicas of the scan mean while retaining the normalization at the true origin.
 For an explicit sampling comparison:
 
 ```python
-result_2x = ptycho.reconstruct(aberrations, upsampling=2)
-result_4x = ptycho.reconstruct(aberrations, upsampling=4)
+result_2x = ptycho.run(aberrations, upsample=2)
+result_4x = ptycho.run(aberrations, upsample=4)
 ```
 
 Show both full fields with a marked, matching crop underneath:
@@ -729,14 +729,14 @@ The library outlines the same physical zoom in both full images and shows it
 below them. Each zoom spans one quarter of the width and height. Use
 `region="center"` (the default), `"top-left"`, `"top-right"`, `"bottom-left"`,
 or `"bottom-right"`. Method names and regularization are included in the titles;
-upsampling is labeled separately. Region selection changes only the display.
+upsample is labeled separately. Region selection changes only the display.
 All four panels share the first result's symmetric `phase_limits`.
 Reconstruction carries those limits from the supplied aberration result, so its
 phase, rotation diagnostics and finer outputs use the same linear mapping. The
 results must cover the same physical field; this view does not align images.
 
-`fit_aberrations()` has no `upsampling` argument: the search stays at 1×.
-The {ref}`Gold comparison <gold-upsampling>` shows 1× and 4× outputs with shared
+`fit_aberrations()` has no `upsample` argument: the search stays at 1×.
+The {ref}`Gold comparison <gold-upsample>` shows 1× and 4× outputs with shared
 contrast and a matched crop. That Gold result has visible bands at 4×;
 the example does not establish improved resolution.
 
@@ -747,7 +747,7 @@ aberrations = ptycho.fit_aberrations(
     scan_region=(128, 384, 128, 384),  # row start/stop, column start/stop; scan pixels
     tilt=True,
 )
-result = ptycho.reconstruct(aberrations, upsampling="auto")
+result = ptycho.run(aberrations, upsample="auto")
 result.show()
 ```
 
@@ -772,7 +772,7 @@ a locally good fit does not establish that the whole specimen is uniform.
 The centre-of-mass curl fixes the scan-detector rotation only modulo 180°: the
 angle and the angle plus 180° reverse every CoM vector and both leave the field
 curl-free. SSB fits both equally well, the second as the conjugate object with
-C10 of the opposite sign. For a rotation the session estimated, `reconstruct()`
+C10 of the opposite sign. For a rotation the session estimated, `run()`
 and `fit_aberrations()` therefore fit twice, at the estimate and at the
 estimate plus 180°: two independent searches with the same settings (tilt,
 ranges, trials, seed), neither started from the other. The branch is decided on
@@ -810,7 +810,7 @@ all on 512 × 512 scans on an M-series Mac, two MPS standard fits
 rotations = ptycho.scan_rotations(region=None, zoom=3, size="large")
 # report=True is the default: phase images, histograms and a numerical table.
 # rotations.report() returns the table again without fitting.
-result = ptycho.reconstruct()                  # the kept fit, no third search
+result = ptycho.run()                  # the kept fit, no third search
 result.show("rotation")                     # the same figure from the result
 ```
 
@@ -818,7 +818,7 @@ result.show("rotation")                     # the same figure from the result
 aberration fit, such as `trials`, `tilt`, and `refinement`. Use `region` to select
 the fitting area; `check_rotation` is not needed. A rotation given to
 `DirectPtycho(...)` or recorded with the acquisition is the user's calibration:
-`reconstruct()` and `fit_aberrations()` fit it once and never move it, and
+`run()` and `fit_aberrations()` fit it once and never move it, and
 `scan_rotations()` on it reports the evidence and keeps the given
 angle unless called with `apply=True`. `fit_aberrations(check_rotation=False)`
 fits once at the session's rotation, estimated or not.
@@ -851,7 +851,7 @@ field 33 to 55 mrad, tilt-corrected fits) the column test chose the wrong
 branch at C10 = −5 and −8 nm and the right one at −3 nm, while the phase tail
 was right in all three.
 In the figure, the top row is each branch's fit reconstructed at
-`upsampling="auto"` by the session (its own rotation, aberrations,
+`upsample="auto"` by the session (its own rotation, aberrations,
 tilt and depth spread; 0.4 s for both 4× panels of the 512 × 512 gold scan),
 with the dark-field columns marked at scan pixels times the factor. The
 bottom row is the evidence, from the native phases the decision used: the
@@ -862,7 +862,7 @@ the rotation decision and numerical report, but is not plotted.
 ## View the phase and model probe
 
 ```python
-result = ptycho.reconstruct(aberrations, upsampling="auto")
+result = ptycho.run(aberrations, upsample="auto")
 result.show()  # one large phase image
 ```
 
@@ -907,7 +907,7 @@ model, not an independently retrieved wave or a measured vacuum pattern.
 Specimen tilt does not become beam tilt; a thick-model probe is at mid-depth.
 The model grid resolves the aperture and expands to cover the defocus and
 astigmatism footprint. It is independent of detector binning and object
-upsampling. Finer model sampling does not add measured information.
+upsample. Finer model sampling does not add measured information.
 The {ref}`phase–probe cell <gold-model-probe>` shows the calibrated scale bars.
 CUDA is physically tested for this view; Python MPS uses MLX but has not yet
 been checked on hardware for this addition.
@@ -941,7 +941,7 @@ Rerun the aberration search for older records; the loader does not guess their u
   `trials` must be non-negative and `refinement` is `"auto"` or `None` (a
   `search="primary"` fit's best trial, unrefined). With `tilt=True` and
   `trials=0` the session's previous joint fit is refined. Use
-  `reconstruct()`, or assign `ptycho.aberrations = {...}`, to apply known
+  `run()`, or assign `ptycho.aberrations = {...}`, to apply known
   parameters without a search.
 - To save results from an in-memory array, provide `source_path` for provenance.
   Direct arrays never reuse results from disk automatically: a path cannot
@@ -962,7 +962,7 @@ check reuse. Any scientific mismatch recomputes instead of reusing stale
 output. Inspect `result.reused`, `result.saved_path`, and `result.metadata`.
 
 Searches start from the current session coefficients, including changes made
-with `reconstruct(aberrations={...})`. Those starting coefficients participate
+with `run(aberrations={...})`. Those starting coefficients participate
 in the saved search identity, so a different refinement start cannot inherit
 an older result.
 
@@ -978,15 +978,15 @@ with DirectPtycho.open(
     scan_sampling_A=(0.264, 0.264),
 ) as batch_ssb:
     batch_aberrations = batch_ptycho.fit_aberrations(save_dir="results/aberrations")
-    result = batch_ptycho.reconstruct(batch_aberrations, save_dir="results/native")
+    result = batch_ptycho.run(batch_aberrations, save_dir="results/native")
 ```
 
 The context manager closes the session after the block. In a still-open
-notebook session, use `reconstruct()` when aberrations are known and no
+notebook session, use `run()` when aberrations are known and no
 optimizer should run:
 
 ```python
-result = ptycho.reconstruct(
+result = ptycho.run(
     aberrations={"C10_nm": 12.5, "C12_nm": 3.0, "phi12_deg": 15.0},
     save_dir="results/fixed-ssb",
 )
@@ -1024,7 +1024,7 @@ phase, native_loss = ptycho.preview(
     dict(aberrations),
     sample_tilt_mrad=aberrations.sample_tilt_mrad,
     depth_spread_nm=aberrations.depth_spread_nm,
-    upsampling=4,
+    upsample=4,
 )
 ```
 
@@ -1038,7 +1038,7 @@ Asking for either raises an error naming its replacement, the regularized
 `method="phase"` or `method="complex"` (see
 [Choose a direct reconstruction](direct-ptycho.md)). Saved results and
 records that name a retired estimator still load as they were saved, with a
-one-line notice; `reconstruct()` recomputes them with SSB. `phase_estimator`
+one-line notice; `run()` recomputes them with SSB. `phase_estimator`
 otherwise accepts only `"phase_of_mean"`, the default.
 
 Reduced contrast compression from wave averaging does not establish
@@ -1227,9 +1227,9 @@ absolute angular scale.
 ## Automatic output sampling
 
 Auto chooses 1×, 2×, 3× or 4× from the acquisition calibration, with a
-maximum of 4×. Select 8× explicitly with `ssb.show(upsampling=8)` or the
+maximum of 4×. Select 8× explicitly with `ssb.show(upsample=8)` or the
 ShowPtycho Upsampling menu. For a standalone reconstruction, use
-`ssb.reconstruct(fit, upsampling=8)`.
+`ssb.run(fit, upsample=8)`.
 
 The nominal bandwidth requirement remains separate from the selected grid.
 When Auto is capped, the fit report and viewer settings identify the larger

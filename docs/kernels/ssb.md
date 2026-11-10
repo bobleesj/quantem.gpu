@@ -354,7 +354,7 @@ result = workflow.fit_aberrations(save_dir="results/ssb")
 For known aberrations, reconstruct without fitting:
 
 ```python
-result = workflow.reconstruct(
+result = workflow.run(
     aberrations={"C10_nm": 12.5, "C12_nm": 3.0, "phi12_deg": 15.0},
     save_dir="results/fixed-ssb",
 )

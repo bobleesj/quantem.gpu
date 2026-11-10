@@ -16,7 +16,7 @@ def test_public_ssb_api_has_one_workflow() -> None:
         "fit_aberrations",
         "scan_rotations",
         "show_trials",
-        "reconstruct",
+        "run",
         "preview",
         "close",
     ):
@@ -37,7 +37,7 @@ def test_ssb_operations_share_saved_result_controls() -> None:
 
     from quantem.gpu import DirectPtycho
 
-    for operation in (DirectPtycho.fit_aberrations, DirectPtycho.reconstruct):
+    for operation in (DirectPtycho.fit_aberrations, DirectPtycho.run):
         signature = inspect.signature(operation)
         assert signature.parameters["save_dir"].default is None
         assert signature.parameters["force"].default is False
@@ -151,7 +151,7 @@ def test_reconstruct_series_reuses_only_exact_results(
             assert kwargs["num_trials"] == 200
             return self._result(0.1 * self.index)
 
-        def reconstruct(self, **kwargs):
+        def run(self, **kwargs):
             assert kwargs["aberrations"] == aberrations
             assert kwargs["save_dir"].name == "ssb-locked"
             return self._result(0.3 + 0.1 * self.index)
@@ -467,7 +467,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
             fits.append(self.name)
             return self._result(fitted)
 
-        def reconstruct(self, **kwargs):
+        def run(self, **kwargs):
             reconstructions.append((self.name, kwargs["aberrations"]))
             return self._result(kwargs["aberrations"])
 

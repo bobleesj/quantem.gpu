@@ -79,7 +79,7 @@ passes are descriptive; the alternating experiment above isolates the speedup.
 
 The 8× host copy had outliers, including 244 ms; its delivery p90 was 357 ms.
 Fine-grid paths were not optimized here. All 55 complete output hashes match
-the frozen reference. Changing upsampling changes the evaluated frequency
+the frozen reference. Changing upsample changes the evaluated frequency
 coverage, so these rows are different workloads, not quality-equivalent
 speedups.
 
@@ -105,7 +105,7 @@ These counters do not establish an algorithmic or hardware lower bound.
   detector sampling, with full-plane GPU comparison in regression tests.
 - Three full-data GPU 1 checks compare both complex spectra and final phase
   byte for byte, including zero depth and a large defocus/depth change.
-- The final CUDA wave-average, upsampling, higher-order and thick-sample suite
+- The final CUDA wave-average, upsample, higher-order and thick-sample suite
   passes all 45 tests. An initial run passed the scientific assertions but
   failed one stale error-message expectation (`num_trials=0` versus the current
   `trials=0`); the expectation was corrected and the complete suite rerun.

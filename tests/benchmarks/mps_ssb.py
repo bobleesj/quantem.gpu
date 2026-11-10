@@ -28,7 +28,7 @@ p90 of its repeats. The metrics, all in milliseconds:
 - ``ssb_prepare``: the first preview, which reads and transforms the
   bright-field evidence (single shot);
 - ``preview_native`` / ``preview_2x``: ``ssb.preview`` without the loss, as a
-  ShowPtycho slider drag, at upsampling 1 and 2, C10 changing every call;
+  ShowPtycho slider drag, at upsample 1 and 2, C10 changing every call;
 - ``preview_native_loss``: the same with the variance loss (slider release);
 - ``search_candidate``: one candidate of the aberration search, timed as a
   batch of eight agreement trials at depth spread 0 (the standard fit's
@@ -354,7 +354,7 @@ def measure(master, reps=20, load_reps=3, log=print):
 
     def drag(factor, loss):
         def call(index):
-            ssb.preview({**base, "C10_nm": 2.0 + 0.05 * index}, compute_loss=loss, upsampling=factor)
+            ssb.preview({**base, "C10_nm": 2.0 + 0.05 * index}, compute_loss=loss, upsample=factor)
         return call
 
     synchronize()

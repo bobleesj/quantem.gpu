@@ -72,7 +72,7 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
     }
     assert shared <= constructor.parameters.keys()
     assert constructor.parameters["backend"].default == "auto"
-    reconstruct = inspect.signature(DirectPtycho.reconstruct)
+    reconstruct = inspect.signature(DirectPtycho.run)
     assert reconstruct.parameters["compute_loss"].default is True
 
 
@@ -85,7 +85,7 @@ def test_mps_preview_honors_compute_loss(monkeypatch) -> None:
 
     def upsampled(candidate, **kwargs):
         assert candidate is prepared and "phase_estimator" not in kwargs
-        calls.append(("phase", kwargs["upsampling_factor"]))
+        calls.append(("phase", kwargs["upsample_factor"]))
         return np.ones((4, 4), dtype=np.float32)
 
     def variance(c10, c12, phi12):
@@ -101,8 +101,8 @@ def test_mps_preview_honors_compute_loss(monkeypatch) -> None:
     backend.reconstruct_with_loss = variance
 
     aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
-    phase, without_loss = backend.preview_upsampled(aberrations, upsampling_factor=2, compute_loss=False)
-    _, with_loss = backend.preview_upsampled(aberrations, upsampling_factor=2, compute_loss=True)
+    phase, without_loss = backend.preview_upsampled(aberrations, upsample_factor=2, compute_loss=False)
+    _, with_loss = backend.preview_upsampled(aberrations, upsample_factor=2, compute_loss=True)
     assert phase.shape == (4, 4)
     assert without_loss is None
     assert with_loss == 0.25

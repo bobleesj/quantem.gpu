@@ -33,8 +33,8 @@ class NeuralPhaseModel:
     --------
     >>> fit = ptycho.fit_aberrations(tilt=True)
     >>> model = NeuralPhaseModel.fit(ptycho, fit)
-    >>> reconstruction = ptycho.reconstruct(fit, method="phase", neural_model=model,
-    ...                                    upsampling="auto")
+    >>> reconstruction = ptycho.run(fit, method="phase", neural_model=model,
+    ...                                    upsample="auto")
     >>> neural_phase = reconstruction.neural_phase
     """
 
@@ -47,7 +47,7 @@ class NeuralPhaseModel:
             "voltage_kV",
             "semiangle_mrad",
             "object_sampling_A",
-            "upsampling",
+            "upsample",
             "annulus_mrad",
             "width",
             "readout",
@@ -59,7 +59,7 @@ class NeuralPhaseModel:
         self._voltage = float(checkpoint["voltage_kV"])
         self._semiangle = float(checkpoint["semiangle_mrad"])
         self._sampling = tuple(checkpoint["object_sampling_A"])
-        self._factor = checkpoint["upsampling"]
+        self._factor = checkpoint["upsample"]
         self._annulus = tuple(checkpoint["annulus_mrad"])
         if (
             len(self._sampling) != 2
@@ -136,7 +136,7 @@ class NeuralPhaseModel:
         semiangle_mrad: float,
         annulus_mrad: tuple[float, float],
         object_sampling_A: tuple[float, float],
-        upsampling: int,
+        upsample: int,
         training_record: dict | None = None,
     ) -> None:
         """Package a fitted model for reuse after validation on held measurements.
@@ -157,7 +157,7 @@ class NeuralPhaseModel:
             Inner and outer collection angles used for the trained annular guide.
         object_sampling_A : pair of float
             Row and column phase pixel sizes at training.
-        upsampling : int
+        upsample : int
             Phase-grid oversampling factor at training.
         training_record : dict, optional
             Selection history and training regions, stored with the selected weights.
@@ -174,7 +174,7 @@ class NeuralPhaseModel:
             semiangle_mrad=float(semiangle_mrad),
             annulus_mrad=tuple(map(float, annulus_mrad)),
             object_sampling_A=tuple(map(float, object_sampling_A)),
-            upsampling=upsampling,
+            upsample=upsample,
         )
         if training_record is not None:
             checkpoint["training_record"] = training_record
@@ -192,7 +192,7 @@ class NeuralPhaseModel:
             directions=[head.state_dict() for head in self._net["heads"]],
             voltage_kV=self._voltage, semiangle_mrad=self._semiangle,
             annulus_mrad=self._annulus, object_sampling_A=self._sampling,
-            upsampling=self._factor, training_record=self.training_record,
+            upsample=self._factor, training_record=self.training_record,
         )
 
     @classmethod
@@ -207,7 +207,7 @@ class NeuralPhaseModel:
         direction_steps: int = 2400,
         patch_size: int = 128,
         seed: int = 6611,
-        upsampling: int | str = "auto",
+        upsample: int | str = "auto",
         annulus_mrad: tuple[float, float] | None = None,
         scan_basis: tuple[tuple[float, float], tuple[float, float]] | None = None,
     ) -> "NeuralPhaseModel":
@@ -237,7 +237,7 @@ class NeuralPhaseModel:
             128. Reconstruction still uses the full acquisition.
         seed : int, optional
             Reproducible initialization and sampled-frequency seed.
-        upsampling : int or "auto", optional
+        upsample : int or "auto", optional
             Output sampling shared by training and inference.
         annulus_mrad : pair of float or None, optional
             Measured guide angles. Default: 1.05–1.5 times the convergence
@@ -263,21 +263,21 @@ class NeuralPhaseModel:
         --------
         >>> optics = ptycho.fit_aberrations(tilt=True)
         >>> model = NeuralPhaseModel.fit(ptycho, optics)
-        >>> reconstruction = ptycho.reconstruct(optics, method="phase",
-        ...                                    neural_model=model, upsampling="auto")
+        >>> reconstruction = ptycho.run(optics, method="phase",
+        ...                                    neural_model=model, upsample="auto")
         """
         if recipe == "staged":
             from quantem.gpu.direct_ptycho._phase_staged_training import train
 
             model = train(ptycho, optics, steps=steps, direction_steps=direction_steps,
-                          patch_size=patch_size, seed=seed, upsampling=upsampling,
+                          patch_size=patch_size, seed=seed, upsample=upsample,
                           annulus_mrad=annulus_mrad, scan_basis=scan_basis)
         elif recipe == "count_split":
             if scan_basis is not None:
                 raise ValueError("scan_basis requires recipe='staged'.")
             from quantem.gpu.direct_ptycho._phase_training import train
 
-            model = train(ptycho, optics, None, steps, patch_size, seed, upsampling, annulus_mrad)
+            model = train(ptycho, optics, None, steps, patch_size, seed, upsample, annulus_mrad)
         else:
             raise ValueError("Choose recipe='staged' or recipe='count_split'.")
         if checkpoint is not None:
@@ -361,7 +361,7 @@ class NeuralPhaseModel:
         return held_scores(self, ptycho, optics, scan_region, seed)
 
     @property
-    def input_phase_damping(self) -> float:
+    def input_phase_damp(self) -> float:
         """Phase damping used by this architecture before its learned correction."""
         return 0.03
 
@@ -394,8 +394,8 @@ class NeuralPhaseModel:
             architecture=self._SCHEMA, weights_sha256=self._weights_sha256,
             checkpoint_sha256=self.checkpoint_sha256, voltage_kV=self._voltage,
             semiangle_mrad=self._semiangle, object_sampling_A=self._sampling,
-            upsampling=self._factor, annulus_mrad=self._annulus,
-            input_phase_damping=self.input_phase_damping,
+            upsample=self._factor, annulus_mrad=self._annulus,
+            input_phase_damp=self.input_phase_damp,
         )
 
     @staticmethod

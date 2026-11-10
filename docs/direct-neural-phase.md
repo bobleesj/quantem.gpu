@@ -1,12 +1,12 @@
 # Neural phase in a direct reconstruction
 
-Use one completed acquisition and the regular `DirectPtycho.reconstruct` call:
+Use one completed acquisition and the regular `DirectPtycho.run` call:
 
 ```python
 optics = ptycho.fit_aberrations(tilt=True, show=False)
 model = ptycho.train_neural_phase(optics)
-reconstruction = ptycho.reconstruct(
-    optics, method="phase", neural_model=model, phase_damping=0.03, upsampling="auto"
+reconstruction = ptycho.run(
+    optics, method="phase", neural_model=model, phase_damp=0.03, upsample="auto"
 )
 reconstruction.show(show_fft=True, cmap="gray")
 phase = reconstruction.phase
@@ -37,7 +37,7 @@ preceding `fit` call learns from measured diffraction, with no simulated
 reference images. Its validity still depends on the weak-object model,
 calibration and generalization of the supplied weights.
 
-The neural input uses phase damping 0.03. A different `phase_damping` changes
+The neural input uses phase damping 0.03. A different `phase_damp` changes
 only the displayed direct baseline; the required input is solved using the
 same prepared diffraction equations. Titles state both strengths. The model
 requires unit smoothness and uniform detector weighting.

@@ -80,11 +80,11 @@ def test_method_comparison_marks_the_same_physical_zoom(region, start):
     conventional = _saved_result()
     phase = replace(
         conventional, reconstruction_method="phase",
-        reconstruction_options={"phase_damping": 0.03},
+        reconstruction_options={"phase_damp": 0.03},
     )
     fine = replace(
         conventional, object_wave=np.repeat(np.repeat(conventional.object_wave, 4, axis=0), 4, axis=1),
-        upsampling=4, object_sampling_A=(0.125, 0.125),
+        upsample=4, object_sampling_A=(0.125, 0.125),
     )
     original = phase.object_wave.copy()
     figure = phase.show(compare=fine, region=region, cmap="gray", size="large")
@@ -92,7 +92,7 @@ def test_method_comparison_marks_the_same_physical_zoom(region, start):
     assert "Regularized phase-only" in axes[0].get_title()
     assert "Phase damping 0.03" in axes[0].get_title()
     assert "Conventional SSB" in axes[1].get_title()
-    assert "4× upsampling" in axes[1].get_title()
+    assert "4× upsample" in axes[1].get_title()
     assert f"{region.capitalize()} zoom" in axes[2].get_title()
     for factor, full, zoom in zip((1, 4), axes[:2], axes[2:], strict=True):
         row, col = np.array(start) * factor
@@ -110,7 +110,7 @@ def test_method_comparison_marks_the_same_physical_zoom(region, start):
 def test_complex_phase_display_names_both_regularization_strengths():
     result = replace(
         _saved_result(), reconstruction_method="complex",
-        reconstruction_options={"phase_damping": 0.03, "amplitude_damping": 0.1},
+        reconstruction_options={"phase_damp": 0.03, "amplitude_damp": 0.1},
     )
     for show_parameters in (False, True):
         figure = result.show(show_parameters=show_parameters, size="large")
@@ -127,7 +127,7 @@ def test_comparison_titles_stay_separate_and_inside_figure(size, columns):
 
     results = [replace(
         _saved_result(), reconstruction_method="phase",
-        reconstruction_options={"phase_damping": value},
+        reconstruction_options={"phase_damp": value},
     ) for value in (0.01, 0.03, 0.05)]
     figure = results[0].show(
         compare=results[1:], region="bottom-left", show_fft=True, columns=columns, size=size,
@@ -148,7 +148,7 @@ def test_compare_regularization_strengths_uses_one_contrast_and_region():
     original = baseline.object_wave.copy()
     results = [replace(
         baseline, object_wave=baseline.object_wave ** factor,
-        reconstruction_method="phase", reconstruction_options={"phase_damping": strength},
+        reconstruction_method="phase", reconstruction_options={"phase_damp": strength},
         phase_clim=(-factor, factor),
     ) for strength, factor in ((0.01, 1), (0.03, 0.8), (0.05, 0.6))]
     figure = results[0].show(compare=results[1:], region="bottom-left", cmap="gray")
@@ -157,7 +157,7 @@ def test_compare_regularization_strengths_uses_one_contrast_and_region():
     full_fields = (axes[0], axes[1], axes[4])
     zooms = (axes[2], axes[3], axes[5])
     for result, full, zoom in zip(results, full_fields, zooms, strict=True):
-        assert f"Phase damping {result.reconstruction_options['phase_damping']:g}" in full.get_title()
+        assert f"Phase damping {result.reconstruction_options['phase_damp']:g}" in full.get_title()
         np.testing.assert_array_equal(zoom.images[0].get_array(), full.images[0].get_array()[12:16, :4])
         # The gallery must use the first result's limits even when another
         # result has its own contrast range saved.
@@ -239,8 +239,8 @@ def test_damping_plot_uses_saved_scores_and_has_helpful_missing_error():
     with pytest.raises(ValueError, match="validate_damping"):
         result.show("damping")
     result.reconstruction_diagnostics["damping_validation"] = {
-        "selected_phase_damping": .03,
-        "records": [{"phase_damping": d, "a_to_b": a, "b_to_a": b, "mean": (a+b)/2}
+        "selected_phase_damp": .03,
+        "records": [{"phase_damp": d, "a_to_b": a, "b_to_a": b, "mean": (a+b)/2}
                     for d,a,b in ((.01,.95,.94),(.03,.93,.92),(.1,.96,.95))],
     }
     figure = result.show("damping")

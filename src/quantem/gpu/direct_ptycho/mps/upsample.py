@@ -1461,7 +1461,7 @@ def _reconstruct_upsampled(
     phi12: float,
     sample_tilt_mrad: tuple[float, float],
     thickness: float,
-    upsampling_factor: int,
+    upsample_factor: int,
     higher_order_magnitudes: np.ndarray | None = None,
     higher_order_angles: np.ndarray | None = None,
 ) -> np.ndarray:
@@ -1473,7 +1473,7 @@ def _reconstruct_upsampled(
     in mrad, and ``phi12`` in radians.
     """
     mx = prepared.mx
-    n = int(prepared.scan_shape[0]) * upsampling_factor
+    n = int(prepared.scan_shape[0]) * upsample_factor
     higher = higher_order_magnitudes is not None
     qr, qc, params, coefficients, packed, dc = _alias_inputs(
         prepared, C10, C12, phi12, sample_tilt_mrad, thickness, n, higher_order_magnitudes, higher_order_angles)
@@ -1482,7 +1482,7 @@ def _reconstruct_upsampled(
     else:
         chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
         probe = _alias_probe(prepared, C10, C12, phi12, params, coefficients, packed, higher)
-        columns = _coherent_columns(prepared, n) if not higher and upsampling_factor > 1 else n
+        columns = _coherent_columns(prepared, n) if not higher and upsample_factor > 1 else n
         total = _coherent_spectrum(
             prepared, qr, qc, params, dc, probe, coefficients, higher, n,
             chunk, columns, has_depth=thickness != 0.0,

@@ -80,7 +80,7 @@ def test_calibration_survives_result_roundtrip_without_session(tmp_path, monkeyp
     assert record["aberrations"] == fit.aberrations
     assert record["sample_tilt_mrad"] == [1., -2.]
     assert record["scan_sampling_A"] == [.5, .5]
-    assert record["upsampling_mode"] == "auto" and record["upsampling"] > 1
+    assert record["upsample_mode"] == "auto" and record["upsample"] > 1
     assert str(tmp_path) not in path.read_text()
     fingerprint = source_identity(**fit._calibration_source)
     signature = {"source": fingerprint}

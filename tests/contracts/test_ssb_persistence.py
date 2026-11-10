@@ -28,7 +28,7 @@ class _Backend:
             scan_detector_rotation_deg=3.0,
             loss=0.125,
             elapsed_s=2.5,
-            timings={"fit": 2.0, "reconstruct": 0.5},
+            timings={"fit": 2.0, "run": 0.5},
             num_trials=trials,
             num_bright_field_pixels=17,
             refinement=settings["refinement"],
@@ -239,13 +239,13 @@ def test_fixed_reconstruction_reuses_only_matching_aberrations(
     first_coefs = {"C10_nm": -100.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.2)}
     changed_coefs = {"C10_nm": -99.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.2)}
 
-    first = _session(monkeypatch, source, backend).reconstruct(
+    first = _session(monkeypatch, source, backend).run(
         aberrations=first_coefs, save_dir=saved
     )
-    second = _session(monkeypatch, source, backend).reconstruct(
+    second = _session(monkeypatch, source, backend).run(
         aberrations=first_coefs, save_dir=saved
     )
-    changed = _session(monkeypatch, source, backend).reconstruct(
+    changed = _session(monkeypatch, source, backend).run(
         aberrations=changed_coefs, save_dir=saved
     )
 
@@ -289,7 +289,7 @@ def test_array_inputs_never_reuse_saved_results_by_source_path(tmp_path, monkeyp
         session.source_kind = "array"
         session._data[...] = offset
         search = session.fit_aberrations(search="primary", tilt=False, save_dir=tmp_path / "search", verbose=False)
-        result = session.reconstruct(save_dir=tmp_path / "fixed")
+        result = session.run(save_dir=tmp_path / "fixed")
         assert not search.reused
         assert not result.reused
         assert search.saved_path.is_file()
@@ -307,7 +307,7 @@ def test_changed_refinement_start_invalidates_saved_search(tmp_path, monkeypatch
     settings = dict(tilt=False, num_trials=0, refinement=None, check_rotation=False,
                     save_dir=tmp_path / "search", verbose=False)
     first = session.fit_aberrations(search="primary", **settings)
-    session.reconstruct(aberrations={"C10_nm": 12.0})
+    session.run(aberrations={"C10_nm": 12.0})
     second = session.fit_aberrations(search="primary", **settings)
     assert not second.reused
     assert backend.fit_calls == 2

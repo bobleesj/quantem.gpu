@@ -503,7 +503,7 @@ def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
             f"The model-agreement fit needs spatial frequencies in {key[0]:g}–{key[1]:g} 1/A, "
             f"but this scan reaches only {float(q.max()):.3g} 1/A. "
             "Acquire a finer scan. "
-            "Reconstruction upsampling does not add measured frequencies."
+            "Reconstruction upsample does not add measured frequencies."
         )
     if half:
         self_mirror = (columns == 0) | ((nx % 2 == 0) & (columns == nx // 2))

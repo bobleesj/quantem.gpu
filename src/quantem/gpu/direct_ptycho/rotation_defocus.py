@@ -135,7 +135,7 @@ class RotationDefocusComparison:
              "depth_nm": fit.depth_spread_nm or 0.0,
              "phase": result.phase, "native_phase": fit.phase,
              "sampling_A": result.object_sampling_A,
-             "upsampling": result.upsampling}
+             "upsample": result.upsample}
             for fit, result in zip(self.fits, self.reconstructions, strict=True)
         ]
         focus_ranges = self.focus_ranges
@@ -148,7 +148,7 @@ class RotationDefocusComparison:
             for key, collection in (("phase", images), ("native_phase", histograms)):
                 phase = case[key]
                 height, width = phase.shape
-                scale = case["upsampling"] if key == "phase" else 1
+                scale = case["upsample"] if key == "phase" else 1
                 top = int(native_height * (1 - view_fraction) / 2) * scale
                 left = int(native_width * (1 - view_fraction) / 2) * scale
                 region = host_array(phase[top:height - top, left:width - left])
@@ -187,7 +187,7 @@ class RotationDefocusComparison:
                 ax.text(0.06 * width, 0.86 * height, "1 nm", color="white", weight="bold")
             if has_zoom:
                 crop = zoom_bounds(case["native_phase"].shape, zoom)
-                top, bottom, left, right = (value * case["upsampling"] for value in crop)
+                top, bottom, left, right = (value * case["upsample"] for value in crop)
                 ax.add_patch(Rectangle((left - .5, top - .5), right - left, bottom - top,
                                        fill=False, edgecolor="#00D5FF", linewidth=1))
                 zoom_axis = axes[row + 2, col]
@@ -306,7 +306,7 @@ def compare_rotation_defocus(
                         check_rotation=False, compare_standard=False, verbose=False,
                     )
                     progress.set_postfix_str(f"{case} | Reconstructing scan region {bounds}")
-                    reconstructed = candidate.reconstruct(upsampling="auto")
+                    reconstructed = candidate.run(upsample="auto")
                     fits.append(fitted)
                     reconstructions.append(reconstructed)
                     progress.update(1)

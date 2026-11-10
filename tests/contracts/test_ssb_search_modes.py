@@ -104,7 +104,7 @@ def _exact_session(monkeypatch, start, refine, *, study=None, **session):
         monkeypatch.setattr(fifth_order_fit, "make_independent_sampler", lambda **kwargs: None)
     return SimpleNamespace(
         backend="cuda", _backend=lambda: SimpleNamespace(_get_accelerator=lambda: object(), band_power=lambda band: 1.0),
-        reconstruct=lambda result, **kwargs: result, _accept_result=lambda result: result, **session)
+        run=lambda result, **kwargs: result, _accept_result=lambda result: result, **session)
 
 
 def _record(point, stop="test stop"):

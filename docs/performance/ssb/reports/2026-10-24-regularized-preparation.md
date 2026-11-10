@@ -2,12 +2,12 @@
 
 ## Question
 
-`DirectPtycho.run(fit, method="phase" | "complex", upsampling_factor="auto")` takes about 9 s the first time and about 1 ms when only a strength changes. Switching phase -> complex -> phase pays the 9 s each time. Which stage costs the time, which parts depend on the optics, and what would it take to keep both methods prepared?
+`DirectPtycho.run(fit, method="phase" | "complex", upsample_factor="auto")` takes about 9 s the first time and about 1 ms when only a strength changes. Switching phase -> complex -> phase pays the 9 s each time. Which stage costs the time, which parts depend on the optics, and what would it take to keep both methods prepared?
 
 ## Setup
 
 - Frame 151 of a MoS2 bilayer time series, full 512 x 512 scan, 192 x 192 detector, 300 kV, 30 mrad, 0.373 A scan step, rotation 176.3 deg, the saved broad fit (14 aberration terms, tilt (5.92, -0.07) mrad, depth 12.4 nm).
-- `upsampling_factor="auto"` resolves to 3. Bright-field pixels: 9298. `G_qk` is (9298, 512, 257) complex64, 9.8 GB.
+- `upsample_factor="auto"` resolves to 3. Bright-field pixels: 9298. `G_qk` is (9298, 512, 257) complex64, 9.8 GB.
 - GPU 0, NVIDIA RTX PRO 6000 Blackwell Workstation Edition (188 SMs), live-env, CuPy, CUDA device confirmed by name. GPU 0 was idle (0 % utilization) during the runs.
 - Scripts (scratchpad `prep-profile/`): `api_table.py` (public API timings), `stages.py` (a copy of `PreparedDirect.prepare` with a device synchronize around each stage), `stages_variants.py` (same copy with the chunk size and the Gram implementation as parameters), `gram_bench.py` (Gram alternatives on the real transfer kernel, plus `torch.profiler` kernel names). No source file was edited.
 - `ncu` and `nsys` are not installed on the test machine; kernel identity comes from `torch.profiler` (CUPTI), which records CuPy kernels too.
@@ -18,7 +18,7 @@
 
 `prepare` loops in Python over alias counts (3, 4, 5, 6 here) and, inside each, over chunks of 128 scan frequencies: 130560 frequencies -> 1022 chunks. Per chunk it gathers `G_qk` at the frequencies, evaluates the transfer `_transfer` (an ElementwiseKernel over (frequency, alias, BF pixel)), casts it to complex128, forms the Gram `T^H W T` and right side `T^H W g` with batched `@`, and for `phase` runs a batched `eigh` so that any strength is a diagonal evaluation later. `complex` keeps the Gram and solves `(G + diag(penalty)) x = rhs` at each strength.
 
-The cache is a single slot, `session._prepared_direct = (key, prepared)`. The key holds `id(engine)`, `id(engine.G_qk)`, rotation, every aberration coefficient, tilt, depth, upsampling factor, method, `smoothness_inv_A` and `detector_weighting`; strengths are not in it. A method switch therefore changes the key and evicts the other model. `set_rotation` and `close` clear the slot.
+The cache is a single slot, `session._prepared_direct = (key, prepared)`. The key holds `id(engine)`, `id(engine.G_qk)`, rotation, every aberration coefficient, tilt, depth, upsample factor, method, `smoothness_inv_A` and `detector_weighting`; strengths are not in it. A method switch therefore changes the key and evicts the other model. `set_rotation` and `close` clear the slot.
 
 ## Raw numbers
 
@@ -111,7 +111,7 @@ As above: frame 151, 512 x 512 scan, 9298 BF pixels, factor 3, the saved broad f
 
 ## Raw numbers
 
-Public API (`ptycho.run(fit, upsampling_factor="auto", compute_loss=False, ...)`), median of 3 processes:
+Public API (`ptycho.run(fit, upsample_factor="auto", compute_loss=False, ...)`), median of 3 processes:
 
 | Call | before | after |
 |---|---|---|

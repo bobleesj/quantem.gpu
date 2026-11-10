@@ -299,7 +299,7 @@ class CudaSSBBackend:
         """
         accel = self._get_accelerator()
         try:
-            phase, _ = accel.thick.reconstruct(
+            phase, _ = accel.thick.run(
                 self.aberrations["C10"], self.aberrations["C12"], self.aberrations["phi12"], (0.0, 0.0), 0.0,
                 compute_loss=False,
             )
@@ -400,7 +400,7 @@ class CudaSSBBackend:
         self,
         aberrations: dict[str, float],
         *,
-        upsampling_factor: int,
+        upsample_factor: int,
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_A: float = 0.0,
@@ -414,9 +414,9 @@ class CudaSSBBackend:
         """
         accel = self._get_accelerator()
         coefficients = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
-        phase, _ = accel.thick.reconstruct(
+        phase, _ = accel.thick.run(
             *coefficients, sample_tilt_mrad, depth_spread_A, compute_loss=False,
-            upsampling_factor=upsampling_factor,
+            upsample_factor=upsample_factor,
             higher_order_magnitudes=higher_order_magnitudes,
             higher_order_angles=higher_order_angles,
         )

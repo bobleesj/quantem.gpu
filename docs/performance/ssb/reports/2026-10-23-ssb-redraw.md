@@ -18,7 +18,7 @@ The hardware is an RTX PRO 6000 Blackwell Max-Q Workstation Edition. The
 backend baseline is `e8750f3e3652`; the candidate changes
 `direct_ptycho/cuda/kernels/engine.py` and `direct_ptycho/cuda/thick.py` on that checkout.
 The browser frontend baseline is `5dc84772dc4b` with the existing ShowPtycho
-upsampling and histogram changes. Both runs use the same full acquisition and
+upsample and histogram changes. Both runs use the same full acquisition and
 saved calibration.
 
 | Upsampling | Output | Before, ms | After, ms |
@@ -82,7 +82,7 @@ performance guarantee.
 These final rates use elapsed time between the canvas's own scientific-paint
 counters and timestamps, including observed stalls. Automation-call wall
 clocks are deliberately excluded: their asynchronous boundaries overstated
-some rates, especially at high upsampling. Raw snapshots retain both clocks
+some rates, especially at high upsample. Raw snapshots retain both clocks
 for audit. These are single observation intervals, not steady-state guarantees.
 The phase and FFT panels agree within approximately 0.01 fps. The MPS
 measurements are mixed across factors; no MPS numerical kernel change was
@@ -102,13 +102,13 @@ then run:
 ```python
 from quantem.gpu.benchmark import run_ssb_preview
 
-report = run_ssb_preview(ssb, upsampling=(1, 2, 3, 4, 8), runs=11)
+report = run_ssb_preview(ssb, upsample=(1, 2, 3, 4, 8), runs=11)
 ```
 
 The report records hardware, source digest, full scientific settings,
 preparation, first/warm distributions and output hashes. It explicitly does
 not measure browser paint. Hashes identify outputs; independently retained
-oracles establish parity. Do not compare different upsampling factors as a
+oracles establish parity. Do not compare different upsample factors as a
 quality-preserving speedup: they represent different reconstructed frequency
 coverage. Native-grid or simpler-optics historical 60-fps measurements are
 not evidence of 60 fps for this full fifth-order model.

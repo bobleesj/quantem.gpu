@@ -17,7 +17,7 @@ vary. Larger contrast alone does not establish accurate projected potential,
 particularly for a thick specimen. No universal absolute-phase accuracy is
 claimed by this change.
 
-A constant-scan control exposed an upsampling artifact on both backends.
+A constant-scan control exposed an upsample artifact on both backends.
 Unfolding scan-frequency aliases also repeated the scan mean into nonzero
 frequencies. Those copies can fall inside the probe support at coarse scan
 sampling. Reconstruction now excludes all nonzero replicas of the scan mean
@@ -52,7 +52,7 @@ completed-result boundaries and do not add synchronization to inner kernels.
 
 Reconstruction policy is part of the exact result signature:
 `default_estimator="phase_of_mean"`, `higher_order_model="krivanek14"` and
-`upsampling_dc_policy="single_origin"`. A previous image cannot silently pass
+`upsample_dc_policy="single_origin"`. A previous image cannot silently pass
 exact-image reuse. The fit schema remains valid because units, fitted-parameter
 meaning and search objective have not changed. Historical saved arrays remain
 readable. Live's Auto cache has its own version increment for regenerated images.

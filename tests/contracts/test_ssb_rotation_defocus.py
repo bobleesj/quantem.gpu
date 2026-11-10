@@ -27,7 +27,7 @@ def test_review_shares_contrast_and_retains_unresolved_phase_evidence():
             fits.append(DirectPtychoResult(object_wave=wave, object_sampling_A=(0.5, 0.5), **fields))
             reconstructions.append(DirectPtychoResult(
                 object_wave=wave.repeat(2, axis=0).repeat(2, axis=1),
-                object_sampling_A=(0.25, 0.25), upsampling=2, **fields,
+                object_sampling_A=(0.25, 0.25), upsample=2, **fields,
             ))
     review = RotationDefocusComparison(tuple(fits), tuple(reconstructions), ((-30, 0), (0, 30)))
     originals = [result.phase.copy() for result in reconstructions]
@@ -102,8 +102,8 @@ def test_comparison_reuses_evidence_without_warm_starting_any_case():
             self.latest = SimpleNamespace(case=len(calls))
             return self.latest
 
-        def reconstruct(self, *, upsampling):
-            assert upsampling == "auto"
+        def run(self, *, upsample):
+            assert upsample == "auto"
             return self.latest
 
     @contextmanager

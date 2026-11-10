@@ -97,15 +97,15 @@ def _count_pair(ptycho, fit, region, factor, valid, annulus, generator, *, inclu
     pair = []
     for half in (first, second):
         with type(ptycho)(cp.from_dlpack(half), **options) as session:
-            result = session.reconstruct(
-                fit, method="phase", upsampling=factor, compute_loss=False, verbose=False
+            result = session.run(
+                fit, method="phase", upsample=factor, compute_loss=False, verbose=False
             )
             equations = session._prepared_direct[1]["phase"]
             phase = torch.from_dlpack(result.phase).detach()
             item = _Half(equations, phase, half[:, :, annulus].sum(-1))
             if include_complex:
-                result = session.reconstruct(
-                    fit, method="complex", upsampling=factor, compute_loss=False, verbose=False
+                result = session.run(
+                    fit, method="complex", upsample=factor, compute_loss=False, verbose=False
                 )
                 item.complex_equations = session._prepared_direct[1]["complex"]
                 item.complex_phase = torch.from_dlpack(result.phase)
@@ -147,7 +147,7 @@ def _detector_mask(ptycho, limits, device):
     return valid, torch.as_tensor(mask, device=device)
 
 
-def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsampling, annulus_mrad):
+def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsample, annulus_mrad):
     scan = ptycho._input_dataset
     if ptycho.backend != "cuda" or scan is None or ptycho.scan_region is not None:
         raise ValueError("Open a full native counting acquisition as a CUDA dataset before fitting.")
@@ -156,7 +156,7 @@ def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsampling, annulus_
     if isinstance(patch_size, bool) or not isinstance(patch_size, int):
         raise ValueError("patch_size must be an integer number of scan pixels.")
     regions = _regions(scan.shape[:2], patch_size)
-    factor = ptycho._resolve_upsampling(upsampling)
+    factor = ptycho._resolve_upsample(upsample)
     sampling = ptycho._output_sampling(factor)
     limits = (
         (1.05 * ptycho.semiangle_mrad, 1.5 * ptycho.semiangle_mrad)
@@ -227,7 +227,7 @@ def train(ptycho, fit, checkpoint, steps, patch_size, seed, upsampling, annulus_
             unet={k: v.cpu() for k, v in best[0].items()}, readout=best[2].cpu(),
             directions=[{k: v.cpu() for k, v in best[1].items()}],
             voltage_kV=ptycho.voltage_kV, semiangle_mrad=ptycho.semiangle_mrad,
-            annulus_mrad=limits, object_sampling_A=sampling, upsampling=factor,
+            annulus_mrad=limits, object_sampling_A=sampling, upsample=factor,
             training_record=training_record,
         ))
         if checkpoint is not None:

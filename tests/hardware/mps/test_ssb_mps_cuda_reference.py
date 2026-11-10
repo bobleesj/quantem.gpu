@@ -1503,7 +1503,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
         refinement=None,
         verbose=False,
     )
-    result = workflow.reconstruct()
+    result = workflow.run()
 
     assert type(optimized) is DirectPtychoResult
     assert type(result) is DirectPtychoResult

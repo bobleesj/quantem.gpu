@@ -1,4 +1,4 @@
-"""DFT matrix-multiply upsampling cross-correlation for subpixel image alignment.
+"""DFT matrix-multiply upsample cross-correlation for subpixel image alignment.
 
 Ports quantem's PyTorch implementation (Guizar-Sicairos 2008) to CuPy.
 This gives much better subpixel accuracy than parabolic-only refinement.
@@ -17,7 +17,7 @@ def cross_correlation_shift_batch_cp(
     """Measure shifts of all images in a stack relative to a reference.
 
     Ports cross_correlation_shift_torch, batched over the stack: Fourier
-    cross-correlation, a parabolic half-pixel estimate, then DFT upsampling
+    cross-correlation, a parabolic half-pixel estimate, then DFT upsample
     around the peak.
 
     Parameters

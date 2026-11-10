@@ -35,7 +35,7 @@ from quantem.gpu.direct_ptycho.mps.prepared import (
 )
 from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
 from quantem.gpu.direct_ptycho.mps.thick_sample import reconstruct_thick
-from quantem.gpu.direct_ptycho.mps.upsampling import _reconstruct_upsampled, phase_variance_higher_order
+from quantem.gpu.direct_ptycho.mps.upsample import _reconstruct_upsampled, phase_variance_higher_order
 
 
 class MpsSSBBackend:
@@ -192,7 +192,7 @@ class MpsSSBBackend:
         self,
         aberrations: dict[str, float],
         *,
-        upsampling_factor: int,
+        upsample_factor: int,
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_A: float = 0.0,
@@ -210,7 +210,7 @@ class MpsSSBBackend:
                       higher_order_angles=higher_order_angles)
         phase = _reconstruct_upsampled(
             self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
-            thickness=depth_spread_A, upsampling_factor=upsampling_factor, **higher,
+            thickness=depth_spread_A, upsample_factor=upsample_factor, **higher,
         )
         if not compute_loss:
             return phase, None

@@ -4,7 +4,7 @@
 
 ## Question
 
-Can the native `MetalSSBJointModel.reconstruct` re-render a fitted SSB phase at
+Can the native `MetalSSBJointModel.run` re-render a fitted SSB phase at
 30 frames per second (≤ 33 ms per frame, median and p90) while a user drags an
 aberration control, after a fifth-order fit, at 3× output sampling, with every
 BF pixel, all 14 aberration terms, sample tilt and depth spread, float32 and

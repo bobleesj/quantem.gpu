@@ -104,7 +104,7 @@ its numbers on purpose and has a test that failed before.
 | CUDA weighted sums and centre of mass | 32 lanes of weight times count in int32 (detectors wider than 1024 could overflow) | exact weight digits, as MPS |
 | MPS selected-frame sums and maxima | ignored flagged detector pixels | zero them, as CUDA does |
 | `masked_sum_exact(output="native")` on precision or float sources | float image | exact counts, or refused for float sources |
-| Parallax upsampling (`upsampling_factor=2`) | summed spectrum tiled: every odd row and column 0 | each image tiled and shifted on the finer grid, as QuantEM's `DirectPtychography.reconstruct`; equals a float64 oracle to 2.4e-7 |
+| Parallax upsample (`upsample_factor=2`) | summed spectrum tiled: every odd row and column 0 | each image tiled and shifted on the finer grid, as QuantEM's `DirectPtychography.run`; equals a float64 oracle to 2.4e-7 |
 | Parallax shifts | applied twice (image matched "shifted twice" to 6e-3) | applied once (float64 single-shift oracle to 2.3e-7) |
 | Parallax repeatability | float32 atomics: shifts differed between identical runs (up to 1.6e-4 px) | fixed-order sums: bit-identical |
 | CUDA NVENC movie under GPU load | 5 of 40 runs encoded a frame four frames early | 0 of 40; encoder copies on the kernels' stream |

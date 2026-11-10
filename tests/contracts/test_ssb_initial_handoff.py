@@ -88,15 +88,15 @@ def handoff(monkeypatch):
             clock.now += 2.0
             return self.primary
 
-        def reconstruct(self, fit, **options):
-            factor = options["upsampling"]
+        def run(self, fit, **options):
+            factor = options["upsample"]
             self.calls.append(factor)
             events.append(f"reconstruct:{factor}")
             clock.now += 1.0
             result = copy.deepcopy(fit)
-            result.upsampling = 2 if factor == "auto" else factor
+            result.upsample = 2 if factor == "auto" else factor
             result.object_wave = np.full(
-                (8 * result.upsampling,) * 2,
+                (8 * result.upsample,) * 2,
                 np.complex64(1.0 + fit.aberrations["C10_nm"] * 1j),
             )
             result.loss = 0.25 if options.get("compute_loss") else None
@@ -170,7 +170,7 @@ def test_initial_and_final_auto_views_preserve_native_fit(handoff):
     assert session.calls == ["auto", 1, "auto"]
     assert handoff.display.call_count == 1
     handoff.handle.update.assert_called_once_with(handoff.figures[1])
-    assert result.upsampling == 1
+    assert result.upsample == 1
     assert session._aberration_search is result
     assert session._reconstruction is result
     assert session.aberrations == result.aberrations
@@ -207,7 +207,7 @@ def test_callback_runs_once_before_refinement_and_outside_fit_clock(handoff):
 
     result = handoff.run(session, show=True, on_initial_fit=receive)
     assert callback_results == [session.primary]
-    assert session.primary.upsampling == 1
+    assert session.primary.upsample == 1
     assert handoff.events.index("initial") < handoff.events.index("callback")
     assert handoff.events.index("callback") < handoff.events.index("setup")
     assert result.timings["initial_handoff_s"] == 15.0

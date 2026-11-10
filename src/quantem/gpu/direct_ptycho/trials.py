@@ -21,7 +21,7 @@ def label_trials(result: DirectPtychoResult, *, search: int) -> None:
     """Give every trial record its index, search pass and physical rotation.
 
     Backends record only the optimized parameters. Without these keys
-    ``show_trials`` and ``reconstruct(trial_ids=...)`` cannot replay a trial
+    ``show_trials`` and ``run(trial_ids=...)`` cannot replay a trial
     at its own rotation and sample geometry.
     """
     for index, record in enumerate(result.trial_records or ()):
@@ -116,7 +116,7 @@ def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (4.5, 4
     table.scale(1, 1.8)
     names = {"negative_thick_agreement": "negative thick-sample agreement"}
     objectives = ", ".join(sorted({names.get(record["objective"], record["objective"]) for record in records}))
-    sampling = f"{result.upsampling}×" if sampling is None else sampling
+    sampling = f"{result.upsample}×" if sampling is None else sampling
     figure.suptitle(f"{selection} {count} search trials · {sampling} · phase (rad)", fontsize=18, y=1 - .08 / height)
     figure.text(.5, 1 - .5 / height,
                 f"Shared contrast: {lower:.3g} to {upper:.3g} rad (pooled 1–99%) · {objectives}",

@@ -116,7 +116,7 @@ layer separation.
 
 Version-one checkpoints require uniform detector weighting, phase damping
 0.03 and a 1 Å⁻¹ smoothness scale. Loading verifies the schema; applying the
-model checks voltage, convergence semiangle, phase sampling and upsampling.
+model checks voltage, convergence semiangle, phase sampling and upsample.
 The saved record includes the seed, training and validation patches, history
 and selected step. Series provenance includes the checkpoint SHA-256.
 Use a region supported by the regularized direct solver if a full field

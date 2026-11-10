@@ -64,7 +64,7 @@ the numerical reduction-order difference and unavailable legacy fixture gate.
 ## Shared C10/C12 reconstruction, 2026-10-16
 
 Python MPS and CUDA now use coherent wave averaging for displayed C10/C12
-phase and exclude repeated scan means during upsampling. The search objective
+phase and exclude repeated scan means during upsample. The search objective
 is unchanged. See [the scientific contract and checks](../performance/ssb/reports/2026-10-16-ssb-coherent-reconstruction.md).
 
 ## Batched joint CUDA refinement, 2026-10-15
@@ -82,7 +82,7 @@ numerical constraints, and reproduction checks.
 The Python MPS backend supports automatic fine-grid C10/C12 reconstruction.
 Matched full 512 × 512 × 192 × 192 measurements reduce prepared tilt/depth
 phase latency from approximately 2.7 s to 0.18 s and joint-search time from
-44–48 s to 33–34 s. See the [sampling and search evidence](../performance/ssb/reports/2026-10-15-mps-ssb-upsampling.md)
+44–48 s to 33–34 s. See the [sampling and search evidence](../performance/ssb/reports/2026-10-15-mps-ssb-upsample.md)
 for numerical differences, unchanged ordinary-search timing, exact scope and
 the separation between prepared and complete workflow measurements.
 
@@ -172,7 +172,7 @@ excluded. A second full acquisition with 8,825 active BF pixels passed the
 scientific comparison, but concurrent GPU work invalidated its speed comparison.
 
 Output reconstruction is unchanged. The same fitted result was passed to
-`reconstruct(result, upsample=factor)` for factors 1, 2, 3, and 4, with and
+`run(result, upsample=factor)` for factors 1, 2, 3, and 4, with and
 without native-grid diagnostic loss. Both acquisitions produced identical
 before/after output arrays and losses in that paired check. Representative
 output times below are three warmed calls per cell on A, with later background
@@ -2773,7 +2773,7 @@ versus `3072` BF at `265.31 ms` mean / `311.79 ms` p95 in that same run.
 
 The historical engine `result()` path displayed the complex object wave and
 then exposed its phase. The public workflow now reaches the same object path
-through `SSB.reconstruct()` or `SSB.preview()`. For that object path, the
+through `SSB.run()` or `SSB.preview()`. For that object path, the
 inverse FFT can move outside the BF average:
 
 ```text
@@ -2791,7 +2791,7 @@ This changes the memory/computation topology only. It does not change the BF
 selection, scan size, precision type, or object definition.
 
 The path is intentionally separate from the phase-variance optimizer path.
-`reconstruct()` and `reconstruct_with_loss()` average per-BF phase and still
+`run()` and `reconstruct_with_loss()` average per-BF phase and still
 need their own optimized kernels because `angle(mean(object))` is not the same
 operation as `mean(angle(object))`.
 
@@ -2838,7 +2838,7 @@ Implementation status from the 2026-07-17 pass:
   and fetch the missing half-plane directly inside the row kernels; no
   transient full-plane `G_qk` chunk is built for the current phase/loss paths.
 - CUDA `512x512` phase-only redraw has a sum-only column accumulator so
-  `reconstruct()` does not compute phase variance when `reconstruct_with_loss()`
+  `run()` does not compute phase variance when `reconstruct_with_loss()`
   is not requested. The measured speed did not improve materially, which shows
   the remaining floor is FFT topology rather than the removed `sumsq` writes.
 - `_extract_gqk(...)` builds the half-plane directly after the BF-stack FFT,
@@ -3032,7 +3032,7 @@ Component timing for phase redraw after the accepted changes:
 | Profiled GPU total | `48.99 ms` |
 
 Longer worker measurements are slightly slower than the isolated component
-probe because they include the full `reconstruct()` / `reconstruct_with_loss()`
+probe because they include the full `run()` / `reconstruct_with_loss()`
 loop overhead and steady GPU clocks:
 
 ```text

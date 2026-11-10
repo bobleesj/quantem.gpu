@@ -38,10 +38,10 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
         np.testing.assert_array_equal(regional.phase.get(), explicit.phase.get())
         assert regional.fit_scan_region == (64, 192, 64, 192)
         assert regional.phase.shape == (128, 128)
-        reconstructed = full.reconstruct(regional)
+        reconstructed = full.run(regional)
         assert reconstructed.phase.shape == (256, 256)
         assert reconstructed.fit_scan_region == regional.fit_scan_region
-        assert full.reconstruct().phase.shape == (256, 256)
+        assert full.run().phase.shape == (256, 256)
         assert full._data.shape == data.shape
 
         from quantem.gpu.direct_ptycho.persistence import load_result, result_paths

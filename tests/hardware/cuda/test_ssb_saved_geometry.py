@@ -34,7 +34,7 @@ def test_saved_fit_replays_exact_detector_selection(tmp_path):
             save_dir=tmp_path / "fit",
         )
         expected = {
-            factor: session.preview(fitted.aberrations, upsampling=factor, compute_loss=False)[0]
+            factor: session.preview(fitted.aberrations, upsample=factor, compute_loss=False)[0]
             for factor in (1, 3)
         }
         pixels = session.num_bright_field_pixels
@@ -46,7 +46,7 @@ def test_saved_fit_replays_exact_detector_selection(tmp_path):
     ) as reopened:
         for factor, phase in expected.items():
             actual, _ = reopened.preview(
-                saved["aberrations"], upsampling=factor, compute_loss=False,
+                saved["aberrations"], upsample=factor, compute_loss=False,
             )
             np.testing.assert_array_equal(actual, phase)
         assert reopened.num_bright_field_pixels == pixels

@@ -59,7 +59,7 @@ CONFIDENCE = 0.04
 # The live search reaches as far as drift's pairs: the residual past the extrapolated guess is a few Å.
 REACH_A = 30.0
 # The layout of a saved frame record; a record of another layout is computed again.
-# 3: the shared settings name the output factor upsampling (upsampling_factor in 2).
+# 3: the shared settings name the output factor upsample (upsample_factor in 2).
 # 4: each frame's C10/C12 refit is the exact-gradient trust region, held coordinates fixed (main's /3).
 RECORD_SCHEMA = "quantem.ssb-stream-frame/4"
 
@@ -69,10 +69,10 @@ def _regularization(key, strengths):
     if key == "phase_of_mean":
         return {}
     method = "complex" if key in ("complex", "amplitude") else "phase"
-    policy = direct_settings(method, strengths.get("phase_damping"),
-                             strengths.get("amplitude_damping") if method == "complex" else None,
+    policy = direct_settings(method, strengths.get("phase_damp"),
+                             strengths.get("amplitude_damp") if method == "complex" else None,
                              None, None)
-    return {name: policy[name] for name in ("phase_damping", "amplitude_damping") if name in policy}
+    return {name: policy[name] for name in ("phase_damp", "amplitude_damp") if name in policy}
 
 
 def _damping_caption(policy):
@@ -139,16 +139,16 @@ class _FrameStep:
         optics, tilt, depth = public_params(objective, coordinates, 5)
         return objective, coordinates, evaluations, stop, optics, tilt, depth
 
-    def reconstruct(self, session, optics, tilt, depth, upsampling, strengths, scan):
+    def run(self, session, optics, tilt, depth, upsample, strengths, scan):
         """Every requested method at the frame's optics; returns the fit copy that carries them."""
         chosen = copy.copy(self.fit)
         chosen.aberrations, chosen.sample_tilt_mrad, chosen.depth_spread_nm = optics, tilt, depth
-        reconstructed, sampling, seconds = _reconstruct(session, chosen, self.runs, upsampling, strengths,
+        reconstructed, sampling, seconds = _run(session, chosen, self.runs, upsample, strengths,
                                                        neural=self.neural_model is not None)
         if self.neural_model is not None:
             began = time.perf_counter()
             guide = annular_counts(session, scan, self.neural_model.annulus_mrad)
-            self.neural_model._check(session, upsampling)
+            self.neural_model._check(session, upsample)
             prepared = session._prepared_direct[1]["phase"]
             neural = self.neural_model._apply(prepared, reconstructed["phase"], sampling, guide)
             reconstructed["neural"] = cp.from_dlpack(neural)
@@ -205,7 +205,7 @@ class _FrameStep:
         self.start = coordinates[VARIED].copy()
 
 
-def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method="phase_of_mean", upsampling="auto", save_dir=None,
+def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method="phase_of_mean", upsample="auto", save_dir=None,
            max_frames: int | None = None, neural_model=None, annulus_mrad=None, show: bool = True, verbose: bool = True, **strengths) -> "DirectPtychoSeries":
     """Refit C10, C12 and phi12 on each source with ``fit``'s higher orders, tilt and depth held.
 
@@ -216,7 +216,7 @@ def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method=
     maximizes the normalized model agreement ``A(z) / A(z_start)`` over the three coordinates; its
     conventional SSB phase is reconstructed with the result, and so is each ``method`` (``"phase_of_mean"``,
     ``"phase"``, ``"complex"`` or a tuple of them) at the same optics, the regularized ones with
-    ``strengths`` (``run``'s ``phase_damping``, ``amplitude_damping``, ``smoothness_inv_A``,
+    ``strengths`` (``run``'s ``phase_damp``, ``amplitude_damp``, ``smoothness_inv_A``,
     ``detector_weighting``). ``fit`` must be a fifth-order fit (``search="standard"`` or ``"broad"``) of
     the reference session. ``refit="full"`` instead fits every frame independently (``fit_aberrations``,
     standard search, the reference rotation kept): the baseline the defocus refit is compared with.
@@ -243,7 +243,7 @@ def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method=
     # Files are read one at a time and freed after their frame; scans already resident (a live stream's
     # encoded datasets) are used in place and stay the caller's.
     sources = [Path(source) if isinstance(source, (str, Path)) else source for source in sources]
-    result = DirectPtychoSeries._begin(ptycho, fit, refit=refit, method=method, upsampling=upsampling, save_dir=save_dir,
+    result = DirectPtychoSeries._begin(ptycho, fit, refit=refit, method=method, upsample=upsample, save_dir=save_dir,
                               show=show, strengths=strengths, frames=len(sources), max_frames=max_frames, neural_model=neural_model,
                               annulus_mrad=annulus_mrad)
     iterator = sources
@@ -293,8 +293,8 @@ class PtychoFrame:
     annular_counts: "cp.ndarray | None" = field(default=None, repr=False)
     annulus_mrad: tuple[float, float] | None = None
     object_sampling_A: tuple[float, float] | None = None
-    phase_damping: float | None = None
-    amplitude_damping: float | None = None
+    phase_damp: float | None = None
+    amplitude_damp: float | None = None
 
     def show(self, *, size="medium", cmap: str = "gray"):
         """Show this scan's phase and, when available, its measured annular image.
@@ -316,10 +316,10 @@ class PtychoFrame:
         if sampling is None:
             raise ValueError("Display a reconstruction with calibrated object_sampling_A in Å per pixel.")
         title = f"{_NAMES[key]} (rad)"
-        if self.phase_damping is not None:
-            title += f"\nphase damping {self.phase_damping:g}"
-            if key == "complex" and self.amplitude_damping is not None:
-                title += f" · amplitude damping {self.amplitude_damping:g}"
+        if self.phase_damp is not None:
+            title += f"\nphase damping {self.phase_damp:g}"
+            if key == "complex" and self.amplitude_damp is not None:
+                title += f" · amplitude damping {self.amplitude_damp:g}"
         panels = [(image, title, sampling)]
         if self.annular_counts is not None:
             counts = host_array(self.annular_counts)
@@ -375,7 +375,7 @@ class DirectPtychoSeries:
     _lock: object = field(default_factory=threading.RLock, init=False, repr=False, compare=False)
 
     @classmethod
-    def _begin(cls, ptycho, fit, *, refit, method, upsampling, save_dir, show, strengths,
+    def _begin(cls, ptycho, fit, *, refit, method, upsample, save_dir, show, strengths,
                frames=0, max_frames=None, neural_model=None, annulus_mrad=None):
         """An empty series on ``ptycho``'s calibration; ``frames`` sizes the image stacks when known."""
         if refit not in ("none", "defocus", "full"):
@@ -403,14 +403,14 @@ class DirectPtychoSeries:
                           neural_model=neural_model, annulus_mrad=annulus_mrad)
         device = f"cuda:{cp.cuda.runtime.getDevice()}"
         # Every frame has the reference calibration, so "auto" is resolved (and a capped factor announced) once.
-        factor = ptycho._resolve_upsampling(upsampling)
+        factor = ptycho._resolve_upsample(upsample)
         if neural_model is not None:
             neural_model._check(ptycho, factor)
         # What every frame's record shares: the reference fit it refits from and the code that ran it.
         shared = None if records is None else {
             "reference": {"coordinates": fit.optimizer["coordinates"], "bounds": fit.optimizer["bounds"],
                           "signature": fit.metadata.get("signature")},
-            "settings": {**step.settings, "upsampling": upsampling}, "software": software_signature(),
+            "settings": {**step.settings, "upsample": upsample}, "software": software_signature(),
         }
         regularization = {key: _regularization(key, strengths) for key in _keys(methods)}
         state = SimpleNamespace(
@@ -421,7 +421,7 @@ class DirectPtychoSeries:
             flagged={} if max_frames is None else deque(maxlen=max_frames),
             capacity=frames, stacks=None, scan=None, views=[], frozen=False, count=0, shifts_px=(),
         )
-        session = {"kind": type(ptycho), "settings": step.settings, "upsampling": factor, "device": device,
+        session = {"kind": type(ptycho), "settings": step.settings, "upsample": factor, "device": device,
                    "regularization": regularization}
         if annulus_mrad is not None:
             session["annulus_mrad"] = annulus_mrad
@@ -476,7 +476,7 @@ class DirectPtychoSeries:
             aberrations=dict(self.aberrations[slot]) if self.aberrations else {},
             annular_counts=self._latest_annular_counts, annulus_mrad=self.session.get("annulus_mrad"),
             object_sampling_A=self.object_sampling_A,
-            phase_damping=damping.get("phase_damping"), amplitude_damping=damping.get("amplitude_damping"),
+            phase_damp=damping.get("phase_damp"), amplitude_damp=damping.get("amplitude_damp"),
         )
 
     @_locked
@@ -568,7 +568,7 @@ class DirectPtychoSeries:
                 optics, tilt, depth = fitted.aberrations, fitted.sample_tilt_mrad, fitted.depth_spread_nm
             else:
                 objective, coordinates, evaluations, stop, optics, tilt, depth = step.refit(session, clock, began)
-            chosen, reconstructed, sampling, seconds = step.reconstruct(session, optics, tilt, depth, state.factor,
+            chosen, reconstructed, sampling, seconds = step.run(session, optics, tilt, depth, state.factor,
                                                                         state.strengths, data)
             clock.update(seconds)
             began = time.perf_counter()
@@ -691,12 +691,12 @@ class DirectPtychoSeries:
         return found
 
     @_locked
-    def reconstruct(self, method, **strengths):
+    def run(self, method, **strengths):
         """Reconstruct ``method`` again on every frame after the series, at its refitted optics.
 
         For trying other strengths without refitting or registering: each source is read again (a resident
         scan is used in place, so it must still be held, not released) with
-        the series' calibration and upsampling, ``method`` runs at ``fits[k]`` with ``strengths`` (they
+        the series' calibration and upsample, ``method`` runs at ``fits[k]`` with ``strengths`` (they
         apply to the regularized methods only), and the result is placed at ``shifts_A`` (the live
         shifts, or align()'s after align). Replaces
         ``images`` and ``combined`` for the method (and ``"amplitude"`` for ``"complex"``) and returns
@@ -716,7 +716,7 @@ class DirectPtychoSeries:
                 frame = session["kind"](data, **session["settings"])
                 try:
                     method_name = "phase" if method == "neural" else method
-                    reconstructed, sampling, _ = _reconstruct(frame, chosen, (method_name,), session["upsampling"], strengths)
+                    reconstructed, sampling, _ = _run(frame, chosen, (method_name,), session["upsample"], strengths)
                     if method == "neural":
                         guide = annular_counts(frame, data, model.annulus_mrad)
                         prepared = frame._prepared_direct[1]["phase"]
@@ -916,7 +916,7 @@ _UNCOVERED = "#b9c7d6"
 
 
 def _check_neural_strengths(strengths):
-    for key, default in (("phase_damping", 0.03), ("smoothness_inv_A", 1.0), ("detector_weighting", "uniform")):
+    for key, default in (("phase_damp", 0.03), ("smoothness_inv_A", 1.0), ("detector_weighting", "uniform")):
         if strengths.get(key) not in (None, default):
             raise ValueError(f"The frozen neural phase model requires {key}={default!r} for its trained diffraction model.")
 
@@ -926,7 +926,7 @@ def _keys(methods):
     return [key for name in methods for key in ((name, "amplitude") if name == "complex" else (name,))]
 
 
-def _reconstruct(session, chosen, methods, upsampling, strengths, *, neural=False):
+def _run(session, chosen, methods, upsample, strengths, *, neural=False):
     """Run each method once on one frame at ``chosen``: the images by name (phase in rad, and the
     complex method's amplitude), the object sampling (Å per pixel) and seconds per method. SSB takes
     no strengths; force rebuilds a regularized method's prepared equations for this frame's counts."""
@@ -935,8 +935,8 @@ def _reconstruct(session, chosen, methods, upsampling, strengths, *, neural=Fals
         began = time.perf_counter()
         options = {} if name == "phase_of_mean" else strengths
         if neural and name == "phase" and "complex" in methods:
-            options = {key: value for key, value in options.items() if key != "amplitude_damping"}
-        result = session.reconstruct(chosen, method=name, upsampling=upsampling, compute_loss=False,
+            options = {key: value for key, value in options.items() if key != "amplitude_damp"}
+        result = session.run(chosen, method=name, upsample=upsample, compute_loss=False,
                                      force=True, verbose=False, **options)
         images[name] = cp.asarray(result.phase, dtype=cp.float32)
         if name == "complex":
@@ -1079,7 +1079,7 @@ def _recorded(path, identity):
     series, the SHA-256 of the previous frame's record, the frame's acquisition_identity (its file
     name, size and the SHA-256 of its first MiB and of each linked data file, and how flagged pixels
     were held), the reference fit's coordinates,
-    bounds and saved signature, the calibration and upsampling, and the SSB source hash. The record
+    bounds and saved signature, the calibration and upsample, and the SSB source hash. The record
     then holds the exact float64 optics and shift the uninterrupted run would find again. A file cut
     short (a crash while it was copied, a full disk) is no record: the frame is computed again."""
     if not path.is_file():

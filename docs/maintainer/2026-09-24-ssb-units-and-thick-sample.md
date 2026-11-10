@@ -65,7 +65,7 @@ thick fit (or trust the calibrated rotation).
 ~20 ms after 1 s compile, fit ~65 s.
 
 **API.** `SSB.fit_aberrations(tilt=True)` (result `.tilt_mrad` (row, col), `.depth_spread_nm`, `.tilt_fit_gain`, `.report()`),
-`SSB.preview(aberrations, tilt_mrad=(row, col), depth_spread_nm=d)`, `SSB.supports_tilt`. CUDA and MPS backends. WebGPU (`reconstruct(..., {sample: {tiltRowMrad, tiltColMrad, thickness}})`, a separate thick shader so the thin path is bit-identical) drives ShowPtycho exports: logic crop in Mac Chrome (Metal) loss 0.170941 vs CUDA 0.170950, phase correlation 0.99999997; fitting stays in Python.
+`SSB.preview(aberrations, tilt_mrad=(row, col), depth_spread_nm=d)`, `SSB.supports_tilt`. CUDA and MPS backends. WebGPU (`run(..., {sample: {tiltRowMrad, tiltColMrad, thickness}})`, a separate thick shader so the thin path is bit-identical) drives ShowPtycho exports: logic crop in Mac Chrome (Metal) loss 0.170941 vs CUDA 0.170950, phase correlation 0.99999997; fitting stays in Python.
 Tests: `tests/hardware/cuda/test_ssb_thick_sample.py`, `tests/hardware/mps/test_ssb_thick_sample_mps.py`, `tests/webgpu/ssb-thick-sample.ts` (+ `run_ssb_thick_sample.py`, weights vs CUDA: max rel 5e-4, median 1.5e-7).
 
 ## 3. cuFFT import order

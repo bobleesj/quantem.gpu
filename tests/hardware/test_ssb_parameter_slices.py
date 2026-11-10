@@ -99,7 +99,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
             assert figure.number not in plt.get_fignums()
 
         # Image comparisons keep every fitted correction, including nonzero tilt/depth.
-        shown = ssb.reconstruct(fit, upsampling="auto", compute_loss=False)
+        shown = ssb.run(fit, upsample="auto", compute_loss=False)
         # Matplotlib consumes host images even when both fitted waves stay on CUDA.
         from quantem.gpu.direct_ptycho.rotation_defocus import RotationDefocusComparison
 
@@ -154,10 +154,10 @@ def test_show_selected_region_preserves_full_field_joint_fit(monkeypatch):
             focus = region.show("focus", mode="static", focus_offsets_nm=(0,),
                                 depth_spread_nm=regional_fit.depth_spread_nm, size="small")
             assert "rows 16:80, columns 32:96" in focus.get_suptitle()
-            factor = ssb._resolve_upsampling("auto")
+            factor = ssb._resolve_upsample("auto")
             expected, _ = ssb.preview(dict(regional_fit), sample_tilt_mrad=regional_fit.sample_tilt_mrad,
                                       depth_spread_nm=regional_fit.depth_spread_nm,
-                                      upsampling=factor, compute_loss=False)
+                                      upsample=factor, compute_loss=False)
             actual = captured[-1][0][0]
             np.testing.assert_array_equal(actual, expected[16 * factor:80 * factor, 32 * factor:96 * factor])
             assert ssb.aberrations == fit.aberrations

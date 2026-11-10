@@ -38,7 +38,7 @@ def test_open_bright_field_crop_matches_full_detector(detector_sampling_mrad):
     assert cropped._data.shape[-2:] != (192, 192)          # only the bright-field region was decoded
     factors = [1, 2, 3, 4] if detector_sampling_mrad is None else [1]
     crop_results = {
-        factor: cropped.preview(aberrations, upsampling=factor)
+        factor: cropped.preview(aberrations, upsample=factor)
         for factor in factors
     }
     crop_bf = cropped.num_bright_field_pixels
@@ -48,7 +48,7 @@ def test_open_bright_field_crop_matches_full_detector(detector_sampling_mrad):
     full = DirectPtycho(cp.from_dlpack(load(str(SOURCE), verbose=False).read()), **settings)
     assert crop_bf == full.num_bright_field_pixels
     for factor in factors:
-        full_phase, full_loss = full.preview(aberrations, upsampling=factor)
+        full_phase, full_loss = full.preview(aberrations, upsample=factor)
         crop_phase, crop_loss = crop_results[factor]
         np.testing.assert_allclose(crop_phase, full_phase, atol=1e-6)
         assert abs(crop_loss - full_loss) <= 1e-6 * abs(full_loss)
@@ -92,7 +92,7 @@ def test_preview_is_in_the_same_scan_order_as_the_result():
     """Every preview path (large-scan chunked, reduced drag subset, thick sample) matches the fitted result's orientation.
 
     The fused column-IFFT kernels of the large-scan path accumulate column-major; before 2026-09-26 its previews came back
-    transposed next to ``reconstruct()`` and the thick-sample preview, so the phase appeared to rotate when a viewer switched
+    transposed next to ``run()`` and the thick-sample preview, so the phase appeared to rotate when a viewer switched
     between them.
     """
     if not SOURCE.is_file():
@@ -106,7 +106,7 @@ def test_preview_is_in_the_same_scan_order_as_the_result():
 
     aberrations = {"C10_nm": 16.2, "C12_nm": 4.15, "phi12_deg": math.degrees(0.33)}
     session = DirectPtycho.open(str(SOURCE), **SETTINGS)
-    result = cp.asnumpy(session.reconstruct(aberrations=aberrations).phase).astype(np.float64)
+    result = cp.asnumpy(session.run(aberrations=aberrations).phase).astype(np.float64)
     previews = {
         "chunked with loss": session.preview(aberrations)[0],
         "chunked without loss": session.preview(aberrations, compute_loss=False)[0],

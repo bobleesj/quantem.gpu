@@ -50,7 +50,7 @@ in about a third of the samples; medians are within 1–8 % of minima. Before is
 | D (0.525 Å) | 14.06 | 1.06 | 13.3 | 3,341 → 15 (+9) |
 | E (0.525 Å) | 14.60 | 1.25 | 11.7 | 5,000 → 19 (+11) |
 
-`io.load` (0.5–1.1 s) and `reconstruct(method, upsampling="auto")` for SSB, Phase and Complex (0.04–0.5 s) are
+`io.load` (0.5–1.1 s) and `run(method, upsample="auto")` for SSB, Phase and Complex (0.04–0.5 s) are
 unchanged. With both 180° branches compared (measured on an RTX PRO 6000 Blackwell Max-Q, quiet), the total drops
 from 8.3–19.2 s to 0.70–1.66 s, and every acquisition keeps the same branch by the same test.
 

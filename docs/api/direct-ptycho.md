@@ -16,21 +16,21 @@ from quantem.gpu import DirectPtycho
 ptycho = DirectPtycho.open("scan.qem")
 optics = ptycho.fit_aberrations(tilt=True)
 
-ssb = ptycho.reconstruct(optics, upsampling="auto")
-phase = ptycho.reconstruct(
-    optics, method="phase", phase_damping=0.03,
-    upsampling="auto", save_dir="results",
+ssb = ptycho.run(optics, upsample="auto")
+phase = ptycho.run(
+    optics, method="phase", phase_damp=0.03,
+    upsample="auto", save_dir="results",
 )
-complex_result = ptycho.reconstruct(
-    optics, method="complex", phase_damping=0.03,
-    amplitude_damping=0.1, upsampling="auto", save_dir="results",
+complex_result = ptycho.run(
+    optics, method="complex", phase_damp=0.03,
+    amplitude_damp=0.1, upsample="auto", save_dir="results",
 )
 ```
 
 For a quick CUDA comparison, reconstruct all three methods with one call:
 
 ```python
-images = ptycho.reconstruct(optics, method="all", upsampling="auto", compute_loss=False)
+images = ptycho.run(optics, method="all", upsample="auto", compute_loss=False)
 images["phase_of_mean"].show(compare=images, region="center", show_fft=True, columns=2, cmap="gray")
 ```
 
@@ -119,12 +119,12 @@ their matching fit-region zooms. All previews apply the regional optics to the
 full acquisition; no second full-field fit is run.
 This display adds full-field reconstruction work; `show=False` skips it.
 The returned `fit.phase` and diagnostics remain regional, and
-`ptycho.reconstruct(fit, ...)` reconstructs the full field using those optics.
+`ptycho.run(fit, ...)` reconstructs the full field using those optics.
 `scan_region` changes fitting data; `result.show(region="top-left", ...)`
 only changes the displayed comparison zoom.
 
-The first `reconstruct(method="phase")` prepares the equations. Repeating it with only
-`phase_damping` changed reuses them and is much faster. Defocus, tilt,
+The first `run(method="phase")` prepares the equations. Repeating it with only
+`phase_damp` changed reuses them and is much faster. Defocus, tilt,
 method or sampling changes require new preparation. Plotting with `show()` is
 separate from the solve, so numerical update speed is not browser frame rate.
 
@@ -153,8 +153,8 @@ The objective is measurement disagreement plus separate quadratic terms:
 
 ```text
 ||sqrt(W) (g - H_phase phi - H_amplitude eta)||²
-  + s * phase_damping * phi* D phi
-  + s * amplitude_damping * eta* D eta
+  + s * phase_damp * phi* D phi
+  + s * amplitude_damp * eta* D eta
 ```
 
 `eta` and its term are absent in the phase method. `s` normalizes the penalty
@@ -164,7 +164,7 @@ suppress poorly measured components more strongly, and can also suppress real
 features. The default strength is 0.03 for each applicable channel.
 These are Tikhonov (damped least-squares) strengths, hence the names. The
 earlier spellings `phase_regularization`, `amplitude_regularization` and
-`upsampling_factor` still work during a transition and raise a
+`upsample_factor` still work during a transition and raise a
 `DeprecationWarning` naming the new keyword; passing both spellings raises
 `TypeError`.
 
@@ -186,7 +186,7 @@ not supply missing independent measurements or validate apparent atom peaks.
 phase.show(compare=ssb, region="top-left", cmap="gray", size="large")
 phase.reconstruction_options
 phase.reconstruction_diagnostics
-ptycho.show(view="regularization", upsampling="auto")
+ptycho.show(view="regularization", upsample="auto")
 ```
 
 Pass several results to compare damping strengths in the same figure:
@@ -231,7 +231,7 @@ retains one prepared system to bound memory. As for conventional SSB, input
 arrays must remain unchanged during the session; create a new session after
 changing measured data. `force=True` rebuilds the prepared equations.
 
-`reconstruct()` creates independent result arrays. Saving regularized alternatives
+`run()` creates independent result arrays. Saving regularized alternatives
 uses filenames containing a scientific signature, so changing strengths keeps
 the previous saved result. Exact file-backed matches can be restored without
 solving again; array inputs record provenance but are recomputed. Model choices
@@ -314,7 +314,7 @@ A frame limit bounds result history, not total device bytes: the retained
 spatial span determines canvas size, and reconstruction workspaces, the initial
 reference and caller-held array snapshots remain additional memory. A receiver's
 count-buffer budget is separate. Resident inputs stay owned by the caller:
-save or retain them if you will later call `series.reconstruct(...)`, which
+save or retain them if you will later call `series.run(...)`, which
 needs their counts again. In bounded mode it reconstructs only the retained
 window. `align()` requires complete history and rejects bounded series; build
 a new series from saved scans with `max_frames=None` for post-hoc alignment.
@@ -323,7 +323,7 @@ recovery message instead of resetting global drift or clipping a scan.
 
 Every frame is reconstructed by SSB, and by each method in `method`
 (`"phase_of_mean"`, `"phase"`, `"complex"` or a tuple) at that frame's optics, with
-`reconstruct`'s strengths (`phase_damping=...`). Each frame is registered on its
+`reconstruct`'s strengths (`phase_damp=...`). Each frame is registered on its
 SSB phase against the last confidently placed frame (lattice-safe band
 registration from `quantem.gpu.drift`, Bragg spots from the first frame) and
 added in register to `series.combined[...]`. A frame whose pair confidence
@@ -343,7 +343,7 @@ amplitude + phase agrees within 0.05 Å.
 - `series.align()`: registers every pair up to three frames apart, solves one
   shift per frame by least squares, replaces `shifts_A` and rebuilds every
   combined image. Returns the `Drift` (pairs, closure, σ).
-- `series.reconstruct("phase", phase_damping=0.05)`: rebuilds a method
+- `series.run("phase", phase_damp=0.05)`: rebuilds a method
   after the series from each frame's saved optics (`series.fits[k]`) and shifts.
 - `series.show(interactive=False)`: the combined image of each method with the
   displacement and C10/C12 traces; `interactive=True` returns an interactive viewer.
@@ -376,8 +376,8 @@ Read `series.latest` for the current scan; `series.show()` displays the register
 
 ## Migration
 
-Use `from quantem.gpu import DirectPtycho` and `ptycho.reconstruct(...)` in new code.
-The public methods are `fit_aberrations()`, `reconstruct()`, and `scan_rotations()`.
+Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.
+The public methods are `fit_aberrations()`, `run()`, and `scan_rotations()`.
 Update old `find_aberrations()`, `run()`, and rotation-comparison calls to these
 names; the renamed methods do not retain aliases. Saved calibration/result
 schemas and their reading paths remain unchanged. The series entry point is
@@ -399,7 +399,7 @@ scientific models are related.
 ### Inspect a damping choice
 
 ```python
-selection = ptycho.validate_damping(optics, upsampling="auto")
+selection = ptycho.validate_damping(optics, upsample="auto")
 selection.show("damping")
 ```
 
@@ -407,7 +407,7 @@ This CUDA diagnostic reconstructs from alternating detector blocks and predicts
 the other blocks, in both directions. It returns the full-data phase at the best
 tested damping, with both score curves and timing saved in
 `selection.reconstruction_diagnostics["damping_validation"]`.
-An optional `phase_dampings=[...]` fixes the evaluated candidate list.
+An optional `phase_damps=[...]` fixes the evaluated candidate list.
 
 The score is non-DC squared prediction error divided by held-out signal power;
 zero phase scores one. It uses the linear weak-phase transfer, not multislice
@@ -424,7 +424,7 @@ band. Display clipping never changes stored reconstruction arrays.
 ## Explore the optical phase plate
 
 ```python
-ptycho.show("regularization", phase_damping=0.03, show_fft=True, show_probe=True)
+ptycho.show("regularization", phase_damp=0.03, show_fft=True, show_probe=True)
 ```
 
 The live reconstruction and FFT appear above a two-column view of probe phase

@@ -3,7 +3,7 @@
 ``tests/parity/torch_ssb.py`` is the readable model the CUDA engine is tested against. Here the fused Metal paths of
 tilt-corrected (thick-sample) SSB are compared with it on real data: the public gold acquisition (``bobleesj/quantem-data``
 revision 5925e4b, ``4dstem/gold_512/gold_004_master.h5``, 512 x 512 scan, 7644 bright-field pixels), at the parameters
-the default ``reconstruct()`` fits (the tilt-corrected joint fit) and at perturbed ones:
+the default ``run()`` fits (the tilt-corrected joint fit) and at perturbed ones:
 
 - ``thick_fit_batch``, the per-term objective (``TorchSSB.fit_power``), for one batch of eight parameter sets, and
   the resident fit's objective (``resident_fit.evaluate``) for the same rows;
@@ -102,7 +102,7 @@ def gold():
     harness.calibrate(data)
     ssb = DirectPtycho(data)
     assert ssb.backend == "mps"
-    fit = ssb.reconstruct()
+    fit = ssb.run()
     assert fit.sample_tilt_mrad is not None and fit.depth_spread_nm, "the default fit is tilt-corrected"
     backend = ssb._backend()
     backend.cache_rotation(math.radians(fit.scan_detector_rotation_deg))
@@ -178,7 +178,7 @@ def test_thick_preview_matches_torch_reference(gold, index):
     """``reconstruct_thick`` phase and loss equal the reference mean phase and phase-variance loss."""
     row = gold["rows"][index]
     phase, loss = _mps_preview(gold, row)
-    reference_phase, reference_loss = gold["reference"].reconstruct(row[0], row[1], row[2], (row[3], row[4]), row[5])
+    reference_phase, reference_loss = gold["reference"].run(row[0], row[1], row[2], (row[3], row[4]), row[5])
     max_error, rms_error = _phase_errors(phase, reference_phase.cpu().numpy())
     scale = UNIT_ROUNDOFF * _chi_max(gold["prepared"], row)
     loss_error = abs(loss - reference_loss) / abs(reference_loss)
@@ -203,13 +203,13 @@ def test_each_float32_path_is_within_its_bound_of_float64(gold):
     exact = TorchSSB.from_mps(prepared, device="cpu", dtype=torch.complex128)
     arguments = (row[0], row[1], row[2], (row[3], row[4]), row[5])
     objective = exact.fit_power(*arguments)
-    exact_phase, exact_loss = exact.reconstruct(*arguments)
+    exact_phase, exact_loss = exact.run(*arguments)
     del exact
     exact_phase = exact_phase.numpy()
     scale = UNIT_ROUNDOFF * _chi_max(prepared, row)
     rtol = _objective_rtol(prepared)
     phase, loss = _mps_preview(gold, row)
-    reference_phase, reference_loss = gold["reference"].reconstruct(*arguments)
+    reference_phase, reference_loss = gold["reference"].run(*arguments)
     measured = {
         "fused MPS": (float(thick_fit_batch(prepared, row[None])[0]), phase, loss),
         "torch float32": (gold["reference"].fit_power(*arguments), reference_phase.cpu().numpy(), reference_loss),

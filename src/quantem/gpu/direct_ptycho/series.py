@@ -189,7 +189,7 @@ def reconstruct_series(
                         "scan_detector_rotation_flipped": reference_flipped}
         with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
             if fixed_probe:
-                result = ssb.reconstruct(
+                result = ssb.run(
                     aberrations=reference_aberrations,
                     save_dir=screen_path / "ssb-locked",
                     verbose=False,
@@ -688,7 +688,7 @@ def open_screen_record(
     --------
     >>> from quantem.gpu.direct_ptycho.series import open_screen_record  # doctest: +SKIP
     >>> ssb = open_screen_record("OUT/live/screen/scan_018")  # doctest: +SKIP
-    >>> ssb.reconstruct()  # doctest: +SKIP
+    >>> ssb.run()  # doctest: +SKIP
     >>> ssb.show(show_fft=True, save_dir="ssb-results")  # doctest: +SKIP
     """
     from quantem.gpu.direct_ptycho.workflow import DirectPtycho

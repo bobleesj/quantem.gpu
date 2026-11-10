@@ -52,8 +52,8 @@ def test_standard_fit_is_the_tilt_corrected_agreement(tmp_path, monkeypatch):
     assert fit.objective == "agreement" and fit.sample_tilt_mrad == (3.0, -4.0)
     assert not backend.fits  # the joint fit, not the standard one
     # a reconstruction of exactly that fit says which objective found its aberrations; changed ones do not
-    assert session.reconstruct().objective == "agreement"
-    assert session.reconstruct(aberrations={"C10_nm": 1.0}).objective is None
+    assert session.run().objective == "agreement"
+    assert session.run(aberrations={"C10_nm": 1.0}).objective is None
 
 
 def test_the_objective_keyword_is_retired(tmp_path, monkeypatch, capsys):
@@ -102,7 +102,7 @@ def test_implicit_reconstruction_uses_default_fifth_order_fit(tmp_path, monkeypa
         return fit
 
     monkeypatch.setattr(fifth_order_fit, "fit_fifth_order", fitted)
-    result = session.reconstruct(verbose=False)
+    result = session.run(verbose=False)
     assert result.objective == "broad_fifth_agreement"
     assert result.aberrations["C50_nm"] == 100.
     assert result.sample_tilt_mrad == (3.0, -4.0)

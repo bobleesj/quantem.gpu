@@ -1,4 +1,4 @@
-"""GPU upsampling preserves the model, native search loss, and source state."""
+"""GPU upsample preserves the model, native search loss, and source state."""
 import math
 import numpy as np
 import pytest
@@ -37,14 +37,14 @@ def _wave_sum_oracle(ssb, factor, coefficients, tilt, depth):
 
 
 @pytest.mark.parametrize('factor', [2, 3, 4, 8])
-def test_upsampling_matches_zero_inserted_scan(factor):
+def test_upsample_matches_zero_inserted_scan(factor):
     import cupy as cp
 
     ssb, _ = _synthetic_session()
     try:
         coefs = {'C10_nm': 30.0, 'C12_nm': 5.0, 'phi12_deg': math.degrees(0.3)}
         native, native_loss = ssb.preview(coefs)
-        phase, loss = ssb.preview(coefs, upsampling=factor)
+        phase, loss = ssb.preview(coefs, upsample=factor)
         assert phase.shape == (128 * factor, 128 * factor)
         assert loss == native_loss
         expected = _wave_sum_oracle(ssb, factor, (300.0, 50.0, 0.3), (0.0, 0.0), 0.0)
@@ -67,11 +67,11 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
     try:
         native, native_loss = ssb.preview(coefs, sample_tilt_mrad=tilt, depth_spread_nm=depth)
         actual, loss = ssb.preview(
-            coefs, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling=factor,
+            coefs, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsample=factor,
         )
-        expected, _ = engine.thick.reconstruct(
+        expected, _ = engine.thick.run(
             -80.0, 40.0, -0.7, tilt, depth * 10, compute_loss=False,
-            upsampling_factor=factor,
+            upsample_factor=factor,
         )
         np.testing.assert_array_equal(actual, cp.asnumpy(expected))
         assert loss == native_loss
@@ -81,7 +81,7 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
         # UI can retain an angle after its higher-order magnitude is cleared.
         inactive, _ = ssb.preview(
             coefs | {"phi21_deg": math.degrees(1.2)}, sample_tilt_mrad=tilt,
-            depth_spread_nm=depth, upsampling=factor,
+            depth_spread_nm=depth, upsample=factor,
         )
         np.testing.assert_allclose(inactive, actual, atol=2e-6)
     finally:
@@ -98,8 +98,8 @@ def test_wave_sum_matches_independent_torch_alias_construction(factor, depth):
     try:
         expected = _wave_sum_oracle(ssb, factor, (-80.0, 40.0, -0.7), (-9.0, 5.0), depth)
         size = 128 * factor
-        actual, _ = engine.thick.reconstruct(-80, 40, -0.7, (-9, 5), depth,
-                    compute_loss=False, upsampling_factor=factor, chunk_bytes=2 * size**2 * 16)
+        actual, _ = engine.thick.run(-80, 40, -0.7, (-9, 5), depth,
+                    compute_loss=False, upsample_factor=factor, chunk_bytes=2 * size**2 * 16)
         np.testing.assert_allclose(cp.asnumpy(actual), expected, atol=2e-5)
     finally:
         ssb.close()

@@ -95,7 +95,7 @@ def test_two_angle_zoom_keeps_full_fields_and_column_markers():
             for angle, sign in [(160., -1), (340., 1)]]
     review = compare_branches(fits, dark_field=None, scan_sampling_A=.5, keep_first=False)
     review._upsampled = ("auto", tuple(fit.phase.repeat(2, 0).repeat(2, 1) for fit in fits))
-    review.upsampling = 2
+    review.upsample = 2
     before = [item.phase.copy() for item in review.branches]
     figure = review.show(zoom=3, size=400)
     images = [ax.images[0] for ax in figure.axes if ax.images]

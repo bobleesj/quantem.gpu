@@ -65,7 +65,7 @@ def _session_256():
     counts[:, :, np.hypot(rr, cc) < 10] += 200
     ssb = DirectPtycho(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.3, 0.3), detector_sampling_mrad=(3.0, 3.0),
               scan_detector_rotation_deg=0.0)
-    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
+    ssb.run(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     return ssb
 
 
@@ -116,7 +116,7 @@ def test_higher_order_preview_matches_float64_chi_reference():
         reference = KrivanekSSB.from_ssb(ssb)
         reference.magnitudes_A = magnitudes.astype(np.float64) * 10.0    # the engine takes Angstrom
         reference.angles_rad = angles.astype(np.float64)
-        expected, expected_loss = reference.reconstruct(0.0, 0.0, 0.0)
+        expected, expected_loss = reference.run(0.0, 0.0, 0.0)
         # measured 2026-10-21 against an independent float64 oracle: this preview 3.5e-6 rad max (float32 Chebyshev chi
         # with all 14 orders) and this reference 3.6e-6, so the two differ by up to 7.1e-6; the probe phase at q - k
         # instead of k - q differs by 2.6e-3. (2.0e-6 before the sign fix, where the two errors partly cancelled.)

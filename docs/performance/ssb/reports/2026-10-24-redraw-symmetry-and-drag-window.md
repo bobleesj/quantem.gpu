@@ -17,7 +17,7 @@
 
 ## Setup
 
-- Acquisition A: MoS2 bilayer, 512 x 512 scan, 192 x 192 detector, 300 kV, 30 mrad, 0.373 A step, rotation 176.3 deg, 9298 BF pixels, a broad 14-term fit (tilt (5.92, -0.07) mrad, depth 12.4 nm). `upsampling_factor="auto"` = 3, output 1536 x 1536.
+- Acquisition A: MoS2 bilayer, 512 x 512 scan, 192 x 192 detector, 300 kV, 30 mrad, 0.373 A step, rotation 176.3 deg, 9298 BF pixels, a broad 14-term fit (tilt (5.92, -0.07) mrad, depth 12.4 nm). `upsample_factor="auto"` = 3, output 1536 x 1536.
 - GPU 0 only (RTX PRO 6000 Blackwell Workstation, 600 W), confirmed by name; GPU 1 (Max-Q) is never compared with it.
 - Timing: device-synchronized wall clock; SSB 8 calls with C10 changed each call, first two dropped; drag window 5 calls after one warm-up, median.
 - Strengths 0.03 / 0.03, smoothness 1 1/A, uniform weights.

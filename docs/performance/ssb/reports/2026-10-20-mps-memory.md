@@ -13,8 +13,8 @@ shows). The companion speed page is
 ## A ShowPtycho session, stage by stage
 
 Load, `data.calibration.fit_detector_sampling()`, `SSB(data)`, the automatic
-two-branch `reconstruct()`, `ssb.show(show_fft=True)` at its default
-upsampling, 20 slider drags at that factor, 3 slider releases (with the loss),
+two-branch `run()`, `ssb.show(show_fft=True)` at its default
+upsample, 20 slider drags at that factor, 3 slider releases (with the loss),
 one 256 × 256 region refit (20 trials) and `save_calibration()`. "Before" is
 the integration branch just before the memory work; "after" is the default
 now, with the loss row IFFT in tiles of 1024 pixels; "whole chunk" is the
@@ -28,7 +28,7 @@ after it, GiB.
 | --- | ---: | ---: | ---: |
 | `io.load` | 3.9 / 2.1 | 3.9 / 2.1 | 3.9 / 2.1 |
 | `SSB(data)` | 8.1 / 8.1 | 2.1 / 2.1 | 2.1 / 2.1 |
-| `reconstruct()`, two branches | 34.3 / 26.9 | 16.8 / 10.8 | 20.9 / 10.8 |
+| `run()`, two branches | 34.3 / 26.9 | 16.8 / 10.8 | 20.9 / 10.8 |
 | `ssb.show(show_fft=True)` | 27.0 / 27.0 | 14.4 / 14.4 | 20.4 / 20.4 |
 | 20 drags (2×), 3 releases | 27.0 / 27.0 | 14.4 / 14.4 | 20.4 / 20.4 |
 | region refit | 33.6 / 16.9 | 14.4 / 2.1 | 28.6 / 10.9 |
@@ -42,7 +42,7 @@ Gold:
 | --- | ---: | ---: | ---: |
 | `io.load` | 7.5 / 5.6 | 7.4 / 5.6 | 7.5 / 5.6 |
 | `SSB(data)` | 15.9 / 15.9 | 5.6 / 5.6 | 5.6 / 5.6 |
-| `reconstruct()`, two branches | 40.2 / 40.2 | 17.9 / 13.1 | 29.9 / 13.1 |
+| `run()`, two branches | 40.2 / 40.2 | 17.9 / 13.1 | 29.9 / 13.1 |
 | `ssb.show(show_fft=True)` | 40.5 / 40.5 | 16.4 / 16.4 | 28.4 / 28.4 |
 | 20 drags (4×), 3 releases | 40.5 / 40.5 | 16.5 / 16.5 | 28.5 / 28.5 |
 | region refit | 46.1 / 23.4 | 16.5 / 5.7 | 34.3 / 13.2 |
@@ -53,7 +53,7 @@ Gold:
 Every fit, image and loss is unchanged: G(q, k) hashes, previews (1× and 2×),
 losses and reconstructions are bit-identical before and after on both scans,
 and the two-branch fit keeps the same rotation and coefficients to the last
-digit. `reconstruct()` took 8.98 → 7.82 s (512² scan) and 20.1 → 18.6 s
+digit. `run()` took 8.98 → 7.82 s (512² scan) and 20.1 → 18.6 s
 (gold), and three slider releases 0.82 → 0.73 s and 0.84 → 0.78 s, all within
 run-to-run spread on a GPU shared with the window server. `SSB(data)` is 0.39 →
 0.14 s and 0.78 → 0.43 s; the first preview, which now decodes the
@@ -77,7 +77,7 @@ size), the encoded data and Torch's few decode blocks. After each stage, GiB;
 | Stage (512² scan) | Driver after | Active after | Cache after | Active peak |
 | --- | ---: | ---: | ---: | ---: |
 | `SSB(data)` | 2.1 | 0.0 | 0.0 | 0.0 |
-| `reconstruct()`, two branches | 10.8 | 8.8 | 0.0 | 11.1 |
+| `run()`, two branches | 10.8 | 8.8 | 0.0 | 11.1 |
 | show, drags, releases | 14.4 | 8.8 | 3.6 | 10.8 |
 | region refit | 2.1 | 0.0 | 0.0 | 6.7 |
 | next full-field preview | 14.4 | 8.8 | 3.6 | 11.2 |
@@ -85,18 +85,18 @@ size), the encoded data and Torch's few decode blocks. After each stage, GiB;
 | Stage (gold) | Driver after | Active after | Cache after | Active peak |
 | --- | ---: | ---: | ---: | ---: |
 | `SSB(data)` | 5.6 | 0.0 | 0.0 | 0.0 |
-| `reconstruct()`, two branches | 13.1 | 7.5 | 0.0 | 9.5 |
+| `run()`, two branches | 13.1 | 7.5 | 0.0 | 9.5 |
 | show, drags, releases | 16.5 | 7.5 | 3.3 | 9.5 |
 | region refit | 5.7 | 0.0 | 0.0 | 5.7 |
 | next full-field preview | 16.5 | 7.5 | 3.3 | 9.6 |
 
-The session peak is the G(q, k) build, which `reconstruct()` runs first (and
+The session peak is the G(q, k) build, which `run()` runs first (and
 the preview after a refit runs again): 8.8 GiB of G(q, k), 2.4 GiB of build
 blocks and FFT batches, and about 3.6 GiB of MLX cache that the build's blocks
 of different widths leave (16.8 GiB with the encoded data). Capping MLX's cache
 at 0.5 or 1 GiB during the build cuts its peak by 2.5 GiB but makes the build
 37 to 47 % slower (1.25 to 1.35 s against 0.92 s), so the cache is not capped.
-Inside `reconstruct()` the fused tilt search (`thick_sample.thick_fit_batch`,
+Inside `run()` the fused tilt search (`thick_sample.thick_fit_batch`,
 band partial sums of G with no per-pixel row IFFT) adds 0.5 GiB of live
 arrays; the branches' loss and phase evaluations run in 256-pixel tiles
 (`reconstruct.FIT_LOSS_ROW_IFFT_TILE_BF`), 1.5 GiB less than 1024-pixel tiles
@@ -165,7 +165,7 @@ instead of mapping it again (clearing it after every release made a release
 **Fit and refit buffers**: the joint fit's candidate batches and loss tiles,
 about 6 GiB above G(q, k) on the 512² scan and 5 GiB on gold (10 and 17 GiB
 with the whole loss chunk), and a region refit's own G(q, k) (2.2 GiB for 256 × 256) plus its
-fit. `find_aberrations` and `reconstruct()` now return MLX's cached buffers when
+fit. `find_aberrations` and `run()` now return MLX's cached buffers when
 they finish, and a region session returns its own on close.
 
 ## The loss route: tiles by default, the whole chunk on request

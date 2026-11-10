@@ -22,7 +22,7 @@ class ProbeExplorer(VBox):
         self.reconstruction = ShowPtycho(session, **options)
         self._reference = session._aberration_search
         if self._reference is None:
-            self._reference = session.reconstruct(compute_loss=False)
+            self._reference = session.run(compute_loss=False)
         self._coefficients = None
         self.probe = None
         super().__init__()

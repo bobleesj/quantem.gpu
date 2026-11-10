@@ -148,7 +148,7 @@ class TorchSSB:
     # --- public -----------------------------------------------------------------------------------------------------------
 
     @torch.inference_mode()
-    def reconstruct(self, C10: float, C12: float, phi12: float, sample_tilt_mrad=(0.0, 0.0), thickness: float = 0.0,
+    def run(self, C10: float, C12: float, phi12: float, sample_tilt_mrad=(0.0, 0.0), thickness: float = 0.0,
                     compute_loss: bool = True) -> tuple[torch.Tensor, float | None]:
         """Mean phase over bright-field pixels and the phase-variance loss (standard SSB at thickness 0)."""
         ny, nx = self.ny, self.nx

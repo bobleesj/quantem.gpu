@@ -24,10 +24,10 @@ def test_coherent_previews_do_not_retain_per_detector_images():
             ssb.depth_spread_nm = depth
             options = {
                 "aberrations": {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0},
-                "upsampling": "auto", "compute_loss": False,
+                "upsample": "auto", "compute_loss": False,
             }
-            first = ssb.reconstruct(**options)
-            repeated = ssb.reconstruct(**options, force=True)
+            first = ssb.run(**options)
+            repeated = ssb.run(**options, force=True)
             np.testing.assert_array_equal(first.phase.get(), repeated.phase.get())
             assert engine._result_buffer is None
     finally:

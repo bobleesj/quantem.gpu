@@ -245,7 +245,7 @@ def generate_ssb_higher_order(directory: Path) -> None:
         "bytes_per_bright_field_pixel": scan * scan * 2, "bits_per_value": 16,
     }))
 
-    def reconstruct(terms, sign):
+    def run(terms, sign):
         """Both estimators: phase_of_mean = angle(ifft2(mean_k C_k)), mean_phase = mean_k angle(ifft2(C_k))."""
         total = np.zeros((scan, scan), complex)
         phases = np.zeros((scan, scan))
@@ -270,8 +270,8 @@ def generate_ssb_higher_order(directory: Path) -> None:
     cases = {"truth": truth, "none": {name: truth[name] for name in ("C10", "C12")},
              "reversed": {**truth, "C21": (truth["C21"][0], truth["C21"][1] + 180.0),
                           "C23": (truth["C23"][0], truth["C23"][1] + 60.0)}}
-    images = {(name, "k-q"): reconstruct(terms, "k-q") for name, terms in cases.items()}
-    images["truth", "q-k"] = reconstruct(truth, "q-k")
+    images = {(name, "k-q"): run(terms, "k-q") for name, terms in cases.items()}
+    images["truth", "q-k"] = run(truth, "q-k")
     scores = {f"{name}|{sign}": correlation(image["phase_of_mean"]) for (name, sign), image in images.items()}
     separation = float(np.abs(images["truth", "k-q"]["phase_of_mean"] - images["truth", "q-k"]["phase_of_mean"]).max())
     # The sign must matter on this fixture, and the probe's own coefficients must reconstruct the object best.
