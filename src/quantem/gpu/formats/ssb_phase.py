@@ -134,7 +134,7 @@ def _aberrations(values: dict[str, float]) -> dict[str, float]:
         np.isfinite(value) for value in values.values()
     ):
         raise ValueError(
-            "SSB aberrations need finite C10_nm, C12_nm and phi12_deg, with optional "
+            "DirectPtycho aberrations need finite C10_nm, C12_nm and phi12_deg, with optional "
             "higher-order coefficients through fifth order in nm and degrees."
         )
     return {key: float(value) for key, value in values.items()}
@@ -147,11 +147,11 @@ def _read_result(manifest: Path, expected_identity: str | None) -> tuple[dict, n
     ``read_result`` reports those as one malformed-result error.
     """
     if manifest.stat().st_size > 32 << 20:
-        raise ValueError("SSB JSON exceeds 32 MB.")
+        raise ValueError("Result JSON exceeds 32 MB.")
     record = json.loads(manifest.read_text())
     name = record.get("phase_file", "")
     if record.get("schema") != SCHEMA:
-        raise ValueError(f"SSB result schema {record.get('schema')!r} is not read; this reader accepts {SCHEMA!r}. Export the result again.")
+        raise ValueError(f"Result schema {record.get('schema')!r} is not read; this reader accepts {SCHEMA!r}. Export the result again.")
     if not name.endswith(".npy") or Path(name).name != name or name.startswith(".") or "\\" in name:
         raise ValueError("Invalid SSB manifest or companion filename.")
     path = manifest.parent / name
@@ -174,7 +174,7 @@ def _read_result(manifest: Path, expected_identity: str | None) -> tuple[dict, n
             or len(identity) != 64 or any(character not in "0123456789abcdef" for character in identity)
             or (expected_identity is not None and identity != expected_identity)
             or hashlib.sha256(array.tobytes()).hexdigest() != record["phase_sha256"]):
-        raise ValueError("SSB result has wrong source identity, dtype, shape or checksum.")
+        raise ValueError("Result has wrong source identity, dtype, shape or checksum.")
     calibration = record["calibration"]
     for key in ("voltage_kV", "semiangle_mrad"):
         if not np.isfinite(calibration[key]) or calibration[key] <= 0:
@@ -184,7 +184,7 @@ def _read_result(manifest: Path, expected_identity: str | None) -> tuple[dict, n
             raise ValueError(f"Invalid calibration: {key} is a positive [row, col] pair.")
     _aberrations(record["aberrations"])
     if not np.isfinite(record["scan_detector_rotation_deg"]) or type(record["scan_detector_rotation_flipped"]) is not bool:
-        raise ValueError("SSB geometry needs a finite scan_detector_rotation_deg and a scan_detector_rotation_flipped flag.")
+        raise ValueError("Calibration geometry needs a finite scan_detector_rotation_deg and a scan_detector_rotation_flipped flag.")
     tilt, depth = record.get("sample_tilt_mrad"), record.get("depth_spread_nm")
     if (tilt is None) != (depth is None) or (tilt is not None and (
             len(tilt) != 2 or not all(np.isfinite(value) for value in tilt) or not np.isfinite(depth) or depth < 0)):

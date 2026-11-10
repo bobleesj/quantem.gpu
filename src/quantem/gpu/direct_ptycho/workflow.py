@@ -730,7 +730,7 @@ class DirectPtycho:
         }
         if to_dict:
             return rows
-        return pd.DataFrame.from_dict(rows, orient="index").rename_axis("SSB launch calibration")
+        return pd.DataFrame.from_dict(rows, orient="index").rename_axis("DirectPtycho calibration")
 
     def _decode_resident(self, data, bright_field_center_px, bright_field_radius_px,
                          detector_sampling_mrad, threshold, semiangle_mrad, mean_pattern, *, identify=True):

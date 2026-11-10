@@ -354,7 +354,7 @@ def run_ssb(
     selected = resolve(backend)
     if selected not in {"cuda", "mps"}:
         raise RuntimeError(
-            "SSB benchmarking needs CUDA or Apple MPS. Install the matching GPU extra."
+            "DirectPtycho benchmarking needs CUDA or Apple MPS. Install the matching GPU extra."
         )
     environment = _environment(selected)
     reference = (
