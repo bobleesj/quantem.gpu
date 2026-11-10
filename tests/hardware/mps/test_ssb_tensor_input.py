@@ -5,6 +5,7 @@ import platform
 
 import numpy as np
 import pytest
+from tests.parity import cpu_reference
 
 pytestmark = pytest.mark.skipif(platform.system() != "Darwin", reason="Requires physical Apple GPU")
 
@@ -90,7 +91,7 @@ def test_open_uses_recorded_calibration_and_keeps_explicit_overrides(tmp_path):
     calibration = dict(voltage_kV=300, semiangle_mrad=30,
                        scan_sampling_A=(.99, .99), detector_sampling_mrad=(6., 6.))
     source = tmp_path / "calibrated.qem"
-    io.save(source, counts, format="quantem", compression="ans", backend="cpu", metadata=calibration)
+    cpu_reference.save(source, counts, metadata=calibration)
     recorded_step = tuple(io.inspect(source).metadata["scan_sampling_A"])
     coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
     with DirectPtycho.open(str(source)) as automatic, DirectPtycho.open(str(source), **calibration) as explicit:
@@ -103,8 +104,7 @@ def test_open_uses_recorded_calibration_and_keeps_explicit_overrides(tmp_path):
         assert overridden.detector_sampling_mrad == (7., 7.)
         assert overridden.scan_sampling_A == recorded_step
     uncalibrated = tmp_path / "uncalibrated.qem"
-    io.save(uncalibrated, counts, format="quantem", compression="ans", backend="cpu",
-            metadata={"voltage_kV": 300, "semiangle_mrad": 30})
+    cpu_reference.save(uncalibrated, counts, metadata={"voltage_kV": 300, "semiangle_mrad": 30})
     with pytest.raises(ValueError, match="missing scan_sampling_A"):
         DirectPtycho.open(str(uncalibrated))
 

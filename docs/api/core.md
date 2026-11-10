@@ -8,15 +8,14 @@ full operation-specific reference page. All coordinates exposed to users are
 
 | Call | Purpose | Failure behavior |
 |---|---|---|
-| `device.profile(device=None)` | notebook-friendly environment and selected-device summary | automatic selection may report CPU for diagnostics |
-| `device.resolve_device(device="auto")` | resolve `"auto"`, `"cuda"`, `"cuda:N"`, `"mps"` or `"cpu"` to a Torch device string for code that also runs on CPU | `"auto"` picks CUDA, then MPS, then CPU and prints its choice once |
+| `device.resolve(device="auto")` | resolve `"auto"`, `"cuda"`, `"cuda:N"`, a GPU number or `"mps"` to `"cuda"`, `"cuda:N"` or `"mps"`; every `device=` and `backend=` argument goes through it | `"auto"` picks CUDA, then MPS, and raises without a GPU; `"cpu"` raises `ValueError` |
 | `device.runtime_notice()` | the one-line install hint when a GPU is present but its runtime is missing, else `None` | printed once at first GPU use |
-| `device.detect()` | choose a native CUDA or MPS accelerator | raises when neither GPU runtime is available |
-| `device.resolve(name="auto")` | validate `cuda` or `mps` | raises on an unavailable or unknown runtime |
 | `device.release_cached_memory(verbose=False)` | collect garbage, empty the Torch, CuPy and MLX caches on every GPU the process has opened, and return the gigabytes this process handed back to the driver | live arrays are untouched; returns `0.0` without a GPU |
 
-CPU reported by `profile()` is diagnostic. Scientific GPU calls do not silently
-turn that diagnostic result into a CPU execution path.
+`resolve` never returns the CPU: quantem.gpu loads and computes on CUDA or
+Apple MPS only. `"cuda"` keeps no index (the current CUDA device), and
+`torch.device(device.resolve(...))` gives the backend as `.type` and the CUDA
+index as `.index`.
 
 `release_cached_memory()` returns cached GPU memory to the driver after `del`
 and `close()`:

@@ -7,6 +7,7 @@ import pytest
 from quantem.gpu import io
 from quantem.gpu.formats.hdf5.master import get_metadata
 from quantem.gpu.formats.qem.metadata import acquisition_metadata, recorded_metadata
+from tests.parity import cpu_reference
 
 
 @pytest.fixture
@@ -43,7 +44,7 @@ def test_calibrated_acquisition_inspection_load_and_saved_metadata(acquisition):
     assert info.scan_shape == (2, 3)
     assert info.metadata["voltage_kV"] == 300
     assert "disagrees" in info.metadata["microscope_metadata_warning"]
-    data = io.load(acquisition, device="cpu", representation="dense", apply_mask=False)
+    data = cpu_reference.load(acquisition, apply_mask=False)
     assert data.sampling == (0.5, 0.5, None, None)
     assert data.units == ("angstrom", "angstrom", None, None)
     assert "rotation_deg" not in data.metadata
@@ -60,7 +61,7 @@ def test_nominal_step_remains_visible_without_false_calibration(acquisition):
     with h5py.File(acquisition.with_name("acquisition.h5"), "a") as handle:
         handle["STEM Metadata"].attrs["IsPixelSizeCalibrated"] = [0]
     assert io.inspect(acquisition).source_signature != before
-    data = io.load(acquisition, device="cpu", representation="dense", apply_mask=False)
+    data = cpu_reference.load(acquisition, apply_mask=False)
     assert data.sampling == (None, None, None, None)
     assert data.metadata["scan_sampling_nominal_A"] == [0.5, 0.5]
     record = acquisition_metadata(data.shape, data.metadata)

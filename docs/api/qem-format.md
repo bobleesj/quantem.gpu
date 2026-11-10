@@ -247,9 +247,10 @@ no implicit factor of `2π`. Angular sampling in mrad is a distinct quantity.
 Known calibrated quantities require nonempty provenance. Source coverage is
 explicit; unknown vendor fields may be retained but must not be guessed.
 
-The reference CPU path is explicit (`backend="cpu"`), not a silent replacement
-for an accelerated backend. It preserves exact measurements and is intended
-for portability, small examples and independent verification, not speed claims.
+The reference codec in `quantem.gpu.formats.qem.reference` decodes and encodes
+on the CPU for tests and portable verification; `io.load` and `io.save` never
+use it. It preserves exact measurements and is intended for small examples and
+independent verification, not speed claims.
 
 ## Scientific contract
 
@@ -353,9 +354,10 @@ not accepted as float32 merely because an XML label says float32.
 
 - Python: `io.save("copy.qem", encoded_resident, backend="mps")`, then
   `io.load("copy.qem", device="mps")`. The shared integer codec also has a CUDA
-  reader, but CUDA execution must be qualified independently. Explicit
-  `backend="cpu"` reads both integer and EMPAD float32 codecs as original dense
-  measurements, and writes supported NumPy arrays. Python GPU float32 ANS-QEM
+  reader, but CUDA execution must be qualified independently. The reference
+  codec (`formats.qem.reference.load_array` and `save_array`) reads both integer
+  and EMPAD float32 codecs as original dense NumPy measurements, and writes
+  supported NumPy arrays, for tests. Python GPU float32 ANS-QEM
   reading is implemented; physical backend qualification remains separate. See the [Python workflow](qem-python.md) and
   [normative codec specification](qem-codecs.md).
   Normalized quantities are available as `acquisition.metadata["scientific_metadata"]`.
@@ -384,8 +386,8 @@ not accepted as float32 merely because an XML label says float32.
   `scaled-uint16-column-rans-v1` codec: native Swift
   `MetalPackedSource.saveQEM(to:scientificMetadata:)` and `MetalPackedSource.loadQEM(url:device:)`
   keep the resident codes and calibration unchanged. Python `io.load(path)` reopens
-  them on Apple GPUs as encoded float32 data (`backend="cpu"` is a dense NumPy
-  reference) and `quantem-gpu validate` checks them. Python CUDA/MPS also support
+  them on Apple GPUs as encoded float32 data (the reference codec decodes them to
+  dense NumPy for tests) and `quantem-gpu validate` checks them. Python CUDA/MPS also support
   the typed bit-lane profile for real integer and floating arrays through 64 bits.
   That profile is not yet implemented by native Swift or WebGPU. Unsupported exports fail rather than writing another
   container under a `.qem` filename.

@@ -11,6 +11,7 @@ import pytest
 
 from quantem.gpu import io
 from quantem.gpu.formats.qem.validation import validate_qem
+from tests.parity import cpu_reference
 
 
 def test_schema_1_references_are_refused_without_a_gpu():
@@ -18,7 +19,7 @@ def test_schema_1_references_are_refused_without_a_gpu():
     root = Path(__file__).parent / "data/qem-v1"
     for name in ("uint8", "uint16"):
         with pytest.raises(ValueError, match="scientific-metadata/1' is not read"):
-            io.load(root / f"{name}.qem", device="cpu")
+            cpu_reference.load(root / f"{name}.qem")
 
 
 def test_frozen_portable_conformance_bundle():
@@ -31,7 +32,7 @@ def test_frozen_portable_conformance_bundle():
         path = root / (entry["name"] + ".qem")
         assert hashlib.sha256(path.read_bytes()).hexdigest() == entry["sha256"]
         expected = np.load(root / (entry["name"] + ".npy"))
-        with io.load(path, device="cpu") as restored:
+        with cpu_reference.load(path) as restored:
             assert restored.data.tobytes() == expected.tobytes()
             assert (
                 hashlib.sha256(restored.data.tobytes()).hexdigest()
@@ -66,7 +67,7 @@ def test_save_numpy_and_reopen_across_chunks(tmp_path, dtype):
         voltage_kV=300,
         source_metadata={"example": "synthetic, no acquisition data"},
     )
-    io.save(path, counts, backend="cpu", metadata=source)
+    cpu_reference.save(path, counts, metadata=source)
     # calibration and source fields are stored once, in scientific_metadata, not again in the retained block
     from quantem.gpu.formats.qem.snapshot import read_envelope
 
@@ -75,7 +76,7 @@ def test_save_numpy_and_reopen_across_chunks(tmp_path, dtype):
     assert inspection.metadata["scientific_metadata"]["schema"].endswith("/2")
     assert inspection.metadata["scan_sampling_A"] == pytest.approx([0.4, 0.6])
     assert validate_qem(path)["codec_layout"] == "verified"
-    with io.load(path, device="cpu") as restored:
+    with cpu_reference.load(path) as restored:
         np.testing.assert_array_equal(restored.data, counts)
         assert restored.metadata["source_metadata"] == source["source_metadata"]
         assert restored.metadata["voltage_kV"] == 300
@@ -83,7 +84,7 @@ def test_save_numpy_and_reopen_across_chunks(tmp_path, dtype):
             restored.data.sum(axis=(2, 3)), counts.sum(axis=(2, 3))
         )
     with pytest.raises(ValueError, match="non-existing"):
-        io.save(path, counts, backend="cpu")
+        cpu_reference.save(path, counts)
 
 
 def test_float_measurement_bits_survive_without_quantization(tmp_path):
@@ -92,14 +93,14 @@ def test_float_measurement_bits_survive_without_quantization(tmp_path):
     )
     words.ravel()[:6] = [0, 0x80000000, 0x7F800000, 0xFF800000, 0x7FC01234, 0x3E800000]
     path = tmp_path / "float.qem"
-    io.save(path, words.view(np.float32), backend="cpu")
+    cpu_reference.save(path, words.view(np.float32))
     assert validate_qem(path)["codec_layout"] == "verified"
-    with io.load(path, device="cpu") as restored:
+    with cpu_reference.load(path) as restored:
         np.testing.assert_array_equal(restored.data.view(np.uint32), words)
         assert restored.metadata["background_applied"] is False
         copied = tmp_path / "copied.qem"
-        io.save(copied, restored, backend="cpu")
-    with io.load(copied, device="cpu") as restored:
+        cpu_reference.save(copied, restored)
+    with cpu_reference.load(copied) as restored:
         np.testing.assert_array_equal(restored.data.view(np.uint32), words)
 
 
@@ -110,14 +111,14 @@ def test_float_export_preserves_validity_mask_and_measurement_bits(tmp_path):
     counts = np.arange(128 * 128, dtype=np.float32).reshape(1, 1, 128, 128) / 8
     # An invalid detector pixel remains a measurement, not a destructive edit.
     counts[0, 0, 0, 0] = -12.5
-    io.save(path, counts, backend="cpu", metadata={"valid_pixels": valid})
+    cpu_reference.save(path, counts, metadata={"valid_pixels": valid})
     assert validate_qem(path)["codec_layout"] == "verified"
-    with io.load(path, device="cpu") as restored:
+    with cpu_reference.load(path) as restored:
         np.testing.assert_array_equal(restored.data.view(np.uint32), counts.view(np.uint32))
         np.testing.assert_array_equal(restored.metadata["valid_pixels"], valid)
         copied = tmp_path / "copied-mask.qem"
-        io.save(copied, restored, backend="cpu")
-    with io.load(copied, device="cpu") as restored:
+        cpu_reference.save(copied, restored)
+    with cpu_reference.load(copied) as restored:
         np.testing.assert_array_equal(restored.data.view(np.uint32), counts.view(np.uint32))
         np.testing.assert_array_equal(restored.metadata["valid_pixels"], valid)
 
@@ -125,12 +126,7 @@ def test_float_export_preserves_validity_mask_and_measurement_bits(tmp_path):
 def test_float_export_does_not_mislabel_already_corrected_data(tmp_path):
     path = tmp_path / "corrected.qem"
     with pytest.raises(NotImplementedError, match="background-corrected"):
-        io.save(
-            path,
-            np.zeros((1, 1, 128, 128), np.float32),
-            backend="cpu",
-            metadata={"background_applied": True},
-        )
+        cpu_reference.save(path, np.zeros((1, 1, 128, 128), np.float32), metadata={"background_applied": True})
     assert not path.exists()
 
 
@@ -145,9 +141,9 @@ def test_empad_rectangular_modern_calibration_survives_conversion(tmp_path):
         "<scale_factor>2</scale_factor></full_scan_field_of_view>"
         "<calibrated_pixelsize>1.826537060227288e-10</calibrated_pixelsize></iom_measurements></root>"
     )
-    with io.load(xml, device="cpu") as original:
-        io.save(tmp_path / "calibrated.qem", original, backend="cpu")
-    with io.load(tmp_path / "calibrated.qem", device="cpu") as restored:
+    with cpu_reference.load(xml) as original:
+        cpu_reference.save(tmp_path / "calibrated.qem", original)
+    with cpu_reference.load(tmp_path / "calibrated.qem") as restored:
         assert restored.metadata["scan_sampling_A"] == pytest.approx([10, 10])
         assert restored.metadata["detector_sampling_inv_A"] == pytest.approx(
             [0.01826537060227288] * 2
@@ -172,14 +168,14 @@ def test_empad_stale_scan_settings_resolve_without_inventing_sampling(tmp_path):
         '<scale_factor>2</scale_factor></full_scan_field_of_view>'
         '</iom_measurements></root>'
     )
-    with io.load(xml, device="cpu") as original:
+    with cpu_reference.load(xml) as original:
         np.testing.assert_array_equal(
             original.data.view(np.uint32), raw[:, :, :128].view(np.uint32)
         )
         assert original.metadata["voltage_kV"] == 300
         assert original.metadata.get("scan_sampling_A") is None
-        io.save(tmp_path / "scan.qem", original, backend="cpu")
-    with io.load(tmp_path / "scan.qem", device="cpu") as restored:
+        cpu_reference.save(tmp_path / "scan.qem", original)
+    with cpu_reference.load(tmp_path / "scan.qem") as restored:
         assert restored.metadata["voltage_kV"] == 300
         assert restored.metadata.get("scan_sampling_A") is None
         assert restored.metadata["source_metadata"]["empad_xml"] == xml.read_text()
@@ -200,18 +196,18 @@ def test_empad_and_numpy_sources_convert_using_public_python_calls(tmp_path):
         "<pix_x>3</pix_x><type>scan</type><iom_measurements>"
         "<high_voltage>300000</high_voltage></iom_measurements></root>"
     )
-    with io.load(xml, device="cpu") as original:
+    with cpu_reference.load(xml) as original:
         np.testing.assert_array_equal(original.data, raw[:, :, :128])
-        io.save(tmp_path / "empad.qem", original, backend="cpu")
-    with io.load(tmp_path / "empad.qem", device="cpu") as restored:
+        cpu_reference.save(tmp_path / "empad.qem", original)
+    with cpu_reference.load(tmp_path / "empad.qem") as restored:
         np.testing.assert_array_equal(restored.data, raw[:, :, :128])
         assert restored.metadata["voltage_kV"] == 300
         assert "empad_xml" in restored.metadata["source_metadata"]
     counts = np.arange(120, dtype=np.uint16).reshape(2, 3, 4, 5)
     np.save(tmp_path / "counts.npy", counts)
-    with io.load(tmp_path / "counts.npy", device="cpu") as original:
-        io.save(tmp_path / "numpy.qem", original, backend="cpu")
-    with io.load(tmp_path / "numpy.qem", device="cpu") as restored:
+    with cpu_reference.load(tmp_path / "counts.npy") as original:
+        cpu_reference.save(tmp_path / "numpy.qem", original)
+    with cpu_reference.load(tmp_path / "numpy.qem") as restored:
         np.testing.assert_array_equal(restored.data, counts)
 
 
@@ -226,7 +222,7 @@ def test_cpu_writer_opens_on_metal_with_exact_products(tmp_path):
     valid = np.ones((17, 19), bool)
     valid[0, 0] = False
     path = tmp_path / "cpu-to-metal.qem"
-    io.save(path, counts, backend="cpu", metadata={"valid_pixels": valid})
+    cpu_reference.save(path, counts, metadata={"valid_pixels": valid})
     with io.load(path, device="mps") as restored:
         decoded = restored.data.decode_scan_range_device(0, 537)
         try:

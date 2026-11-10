@@ -17,8 +17,8 @@ different definitions of the science.
 Representation distinguishes `encoded`, `paired`, `packed`, and `dense`
 storage; each runtime supports its documented subset. Python accepts
 `encoded`, `paired`, and `dense`; `packed` is a native Swift/Metal
-storage form. Python GPU acquisition loading defaults to ANS-encoded storage,
-and Python dense loading requires the explicit `device="cpu"` reference.
+storage form. Python GPU acquisition loading defaults to ANS-encoded storage;
+`dense` names arrays an algorithm holds, never a way to load an acquisition.
 Dtype, device/host residency, file schema, and codec profile are separate
 fields. A backend may add a new internal codec without forcing every scientist
 or consumer application to learn another load mode.

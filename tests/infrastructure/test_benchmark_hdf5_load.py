@@ -125,12 +125,11 @@ def test_load_once_reuses_explicit_geometry_mask_and_dtype_contract(
 
     monkeypatch.setattr(io, "load", fake_load)
     args = argparse.Namespace(
-        backend="cpu",
+        backend="cuda",
         det_bin=1,
         dtype="uint16",
         expected_scan_shape=(2, 3),
         apply_mask=False,
-        auto_narrow=False,
         scan_region=None,
     )
 
@@ -141,12 +140,11 @@ def test_load_once_reuses_explicit_geometry_mask_and_dtype_contract(
         (
             "fixture.h5",
             {
-                "backend": "cpu",
+                "device": "cuda",
                 "verbose": False,
                 "dtype": "uint16",
                 "scan_shape": (2, 3),
                 "apply_mask": False,
-                "auto_narrow": False,
             },
         )
     ]

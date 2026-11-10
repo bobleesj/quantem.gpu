@@ -300,8 +300,8 @@ def load_array_source(
 ) -> tuple[np.memmap, dict]:
     """Map an explicit NumPy or EMPAD array source and describe it, without copying it.
 
-    The memory map keeps the stored float32 or integer values; ``io`` decides
-    whether to encode them on the GPU or return them as the CPU reference.
+    The memory map keeps the stored float32 or integer values; ``io.load``
+    encodes them on the GPU in bounded blocks.
     """
     path = Path(path)
     if path.suffix.lower() != ".npy":

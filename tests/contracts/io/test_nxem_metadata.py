@@ -6,6 +6,7 @@ import pytest
 
 from quantem.gpu import io
 from quantem.gpu.formats.qem.metadata import acquisition_metadata, recorded_metadata
+from tests.parity import cpu_reference
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def acquisition(tmp_path):
 def test_load_and_saved_metadata_keep_axis_units(acquisition):
     info = io.inspect(acquisition)
     assert info.ready and info.scan_shape == (2, 3)
-    data = io.load(acquisition, device="cpu", representation="dense", apply_mask=False)
+    data = cpu_reference.load(acquisition, apply_mask=False)
     assert data.sampling == (4, 5, .2, .3)
     assert data.units == ("angstrom", "angstrom", "mrad", "mrad")
     assert data.metadata["voltage_kV"] == 300

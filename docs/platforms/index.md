@@ -49,7 +49,8 @@ CUDA and Python MPS expose this through `io.Dataset4dstem`, native Swift/Metal
 through `Metal4DSTEMResidentReceipt`, and WebGPU through
 `LocalH5LoadResult`.
 Python CUDA/MPS acquisition loading defaults to ANS and CUDA also accepts
-`paired`; Python `dense` requires `device="cpu"`, and Python has no `packed`
+`paired`; Python loads no `dense` acquisition (the CPU decoder that checks the
+GPU loads lives in `tests/parity/cpu_reference.py`), and Python has no `packed`
 representation. A representation enum is not a promise that every runtime can
 load that layout. See the
 [representation support matrix](../api/representations.md) before assuming an
@@ -63,7 +64,7 @@ operation accepts a representation on a given runtime.
 | CUDA | `device/select.py`, operation protocols | `io/hdf5/cuda`, `resident/cuda` | `detector/cuda` | `direct_ptycho/cuda` | `test_cuda_*`, `test_realdata_parity.py` |
 | Swift/Metal | SwiftPM products in `Package.swift` | `Native4DSTEMIO`, `Metal4DSTEMKernels` | `Metal4DSTEMKernels` | `MetalImageFFT`, `MetalDisplayKernels`, `MetalImageRuntime` | `native/swift/Tests` |
 | WebGPU | `device/webgpu.ts` and TypeScript adapters | `io/hdf5/webgpu` | detector/DPC WebGPU modules | `direct_ptycho/webgpu`; the browser client owns display | `test_webgpu_*`, browser hardware gates |
-| CPU reference | explicit `backend="cpu"` | `io/hdf5/cpu.py` | NumPy paths in detector/DPC workflows | small independent reference fixtures | product/parity tests |
+| CPU reference | tests only | `tests/parity/cpu_reference.py` | NumPy paths in detector/DPC workflows | small independent reference fixtures | product/parity tests |
 
 Open the runtime page for exact source files, call path, memory behavior,
 profiling boundaries, build commands, and acceptance gates.

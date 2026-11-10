@@ -12,7 +12,7 @@ def test_encoded_series_keeps_order_geometry_and_device(monkeypatch, tmp_path, b
     """Open differently shaped acquisitions in source order and close each owner."""
     streamed = import_module("quantem.gpu.io.encoded")
     backends = import_module("quantem.gpu.device.select")
-    monkeypatch.setattr(backends, "resolve_backend", lambda requested: backend)
+    monkeypatch.setattr(backends, "resolve", lambda requested: "cuda:0" if backend == "cuda" else "mps")
     paths = [tmp_path / f"scan_{index}.h5" for index in range(3)]
     calls = []
     owners = []
@@ -49,7 +49,7 @@ def test_incomplete_encoded_series_closes_prior_acquisitions(monkeypatch, tmp_pa
     """A missing required acquisition cannot return a misleading partial series."""
     streamed = import_module("quantem.gpu.io.encoded")
     backends = import_module("quantem.gpu.device.select")
-    monkeypatch.setattr(backends, "resolve_backend", lambda requested: backend)
+    monkeypatch.setattr(backends, "resolve", lambda requested: backend)
     paths = [tmp_path / f"scan_{index}.h5" for index in range(3)]
     released = []
 

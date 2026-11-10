@@ -47,11 +47,11 @@ authenticate the detector payload.
 Metadata parsing may run on the host, but detector decoding and compression do
 not silently fall back to CPU. Without `device=` (or with `device="auto"`) the
 load selects CUDA or MPS and raises with a corrective message when neither
-accelerated backend is available. The explicit `device="cpu"` path exists for
-reference and parity tests, and for computers without a GPU: it
-returns a dense host acquisition whose indexing gives CPU tensors and which
-`numpy.asarray` converts. `device=` takes `"auto"` (CUDA or MPS, never the
-CPU), a GPU number (`0`, `1`), `"cuda"`, `"cuda:N"`, `"mps"` and `"cpu"`.
+accelerated backend is available. There is no CPU load: `device=` takes
+`"auto"` (CUDA or MPS), a GPU number (`0`, `1`), `"cuda"`, `"cuda:N"` and
+`"mps"`, resolved by `quantem.gpu.device.resolve`, and `"cpu"` raises
+`ValueError`. The CPU decoders that check the GPU loads live in the tests
+(`tests/parity/cpu_reference.py`).
 
 (shared-tutorial-data)=
 ## Shared tutorial data
@@ -325,10 +325,8 @@ detector-column order; arbitrary Velox event/image layouts are not implied.
 Use `io.report(path, dataset_path="experiment/acquisition/data")` and the same
 `dataset_path` in `io.load` when an EMD contains multiple acquisitions.
 
-GPU NumPy/EMPAD loading rejects a dense residency override. Explicit
-`device="cpu", representation="dense"` remains available for reference access,
-not as an automatic fallback. Unsupported dtypes/layouts raise an actionable
-error before allocating a resident cube.
+GPU NumPy/EMPAD loading rejects a dense residency override. Unsupported
+dtypes/layouts raise an actionable error before allocating a resident cube.
 
 NumPy simulations stored as `int32`, such as those in
 [the SrTiO3 dislocation dataset](https://doi.org/10.5281/zenodo.7464234),
@@ -342,8 +340,7 @@ most 255, else uint16, else uint32 (one value above 65,535, such as a kept
 unchanged and use the fast detector sums; `io.load` names the stored type in
 one line, and `dtype="native"` reads them in the file's dtype, a cast on read.
 `.qem` copies (`convert`, `io.save`) store that narrow type and record the
-source dtype; `convert(..., verify=True)` verifies every value against the source. `auto_narrow`
-applies only to the explicit dense reader, and defaults to false. EMPAD RAW loading finds a sibling XML that
+source dtype; `convert(..., verify=True)` verifies every value against the source. EMPAD RAW loading finds a sibling XML that
 names the RAW file, retaining its scan dimensions, instrument fields, and
 independently indexed virtual-detector regions. If multiple XML files name the
 same RAW, open the intended XML explicitly. The archive's separate `para.txt`
@@ -429,8 +426,7 @@ be multiples of 512. No crop, binning, clipping, detector masking, or intensity
 normalization is applied. Geometry and calibration use `(row, col)` order;
 metadata retains axis units, sampling, pixel origins and microscope voltage.
 Unsupported axis layouts and ambiguous multiple 4D images raise actionable
-errors. `device="cpu", representation="dense"` explicitly opens a read-only
-memory map for reference access.
+errors.
 
 Save this encoded CUDA resident once to reopen it without re-encoding counts
 or rebuilding spatial indexes:
@@ -633,7 +629,7 @@ internal codec profile through this argument.
 
 Native Swift/Metal can reopen a saved `.qem` copy directly, with a bounded
 physical geometry gate. That gate does not qualify complete-series loading,
-peak memory, or interactive throughput. The explicit CPU reference can decode encoded data to dense.
+peak memory, or interactive throughput.
 Accelerated HDF5-to-ANS ingestion is implemented on CUDA and MPS. Native
 float32 coverage remains narrower than Python coverage. Do not infer support for every
 source/representation/backend combination from the selector names.
@@ -673,8 +669,6 @@ data = io.load("scan_master.h5")
 pattern = data[0, 0]
 ```
 
-Tiny explicit CPU references may use `device="cpu", representation="dense"`.
-They are not a production loading fallback.
 
 ### Selection
 
@@ -747,8 +741,7 @@ saved.wait()
 ```
 
 `backend="auto"` infers CUDA from a CuPy array and MPS from an MPS tensor.
-A NumPy array requires `backend="cpu"` explicitly; this makes reference/test
-writes visible rather than accidental.
+A NumPy array is refused: load it onto the GPU with `io.load` first.
 
 The default file contract remains an Arina-style master with external data
 files and lossless bitshuffle/LZ4 storage for integer detector counts.
@@ -765,7 +758,7 @@ These are independent decisions, not different names for the same setting:
 |---|---|---|
 | `format` on save | File layout | `"arina"`, `"quantem"` |
 | `compression` on save | Lossless file encoding | `"bitshuffle_lz4"` for Arina; `"ans"` for QuantEM |
-| `representation` on load | In-memory count layout | GPU: `"encoded"`, explicit CUDA `"paired"`; CPU reference: `"dense"` |
+| `representation` on load | In-memory count layout | `"encoded"`, explicit CUDA `"paired"` |
 
 For example, save and reopen an ANS-resident acquisition:
 

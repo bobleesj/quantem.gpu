@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu import io
+from quantem.gpu.formats.qem.reference import load_array, save_array
 from quantem.gpu.formats.qem.snapshot import read_envelope
 from quantem.gpu.formats.qem.validation import validate_qem
 
@@ -59,11 +59,11 @@ def main() -> None:
             detector_sampling_inv_A=[0.02, 0.03],
             voltage_kV=300,
         )
-        io.save(path, data, metadata=metadata, backend="cpu", batch_size=batch)
+        # the frozen bundle is written and checked by the portable reference codec, independent of any GPU
+        save_array(path, data, metadata, chunk_scans=batch)
         np.save(args.output / f"{name}.npy", data)
         header, _ = read_envelope(path)
-        with io.load(path, device="cpu") as reopened:
-            assert reopened.data.tobytes() == data.tobytes()
+        assert load_array(path)[0].tobytes() == data.tobytes()
         records.append(
             dict(
                 name=name,

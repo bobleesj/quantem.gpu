@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from quantem.gpu import detector, io
+from tests.parity import cpu_reference
 
 
 def test_public_ans_series_keeps_sources_independent_and_exact(tmp_path):
@@ -17,7 +18,7 @@ def test_public_ans_series_keeps_sources_independent_and_exact(tmp_path):
     paths = []
     for index, values in enumerate(counts):
         path = tmp_path / f"series-{index}.qem"
-        io.save(path, values, format="quantem", compression="ans", backend="cpu")
+        cpu_reference.save(path, values)
         paths.append(path)
 
     loaded = io.load(

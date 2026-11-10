@@ -1,26 +1,146 @@
-"""CPU reference decode of complete HDF5 acquisitions.
+"""CPU reference decode and encode of stored acquisitions, the oracle the GPU loads are tested against.
 
-Parity tests compare every accelerated load against an independent decode:
-h5py plus hdf5plugin, whose bitshuffle+LZ4 filter decompresses each dataset
-slice on the CPU with no custom kernel. ``io.load`` reaches it only with an
-explicit ``backend="cpu"``; accelerated ``backend="auto"`` never selects it.
-It is slower than CUDA or MPS but returns bit-identical stored frames.
+Parity tests compare every accelerated load against an independent decode on
+the host: h5py plus hdf5plugin for HDF5 (its bitshuffle+LZ4 filter
+decompresses each dataset slice with no custom kernel), the portable QEM
+reference codec for ``.qem`` files, and plain memory maps for NumPy, EMPAD,
+Zarr and DigitalMicrograph sources. ``quantem.gpu`` itself never loads or
+saves scientific data on the CPU, so this oracle lives with the tests. It is
+slower than CUDA or MPS but returns bit-identical stored values.
 """
 
+import json
 import math
 import os
 import time
+from pathlib import Path
 
 import h5py
 import numpy as np
 from tqdm.auto import tqdm
 
+from quantem.gpu.formats import empad, zarr_zip
 from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE, get_metadata, read_pixel_mask
-from quantem.gpu.io.dataset import Dataset4dstem
+from quantem.gpu.formats.qem.metadata import MAPED_RECORDS, json_metadata
+from quantem.gpu.formats.qem.reference import load_array, save_array
+from quantem.gpu.formats.qem.snapshot import is_qem_file
+from quantem.gpu.io.dataset import Dataset4dstem, drop_unread_calibration
+from quantem.gpu.io.digitalmicrograph import read_dm_source
+from quantem.gpu.io.hdf5.write import _DEFAULT_BATCH_SIZE, _infer_save_dtype, save_compressed_arina_h5
 from quantem.gpu.io.representation import DataRepresentation
-from quantem.gpu.resident.hot_pixels import fill_flagged, hot_pixel_outcome, hot_pixel_record, median_plan
+from quantem.gpu.resident.hot_pixels import (
+    fill_flagged,
+    hot_pixel_outcome,
+    hot_pixel_record,
+    median_plan,
+    normalize_hot_pixel_correction,
+)
 
+
+def load(
+    source,
+    *,
+    scan_shape: tuple[int, int] | None = None,
+    apply_mask: bool | None = None,
+    hot_pixel_correction: str = "median",
+    auto_narrow: bool = False,
+    stack: bool | None = None,
+    verbose: bool = False,
+) -> Dataset4dstem | list[Dataset4dstem]:
+    """Decode one source (or a list) into host NumPy arrays, the stored values the GPU loads must reproduce.
+
+    The format follows the file as ``io.load`` detects it. HDF5 masters read
+    the stored detector mask unless ``apply_mask=False`` and treat its pixels
+    with ``hot_pixel_correction`` through the CPU reference of the GPU kernels,
+    so a reference load holds the counts an encoded load does; several masters
+    stack along a leading file axis unless ``stack`` is False. ``.qem`` copies
+    decode through the portable reference codec; NumPy, EMPAD and Zarr sources
+    and DigitalMicrograph files are memory-mapped as stored.
+    """
+    hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
+    single = isinstance(source, (str, os.PathLike))
+    sources = [source] if single else list(source)
+    if not sources:
+        raise ValueError("Empty file list")
+    if all(is_qem_file(path) for path in sources):
+        loaded = []
+        for path in sources:
+            data, metadata = load_array(path)
+            if scan_shape is not None and tuple(scan_shape) != data.shape[:2]:
+                raise ValueError("scan_shape disagrees with the saved QEM file.")
+            loaded.append(record_dense_representation(Dataset4dstem(data, metadata)))
+        return loaded[0] if single else loaded
+    suffixes = {Path(path).suffix.lower() for path in sources}
+    if suffixes <= {".npy", ".xml", ".raw"} or all(zarr_zip.is_zarr_zip(path) for path in sources):
+        loaded = []
+        for path in sources:
+            reader = zarr_zip if zarr_zip.is_zarr_zip(path) else empad
+            loaded.append(Dataset4dstem(*reader.load_array_source(path, scan_shape)))
+        return loaded[0] if single else loaded
+    if suffixes <= {".dm3", ".dm4"}:
+        loaded = []
+        for path in sources:
+            dm_source = read_dm_source(path, scan_shape)
+            metadata = dict(dm_source.metadata)
+            metadata.update(backend="cpu", residency="host", file_counts_exact=True,
+                            lossless_exact=True, scan_bin=1, detector_bin=1, crop=None)
+            loaded.append(Dataset4dstem(dm_source.memmap(), metadata))
+        return loaded[0] if single else loaded
+    return drop_unread_calibration(load_reference(
+        sources,
+        single=single,
+        scan_shape=scan_shape,
+        apply_mask=True if apply_mask is None else apply_mask,
+        hot_pixel_correction=hot_pixel_correction,
+        auto_narrow=auto_narrow,
+        # Unlike compressed acquisitions, reference arrays stack by default.
+        stack=True if stack is None else stack,
+        verbose=verbose,
+    ), sources)
+
+
+def save(
+    path,
+    data,
+    *,
+    metadata: dict | None = None,
+    dtype=None,
+    scan_shape: tuple[int, int] | None = None,
+    batch_size: int | None = None,
+    frames_per_file: int = 32768,
+) -> None:
+    """Write host data as a ``.qem`` copy (portable reference encoder) or an Arina HDF5 master (h5py, hdf5plugin).
+
+    Tests build their fixture files with it; the files are the ones the GPU
+    writers produce, so a GPU load of them is checked against known values.
+    A dense :class:`Dataset4dstem` keeps its metadata, as ``io.save`` keeps it.
+    """
+    if Path(path).suffix.lower() == ".qem":
+        if isinstance(data, Dataset4dstem):
+            metadata = dict(data.metadata) | (metadata or {})
+            data = data.data
+        save_array(path, np.asarray(data), metadata, chunk_scans=512 if batch_size is None else batch_size)
+        return
+    if isinstance(data, Dataset4dstem):
+        metadata = dict(data.metadata if metadata is None else metadata)
+        for key, attribute in MAPED_RECORDS.items():
+            if isinstance(metadata.get(key), dict):
+                metadata[attribute] = json.dumps(metadata[key], default=json_metadata)
+        data = data.data
+    save_compressed_arina_h5(
+        path,
+        data,
+        scan_shape=scan_shape,
+        metadata=metadata,
+        dtype=_infer_save_dtype(data) if dtype is None else dtype,
+        batch_size=_DEFAULT_BATCH_SIZE if batch_size is None else int(batch_size),
+        frames_per_file=frames_per_file,
+        compression_backend="hdf5",
+    )
+
+
+# ---
 
 def load_reference(
     paths: list[str | os.PathLike[str]],
@@ -33,7 +153,7 @@ def load_reference(
     stack: bool,
     verbose: bool,
 ) -> Dataset4dstem | list[Dataset4dstem]:
-    """Decode complete HDF5 acquisitions on the CPU as the explicit reference.
+    """Decode complete HDF5 acquisitions on the CPU.
 
     With ``apply_mask`` the pixels the stored mask flags receive
     ``hot_pixel_correction`` through the CPU reference of the GPU kernels, so a

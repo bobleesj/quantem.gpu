@@ -45,9 +45,9 @@ python -m pip install -e ".[mps]"
 python -m pip install -e ".[cpu]"
 ```
 
-`[cpu]` adds nothing to the base install. Pass `device="cpu"` to load the
-dense CPU reference, `io.load(path, device="cpu")`. Tested on Linux and
-Windows.
+`[cpu]` adds nothing to the base install. Without a GPU, `io.load` and the
+detector, SSB and DPC calls raise: there is no CPU path for scientific data.
+Tested on Linux and Windows.
 
 An Intel Mac is not supported by quantem.gpu: PyTorch publishes no wheel newer
 than torch 2.2 for it and quantem.gpu needs torch 2.3, and the `[mps]` extra
@@ -92,7 +92,7 @@ import quantem.gpu as qgpu
 
 print(md.version("quantem.gpu"))
 print(qgpu.__version__)
-print(qgpu.device.detect())
+print(qgpu.device.resolve("auto"))
 ```
 
 The distribution version and `qgpu.__version__` should match.

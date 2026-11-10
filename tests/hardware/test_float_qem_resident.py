@@ -11,6 +11,7 @@ from quantem.gpu import detector, dpc, io
 from quantem.gpu.resident.float_ans import FloatANSResident, MAX_DECODE_BYTES
 from quantem.gpu.formats.qem.validation import validate_qem
 from quantem.gpu.formats.qem.snapshot import read_header
+from tests.parity import cpu_reference
 
 
 def _host(output):
@@ -54,13 +55,7 @@ def test_float_qem_preserves_bits_and_metadata_without_dense_residency(tmp_path)
         sha256=hashlib.sha256(content.encode()).hexdigest(),
     )
     path = tmp_path / "original.qem"
-    io.save(
-        path,
-        words.view(np.float32),
-        backend="cpu",
-        batch_size=3,
-        metadata={"source_documents": [document], "voltage_kV": 200},
-    )
+    cpu_reference.save(path, words.view(np.float32), batch_size=3, metadata={"source_documents": [document], "voltage_kV": 200})
     with io.load(path, device=backend) as loaded:
         assert loaded.metadata["representation"] == "encoded"
         assert loaded.metadata["resident_profile"] == "float32-bit-lanes-rans-v1"
@@ -97,7 +92,7 @@ def test_float_products_and_selected_mean_stay_on_device(tmp_path):
         np.arange(8 * 128 * 128, dtype=np.float32).reshape(2, 4, 128, 128) % 101 - 50
     ) / 8
     path = tmp_path / "measurements.qem"
-    io.save(path, raw, backend="cpu", batch_size=3)
+    cpu_reference.save(path, raw, batch_size=3)
     mask = np.zeros((128, 128), bool)
     mask[19:40, 17:90] = True
     with io.load(path, device=backend) as loaded:
@@ -156,7 +151,7 @@ def test_float_background_is_applied_once_and_survives_export(tmp_path):
         "background": {"values_float32_le": base64.b64encode(dark.tobytes()).decode()},
     }
     path = tmp_path / "background.qem"
-    io.save(path, raw, backend="cpu", batch_size=2, metadata={"qem_empad": empad})
+    cpu_reference.save(path, raw, batch_size=2, metadata={"qem_empad": empad})
     copied = tmp_path / "copy.qem"
     for saved in (path, copied):
         with io.load(saved, device=backend) as loaded:
@@ -182,7 +177,7 @@ def test_float_reductions_keep_cancellation_and_nonfinite_semantics(tmp_path):
     raw[0, :, 0, :3] = [1e20, 1, -1e20]
     raw[0, 2, 1, 0] = np.nan
     path = tmp_path / "cancellation.qem"
-    io.save(path, raw, backend="cpu", batch_size=2)
+    cpu_reference.save(path, raw, batch_size=2)
     mask = np.zeros((128, 128), bool)
     mask[0, :3] = True
     with io.load(path, device=backend) as loaded:
@@ -207,7 +202,7 @@ def test_float_com_does_not_overflow_or_hide_invalid_frames(tmp_path):
     raw[0, 1, 30, 40] = 1e38
     raw[0, 3, 2, 3] = np.inf
     path = tmp_path / "moments.qem"
-    io.save(path, raw, backend="cpu", batch_size=2)
+    cpu_reference.save(path, raw, batch_size=2)
     with io.load(path, device=backend) as loaded:
         row, column = detector.prepare(loaded).center_of_mass()
         np.testing.assert_array_equal(row[0, :3], [10, 30, 0])
@@ -223,7 +218,7 @@ def test_float_com_does_not_overflow_or_hide_invalid_frames(tmp_path):
 def test_corrupt_upload_releases_partial_resident(tmp_path, monkeypatch):
     backend = _backend()
     path = tmp_path / "damaged.qem"
-    io.save(path, np.ones((1, 4, 128, 128), np.float32), backend="cpu", batch_size=2)
+    cpu_reference.save(path, np.ones((1, 4, 128, 128), np.float32), batch_size=2)
     _, start = read_header(path)
     with path.open("r+b") as handle:
         handle.seek(start)
@@ -251,7 +246,7 @@ def test_cuda_resident_survives_client_device_switch(tmp_path):
     if cp.cuda.runtime.getDeviceCount() < 2:
         pytest.skip("Requires two CUDA devices")
     path = tmp_path / "device.qem"
-    io.save(path, np.ones((1, 2, 128, 128), np.float32), backend="cpu")
+    cpu_reference.save(path, np.ones((1, 2, 128, 128), np.float32))
     with io.load(path, device=0) as loaded:
         with cp.cuda.Device(1):
             # No scientific work is submitted on device 1.
@@ -276,7 +271,7 @@ def test_cuda_float_decode_reports_failures_into_the_callers_flags(tmp_path):
     words = np.zeros((4, 32, 128, 128), np.uint32)
     words[..., :64, :] = np.random.default_rng(1).integers(0, 3, (4, 32, 64, 128))
     path = tmp_path / "entropy.qem"
-    io.save(path, words.view(np.float32), backend="cpu", batch_size=128)
+    cpu_reference.save(path, words.view(np.float32), batch_size=128)
     with io.load(path, device="cuda") as loaded:
         lanes = loaded.data._lanes
         chunk = lanes.chunks[0]

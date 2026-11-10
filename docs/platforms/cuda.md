@@ -9,7 +9,7 @@ launch details through the public API.
 | Layer | CUDA source | Implementation responsibility |
 |---|---|---|
 | Device selection | `src/quantem/gpu/device/select.py` | probe CuPy/runtime and reject unavailable CUDA explicitly |
-| IO contract | `src/quantem/gpu/device/select.py` | validate `cuda`, `mps`, or explicit `cpu` |
+| IO contract | `src/quantem/gpu/device/select.py` | `resolve` turns `device=` into `cuda`, `cuda:N` or `mps`, never `cpu` |
 | Load orchestration | `src/quantem/gpu/io/load.py` | source discovery, frame planning, metadata, precision and region provenance |
 | CUDA decode | `src/quantem/gpu/io/hdf5/cuda/decode.py` | bitshuffle/LZ4 decode into CuPy-resident arrays |
 | Detector dispatch | `src/quantem/gpu/detector/session.py` | select resident CUDA reducers and normalize small results |
@@ -21,7 +21,7 @@ The ordinary IO call path is:
 
 ```text
 io.load(..., device="cuda")
-  → device.select.resolve_backend
+  → device.resolve
   → io.load source/index/read planning
   → bounded source decode + ANS encoding
   → Dataset4dstem with encoded storage and provenance

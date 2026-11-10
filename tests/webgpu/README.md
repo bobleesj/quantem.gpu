@@ -89,14 +89,13 @@ a caller-owned snapshot of the canonical integer buffer in GPU queue order.
 `readImage(tilt)` retains its float32 display behavior, which can round integer
 sums above 2^24. Display normalization never modifies the integer buffer.
 
-Generate the small saturated fixture with the public encoder (CPU only):
+Generate the small saturated fixture with the portable reference encoder:
 
 ```python
 import numpy as np
-from quantem.gpu import io
+from quantem.gpu.formats.qem.reference import save_array
 
-io.save("saturated.qem", np.full((1, 1, 256, 256), 65535, np.uint16),
-        format="quantem", compression="ans", backend="cpu")
+save_array("saturated.qem", np.full((1, 1, 256, 256), 65535, np.uint16))
 ```
 
 Bundle `rans-integer-readback.ts` with

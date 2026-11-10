@@ -1,13 +1,13 @@
 """Scientist-facing dense and encoded loading workflows."""
 
-from quantem.gpu.io.dataset import Dataset4dstem
-
 from importlib import import_module
 
 import numpy as np
 import pytest
 
 from quantem.gpu import io
+from quantem.gpu.io.dataset import Dataset4dstem
+from tests.parity import cpu_reference
 
 
 @pytest.mark.parametrize("backend", ["cuda", "mps"])
@@ -15,7 +15,6 @@ def test_original_acquisition_defaults_to_ans(monkeypatch, tmp_path, backend) ->
     """Opening an original without storage flags reaches ANS, never dense IO."""
     import h5py
 
-    cpu = import_module("quantem.gpu.io.hdf5.cpu")
     backends = import_module("quantem.gpu.device.select")
     streamed = import_module("quantem.gpu.io.encoded")
     source = tmp_path / "acquisition.h5"
@@ -29,34 +28,17 @@ def test_original_acquisition_defaults_to_ans(monkeypatch, tmp_path, backend) ->
         calls.append((path, options["backend"]))
         return expected
 
-    def dense(*args, **kwargs):
-        pytest.fail("Default acquisition loading reached dense materialization")
-
-    monkeypatch.setattr(backends, "resolve_backend", lambda requested: backend)
+    monkeypatch.setattr(backends, "resolve", lambda requested: backend)
     monkeypatch.setattr(streamed, "load_h5_ans", encoded)
-    monkeypatch.setattr(cpu, "load_reference", dense)
     assert io.load(source) is expected
     assert calls == [(source, backend)]
 
 
-def test_dense_representation_is_explicit_and_reports_memory(monkeypatch) -> None:
-    """An explicit dense load reports its representation and exact byte counts."""
-    cpu = import_module("quantem.gpu.io.hdf5.cpu")
+def test_dense_representation_reports_memory() -> None:
+    """A dense reference array reports its representation and exact byte counts."""
     values = np.arange(2 * 3 * 4 * 5, dtype=np.uint16).reshape(2, 3, 4, 5)
-
-    monkeypatch.setattr(
-        cpu,
-        "load_reference",
-        lambda *args, **kwargs: cpu.record_dense_representation(
-            Dataset4dstem(values, {"backend": "cpu", "source_dtype": "uint16"})
-        ),
-    )
-
-    loaded = io.load(
-        "ordinary-master.h5",
-        device="cpu",
-        representation="dense",
-        verbose=False,
+    loaded = cpu_reference.record_dense_representation(
+        Dataset4dstem(values, {"backend": "cpu", "source_dtype": "uint16"})
     )
 
     assert isinstance(loaded, io.Dataset4dstem)
@@ -78,8 +60,7 @@ def test_representation_values_do_not_encode_dtype() -> None:
 
 
 def test_narrowed_dense_result_does_not_claim_unproven_losslessness() -> None:
-    cpu = import_module("quantem.gpu.io.hdf5.cpu")
-    loaded = cpu.record_dense_representation(
+    loaded = cpu_reference.record_dense_representation(
         Dataset4dstem(
             np.asarray([255], dtype=np.uint8),
             {"source_dtype": "uint16", "backend": "cpu"},
@@ -90,8 +71,7 @@ def test_narrowed_dense_result_does_not_claim_unproven_losslessness() -> None:
 
 
 def test_float64_result_does_not_claim_exact_uint64_counts() -> None:
-    cpu = import_module("quantem.gpu.io.hdf5.cpu")
-    loaded = cpu.record_dense_representation(
+    loaded = cpu_reference.record_dense_representation(
         Dataset4dstem(
             np.asarray([2**60 + 1], dtype=np.float64),
             {"source_dtype": "uint64", "backend": "cpu"},
@@ -108,13 +88,13 @@ def test_gpu_acquisitions_reject_expansion_before_opening(
 ):
     """Selecting GPU residency never expands an acquisition as a loading option."""
     backends = import_module("quantem.gpu.device.select")
-    monkeypatch.setattr(backends, "resolve_backend", lambda requested: backend)
+    monkeypatch.setattr(backends, "resolve", lambda requested: backend)
     with pytest.raises(NotImplementedError, match="must remain ANS encoded"):
         io.load(f"not-opened.{extension}", device=backend, representation=representation)
 
 
-def test_dense_cpu_load_and_inspect_preserve_real_hdf5_counts(tmp_path) -> None:
-    """Exercise the retained dense path without replacing the actual loader."""
+def test_inspect_and_reference_decode_preserve_real_hdf5_counts(tmp_path) -> None:
+    """A master whose frames sit in an external shard inspects as ready and decodes to the stored counts."""
     import h5py
 
     source = tmp_path / "native_master.h5"
@@ -130,20 +110,16 @@ def test_dense_cpu_load_and_inspect_preserve_real_hdf5_counts(tmp_path) -> None:
     report = io.inspect(source, scan_shape=(2, 3))
     assert report.ready
     assert report.metadata["representation"] == "dense"
-    loaded = io.load(source, device="cpu", representation="dense",
-                     scan_shape=(2, 3), dtype="native", verbose=False)
+    loaded = cpu_reference.load(source, scan_shape=(2, 3))
     np.testing.assert_array_equal(loaded.data, counts.reshape(2, 3, 4, 5))
     assert loaded.dtype == np.dtype("uint16")
     assert loaded.lossless
     assert loaded.logical_bytes == loaded.resident_bytes == counts.nbytes
 
 
-
 def test_cpu_reference_refuses_a_pixel_mask_of_another_shape(tmp_path) -> None:
     """A mismatched dead-pixel mask raises; skipping it kept 65535 sentinels as counts without notice."""
     import h5py
-
-    from quantem.gpu.io.hdf5.cpu import load_master
 
     source = tmp_path / "native_master.h5"
     counts = np.arange(6 * 4 * 5, dtype=np.uint16).reshape(6, 4, 5)
@@ -154,6 +130,6 @@ def test_cpu_reference_refuses_a_pixel_mask_of_another_shape(tmp_path) -> None:
     mask[1, 2] = 1
     expected = counts.copy()
     expected[:, 1, 2] = 0
-    np.testing.assert_array_equal(load_master(str(source), pixel_mask=mask, method="zero", verbose=False), expected)
+    np.testing.assert_array_equal(cpu_reference.load_master(str(source), pixel_mask=mask, method="zero", verbose=False), expected)
     with pytest.raises(ValueError, match="pixel mask is 5 x 4, but the frames are 4 x 5; load with apply_mask=False"):
-        load_master(str(source), pixel_mask=mask.T, verbose=False)
+        cpu_reference.load_master(str(source), pixel_mask=mask.T, verbose=False)

@@ -9,7 +9,6 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.device import select
 from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.device.metal_runtime import (
     allocate_shared,
@@ -144,25 +143,16 @@ def read_dm_source(
 
 
 def load_dm(path, *, backend, representation, scan_shape, device, verbose):
-    """Load a DigitalMicrograph 4D-STEM file, reading the detector bytes once.
+    """Load a DigitalMicrograph 4D-STEM file on ``backend`` (``"cuda"`` or ``"mps"``), reading the detector bytes once.
 
-    The CPU reference maps the file; CUDA and Metal stream bounded frame
-    blocks through staging into an encoded resident, so the dense cube never
-    exists in memory.
+    CUDA and Metal stream bounded frame blocks through staging into an encoded
+    resident, so the dense cube never exists in memory.
     """
     started = time.perf_counter()
     source = read_dm_source(path, scan_shape)
-    backend = select.resolve_backend(backend)
-    representation = DataRepresentation.parse(
-        representation or ("dense" if backend == "cpu" else "encoded")
-    )
+    representation = DataRepresentation.parse(representation or "encoded")
     metadata = dict(source.metadata)
-    if backend == "cpu" and representation is DataRepresentation.DENSE:
-        metadata.update(backend="cpu", residency="host", file_counts_exact=True,
-                        lossless_exact=True, scan_bin=1, detector_bin=1, crop=None)
-        return Dataset4dstem(source.memmap(), metadata)
-    if (backend in {"cuda", "mps"} and representation is DataRepresentation.ENCODED
-            and source.dtype == np.dtype("float32")):
+    if representation is DataRepresentation.ENCODED and source.dtype == np.dtype("float32"):
         mapped = source.memmap()
         loaded = None
         try:
@@ -184,15 +174,9 @@ def load_dm(path, *, backend, representation, scan_shape, device, verbose):
             raise TypeError("DM Metal ANS requires native uint8/uint16 counts.")
         return _load_counts_mps(source, started, verbose)
     if backend != "cuda" or representation is not DataRepresentation.ENCODED:
-        raise NotImplementedError(
-            "DigitalMicrograph currently supports CUDA encoded counts or explicit "
-            "backend='cpu', representation='dense' reference access."
-        )
+        raise NotImplementedError("DigitalMicrograph loads as encoded counts on CUDA or Metal; omit representation.")
     if source.dtype.name not in {"uint8", "uint16"} or not source.dtype.isnative:
-        raise TypeError(
-            f"DM ANS requires native uint8/uint16 counts; got {source.dtype}. "
-            "Use backend='cpu', representation='dense' to inspect without conversion."
-        )
+        raise TypeError(f"DM ANS requires native uint8/uint16 counts or float32 values; got {source.dtype}.")
     import cupy as cp
 
     selected = cuda_device_index(device)

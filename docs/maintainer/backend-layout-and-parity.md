@@ -36,7 +36,7 @@ The Python files below were moved, not copied.
 |---|---|
 | Python CUDA | `io/hdf5/cuda/decode.py` kernels, consumed by `io/encoded.py`, `io/paired.py`, and `io/precision.py` |
 | Python MPS | `io/hdf5/mps/decode.py`, consumed by `io/encoded.py` and `io/precision.py` |
-| Explicit CPU reference | `io/hdf5/cpu.py` (dense) |
+| CPU reference (tests only) | `tests/parity/cpu_reference.py` (dense) |
 | WebGPU | `io/hdf5/webgpu/local-h5.ts` (dense) |
 
 Python callers continue to use `io.load(..., representation=...)`.
@@ -64,8 +64,9 @@ pinned staging ownership (`device/cuda_runtime.py`).
 
 `load.py` keeps the public route choice. Bounded HDF5-to-ANS streaming lives
 in `io/encoded.py`, the CUDA paired-count layout in `io/paired.py`, scaled
-precision storage in `io/precision.py`, and the dense CPU reference in
-`io/hdf5/cpu.py`; GPU dense loading is not a route. Further decomposition must
+precision storage in `io/precision.py`. Neither GPU dense loading nor a CPU
+load is a route; the dense CPU reference that checks the loaders is
+`tests/parity/cpu_reference.py`. Further decomposition must
 preserve source-range, cancellation, and failure behavior.
 
 ## Current source tree

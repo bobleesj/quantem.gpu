@@ -1,7 +1,7 @@
 """A finished ``.qem`` save reports its wall time and sizes, shows them as a table, and reopens unchanged.
 
 The summary comes from the file size and the array geometry alone, so it costs
-no detector read. The host reference writer runs everywhere; the encoded
+no detector read. The table itself is checked everywhere; the encoded
 residents run where ``QEM_TEST_BACKEND`` names a physical accelerator.
 """
 
@@ -22,34 +22,30 @@ def _measurements(dtype):
     return values
 
 
-@pytest.mark.parametrize("dtype", [np.uint16, np.float32])
-def test_host_qem_save_reports_time_and_sizes(tmp_path, dtype):
-    values = _measurements(dtype)
-    path = tmp_path / "measurements.qem"
-    result = io.save(path, values, backend="cpu")
-    assert (result.complete, result.backend, result.path) == (True, "cpu", str(path))
-    assert result.logical_bytes == values.nbytes
-    assert result.file_bytes == path.stat().st_size
-    assert result.elapsed_s > 0
+def test_summary_is_a_table_of_time_and_sizes() -> None:
+    """The summary is built from the recorded numbers alone, in text and as an HTML table."""
+    from quantem.gpu.io.save import SaveResult
+
+    result = SaveResult("measurements.qem", "cuda", complete=True, elapsed_s=0.25,
+                        logical_bytes=4 * 2**20, file_bytes=3 * 2**20)
     text, html = repr(result), result._repr_html_()
-    megabytes = f"{path.stat().st_size / 2**20:.2f} MiB"
-    for label in ("Saved", "Save time", "Uncompressed array", "Lossless QEM", megabytes):
+    for label in ("Saved", "Save time", "Uncompressed array", "Lossless QEM", "3.00 MiB", "25.0% smaller"):
         assert label in text and label in html
     assert "<table" in html
-    with io.load(path, device="cpu") as reopened:
-        assert reopened.data.tobytes() == values.tobytes()
 
 
-def test_summary_says_when_the_file_is_larger_than_the_array(tmp_path):
+def test_summary_says_when_the_file_is_larger_than_the_array() -> None:
     """Four detector pixels compress to less than the file's own metadata."""
-    result = io.save(tmp_path / "small.qem", np.zeros((1, 1, 2, 2), dtype=np.uint8), backend="cpu")
-    assert result.file_bytes > result.logical_bytes == 4
+    from quantem.gpu.io.save import SaveResult
+
+    result = SaveResult("small.qem", "cuda", complete=True, elapsed_s=0.01, logical_bytes=4, file_bytes=900)
     assert "larger than uncompressed" in repr(result)
 
 
-def test_hdf5_save_summary_has_no_sizes(tmp_path):
-    result = io.save(tmp_path / "scan_master.h5", _measurements(np.uint16), backend="cpu")
-    assert (result.complete, result.file_bytes, result.elapsed_s) == (True, None, None)
+def test_hdf5_save_summary_has_no_sizes() -> None:
+    from quantem.gpu.io.save import SaveResult
+
+    result = SaveResult("scan_master.h5", "cuda", complete=True)
     assert "Saved" in repr(result) and "Lossless QEM" not in repr(result)
 
 

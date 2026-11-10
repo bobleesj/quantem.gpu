@@ -120,8 +120,8 @@ def current_context() -> tuple[int, int]:
     """Identify the current device and CUDA context, without changing devices."""
     if cp is None:
         raise ImportError(
-            "CuPy is required for CUDA I/O. Install CuPy or select "
-            "backend='cpu' or backend='mps'."
+            "CuPy is required for CUDA I/O; install it with pip install \"quantem.gpu[cuda]\", "
+            "or select device='mps' on an Apple GPU."
         )
     device = int(cp.cuda.runtime.getDevice())
     context = int(cp.cuda.driver.ctxGetCurrent())

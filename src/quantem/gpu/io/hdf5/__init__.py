@@ -1,1 +1,1 @@
-"""Bitshuffle+LZ4 HDF5 frames: CPU reference decode, CUDA and MPS codecs, browser WebGPU sources."""
+"""Bitshuffle+LZ4 HDF5 frames: CUDA and MPS codecs, the HDF5 writer, browser WebGPU sources."""

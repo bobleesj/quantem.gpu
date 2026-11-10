@@ -19,17 +19,18 @@ def test_io_exports_only_scientist_workflows() -> None:
     )
 
 
-def test_auto_backend_never_selects_cpu(monkeypatch) -> None:
+def test_load_never_selects_cpu(monkeypatch, tmp_path) -> None:
+    """Without a GPU the automatic load raises; ``device="cpu"`` raises as well, before any probe."""
+    from quantem.gpu import io
     from quantem.gpu.device import select
 
-    def no_accelerator() -> None:
-        raise RuntimeError("No QuantEM GPU backend is available")
-
-    monkeypatch.setattr(select, "detect", no_accelerator)
-
+    monkeypatch.setattr(select, "_cuda_probe", lambda: (0, "missing CUDA"))
+    monkeypatch.setattr(select, "_mps_probe", lambda: (False, "missing MPS"))
+    np.save(tmp_path / "scan.npy", np.zeros((1, 1, 2, 2), dtype=np.uint16))
     with pytest.raises(RuntimeError, match="No QuantEM GPU backend"):
-        select.resolve_backend("auto")
-    assert select.resolve_backend("cpu") == "cpu"
+        io.load(tmp_path / "scan.npy")
+    with pytest.raises(ValueError, match="device='cpu' is not supported"):
+        io.load(tmp_path / "scan.npy", device="cpu")
 
 
 def test_auto_save_rejects_host_array_instead_of_using_cpu(tmp_path) -> None:

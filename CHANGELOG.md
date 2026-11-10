@@ -43,7 +43,8 @@ deprecated keyword or reader of an old saved key remains for them.
 | `DetectorSession.mean_dp()`, `ScreeningResult.mean_diffraction_pattern` | `DetectorSession.mean_pattern()`, `ScreeningResult.mean_pattern` | method, attribute |
 | `detector.masked_sum(data, det_mask)` | `detector.masked_sum(data, mask)` | keyword |
 | `Dataset4dstemGPU` | `Dataset4dstem` | class (`quantem.gpu.io`) |
-| `io.load(backend=, device=)` | `io.load(device=)`: omit it or `"auto"` for CUDA or MPS (never the CPU), `"cpu"`, `"mps"`, `"cuda"`, `"cuda:N"` or a GPU number | keyword |
+| `io.load(backend=, device=)` | `io.load(device=)`: omit it or `"auto"` for CUDA or MPS, `"mps"`, `"cuda"`, `"cuda:N"` or a GPU number (`"cpu"` raises) | keyword |
+| `device.resolve_device(device)`, `device.detect()`, `device.select.resolve_backend(backend)`, `device.resolve(name)` | `device.resolve(device="auto")`: `"cuda"`, `"cuda:N"` or `"mps"`, never the CPU; `"auto"` raises without a GPU | function |
 | `movie.save_mp4(backend=, gpu_id=)` | `movie.save_mp4(device=)`: `"auto"`, `"cpu"`, `"mps"`, `"cuda"`, `"cuda:N"` or a GPU number | keyword |
 | `movie.save_gif(cols=)`, `movie.save_mp4(cols=)` | `columns=` | keyword |
 | `remote.create_app(gpus=)`, `remote.BrowseService(gpus=)`, `ResidentAcquisition.gpu` | `devices=`, `ResidentAcquisition.device` | keyword, attribute |
@@ -183,6 +184,11 @@ the first run after this change computes them again, as after any code change; t
   Removed `formats/float8.py`, the CUDA and Metal FP8 decode and product kernels, the `quantem_dtype` HDF5 tag, the
   FP8 branches of `io.load`, `read`, `inspect`, `convert`, the typed QEM codec and SSB, and the `ml_dtypes`
   dependency. The float32 ANS kernels lose only their FP8 preprocessor branches.
+- The CPU data path: `io.load(device="cpu")`, `io.save(backend="cpu")`, the dense CPU `.qem` and DigitalMicrograph
+  reads and `io.load(auto_narrow=)` (it applied only to the CPU reader). `device="cpu"` raises `ValueError`. The CPU
+  HDF5 reader (`io/hdf5/cpu.py`) moves to the test oracle `tests/parity/cpu_reference.py`, which also decodes `.qem`,
+  NumPy, EMPAD, Zarr and DM files and writes fixture files for the tests.
+- `device.profile()`: its automatic choice could report the CPU. `device.resolve` is the one device resolver.
 - `direct_ptycho.torch_agreement` (the float64 plain-torch reference of the fit's agreement and derivatives) moves to
   `tests/parity/torch_agreement.py`: only tests used it.
 - Test-only helpers leave the package: `mps.hardware.exact_pair_row_policy_512`, `mps.prepared.bf_storage_chunk_packs`,

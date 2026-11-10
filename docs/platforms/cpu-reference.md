@@ -1,31 +1,25 @@
 # CPU reference
 
-For QEM archival portability, `io.load("acquisition.qem", device="cpu")`
-explicitly decodes original measurements. `io.save("copy.qem", array,
-backend="cpu")` accepts supported 4D NumPy data. The readable implementation in
-`src/quantem/gpu/formats/qem/reference.py` imports no accelerated codec code and uses
-frozen integer entropy tables. It is a correctness reference, not a performance
-fallback. See [QEM Python workflows](../api/qem-python.md).
-
-The CPU path is an explicit independent reference for small deterministic
-fixtures and portable IO checks. It is not a silent production fallback.
+The package loads and saves scientific data on CUDA or Apple MPS only; the
+public `io.load` and `io.save` have no CPU route, and `device="cpu"` raises.
+The CPU decoders that adjudicate the GPU loads live with the tests, in
+`tests/parity/cpu_reference.py`: h5py plus hdf5plugin for HDF5 masters, and
+the portable QEM codec in `src/quantem/gpu/formats/qem/reference.py`, which
+imports no accelerated codec code and uses frozen integer entropy tables. They
+are a correctness reference for small deterministic fixtures, never a fallback.
+See [QEM Python workflows](../api/qem-python.md).
 
 ```python
-from quantem.gpu import io
+from tests.parity import cpu_reference
 
-reference = io.load(
-    "small_master.h5",
-    device="cpu",
-    representation="dense",
-)
+reference = cpu_reference.load("small_master.h5")
 ```
 
 ## Dispatch and implementation layers
 
 | Layer | CPU/reference source | Responsibility |
 |---|---|---|
-| Explicit selection | `src/quantem/gpu/device/select.py` | accept `device="cpu"` (`io.load`) and `backend="cpu"` (`io.save`); automatic accelerator selection never chooses it |
-| IO implementation | `src/quantem/gpu/io/hdf5/cpu.py` | h5py/hdf5plugin decode of complete acquisitions and bad-pixel zeroing |
+| IO implementation | `tests/parity/cpu_reference.py` | h5py/hdf5plugin decode of complete acquisitions and the CPU reference of the bad-pixel fill |
 | Array detector reference | `src/quantem/gpu/detector/tensors.py::ArrayBackend` | NumPy mean diffraction, masks, exact sums, and CoM in uint64/float64 |
 | DPC/iDPC reference | `src/quantem/gpu/dpc/workflow.py` | NumPy rotation, curl objective, and FFT integration |
 | Frozen contracts | `tests/parity`, product and backend tests | adjudicate accelerator outputs without generating goldens from that accelerator |
@@ -33,8 +27,7 @@ reference = io.load(
 The reference call path is:
 
 ```text
-io.load(..., device="cpu")
-  → explicit CPU route in io.load
+cpu_reference.load(...)
   → h5py + hdf5plugin decompression
   → NumPy array + shared Dataset4dstem metadata
   → NumPy detector/DPC reference operations

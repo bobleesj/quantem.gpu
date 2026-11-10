@@ -122,10 +122,14 @@ def test_big_endian_bytes_keep_values(tmp_path, data):
 
 
 def test_io_load_returns_the_dataset_with_axis_calibration(tmp_path, data):
+    import torch
+
+    if not (torch.cuda.is_available() or torch.backends.mps.is_available()):
+        pytest.skip("io.load encodes the archive on a CUDA or Apple GPU")
     path = tmp_path / "dataset.zip"
     _write(path, data)
-    loaded = io.load(path, device="cpu", verbose=False)
-    assert np.asarray(loaded.data).tobytes() == data.tobytes()
+    loaded = io.load(path, verbose=False)
+    assert loaded.read().cpu().numpy().tobytes() == data.tobytes()
     assert loaded.sampling == (0.5, 0.5, 2.0, 2.0)
     assert loaded.units == ("angstrom", "angstrom", "mrad", "mrad")
     assert loaded.origin == (1.0, 2.0, 0.0, 0.0)

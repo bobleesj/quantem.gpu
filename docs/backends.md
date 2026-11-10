@@ -6,20 +6,19 @@ Backend implementations remain private behind one domain-level scientific API;
 folder moves require the machine-readable parity gates in
 `tests/parity/backend_matrix.json`.
 
-`quantem.gpu` supports three backend names:
+`quantem.gpu` supports two backend names:
 
 | Backend | Purpose | Notes |
 |---|---|---|
 | `cuda` | NVIDIA GPU IO, decompression, reductions, and SSB reference paths | Uses CuPy/CUDA kernels where available. |
 | `mps` | Apple Silicon Metal/MLX paths | Used for ANS-encoded loading, BF/DF/DPC images, and SSB fit/reconstruction/preview paths. |
-| `cpu` | Test/reference implementation | Available only when explicitly requested by a test or reference comparison. |
 
 Check the selected backend:
 
 ```python
 import quantem.gpu as qgpu
 
-backend = qgpu.device.detect()
+backend = qgpu.device.resolve("auto")
 print(backend)
 ```
 

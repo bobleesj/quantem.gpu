@@ -19,6 +19,7 @@ from tests.hardware.test_encoded_detector_moments import (
     _load,
     _valid,
 )
+from tests.parity import cpu_reference
 
 
 def _backend():
@@ -55,7 +56,7 @@ def test_float_sources_refuse_exact_sums_on_both_outputs(tmp_path):
     backend = _backend()
     values = (np.arange(4 * 4 * 16 * 16, dtype=np.float32).reshape(4, 4, 16, 16) % 37) / 4
     mask = _disk((16, 16))
-    io.save(tmp_path / "float.qem", values, backend="cpu")
+    cpu_reference.save(tmp_path / "float.qem", values)
     np.save(tmp_path / "float.npy", values)
     with (
         io.load(tmp_path / "float.qem", device=backend) as float_ans,

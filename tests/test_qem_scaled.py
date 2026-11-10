@@ -12,6 +12,7 @@ from quantem.gpu import io
 from quantem.gpu.formats.qem import metadata
 from quantem.gpu.formats.qem.reference import _integer_arrays
 from quantem.gpu.formats.qem.validation import validate_qem
+from tests.parity import cpu_reference
 
 SHAPE = (40, 32, 6, 5)
 # Two calibration regions, each saved as one chunk; the first spans two codec blocks.
@@ -79,7 +80,7 @@ def test_validator_and_cpu_reference_restore_regional_calibration(scaled):
     report = validate_qem(path)
     assert report["codec_layout"] == "verified"
     assert report["measurements_changed_by"] == ["scaled_uint16_quantization"]
-    data = io.load(path, device="cpu")
+    data = cpu_reference.load(path)
     assert np.array_equal(np.asarray(data.data).view(np.uint32), expected.view(np.uint32))
     assert data.metadata["precision"]["regions"][1]["scale"] == REGIONS[1][2]
 
@@ -101,7 +102,7 @@ def test_merge_records_read_the_same_from_a_qem_and_an_hdf5_master(tmp_path):
     with h5py.File(tmp_path / "merged_master.h5", "w") as handle:
         handle["entry/data/data"] = np.zeros((2, 3, 4, 5), np.uint16)
         handle.attrs.update(stored)
-    from_qem = io.load(tmp_path / "merged.qem", device="cpu").metadata
+    from_qem = cpu_reference.load(tmp_path / "merged.qem").metadata
     from_master = io.inspect(tmp_path / "merged_master.h5").metadata
     assert from_qem["maped_merge"] == from_master["maped_merge"] == merge
     assert from_qem["maped_summary"] == from_master["maped_summary"] == summary
@@ -112,7 +113,7 @@ def test_merge_records_read_the_same_from_a_qem_and_an_hdf5_master(tmp_path):
     # text that is not a version-1 record is left out by both readers, not returned raw
     _write(tmp_path / "other.qem", codes, {"quantem_maped_merge_v1": json.dumps({"version": 2}),
                                            "quantem_maped_summary_v1": "not json"})
-    other = io.load(tmp_path / "other.qem", device="cpu").metadata
+    other = cpu_reference.load(tmp_path / "other.qem").metadata
     assert "maped_merge" not in other and "maped_summary" not in other
 
 

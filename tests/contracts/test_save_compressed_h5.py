@@ -71,41 +71,12 @@ def test_save_compressed_arina_h5_uint8_display_export(tmp_path):
         )
 
 
-def test_save_public_api_routes_numpy_to_arina_h5(tmp_path):
+def test_save_public_api_refuses_the_cpu(tmp_path):
+    """``io.save`` writes GPU data only; ``backend="cpu"`` is not a writer."""
     from quantem.gpu.io import save
 
-    data = np.array(
-        [
-            [[[0.2, 12.6], [255.4, 400.0]]],
-            [[[2.5, 3.5], [-4.0, 4.49]]],
-        ],
-        dtype=np.float32,
-    )
-
-    master = tmp_path / "public_master.h5"
-    result = save(
-        master,
-        data,
-        dtype="u16",
-        backend="cpu",
-        frames_per_file=1,
-        wait=False,
-    )
-    assert result.complete is True
-    assert result.wait() is result
-
-    with h5py.File(master, "r") as handle:
-        assert handle.attrs["scan_shape"].tolist() == [2, 1]
-        group = handle["entry/data"]
-        assert isinstance(group.get("data_000001", getlink=True), h5py.ExternalLink)
-
-    with h5py.File(tmp_path / "public_data_000001.h5", "r") as handle:
-        dset = handle["entry/data/data"]
-        assert dset.dtype == np.dtype("uint16")
-        np.testing.assert_array_equal(
-            dset[:],
-            np.array([[[0, 13], [255, 400]]], dtype=np.uint16),
-        )
+    with pytest.raises(ValueError, match="backend must be 'auto', 'cuda' or 'mps'"):
+        save(tmp_path / "public_master.h5", np.zeros((1, 1, 2, 2), dtype=np.uint16), backend="cpu")
 
 
 def test_save_public_api_rejects_cuda_backend_for_numpy(tmp_path):
@@ -121,7 +92,11 @@ def test_save_public_api_rejects_cuda_backend_for_numpy(tmp_path):
 def test_arina_compression_choices_preserve_bitshuffle_chunks_and_counts(tmp_path, dtype):
     from quantem.gpu.io import save
 
-    data = np.arange(3 * 2 * 4 * 5, dtype=dtype).reshape(3, 2, 4, 5)
+    cp = pytest.importorskip("cupy")
+    if not cp.cuda.runtime.getDeviceCount():
+        pytest.skip("CUDA device is not available.")
+    # the GPU bitshuffle writer takes detector frames of a multiple of 8 elements
+    data = np.arange(3 * 2 * 4 * 8, dtype=dtype).reshape(3, 2, 4, 8)
     data[0, 0, 0, 0] = np.iinfo(dtype).max
     reference = None
     for label, options in (
@@ -133,8 +108,7 @@ def test_arina_compression_choices_preserve_bitshuffle_chunks_and_counts(tmp_pat
         master = tmp_path / f"{label}_master.h5"
         save(
             master,
-            data,
-            backend="cpu",
+            cp.asarray(data),
             frames_per_file=4,
             metadata={"detector_step_mrad": 0.05},
             **options,
@@ -145,14 +119,14 @@ def test_arina_compression_choices_preserve_bitshuffle_chunks_and_counts(tmp_pat
             assert handle.attrs["detector_step_mrad"] == 0.05
             for dataset in handle["entry/data"].values():
                 assert dataset.dtype == np.dtype(dtype)
-                assert dataset.chunks == (1, 4, 5)
+                assert dataset.chunks == (1, 4, 8)
                 frames.append(dataset[:])
                 filters.append(dataset.id.get_create_plist().get_filter(0))
                 chunks.extend(
                     dataset.id.read_direct_chunk((frame, 0, 0))
                     for frame in range(dataset.shape[0])
                 )
-        np.testing.assert_array_equal(np.concatenate(frames), data.reshape(6, 4, 5))
+        np.testing.assert_array_equal(np.concatenate(frames), data.reshape(6, 4, 8))
         if reference is None:
             reference = filters, chunks
         assert (filters, chunks) == reference
@@ -249,7 +223,7 @@ def test_cuda_four_byte_hdf5_chunks_on_current_stream(tmp_path, dtype):
     np.testing.assert_array_equal(restored.reshape(values.shape), values)
 
 
-@pytest.mark.parametrize("backend", ["cpu", "cuda", "mps"])
+@pytest.mark.parametrize("backend", ["cuda", "mps"])
 def test_narrower_integer_save_is_exact_or_refused(tmp_path, backend):
     """uint16 counts saved as uint8 are written unchanged when they fit and refused when one does not.
 
@@ -270,8 +244,6 @@ def test_narrower_integer_save_is_exact_or_refused(tmp_path, backend):
 
         def convert(values):
             return torch.from_numpy(values).to("mps")
-    else:
-        convert = np.asarray
     with pytest.raises(ValueError, match="outside the uint8 range"):
         io.save(str(tmp_path / "wrapped_master.h5"), convert(counts), dtype="u8", backend=backend, verbose=False)
     fitting = np.minimum(counts, 255)

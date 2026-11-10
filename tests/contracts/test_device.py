@@ -8,85 +8,58 @@ from quantem.gpu import device
 from quantem.gpu.device import select
 
 
-def test_detect_prefers_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(select, "_cuda_probe", lambda: (True, None))
-    monkeypatch.setattr(select, "_mps_probe", lambda: (True, None))
-
-    assert device.detect() == "cuda"
-
-
-def test_profile_is_non_printing_and_reports_backend(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(select, "_cuda_probe", lambda: (False, "missing CUDA"))
-    monkeypatch.setattr(select, "_mps_probe", lambda: (False, "missing MPS"))
-
-    result = device.profile()
-
-    assert set(result) == {
-        "platform",
-        "torch",
-        "backend",
-        "device",
-        "available_devices",
-    }
-    assert result["platform"]
-    assert result["torch"]
-    assert result["backend"] in {"cuda", "mps", "cpu"}
-    assert result["device"] in {"cuda:0", "mps", "cpu"}
-    assert result["device"] in result["available_devices"]
+def gpus(monkeypatch: pytest.MonkeyPatch, *, cuda: int = 0, mps: bool = False) -> None:
+    """Pretend, inside ``select`` only, that CuPy sees ``cuda`` devices and that Apple Metal is usable or not."""
+    monkeypatch.setattr(select, "_cuda_probe", lambda: (cuda, None if cuda else "missing CUDA"))
+    monkeypatch.setattr(select, "_mps_probe", lambda: (mps, None if mps else "missing MPS"))
+    monkeypatch.setattr(select, "runtime_notice", lambda: None)
 
 
-def test_profile_selects_explicit_cuda_device(monkeypatch: pytest.MonkeyPatch) -> None:
-    import torch
-
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
-
-    result = device.profile(device="cuda:1")
-
-    assert result["backend"] == "cuda"
-    assert result["device"] == "cuda:1"
-    assert result["available_devices"] == ["cuda:0", "cuda:1"]
+def test_auto_prefers_cuda_then_mps(monkeypatch: pytest.MonkeyPatch) -> None:
+    gpus(monkeypatch, cuda=2, mps=True)
+    assert device.resolve() == "cuda"
+    assert device.resolve(None) == "cuda"
+    gpus(monkeypatch, mps=True)
+    assert device.resolve("auto") == "mps"
 
 
-def test_profile_takes_a_gpu_number(monkeypatch: pytest.MonkeyPatch) -> None:
-    """device=1 is the second visible CUDA GPU; on a Mac device=0 is the Apple GPU."""
-    import torch
-
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
-    assert device.profile(device=1)["device"] == "cuda:1"
-    assert device.profile(device=0)["device"] == "cuda:0"
-    with pytest.raises(ValueError, match=r"2 CUDA device\(s\) are visible"):
-        device.profile(device=2)
-
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
-    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
-    assert device.profile(device=0)["device"] == "mps"
-
-
-def test_profile_rejects_cuda_index_outside_visible_devices(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import torch
-
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
-
-    with pytest.raises(ValueError, match=r"2 CUDA device\(s\) are visible"):
-        device.profile(device="cuda:2")
-
-
-def test_no_cpu_scientific_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(select, "_cuda_probe", lambda: (False, "missing CUDA"))
-    monkeypatch.setattr(select, "_mps_probe", lambda: (False, "missing MPS"))
-
+def test_auto_without_a_gpu_raises_instead_of_using_the_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    gpus(monkeypatch)
     with pytest.raises(RuntimeError, match="No QuantEM GPU backend"):
-        device.detect()
-    with pytest.raises(ValueError, match="Unknown GPU backend"):
+        device.resolve("auto")
+
+
+def test_cpu_is_refused_even_on_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    gpus(monkeypatch, cuda=2)
+    with pytest.raises(ValueError, match="device='cpu' is not supported"):
         device.resolve("cpu")
+
+
+def test_explicit_cuda_devices_and_gpu_numbers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``"cuda"`` stays the current device; ``"cuda:N"`` and the integer N name visible device N."""
+    gpus(monkeypatch, cuda=2)
+    assert device.resolve("cuda") == "cuda"
+    assert device.resolve("CUDA:1") == "cuda:1"
+    assert device.resolve(1) == "cuda:1"
+    assert device.resolve(0) == "cuda:0"
+    with pytest.raises(ValueError, match=r"2 CUDA device\(s\) are visible"):
+        device.resolve("cuda:2")
+    with pytest.raises(ValueError, match=r"2 CUDA device\(s\) are visible"):
+        device.resolve(2)
+    with pytest.raises(ValueError, match="Invalid CUDA device"):
+        device.resolve("cuda:x")
+    with pytest.raises(ValueError, match="Unknown device"):
+        device.resolve("gpu")
+    with pytest.raises(RuntimeError, match="MPS backend is unavailable"):
+        device.resolve("mps")
+
+
+def test_gpu_number_zero_is_the_apple_gpu_on_a_mac(monkeypatch: pytest.MonkeyPatch) -> None:
+    gpus(monkeypatch, mps=True)
+    assert device.resolve(0) == "mps"
+    assert device.resolve("mps") == "mps"
+    with pytest.raises(RuntimeError, match="CUDA backend is unavailable"):
+        device.resolve(1)
 
 
 def test_cupy_lookups_follow_the_imported_module(monkeypatch: pytest.MonkeyPatch) -> None:
