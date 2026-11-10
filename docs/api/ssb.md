@@ -42,7 +42,7 @@ sessions retain conventional SSB. See [direct comparisons](direct-ptycho.md).
 The default `columns=2` wraps the methods into two columns. Use `columns=1`
 for a vertical stack, or explicitly request `columns=3` for a single row. `size` sets each panel's size:
 `"small"`, `"medium"`, `"large"` or `"xlarge"`, 300, 450, 600 or 900 px wide, the same presets as
-quantem.widget. The same sizing applies to result and focus comparisons;
+the viewer widgets. The same sizing applies to result and focus comparisons;
 source sampling and fitted values are unchanged.
 CLI calls create no plots. `fit.timings` separates the initial fit, refinement,
 initial handoff and final display; display work is excluded from the fit clock.

@@ -64,7 +64,7 @@ fit = ptycho.aberrations(
 `columns` controls the final comparison layout: `columns=1` stacks the three
 methods vertically; the default `columns=2` wraps them into two columns.
 Set `columns=3` explicitly for a single comparison row. `size` is `"small"`, `"medium"`, `"large"` or `"xlarge"`
-(300, 450, 600, 900 pixels per panel, the same presets as quantem.widget); static plots use
+(300, 450, 600, 900 pixels per panel, the same presets as the viewer widgets); static plots use
 a 100-DPI reference. Browser fitting and HiDPI display can scale the rendered
 figure. These settings do not alter reconstruction sampling. For example:
 
