@@ -662,15 +662,14 @@ class DirectPtycho:
         Parameters
         ----------
         to_dict : bool, optional
-            Return ``{row: {"File value", "File unit", "Value used", "Unit used", "Source"}}``
-            instead of the DataFrame, the same rows and values, for saving or comparing in code.
+            Return ``{row: {"Value", "Source"}}`` instead of the DataFrame, the same rows
+            and values, for saving or comparing in code.
 
         Returns
         -------
         pandas.DataFrame or dict
-            File value, value used, units and the source of each value used.
-            File values are the loader's effective metadata, including saved
-            calibration overrides; original source records stay in the dataset.
+            The value this session uses, with its unit, and where it came from.
+            Two columns: ``Value`` and ``Source``.
             Numbers are rounded to six significant figures for reading; the
             session's attributes (``ssb.detector_sampling_mrad``, ...) keep the
             full values.
@@ -714,17 +713,12 @@ class DirectPtycho:
                     value = labels.PENDING_PROBE_FIT
             if isinstance(value, (list, tuple)):
                 value = tuple(value)
-            rows[label] = {
-                "File value": labels.display_value(recorded["Value"]), "File unit": recorded["Unit"],
-                "Value used": labels.display_value(value),
-                "Unit used": labels.CALIBRATION_UNITS[name] if name == "detector_sampling_mrad" else recorded["Unit"],
-                "Source": source,
-            }
+            unit = labels.CALIBRATION_UNITS[name] if name == "detector_sampling_mrad" else recorded["Unit"]
+            rows[label] = {"Value": f"{labels.display_value(value)} {unit}".strip(), "Source": source}
         rotation = rows[labels.CALIBRATION_LABELS["scan_detector_rotation_deg"]]
         flipped = self._calibration_file.get(labels.CALIBRATION_LABELS["scan_detector_rotation_flipped"], {})
         rows[labels.CALIBRATION_LABELS["scan_detector_rotation_flipped"]] = {
-            "File value": flipped.get("Value", labels.NOT_RECORDED), "File unit": "",
-            "Value used": "yes" if self.scan_detector_rotation_flipped else "no", "Unit used": "",
+            "Value": "yes" if self.scan_detector_rotation_flipped else "no",
             "Source": rotation["Source"] if rotation["Source"] != labels.MODIFIED_IN_SESSION else (
                 labels.EXPLICIT_OVERRIDE if "scan_detector_rotation_deg" in self._calibration_supplied else labels.DEFAULT),
         }

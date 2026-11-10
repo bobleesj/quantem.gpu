@@ -210,7 +210,7 @@ def test_one_number_is_the_scan_step_on_both_axes_at_every_entry_point(tmp_path,
             with one, two:
                 assert one.scan_sampling_A == two.scan_sampling_A == (0.99, 0.99)
                 assert one.detector_sampling_mrad == two.detector_sampling_mrad == (0.6, 0.6)
-                assert one.calibration().loc["Scan step (row, col)", "Value used"] == (0.99, 0.99)
+                assert one.calibration().loc["Scan step (row, col)", "Value"].startswith("(0.99, 0.99)")
                 np.testing.assert_array_equal(one.preview(ABERRATIONS)[0], two.preview(ABERRATIONS)[0])
     with pytest.raises(ValueError, match="one number for both axes or a \\(row, col\\) pair"):
         DirectPtycho(counts, **{**scalar, "scan_sampling_A": (0.99, 0.99, 0.99)})
