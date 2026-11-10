@@ -14,11 +14,20 @@ import numpy as np
 import pytest
 
 from quantem.gpu.direct_ptycho import _exact_newton, fifth_order_fit, fifth_order_parameters
-from quantem.gpu.direct_ptycho._gradient_refinement import Settings, bounded_step, projected_gradient, refine
+from quantem.gpu.direct_ptycho._gradient_refinement import Settings, bounded_step, refine
 from quantem.gpu.direct_ptycho.fifth_order_parameters import Coordinates, aperture_phase, aperture_rms, packed_coefficients
 from quantem.gpu.direct_ptycho.higher_order import ORDERS
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 from quantem.gpu.direct_ptycho.workflow import DirectPtycho
+
+
+def projected_gradient(gradient, z, bounds):
+    """The gradient with zeros where a bound holds the coordinate and the ascent direction leaves the box."""
+    gradient = np.array(gradient, dtype=float)
+    gradient[(z <= bounds[:, 0]) & (gradient < 0)] = 0
+    gradient[(z >= bounds[:, 1]) & (gradient > 0)] = 0
+    return gradient
+
 
 FIFTH_BOUNDS = np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-2, 2)] * 22, dtype=float)
 

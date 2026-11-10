@@ -178,6 +178,11 @@ the first run after this change computes them again, as after any code change; t
 
 ### Removed
 
+- Test-only helpers leave the package: `mps.hardware.exact_pair_row_policy_512`, `mps.prepared.bf_storage_chunk_packs`,
+  `DirectPtycho.supports_tilt` (both backends fit tilt) and `_gradient_refinement.projected_gradient` (now in its
+  test). The retired higher-order agreement batch (`direct_ptycho/higher_order_fit.py`,
+  `mps.higher_order_agreement.agreement_batch`) moves to the test oracle `tests/hardware/mps/agreement_oracle.py`;
+  the fifth-order objective keeps the kernel source it compiles.
 - `geometry.rotate_scan` with its CUDA kernels (`geometry/rotation.py`, `geometry/cuda.py`) and its tests: no caller
   in any consumer, and its arbitrary-angle path interpolated measured counts. `geometry` keeps the scan-detector frame
   arithmetic. The parity fixture `parity/scan_rotation_v1.json` stays until the Swift `MetalScanRotator` that reads

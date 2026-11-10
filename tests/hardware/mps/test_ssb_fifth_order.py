@@ -54,7 +54,7 @@ def test_batched_candidates_preserve_scores(objective):
 def test_matches_existing_higher_order_model(objective):
     """Compare the new GPU reduction with the established Metal optics model."""
     from quantem.gpu.direct_ptycho.higher_order import ORDERS
-    from quantem.gpu.direct_ptycho.mps.higher_order_agreement import agreement_batch
+    from tests.hardware.mps.agreement_oracle import agreement_batch
 
     candidates = np.random.default_rng(619).uniform(-0.25, 0.25, (9, 28))
     candidates[:, 5] = 1.2

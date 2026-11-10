@@ -12,7 +12,7 @@ gives each its own real weight (sinc of the depth-phase rate times t / 2):
 with P = aperture exp(-i chi) at the mid-depth aberrations, chi = factor alpha^2 (C10 + C12 cos 2(phi - phi12)),
 factor = pi / lambda[A], and the soft aperture of ``prepared.compute_geometry``. Thickness 0 gives w = 1 and the standard
 correction exactly. P is even in k for C10 and C12, so P(q - k) = P(k - q); the odd higher orders are not, and
-``higher_order_agreement`` evaluates the first term at k - q. Units: q, k in 1/A; C10, C12, thickness in Angstrom (the engine unit); tilt in mrad, scan frame (row, col).
+the fifth-order agreement kernel (``mps.fifth_order``) evaluates the first term at k - q. Units: q, k in 1/A; C10, C12, thickness in Angstrom (the engine unit); tilt in mrad, scan frame (row, col).
 
 Two implementations of the thick preview. ``reconstruct_thick`` (the interactive path) runs the standard fused MPS
 row kernel with the depth weights added per (k, q) (``kernels.row_ifft._row_ifft_small_dynamic_kernel(thick=True)``) and the same

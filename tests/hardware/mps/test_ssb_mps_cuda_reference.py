@@ -652,37 +652,6 @@ def test_mps_tiled_row_intermediate_preserves_exact_column_result() -> None:
     )
 
 
-def test_mps_exact_pair_row_policy_selects_m5_max(monkeypatch) -> None:
-    """The measured topology must not spread to unmeasured high-memory chips."""
-    from quantem.gpu.direct_ptycho.mps import hardware
-
-    monkeypatch.setattr(
-        hardware,
-        "_apple_hardware_profile",
-        lambda: (128 * 1024**3, "Apple M5 Max"),
-    )
-    hardware.exact_pair_row_policy_512.cache_clear()
-    try:
-        assert hardware.exact_pair_row_policy_512(2) == (1024, (1024,))
-        assert hardware.exact_pair_row_policy_512(1) == (300, (288, 320))
-        monkeypatch.setattr(
-            hardware,
-            "_apple_hardware_profile",
-            lambda: (96 * 1024**3, "Apple M5 Max"),
-        )
-        hardware.exact_pair_row_policy_512.cache_clear()
-        assert hardware.exact_pair_row_policy_512(2) == (716, (720,))
-        monkeypatch.setattr(
-            hardware,
-            "_apple_hardware_profile",
-            lambda: (128 * 1024**3, "Apple M4 Max"),
-        )
-        hardware.exact_pair_row_policy_512.cache_clear()
-        assert hardware.exact_pair_row_policy_512(2) == (300, (288, 320))
-    finally:
-        hardware.exact_pair_row_policy_512.cache_clear()
-
-
 def test_mps_simd_column_stage_is_scoped_to_m5_max(monkeypatch) -> None:
     """The register transpose stays on its measured hardware family."""
     from quantem.gpu.direct_ptycho.mps import hardware
@@ -1587,20 +1556,6 @@ def test_mps_sparse_storage_keeps_logical_chunk_boundaries() -> None:
         bf_storage_indices_np = np.asarray([0, 3, 4, 7, 11], dtype=np.int32)
 
     assert list(bf_storage_chunks(Prepared(), 4)) == [(0, 2), (2, 4), (4, 5)]
-
-
-def test_mps_sparse_row_packs_preserve_reduction_boundaries() -> None:
-    """Row packs may share storage without merging exact column reductions."""
-    from quantem.gpu.direct_ptycho.mps.prepared import bf_storage_chunk_packs
-
-    class Prepared:
-        num_bright_field_pixels = 12
-        bf_storage_indices_np = np.asarray([0, 3, 4, 7, 11], dtype=np.int32)
-
-    assert bf_storage_chunk_packs(Prepared(), 4, 3) == [
-        [(0, 2)],
-        [(2, 4), (4, 5)],
-    ]
 
 
 @pytest.mark.parametrize("detector_bin", [1, 2])

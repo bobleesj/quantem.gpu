@@ -1,4 +1,7 @@
-"""Model agreement of the thick-sample SSB model with higher-order aberrations, on MPS.
+"""Test oracle: the per-term model agreement of the thick-sample SSB model with higher-order aberrations, on MPS.
+
+The fifth-order objective (``mps.fifth_order``) compiles the same agreement kernel; this module runs it on trial rows
+so the tests can check that kernel against independent float64 models and the objective against the kernel.
 
 Same objective as ``thick_sample.thick_fit_batch`` (the least-squares agreement of the SSB model with G(q, k) over a
 band of q, larger is better), with the probe phase chi evaluated from the 14-term Krivanek polynomial of
@@ -17,7 +20,8 @@ from functools import lru_cache
 import numpy as np
 
 from quantem.gpu.direct_ptycho._execution import checkpoint
-from quantem.gpu.direct_ptycho.higher_order_fit import num_terms, packed
+from quantem.gpu.direct_ptycho.higher_order import ORDERS
+from quantem.gpu.direct_ptycho.mps.fifth_order import _AGREEMENT_SOURCE
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 from quantem.gpu.direct_ptycho.mps.thick_sample import (
     _FIT_DISPATCH_BATCH,
@@ -65,63 +69,29 @@ _PROBE_SOURCE = """
     }
 """
 
-_AGREEMENT_SOURCE = """
-    uint q = thread_position_in_grid.x;
-    uint chunk = thread_position_in_grid.y;
-    uint base = thread_position_in_grid.z * B;
-    if (q >= N_BAND) return;
-    float wl = scalars[0], semiangle = scalars[1], ang_y = scalars[2], ang_x = scalars[3], factor = scalars[4];
-    float qx = band_qx[q], qy = band_qy[q];
-    uint off = band_flat[q];
-    float nr[B], ni[B], dd[B];
-    for (int b = 0; b < B; ++b) { nr[b] = 0.0f; ni[b] = 0.0f; dd[b] = 0.0f; }
-    uint k0 = chunk * K_CHUNK;
-    uint k1 = metal::min(uint(NUM_BF), k0 + uint(K_CHUNK));
-    for (uint k = k0; k < k1; ++k) {
-        float kxv = kx[k], kyv = ky[k];
-        float4 gk = float4(probe_geometry[k * 4], probe_geometry[k * 4 + 1],
-                           probe_geometry[k * 4 + 2], probe_geometry[k * 4 + 3]);
-        float4 gm = tf_geometry(qx - kxv, qy - kyv, wl, semiangle, ang_y, ang_x);
-        float4 gp = tf_geometry(qx + kxv, qy + kyv, wl, semiangle, ang_y, ang_x);
-        float a1 = gm.w * gk.w, a2 = gp.w * gk.w;
-        if (a1 == 0.0f && a2 == 0.0f) continue;      // no double overlap: gamma = 0
-        auto g = G[(size_t)k * (size_t)PLANE + (size_t)off];
-        float gre = g.real, gim = g.imag;
-        for (int b = 0; b < B; ++b) {
-            if (base + b >= TOTAL) break;
-            const device float* row = trial + (base + b) * STRIDE;
-            float t = row[0], thr = row[1], thc = row[2];
-            float chi_k = probe_chi[k * TOTAL + base + b];
-            float b1 = 0.0f, b2 = 0.0f, c1 = 0.0f, cp = 0.0f, s1 = 0.0f, sp = 0.0f;
-            bool thick = t != 0.0f;
-            float shift = 6.283185307179586f * (qx * thr + qy * thc);
-            if (a1 != 0.0f) {
-                // chi(k - q), not chi(q - k): they differ for the odd terms (coma, trefoil). G(q, k) ~ P(k - q) conj P(k)
-                // - P(k) conj P(k + q) for a thin object (Pennycook et al. 2015); chi(q - k) breaks G(-q) = conj G(q).
-                float chi_m = ho_chi<NT>(kxv - qx, kyv - qy, wl, row + 3);
-                s1 = metal::precise::sincos(chi_m - chi_k, c1);
-                b1 = thick ? tf_sinc(0.5f * t * (-factor * (gm.x - gk.x) - shift)) * a1 : a1;
-            }
-            if (a2 != 0.0f) {
-                float chi_p = ho_chi<NT>(qx + kxv, qy + kyv, wl, row + 3);
-                sp = metal::precise::sincos(chi_p - chi_k, cp);
-                b2 = thick ? tf_sinc(0.5f * t * (factor * (gp.x - gk.x) - shift)) * a2 : a2;
-            }
-            float gr = b1 * c1 - b2 * cp;
-            float gi = -b1 * s1 - b2 * sp;
-            nr[b] += gre * gr + gim * gi;        // G conj(gamma)
-            ni[b] += gim * gr - gre * gi;
-            dd[b] += gr * gr + gi * gi;
-        }
-    }
-    for (int b = 0; b < B; ++b) {
-        if (base + b >= TOTAL) break;
-        size_t o = ((size_t)chunk * TOTAL + base + b) * N_BAND + q;
-        numer_real[o] = nr[b];
-        numer_imag[o] = ni[b];
-        denom[o] = dd[b];
-    }
-"""
+
+
+
+
+
+def num_terms(rows: np.ndarray) -> int:
+    """Krivanek terms an agreement row carries: (width - 3) / 2."""
+    width = np.shape(rows)[-1]
+    if width < 5 or (width - 3) % 2 or (width - 3) // 2 > len(ORDERS):
+        raise ValueError(f"A trial row is (thickness, tilt_row, tilt_col) and 2 N Cartesian coefficients; got {width}.")
+    return (width - 3) // 2
+
+
+def packed(rows: np.ndarray) -> np.ndarray:
+    """Agreement rows -> the kernels' float32 rows: tilt in rad and each Cartesian coefficient divided by (n + 1)."""
+    rows = np.atleast_2d(np.asarray(rows, dtype=np.float64))
+    terms = num_terms(rows)
+    order = np.repeat(np.asarray([n for n, _ in ORDERS[:terms]], dtype=np.float64), 2)
+    out = np.empty_like(rows)
+    out[:, 0] = rows[:, 0]
+    out[:, 1:3] = rows[:, 1:3] * 1e-3
+    out[:, 3:] = rows[:, 3:] / (order + 1.0)
+    return out.astype(np.float32)
 
 
 @lru_cache(maxsize=1)
@@ -198,5 +168,3 @@ def agreement_batch(prepared, rows, band_inv_A: tuple[float, float] = (0.2, 0.9)
         out[start:start + batch] = (weight[None] * power).sum(axis=1)
     return out
 
-
-__all__ = ["agreement_batch"]

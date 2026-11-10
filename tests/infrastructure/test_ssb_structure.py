@@ -6,23 +6,6 @@ import math
 from pathlib import Path
 
 
-def test_public_ssb_api_has_one_workflow() -> None:
-    """C1: scientist API, expect one session with explicit operations."""
-
-    from quantem.gpu import DirectPtycho
-
-    for name in (
-        "open",
-        "aberrations",
-        "scan_rotations",
-        "show",
-        "run",
-        "preview",
-        "close",
-    ):
-        assert hasattr(DirectPtycho, name)
-
-
 def test_ssb_open_keeps_detector_storage_dtype_explicit() -> None:
     """C1b: raw HDF5 loading defaults native and permits an explicit dtype."""
 

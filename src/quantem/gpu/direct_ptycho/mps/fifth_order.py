@@ -1,7 +1,7 @@
 """GPU-resident fifth-order SSB model agreement on Apple GPUs.
 
-The Metal polynomial and depth model are shared with the existing higher-order
-agreement kernel. The final weighted reduction also stays on the GPU; only one
+The Metal polynomial and depth model are those of the per-term agreement kernel
+below, which the tests also run on its own against a float64 model. The final weighted reduction also stays on the GPU; only one
 float32 score per candidate returns to the host optimizer. Coordinates match
 the CUDA objective, including sample tilt and depth spread.
 """
@@ -14,13 +14,71 @@ from quantem.gpu.direct_ptycho._execution import checkpoint
 from quantem.gpu.direct_ptycho.fifth_order_parameters import Coordinates
 from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
-from quantem.gpu.direct_ptycho.mps.higher_order_agreement import _AGREEMENT_SOURCE
 from quantem.gpu.direct_ptycho.mps.resident_fit import _probe_geometry
 from quantem.gpu.direct_ptycho.mps.thick_sample import (
     _K_CHUNK,
     _THICK_FIT_BATCH_HEADER,
     _band,
 )
+
+# Model agreement per (q, BF chunk, trial tile) of the thick-sample SSB model with chi from the Krivanek polynomial.
+_AGREEMENT_SOURCE = """
+    uint q = thread_position_in_grid.x;
+    uint chunk = thread_position_in_grid.y;
+    uint base = thread_position_in_grid.z * B;
+    if (q >= N_BAND) return;
+    float wl = scalars[0], semiangle = scalars[1], ang_y = scalars[2], ang_x = scalars[3], factor = scalars[4];
+    float qx = band_qx[q], qy = band_qy[q];
+    uint off = band_flat[q];
+    float nr[B], ni[B], dd[B];
+    for (int b = 0; b < B; ++b) { nr[b] = 0.0f; ni[b] = 0.0f; dd[b] = 0.0f; }
+    uint k0 = chunk * K_CHUNK;
+    uint k1 = metal::min(uint(NUM_BF), k0 + uint(K_CHUNK));
+    for (uint k = k0; k < k1; ++k) {
+        float kxv = kx[k], kyv = ky[k];
+        float4 gk = float4(probe_geometry[k * 4], probe_geometry[k * 4 + 1],
+                           probe_geometry[k * 4 + 2], probe_geometry[k * 4 + 3]);
+        float4 gm = tf_geometry(qx - kxv, qy - kyv, wl, semiangle, ang_y, ang_x);
+        float4 gp = tf_geometry(qx + kxv, qy + kyv, wl, semiangle, ang_y, ang_x);
+        float a1 = gm.w * gk.w, a2 = gp.w * gk.w;
+        if (a1 == 0.0f && a2 == 0.0f) continue;      // no double overlap: gamma = 0
+        auto g = G[(size_t)k * (size_t)PLANE + (size_t)off];
+        float gre = g.real, gim = g.imag;
+        for (int b = 0; b < B; ++b) {
+            if (base + b >= TOTAL) break;
+            const device float* row = trial + (base + b) * STRIDE;
+            float t = row[0], thr = row[1], thc = row[2];
+            float chi_k = probe_chi[k * TOTAL + base + b];
+            float b1 = 0.0f, b2 = 0.0f, c1 = 0.0f, cp = 0.0f, s1 = 0.0f, sp = 0.0f;
+            bool thick = t != 0.0f;
+            float shift = 6.283185307179586f * (qx * thr + qy * thc);
+            if (a1 != 0.0f) {
+                // chi(k - q), not chi(q - k): they differ for the odd terms (coma, trefoil). G(q, k) ~ P(k - q) conj P(k)
+                // - P(k) conj P(k + q) for a thin object (Pennycook et al. 2015); chi(q - k) breaks G(-q) = conj G(q).
+                float chi_m = ho_chi<NT>(kxv - qx, kyv - qy, wl, row + 3);
+                s1 = metal::precise::sincos(chi_m - chi_k, c1);
+                b1 = thick ? tf_sinc(0.5f * t * (-factor * (gm.x - gk.x) - shift)) * a1 : a1;
+            }
+            if (a2 != 0.0f) {
+                float chi_p = ho_chi<NT>(qx + kxv, qy + kyv, wl, row + 3);
+                sp = metal::precise::sincos(chi_p - chi_k, cp);
+                b2 = thick ? tf_sinc(0.5f * t * (factor * (gp.x - gk.x) - shift)) * a2 : a2;
+            }
+            float gr = b1 * c1 - b2 * cp;
+            float gi = -b1 * s1 - b2 * sp;
+            nr[b] += gre * gr + gim * gi;        // G conj(gamma)
+            ni[b] += gim * gr - gre * gi;
+            dd[b] += gr * gr + gi * gi;
+        }
+    }
+    for (int b = 0; b < B; ++b) {
+        if (base + b >= TOTAL) break;
+        size_t o = ((size_t)chunk * TOTAL + base + b) * N_BAND + q;
+        numer_real[o] = nr[b];
+        numer_imag[o] = ni[b];
+        denom[o] = dd[b];
+    }
+"""
 
 _HEADER = (
     "#define SSB_DEVICE inline\n"

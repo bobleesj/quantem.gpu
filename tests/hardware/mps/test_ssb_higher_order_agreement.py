@@ -1,4 +1,4 @@
-"""The MPS per-term agreement kernel (``mps.higher_order_agreement.agreement_batch``) against independent models.
+"""The MPS per-term agreement kernel (``tests.hardware.mps.agreement_oracle.agreement_batch``) against independent models.
 
 ``tests/hardware/mps/test_ssb_fifth_order.py`` checks the fifth-order objective against this kernel, so the kernel is
 checked here on its own: with zero higher orders it is the joint fit's two-term kernel, and with coma, trefoil and
@@ -48,7 +48,7 @@ def _evidence(prepared):
 
 def test_agreement_reduces_to_the_two_term_kernel_and_matches_the_physical_model(simulation):
     """Zero higher orders: the joint fit's kernel. With coma, trefoil and C30: a float64 sum over the full q plane."""
-    from quantem.gpu.direct_ptycho.mps.higher_order_agreement import agreement_batch
+    from tests.hardware.mps.agreement_oracle import agreement_batch
 
     data, _, detector_mrad = simulation
     with session(data, detector_mrad, "mps") as ssb:

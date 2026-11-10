@@ -10,8 +10,6 @@ import subprocess
 from functools import lru_cache
 
 # the 512 pair-pack policy where no machine-specific measurement applies
-_EXACT_ROW_PACK_STORAGE_BF_512 = 300
-_EXACT_ROW_STORAGE_CLASSES_BF_512 = (288, 320)
 
 
 def require_mlx():
@@ -110,27 +108,6 @@ def default_phase_col_k_bf(
         # the exact BF evidence.
         return 4096
     return 32
-
-
-@lru_cache(maxsize=2)
-def exact_pair_row_policy_512(batch: int = 2) -> tuple[int, tuple[int, ...]]:
-    """Return the measured 512 pair-pack policy for this hardware class."""
-
-    total, chip = _apple_hardware_profile()
-    if chip == "Apple M5 Max" and int(batch) == 2:
-        if total >= 120 * 1024**3:
-            # On the 128 GB M5 Max a pair of candidates takes the same time in
-            # 1,024-plane packs as in one 2,476-plane pack (217.5 against 218.1 ms
-            # per pair, interleaved medians, 8,939 bright-field pixels), with a
-            # 4.0 GiB row intermediate instead of 9.8 GiB. Every original
-            # 512-logical-BF reduction range remains separate in the column
-            # output, so the pack size does not alter summation order.
-            return 1024, (1024,)
-        if total >= 96 * 1024**3:
-            # Lower-memory M5 Max systems retain the measured four-pack policy.
-            # A 716-plane greedy limit uses one stable 720-plane class.
-            return 716, (720,)
-    return _EXACT_ROW_PACK_STORAGE_BF_512, _EXACT_ROW_STORAGE_CLASSES_BF_512
 
 
 def use_simd_radix8_col_stage_512() -> bool:

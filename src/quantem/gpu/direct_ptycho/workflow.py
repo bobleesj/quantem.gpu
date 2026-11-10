@@ -3253,14 +3253,6 @@ class DirectPtycho:
                 **higher,
             )
 
-    @property
-    def supports_tilt(self) -> bool:
-        """True when this session's backend implements the thick-sample model (``aberrations(tilt=True)``, ``preview(sample_tilt_mrad=...)``).
-
-        Both Python backends, CUDA and MPS, implement it.
-        """
-        return self.backend in ("cuda", "mps")
-
     def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool,
                   *, fixed_aberrations: dict[str, float] | None = None,
                   bounds: dict[str, object] | None = None,

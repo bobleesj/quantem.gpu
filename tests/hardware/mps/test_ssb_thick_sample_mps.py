@@ -52,7 +52,6 @@ def test_fit_tilt_recovers_known_tilt(name, sample_tilt_mrad):
     _require_mps()
     data, det_mrad = _simulated_crystal(name)
     ssb = _session(data, det_mrad)
-    assert ssb.supports_tilt
     result = ssb.aberrations(search="primary", tilt=True, verbose=False)
     # 1 mrad is the scan/detector sampling limit of this simulation (same bound as the CUDA test)
     assert abs(result.sample_tilt_mrad[0] - sample_tilt_mrad[0]) < 1.0

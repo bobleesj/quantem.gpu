@@ -85,14 +85,6 @@ def bounded_step(gradient, hessian, radius, z, lower, upper, scaling):
     return step
 
 
-def projected_gradient(gradient, z, bounds):
-    """The gradient with zeros where a bound holds the coordinate and the ascent direction leaves the box."""
-    gradient = np.array(gradient, dtype=float)
-    gradient[(z <= bounds[:, 0]) & (gradient < 0)] = 0
-    gradient[(z >= bounds[:, 1]) & (gradient > 0)] = 0
-    return gradient
-
-
 def refine(evaluate, start, bounds, *, start_value=None, settings=None, log=None, progress=None):
     """Refine ``start`` inside ``bounds`` (n x 2) to the full-data maximum.
 
