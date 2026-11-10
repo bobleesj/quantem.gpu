@@ -326,6 +326,23 @@ the first run after this change computes them again, as after any code change; t
 
 ### Changed
 
+- `io.load(hot_pixel_correction=...)` defaults to `"none"`: a load keeps every stored value, and detector products
+  and SSB leave the flagged pixels out. `"median"` fills them only when asked; the load line names the count and
+  the setting that does the other. Callers already passed `"none"` 129 times against 20 `"median"`; the live stream
+  (`LiveEncoder`, `io.paired`) keeps its median fill. Default call on a 256 x 256 gold nanoparticle scan
+  (192 x 192 detector, 4 flagged pixels; RTX PRO 6000, sha256 prefixes):
+
+  | Default `io.load` then | Before (`"median"`) | After (`"none"`) |
+  |---|---|---|
+  | BF pixels, detector sampling (mrad) | 9230, 0.5474838 | 9229, 0.5475128 |
+  | `run` at C10 1.47 nm: phase, loss | 4e00b278f6c3cc92, 0.0297085 | 726cd57527f13528, 0.0297091 |
+  | `aberrations(search="primary", tilt=False)`: C10, loss | -5.227730 nm, 0.0295484 | -5.227472 nm, 0.0295493 |
+  | `aberrations()` (tilt, fifth order): C10 | 4.163500 nm | 4.165118 nm |
+  | `dpc.run`: rotation | 1.24085 deg | 1.24574 deg |
+  | `parallax.run`: image | 9cca733c45c7abaa | 9cca733c45c7abaa |
+
+  A scan with no flagged pixels is unchanged bit for bit (the 256 x 256 Arina scan used for every other check).
+
 - optuna is pinned to `==4.9.0` and the broad SSB search raises `ImportError` on any other version, instead of
   silently falling back to stock TPE. The batched sampler reproduces stock Optuna 4.9.0 TPE bit for bit and is kept for
   speed. Measured on one 256 x 256 Arina acquisition (192 x 192 detector, 8,878 BF pixels, RTX PRO 6000, seed 17,
