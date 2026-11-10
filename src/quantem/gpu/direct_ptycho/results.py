@@ -583,6 +583,8 @@ class DirectPtychoResult(Mapping[str, float]):
             except ValueError:
                 # An array-backed fit has no acquisition identity to record; the arrays stand.
                 pass
+        names = ", ".join(Path(item).name for item in written)
+        print(f"saved {names} in {folder}")
         return written
 
     def save_calibration(self, path: str | Path = "calibration.json") -> Path:
