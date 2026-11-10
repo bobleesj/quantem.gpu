@@ -414,6 +414,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     from quantem.gpu.formats.ssb_phase import export_result, read_result
     from quantem.gpu.direct_ptycho import workflow
     from quantem.gpu.direct_ptycho.brightfield import BrightFieldSelection
+    from quantem.gpu.direct_ptycho.mps import backend as mps_backend
     from quantem.gpu.direct_ptycho.mps.frames import MpsBfColumnFrames
     from quantem.gpu.direct_ptycho.series import write_fit_metadata
 
@@ -430,7 +431,7 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     columns = tmp_path / "columns.u16"
     np.zeros((2, 4), dtype=np.uint16).tofile(columns)
     monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
-    monkeypatch.setattr(workflow, "MpsSSBBackend", RecordingBackend)
+    monkeypatch.setattr(mps_backend, "MpsSSBBackend", RecordingBackend)
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.25, 0.25)}
     # an export with its own calibration, then one that records only the disk edge
     for exported, expected in (((0.61, 0.62), (0.61, 0.62)), (None, (30.0 / 48.0, 30.0 / 48.0))):
