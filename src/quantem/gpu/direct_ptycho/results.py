@@ -584,6 +584,8 @@ class DirectPtychoResult(Mapping[str, float]):
              show_parameters: bool = True,
              interactive: bool = False, show_fft: bool = False,
              fft_limit_inv_A: float | None = None,
+             clim: tuple[float, float] | None = None,
+             percentiles: tuple[float, float] | None = None,
              size: Literal["small", "medium", "large", "xlarge"] | int | None = None,
              rows: int | None = None, columns: int | None = None,
              region: Literal["center", "top-left", "top-right", "bottom-left", "bottom-right"] | None = None,
@@ -660,6 +662,14 @@ class DirectPtychoResult(Mapping[str, float]):
             upsample factor shows the same physical region. Neural comparisons use full-field log10 amplitude with shared
             1–99.8 percentile limits and magma colors. Only displayed frequency
             support is restricted; stored reconstruction arrays are unchanged.
+        clim : pair of float, optional
+            Absolute phase limits in radians. Overrides the fitted limits and
+            ``percentiles`` for this call without changing the result.
+        percentiles : pair of float, optional
+            Percentiles of the displayed phase that set the contrast, pooled
+            over every panel in the call. ``(0.5, 99.5)`` clips the tails; pass
+            a narrow pair to pull out faint contrast. Mutually exclusive with
+            ``clim``.
         size : {"small", "medium", "large", "xlarge"}, int or None, optional
             Per-panel width: small 3, medium 4.5, large 6 or xlarge 9 inches
             at the static 100-DPI reference, or a positive integer pixel width
@@ -713,6 +723,12 @@ class DirectPtychoResult(Mapping[str, float]):
 
         if fft_limit_inv_A is not None and (not show_fft or not np.isfinite(fft_limit_inv_A) or fft_limit_inv_A <= 0):
             raise ValueError("Use show_fft=True and a positive finite fft_limit_inv_A.")
+        if clim is not None and percentiles is not None:
+            raise ValueError("Set clim or percentiles, not both.")
+        if clim is not None and (len(clim) != 2 or not all(np.isfinite(clim)) or clim[0] >= clim[1]):
+            raise ValueError(f"clim must be two increasing finite radians; got {clim!r}.")
+        if percentiles is not None and (len(percentiles) != 2 or not 0 <= percentiles[0] < percentiles[1] <= 100):
+            raise ValueError(f"percentiles must increase within 0..100; got {percentiles!r}.")
         if (region is not None or interactive or show_fft) and view != "phase":
             raise ValueError("interactive, show_fft and region apply to phase images; use show(view='phase', ...).")
         if interactive and (save is not None or axsize is not None):
@@ -752,7 +768,8 @@ class DirectPtychoResult(Mapping[str, float]):
                 region = "center"
             figure = _phase_comparison(self, *others, axsize=axsize, cmap=cmap, region=region,
                                        show_fft=show_fft, interactive=interactive, size=size or "medium",
-                                       columns=columns, rows=rows, fft_limit_inv_A=fft_limit_inv_A)
+                                       columns=columns, rows=rows, fft_limit_inv_A=fft_limit_inv_A,
+                                       clim=clim, percentiles=percentiles)
             if save is not None:
                 figure.savefig(save, dpi="figure", bbox_inches="tight")
             return figure
@@ -1088,7 +1105,9 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
                       region: str | None = "center", show_fft: bool = False,
                       interactive: bool = False, size: str | int = "medium",
                       columns: int | None = None, rows: int | None = None,
-                      fft_limit_inv_A: float | None = None):
+                      fft_limit_inv_A: float | None = None,
+                      clim: tuple[float, float] | None = None,
+                      percentiles: tuple[float, float] | None = None):
     """Show calibrated full fields, matching crops and optionally their spectra."""
     entries = [(result, neural) for result in (first, *others)
                for neural in ((False, True) if result.neural_phase is not None else (False,))]
@@ -1134,6 +1153,13 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
         phase_limits = tuple(np.percentile(np.concatenate([p.ravel() for p in phases]), [.5, 99.5]))
         if phase_limits[0] == phase_limits[1]:
             phase_limits = (phase_limits[0] - .5, phase_limits[1] + .5)
+    if percentiles is not None:
+        phase_limits = tuple(float(v) for v in np.percentile(
+            np.concatenate([p.ravel() for p in phases]), list(percentiles)))
+        if phase_limits[0] == phase_limits[1]:
+            phase_limits = (phase_limits[0] - .5, phase_limits[1] + .5)
+    if clim is not None:
+        phase_limits = (float(clim[0]), float(clim[1]))
     titles = [_phase_title(result, neural=neural) for result, neural in entries]
     bars = [scalebar(step[1], "Å", phase.shape[0], axsize[0]) for step, phase in zip(sampling, phases, strict=True)]
     groups = [phases]
