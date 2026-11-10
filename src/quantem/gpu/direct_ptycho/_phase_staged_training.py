@@ -281,7 +281,7 @@ def _direction_gain(case, head):
     return -change / case.power
 
 
-def _fit_head(training, validation, steps, seed, trace, label="direction head"):
+def _fit_head(training, validation, steps, seed, trace, label="correction direction"):
     device = training[0].base.device
     torch.manual_seed(seed)
     head = Direction().to(device)
@@ -378,7 +378,7 @@ def train(
         heads, head_steps = [], []
         for index, head_seed in enumerate((seed + 13, seed + 37), start=1):
             head, selected = _fit_head(training, validation, direction_steps, head_seed, trace,
-                                       label=f"direction head {index} of 2")
+                                       label=f"correction direction {index} of 2")
             heads.append(head)
             head_steps.append(selected)
         torch.cuda.synchronize(device)
