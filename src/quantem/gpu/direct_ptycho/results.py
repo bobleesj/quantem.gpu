@@ -1159,6 +1159,16 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
     """Show calibrated full fields, matching crops and optionally their spectra."""
     entries = [(result, neural) for result in (first, *others)
                for neural in ((False, True) if result.neural_phase is not None else (False,))]
+    # A compared result re-solved with the same optics and smoothing repeats the base
+    # image; drop the copy so every column is a different reconstruction.
+    unique, seen = [], []
+    for result, neural in entries:
+        array = host_array(result.neural_phase if neural else result.phase)
+        if any(array.shape == previous.shape and np.array_equal(array, previous) for previous in seen):
+            continue
+        seen.append(array)
+        unique.append((result, neural))
+    entries = unique
     results = [result for result, _ in entries]
     count = len(results)
     columns = resolve_columns(count, columns=columns, rows=rows, default=min(count, 2))
