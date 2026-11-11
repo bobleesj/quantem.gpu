@@ -1,6 +1,6 @@
 # Backend Optimization Matrix
 
-This page is the single checklist for accelerated Show4DSTEM and SSB work
+This page is the single checklist for accelerated Show4DSTEM and direct ptychography work
 across CUDA, MPS, and WebGPU. It summarizes what is optimized today, what is
 only source-present, and what still needs real user-facing agreement and FPS
 signoff.
@@ -13,7 +13,7 @@ crop, detector binning, BF reduction, saved derived cache, or CPU fallback.
 | Target | Budget | Use case |
 | --- | ---: | --- |
 | Smooth drag | `<=16.7 ms` | 60 FPS ROI dragging and scrub feedback. |
-| Interactive | `<=33.3 ms` | 30 FPS BF/DF/ADF/DPC and SSB live steering. |
+| Interactive | `<=33.3 ms` | 30 FPS BF/DF/ADF/DPC and direct ptychography live steering. |
 | Reviewable | `<=100 ms` | 10 FPS large or exact paths that are still usable. |
 | Slow path | `>100 ms` | Needs redesign before calling it interactive. |
 
@@ -30,7 +30,7 @@ Raw 4D-STEM footprint for native `192x192` detector data:
 | `512x512x192x192` | `9.66 GB` / `9.0 GiB` | `19.33 GB` / `18.0 GiB` | `1.05 MB` |
 | `1024x1024x192x192` | `38.65 GB` / `36.0 GiB` | `77.31 GB` / `72.0 GiB` | `4.19 MB` |
 
-SSB Hermitian `G_qk` footprint, complex64 half-plane:
+Direct ptychography Hermitian `G_qk` footprint, complex64 half-plane:
 
 | Active BF | `128x128` | `256x256` | `512x512` | `1024x1024` |
 | ---: | ---: | ---: | ---: | ---: |
@@ -38,7 +38,7 @@ SSB Hermitian `G_qk` footprint, complex64 half-plane:
 | `~8809` BF, full-BF style | `0.59 GB` | `2.33 GB` | `9.27 GB` | `37.02 GB` |
 | `~9070` BF, fitted full field | `0.60 GB` | `2.40 GB` | `9.55 GB` | `38.12 GB` |
 
-Full-plane SSB `G_qk` is about twice the Hermitian footprint and is not a
+Full-plane direct ptychography `G_qk` is about twice the Hermitian footprint and is not a
 public runtime mode.
 
 ## Streaming Ptychography IO
@@ -73,8 +73,8 @@ acquisition.
 | Dense DF | Dense arrays: selected-pixel reducer over the mask, without a cached total. | Dense arrays: row-span or dense 0/1 mask reducer, without a cached total. | Cached full-detector total minus complement source path. | WebGPU needs explicit dense-DF timing and memory behavior at `512` and `1024`. |
 | CoM/DPC | Fused CUDA moment reducer. | Raw Metal `com_u8`/`com_u16`, chunk-backed dispatch. | `maskedCoMBuffer` and `maskedDpcBuffer` source paths have full `512` headed signoff for row/col display. | WebGPU DPC row/col clears the strict `1e-5` max-error gate. |
 | iDPC | Uses shared DPC phase reconstruction after CoM. | Same API over MPS CoM outputs. | Fixed-rotation browser solver with paired DPC buffers and a dual-real FFT. | WebGPU iDPC is signed off at float32 FFT tolerance and clears 30 FPS by median; p95/outlier tuning remains. |
-| SSB object redraw | Optimized native kernels for `128/256/512/1024`; `512` and object review are strong. | Implemented; real `512` object-wave steering is usable after warm-up. | ShowPtycho SSB WGSL source supports `128/256/512/1024`. | MPS/WebGPU need broader same-BF real-data signoff. |
-| SSB exact phase/loss | `512` real full-BF meets about 30 FPS; `1024` remains slow. | `128` real-time, `256` near, `512/1024` not real-time. | Source exists; not yet a CUDA-level matrix. | Extend 12-cell matrix with real WebGPU adapter and MPS full-BF runs. |
+| Direct ptychography object redraw | Optimized native kernels for `128/256/512/1024`; `512` and object review are strong. | Implemented; real `512` object-wave steering is usable after warm-up. | ShowPtycho direct ptychography WGSL source supports `128/256/512/1024`. | MPS/WebGPU need broader same-BF real-data signoff. |
+| Direct ptychography exact phase/loss | `512` real full-BF meets about 30 FPS; `1024` remains slow. | `128` real-time, `256` near, `512/1024` not real-time. | Source exists; not yet a CUDA-level matrix. | Extend 12-cell matrix with real WebGPU adapter and MPS full-BF runs. |
 
 ## Current Measured Checkpoints
 
@@ -214,11 +214,11 @@ Bounded experiments from this sprint:
 | Real crop product agreement gate | CUDA | opt-in local HDF5 crop, BF radius `30`, `128x128` scan | BF/ADF/DF exact; full and BF-masked CoM within `1e-5`; wall `6:10` with independent reference | Strong product correctness gate; wall time is reference-heavy, not a clean benchmark. |
 | Real crop product agreement gate | MPS | opt-in local HDF5 crop, BF radius `30`, `128x128` scan | BF/ADF/DF exact; full and BF-masked CoM within `1e-5`; initially exposed masked-CoM fallback bug, fixed and passed | Strong product correctness gate on Apple GPU. |
 | WebGPU corrected-frame checksum gate | WebGPU on Apple GPU | full `512x512x192x192`, first/middle/last detector frames after bad-pixel correction | selected-frame `sum/min/max/n` exactly matches CUDA for all three scan indices | Strong browser HDF5 parse/decode/chunk-order/dtype/bad-pixel parity gate without reading the full 9.7 GB stack back to CPU. |
-| SSB exact phase/loss | CUDA | real `512x512` full-BF field | mean about `32.5 ms`, p50 about `32.2 ms`, p95 about `33.3 ms` | Meets 30 FPS with small p95 margin. |
-| SSB exact phase/loss | CUDA | synthetic `1024x1024`, full-BF style | about `198 ms`, `5 FPS` | Not interactive yet. |
-| SSB exact phase/loss | MPS | real `512x512`, radius-30 BF, prepared Hermitian `G_qk` on Apple GPU | fresh Apple Silicon `origin/main` probe: phase-only mean `76.67 ms`, p50 `76.88 ms`, p95 `78.98 ms`; phase+loss mean `76.28 ms`, p50 `76.52 ms`, p95 `77.41 ms`; loss `0.2932657` | Correct and reviewable at about `13 FPS`, but still not CUDA-like. Object-wave steering for the same BF policy measured `10.86 ms` mean. |
-| SSB exact phase/loss | MPS | real `512x512`, full active BF mask, prepared Hermitian `G_qk` on Apple GPU | fresh Apple Silicon `origin/main` probe: phase-only mean `481.15 ms`, p50 `476.32 ms`, p95 `509.44 ms`; phase+loss mean `528.90 ms`, p50 `537.58 ms`, p95 `557.51 ms`; loss `0.0885396` | Correct but slow. This is the large-BF policy that still needs a deeper MPS row/column FFT topology. |
-| SSB exact phase/loss | MPS | synthetic full-BF-style `1024x1024`, `8809` BF | fresh Apple Silicon source-tree probe: object median `142.7 ms`; exact phase+loss median `669.1 ms` with `37.02 GB` Hermitian `G_qk` | Needs deeper MPS topology for large exact phase/loss; chunk tuning alone is not enough. |
+| Direct ptychography exact phase/loss | CUDA | real `512x512` full-BF field | mean about `32.5 ms`, p50 about `32.2 ms`, p95 about `33.3 ms` | Meets 30 FPS with small p95 margin. |
+| Direct ptychography exact phase/loss | CUDA | synthetic `1024x1024`, full-BF style | about `198 ms`, `5 FPS` | Not interactive yet. |
+| Direct ptychography exact phase/loss | MPS | real `512x512`, radius-30 BF, prepared Hermitian `G_qk` on Apple GPU | fresh Apple Silicon `origin/main` probe: phase-only mean `76.67 ms`, p50 `76.88 ms`, p95 `78.98 ms`; phase+loss mean `76.28 ms`, p50 `76.52 ms`, p95 `77.41 ms`; loss `0.2932657` | Correct and reviewable at about `13 FPS`, but still not CUDA-like. Object-wave steering for the same BF policy measured `10.86 ms` mean. |
+| Direct ptychography exact phase/loss | MPS | real `512x512`, full active BF mask, prepared Hermitian `G_qk` on Apple GPU | fresh Apple Silicon `origin/main` probe: phase-only mean `481.15 ms`, p50 `476.32 ms`, p95 `509.44 ms`; phase+loss mean `528.90 ms`, p50 `537.58 ms`, p95 `557.51 ms`; loss `0.0885396` | Correct but slow. This is the large-BF policy that still needs a deeper MPS row/column FFT topology. |
+| Direct ptychography exact phase/loss | MPS | synthetic full-BF-style `1024x1024`, `8809` BF | fresh Apple Silicon source-tree probe: object median `142.7 ms`; exact phase+loss median `669.1 ms` with `37.02 GB` Hermitian `G_qk` | Needs deeper MPS topology for large exact phase/loss; chunk tuning alone is not enough. |
 
 ## Required Agreement Gates
 
@@ -235,8 +235,8 @@ speed:
 | WebGPU BF/ADF/DF | Python `quantem.gpu` reference arrays exported with public-safe labels. | browser adapter, max/mean/p99 error, warm compute ms, display ms, no SwiftShader timing claims. |
 | WebGPU CoM/DPC/iDPC | Python CUDA/MPS reference arrays with same mask, mean policy, and fixed iDPC rotation. | row/col error, centered component error, iDPC float32 FFT error, compute/readback/display split. |
 | WebGPU HDF5 load/decode | Python CUDA/MPS corrected-load reference from the same local evidence. | selected corrected frame checksum, frame order, dtype, bad-pixel count, adapter, load split, no private path in artifacts. |
-| SSB object | Corrected-object reference at same BF, aberrations, scan size, and precision. | object complex error or phase/amplitude image error, warm redraw FPS. |
-| SSB phase/loss | Existing exact phase/loss path; never object-wave identity as reference. | phase mean/p99/max, scalar loss delta, fit/reconstruction agreement. |
+| Direct ptychography object | Corrected-object reference at same BF, aberrations, scan size, and precision. | object complex error or phase/amplitude image error, warm redraw FPS. |
+| Direct ptychography phase/loss | Existing exact phase/loss path; never object-wave identity as reference. | phase mean/p99/max, scalar loss delta, fit/reconstruction agreement. |
 
 ## Failed / Bounded Hypotheses
 
@@ -253,7 +253,7 @@ speed:
 | Low8-only bslz4 decode. | Count audit after bad-pixel correction showed max unmasked count `57` and zero unmasked pixels above `255`, so low8 is lossless for the tested browse output. Block-cooperative low8 reduced full local-file load to about `1.27 s`; frame-cooperative low8 reduced it to about `1.12 s` and seven-load profile-sum to `7.88 s`, all with corrected-frame checksum parity. | Promote frame-cooperative low8 for count-audited `h5_uint8_lossless=True` exports. Keep it disabled for general `uint16` data unless the audit passes. |
 | HDF5 frame-index manifest only. | The metadata-only frame-offset manifest preserved parity and reduced parse time, but full-stack local load improved only about `1%` because file read, compressed upload, and WGSL decode dominate. | Removed from the browser loader. The `QH5IDX01` block-index sidecar is the retained metadata cache. |
 | Product-first masked-sum HDF5 decode. | Exact BF r30 parity now passes for a true `256` crop, full `512`, a `1024` repeat-stress gate, and true real-acquisition `1024` product-first evidence. Full `512` reaches about `1.03 s` wall and `0.51 s` product stage, but it still reads whole native HDF5 files and packs `1.52 GB` of selected compressed blocks. | Promote as the correct virtual-image product direction. The next speed jump requires selected-block acquisition/layout, not more scan cropping or BF reduction. |
-| Selected-block sidecar layout. | A sidecar preserving exact native bslz4 streams for selected detector blocks cut full `512` BF r30 wall time from about `1.03 s` to median `0.528 s`, with exact CUDA parity; seven repeats summed to `3.716 s`. | Promote as the browser fast-load contract for product-first VI/DPC/SSB evidence, provided metadata records the detector-block coverage and the UI falls back when the mask asks for missing blocks. |
+| Selected-block sidecar layout. | A sidecar preserving exact native bslz4 streams for selected detector blocks cut full `512` BF r30 wall time from about `1.03 s` to median `0.528 s`, with exact CUDA parity; seven repeats summed to `3.716 s`. | Promote as the browser fast-load contract for product-first VI/DPC/direct evidence, provided metadata records the detector-block coverage and the UI falls back when the mask asks for missing blocks. |
 | Sidecar crop prefilter plus auto product batching. | Moving sidecar span filtering before full reads and auto-batching small row-window specs cut the true `256x256` crop page total to about `0.253 s` and product stage to about `0.141 s`, with exact CUDA parity before the later direct-float/pipeline work. | Promote for scan-region products. Keep full `512`/`1024` at batch `1`, where larger batches increased upload pressure. |
 | Pixel reducer workgroup variants. | Forced `pixel-wg64/128/256` all preserved exact parity on `256`, `512`, and `1024` repeat-stress runs, but `wg64` was fastest in every case. Current representative page totals for `wg64/128/256`: `256` crop `0.292/0.315/0.363 s`, `512` full `0.470/0.551/0.689 s`, `1024` repeat-stress `1.536/1.835/2.461 s`. | Keep wider pixel variants as profiling knobs only. The production default is now the grouped-mask `wg64` kernel below. |
 | Grouped-mask popcount reducer. | Re-tested after the current browser/source sync, grouped-mask `wg64` preserved exact parity and was fastest for full `512` and `1024` repeat-stress before the later direct-float/pipeline work. It was not fastest for the true `256` crop after auto-batching; pixel `wg64` won there. | Use automatic routing: pixel `wg64` for `<=256x256` product outputs, grouped-mask `wg64` above that. Leave `window.__QT_BSLZ4_MASKED_SUM_GROUPMASK=true/false` for diagnostics. |

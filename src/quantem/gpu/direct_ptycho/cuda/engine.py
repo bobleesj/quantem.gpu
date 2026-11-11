@@ -1,4 +1,4 @@
-"""The CUDA engine for single-sideband ptychography.
+"""The CUDA engine for direct ptychography.
 
 The engine holds the bright-field Fourier evidence ``G_qk`` on the device and
 evaluates corrected phases, the phase-variance loss and (through
@@ -36,7 +36,7 @@ _CHUNK_TARGET_BYTES = 2 * 1024 ** 3
 class _PreparedCudaBfSubset:
     """Reusable CUDA-owned state for an explicitly approximate drag preview.
 
-    ``engine`` is the :class:`SSBEngine` whose full-BF state this subset
+    ``engine`` is the :class:`DirectEngine` whose full-BF state this subset
     swaps out while it is entered and restores on exit. What does not depend
     on the rotation (the subset's rows of G, detector indices and work
     buffers) is made once; the per-pixel geometry is taken from the engine's
@@ -71,7 +71,7 @@ class _PreparedCudaBfSubset:
 
     def __enter__(self) -> Self:
         if self._active:
-            raise RuntimeError("The prepared SSB BF subset is already active.")
+            raise RuntimeError("The prepared direct ptychography BF subset is already active.")
         self._active = True
         if not self._subset:
             return self
@@ -136,9 +136,9 @@ class _PreparedCudaBfSubset:
         self._full.clear()
 
 
-class SSBEngine:
+class DirectEngine:
     """
-    CuPy-accelerated SSB computation with fused CUDA kernels.
+    CuPy-accelerated direct ptychography computation with fused CUDA kernels.
 
     All computation is done on GPU using CuPy arrays.
     Pre-computes rotation-dependent quantities and caches them for
@@ -300,12 +300,12 @@ class SSBEngine:
 
         Encoding uses the shared CUDA acquisition codec in bounded scan chunks.
         The QEM detector axis enumerates the selected BF pixels; their original
-        row/column coordinates remain in the SSB calibration.
+        row/column coordinates remain in the direct ptychography calibration.
         """
         started = time.perf_counter()
         data = cp.asarray(data)
         if data.ndim != 4 or tuple(data.shape[:2]) != self.scan_shape:
-            raise ValueError("BF export requires the same scan shape as the SSB session.")
+            raise ValueError("BF export requires the same scan shape as the direct ptychography session.")
         if data.dtype not in {cp.dtype(cp.uint8), cp.dtype(cp.uint16)}:
             raise TypeError("Lossless BF export requires uint8 or uint16 detector counts.")
         path = pathlib.Path(path_stem).with_suffix(".qem").expanduser().resolve()
@@ -321,7 +321,7 @@ class SSBEngine:
                         flat[first:first + 512, self.bf_inds_row, self.bf_inds_col]
                     ).reshape(-1, 1, self.num_bright_field_pixels)
                     source.append(selected)
-                save_streamed(path, source, {"selection": "SSB bright-field pixels"})
+                save_streamed(path, source, {"selection": "Direct ptychography bright-field pixels"})
             finally:
                 source.release()
         self._bf_source_path = path
@@ -404,7 +404,7 @@ class SSBEngine:
         if self._custom_fft is None:
             if ny != nx:
                 raise ValueError(
-                    "CUDA SSB requires a square scan grid; "
+                    "CUDA direct ptychography requires a square scan grid; "
                     f"got {ny}x{nx}."
                 )
             self._custom_fft = get_fft_kernel(ny)
@@ -494,7 +494,7 @@ class SSBEngine:
         if chunk_bf is None or not 0 < chunk_bf < num_bright_field_pixels:
             if ny == 512 and nx == 512 and num_bright_field_pixels > 64:
                 # Keep the staged row-IFFT producer/consumer working set small.
-                # For full-BF 512 SSB, 64 BF chunks avoid the slow 18+ GB
+                # For full-BF 512 direct ptychography, 64 BF chunks avoid the slow 18+ GB
                 # write-then-read pass while preserving exact phase/loss accumulation.
                 chunk_bf = 64
             elif ny == 1024 and nx == 1024 and num_bright_field_pixels > 1024:

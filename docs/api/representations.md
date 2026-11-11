@@ -126,7 +126,7 @@ detector shape. BF/DF/ADF use the same resident binary-mask path when the
 caller supplies a center and radius. The ordinary public `masked_sum` keeps
 its existing float32 output; use `masked_sum_exact` when exact integer totals
 are required. `DirectPtycho.open` follows the same ANS-only acquisition loading policy.
-See the [SSB API](ssb.md) for its calibration and native-shape requirements.
+See the [direct ptychography API](direct.md) for its calibration and native-shape requirements.
 Missing operations raise explicitly; they do not silently allocate a dense volume.
 
 For multiple acquisitions, `io.load(paths, stack=False)` returns independent

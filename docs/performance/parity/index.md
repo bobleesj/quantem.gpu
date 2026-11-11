@@ -30,7 +30,7 @@ These operations are byte-exact when they operate on integer evidence:
 - histogram counts and integer RGBA lookup outputs; and
 - cache payload identity and metadata.
 
-CoM, DPC/iDPC, FFT, and SSB use frozen operation-specific metrics. Reports
+CoM, DPC/iDPC, FFT, and direct ptychography use frozen operation-specific metrics. Reports
 include maximum and high-percentile error where meaningful. Tolerances are not
 widened to make a new backend pass.
 
@@ -55,7 +55,7 @@ detector-bin-8 timings have no equivalent retained real-data product bundle and
 remain timing-only. See [Verified benchmark results](../results.md) for the full
 matrix and device/runtime details.
 
-Native Swift/Metal SSB at `e1da9bc` (the engine's non-model reconstruction and
+Native Swift/Metal direct ptychography at `e1da9bc` (the engine's non-model reconstruction and
 phase-variance fit, retired 2026-10-25) had its own independently frozen 512×512
 phase reference. The complete-cache path passed at relative L2 `5.86952296e-5`
 and maximum wrapped error `5.62884106e-6` rad; the zero-cache exact path passed
@@ -94,7 +94,7 @@ PYTHONPATH=src python -m pytest -q \
   tests/parity/test_products_parity.py \
   tests/parity/test_dpc_rotation_agreement.py \
   tests/parity/test_display_parity.py \
-  tests/contracts/test_ssb_backend_contract.py
+  tests/contracts/test_direct_backend_contract.py
 ```
 
 Native Apple parity additionally runs:

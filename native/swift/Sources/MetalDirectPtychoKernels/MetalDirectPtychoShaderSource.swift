@@ -3,7 +3,7 @@ import Foundation
 /// Load the same resources from a Swift package or a bundled native app.
 enum MetalDirectPtychoShaderSource {
   /// This target's SwiftPM resource bundle (`<package>_<target>`), which a packaged app copies into
-  /// `Contents/Resources`. Before the module was renamed it was `MetalKernels_MetalSSBKernels.bundle`.
+  /// `Contents/Resources`. Before the module was renamed it was `MetalKernels_MetalDirectKernels.bundle`.
   static let packagedBundleName = "MetalKernels_MetalDirectPtychoKernels.bundle"
 
   /// `packagedResources` is a packaged app's resource folder; the package's own bundle is the fallback.

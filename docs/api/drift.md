@@ -13,8 +13,8 @@ found.show(phases)                         # frame 0, the mean before and after 
 aligned, mean = found.corrected(phases)    # every frame on frame 0, over the region all frames share
 ```
 
-`phases` can be a GPU tensor or CuPy array, a NumPy array (moved to the GPU), a list of 2D images, a list of SSB
-results, or the SSB stream itself. A stream or result supplies its own sampling and a stream its frame names, so
+`phases` can be a GPU tensor or CuPy array, a NumPy array (moved to the GPU), a list of 2D images, a list of direct ptychography
+results, or the direct ptychography stream itself. A stream or result supplies its own sampling and a stream its frame names, so
 `drift(stream)` needs no other argument. On a stream, `stream.align()` runs the same `drift` and also re-places the
 stream's own combined image with it; call `drift(stream)` for the Drift alone.
 
@@ -41,12 +41,12 @@ rows and columns inside every frame. `found.sigma_A[f]` is its one-sigma uncerta
 
 ## Which reconstruction to register on
 
-It does not matter. On a 40-frame experimental MoS2 bilayer series the drift measured on SSB, phase-only and amplitude + phase agree to
-0.05 Å over 116 Å of drift, the size of the drift's own σ. Measure it on whichever you have (the stream gives SSB) and
+It does not matter. On a 40-frame experimental MoS2 bilayer series the drift measured on direct ptychography, phase-only and amplitude + phase agree to
+0.05 Å over 116 Å of drift, the size of the drift's own σ. Measure it on whichever you have (the stream gives direct ptychography) and
 correct any reconstruction of the same frames with it: `found.corrected(phase_only_stack)`. The frames must share frame
 0's origin; a stack at another pixel size moves by its own pixels (`corrected(stack, sampling_A=...)`, read from a
 stream or results when they carry it).
-Evidence: [method comparison](../performance/ssb/reports/2026-10-24-drift-method-comparison.md).
+Evidence: [method comparison](../performance/direct/reports/2026-10-24-drift-method-comparison.md).
 
 ## Advanced
 

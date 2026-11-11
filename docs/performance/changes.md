@@ -76,7 +76,7 @@ boundary; earlier results are not relabeled as routine conversion timings.
 Portable checks passed 69 tests. Physical conversion checks passed 18 tests on
 MPS and 17 on CUDA, with only the opposite-backend lifetime checks skipped.
 The broader acceptance runs retained their existing FP8 product failures and
-the existing MPS uint64 SSB failure; no new failed test appeared. Private
+the existing MPS uint64 direct ptychography failure; no new failed test appeared. Private
 evidence is retained in experiment `20261023-io-limits`.
 
 Two subsequent routine 2048² conversions per backend, with both optional checks
@@ -220,18 +220,18 @@ scientific read dtype from the narrower lossless backing representation.
 
 ## 2026-10-22: exact independent proposal reuse
 
-The [dated broad-search record](ssb/reports/2026-10-22-independent-tpe-reuse.md) reports
+The [dated broad-search record](direct/reports/2026-10-22-independent-tpe-reuse.md) reports
 batched inverse-CDF calculations and completed-history reuse, with exact
 proposals, objective values and phase arrays. The benchmark now explicitly
 selects standard search to retain its documented 200-trial-per-branch workload.
 No CUDA reconstruction schedule, precision, BF selection or estimator changes.
 The separate shared-FFT compiler-cache investigation remains held.
 
-## 2026-10-21: reusable SSB measurement and agent workflow
+## 2026-10-21: reusable direct ptychography measurement and agent workflow
 
-Added `quantem-gpu benchmark-ssb`, a repository-local `gpu-benchmark` skill,
+Added `quantem-gpu benchmark-direct`, a repository-local `gpu-benchmark` skill,
 and installed-wheel hardware gates. The
-[dated record](ssb/reports/2026-10-21-ssb-joint-benchmark.md) separates repeated
+[dated record](direct/reports/2026-10-21-direct-joint-benchmark.md) separates repeated
 MPS compute timings from browser interactions and earlier one-off observations.
 Raw evidence stays private. This adds reproducible measurement infrastructure;
 it does not claim a kernel speedup or completed cross-backend release signoff.
@@ -287,13 +287,13 @@ Python MPS, WebGPU, source-load, or application measurement.
 | `00ba8bd` | Reused the immutable source identity while preserving controlled source reads | kept the same exact source/load boundary; the later `c0ea444` run owns durable timing because its state label is internally consistent |
 | `3bb3845` | Added exact full-native detector-bin-1 loading into private Metal residency | established the 18 GiB exact resident path; later controlled-source runs own the current distribution |
 | `d65911a` | Added provenance-bound exact resident summaries and overflow-safe `uint64` detector moments | adds separate one-time summary-build and prepared-reopen rows; does not replace first compressed-source load or resident-compute rows |
-| `e1da9bc` | Added `MetalSSBKernels`, exact 512×512 reconstruction/loss, deterministic 200-trial TPE plus Nelder–Mead fitting, focused tests, and a standalone benchmark | adds separate native Swift/Metal SSB rows; does not replace differently configured CUDA, Python MPS, or WebGPU rows |
+| `e1da9bc` | Added `MetalDirectKernels`, exact 512×512 reconstruction/loss, deterministic 200-trial TPE plus Nelder–Mead fitting, focused tests, and a standalone benchmark | adds separate native Swift/Metal direct ptychography rows; does not replace differently configured CUDA, Python MPS, or WebGPU rows |
 | Current profiling-registry follow-up | Added the 35-cell platform/module schedule, human run index, manifest validator, CI gate, and continuous-profiling guide | none; the existing timings and scientific acceptance states are unchanged |
 | `e052dfb` | Combined current platform profiling evidence with the three parity-qualified scientific fixes | existing measured baselines remain tied to their recorded revisions |
-| `146238a` | Clarified that the SSB PyTorch functions are executable teaching references, not production kernels | none |
-| `d83c8a1` | Rewrote SSB examples with explicit named layouts and ordinary PyTorch FFT calls | none |
-| `7182ce4` | Made the SSB reference progressive and executable from top to bottom | none |
-| `a319507` | Added equation-paired PyTorch SSB reference functions | none |
+| `146238a` | Clarified that the direct ptychography PyTorch functions are executable teaching references, not production kernels | none |
+| `d83c8a1` | Rewrote direct ptychography examples with explicit named layouts and ordinary PyTorch FFT calls | none |
+| `7182ce4` | Made the direct ptychography reference progressive and executable from top to bottom | none |
+| `a319507` | Added equation-paired PyTorch direct ptychography reference functions | none |
 | `5a897d9` | Added the implementation and benchmark dashboard | no measurement changed; existing evidence was indexed |
 | `f16ad05` | Completed operation contracts, source maps, and parity gates | none |
 | `6502ed0` | Turned API pages into typed integration contracts | none |
@@ -319,24 +319,24 @@ The current values and distributions live only in
 | `0822-97-fnocache-provenance-v8` | Promoted as controlled native package evidence | Seven fresh processes use a new index root, fresh private destination, and explicit `F_NOCACHE` source descriptors; volume and product hashes are exact. It is an audited-source package boundary, not arbitrary-source cold or application E2E, and the detailed result remains above the requested target. |
 | `0821-96-bin1-controlled-cold` schema v7 | Superseded, preserved | Its command applied `F_NOCACHE` but the raw state token said source pages were unspecified. The timing and raw trials remain retained; schema v8 replaces it only for state-consistent reporting. |
 | `20260819-air-exact-resident-summary` | Promoted as separate native Swift/Metal prepared-product evidence | Seven fresh-process reopens reproduce nine same-device products byte-for-byte on MacBook Pro (M5 Max, 128 GB) and MacBook Air (M2, 8 GB). Summary creation, prepared reopen, resident load, compressed-source load, and GUI paint remain distinct boundaries. |
-| `20260819-native-metal-ssb` | Promoted as a separate native Swift/Metal SSB row | It uses its own full-BF fixture and optimizer implementation; warm prepared compute is not raw-source load, application wall time, or physical 8 GB signoff. |
+| `20260819-native-metal-ssb` | Promoted as a separate native Swift/Metal direct ptychography row | It uses its own full-BF fixture and optimizer implementation; warm prepared compute is not raw-source load, application wall time, or physical 8 GB signoff. |
 | `PLATFORM-PROFILE-2026-08-19` | Current cross-platform profile | It supplies atomic timing, memory, dtype/bin, device, date, and parity fields; fixtures C and D remain explicitly separate. |
 | Exact streamed screening follow-up | Promoted | It derives masks from the complete detector sum and transparently reruns BF/DF when the provisional mask differs. The first-chunk-mask candidate failed full-scan parity and remains rejected. |
-| Deterministic CUDA SSB calibration follow-up | Promoted | Three seeded fits reproduce fitted parameters, phase, object, and loss. The earlier atomic-objective run produced two fitted minima and remains rejected despite being faster. |
+| Deterministic CUDA direct ptychography calibration follow-up | Promoted | Three seeded fits reproduce fitted parameters, phase, object, and loss. The earlier atomic-objective run produced two fitted minima and remains rejected despite being faster. |
 | Current MPS prepared companion | Rejected | Stored columns do not match the declared detector-bin coordinate grid; only the raw detector-bin-2 reconstruction retains current numerical evidence. |
 | Current WebGPU profile | Promoted for the measured load and resident-compute boundaries | UI paint, physical 8 GB signoff, per-pixel CoM/DPC/iDPC error arrays, and calibration remain explicit gaps. |
 | `THREE-HOST-512-U16-2026-08-19` | Superseded for current headline timing | It remains useful same-fixture history, but newer comparable profile rows own current values. |
 | Detector-bin-4 products | Mixed | Integer products and CoM pass their stated gates; cross-backend iDPC remains blocked and cannot inherit an integer-parity check mark. |
 | Native-detector MPS CoM/iDPC | Blocked as native-resolution evidence | At that revision the public interaction sidecar used detector bin 2 (Metal detector sessions have since dropped the sidecar); direct full-resolution CoM passes, while iDPC remains blocked. |
-| `M2-AIR-BIN4-E2E` | Separate application evidence | It proves a physical 8 GB detector-bin-4 application path, not a no-bin library load or native SSB memory gate. |
+| `M2-AIR-BIN4-E2E` | Separate application evidence | It proves a physical 8 GB detector-bin-4 application path, not a no-bin library load or native direct ptychography memory gate. |
 | `CUDA-STOCHASTIC-IO` | Historical, labeled first-process | The storage-cache eviction procedure was not retained, so it cannot be called cold. |
 | `WEBGPU-VISIBLE-512` | Historical single visible run | No timing distribution was retained, so it is not a median. |
 | Other July rows with missing host identity | Historical diagnostic | Their numerical evidence can guide optimization, but incomplete hardware provenance prevents current release signoff. |
 
 Accepted and rejected performance experiments remain in the
-[optimization ledger](../maintainer/backend-optimization-matrix.md); older SSB
+[optimization ledger](../maintainer/backend-optimization-matrix.md); older direct ptychography
 layout experiments remain in the
-[SSB performance history](../maintainer/ssb-performance.md).
+[direct ptychography performance history](../maintainer/direct-performance.md).
 
 ## Adding a new revision
 
@@ -353,7 +353,7 @@ Keep dated reports as reproducible records, with a
 [topic-based entry point](index.md#browse-by-topic) for loading, fitting,
 reconstruction, compression and parity. Existing report paths remain stable.
 
-The [C10 cache and FFT transfer record](rendering/reports/2026-10-24-ssb-c10-cache-transfer.md)
+The [C10 cache and FFT transfer record](rendering/reports/2026-10-24-direct-c10-cache-transfer.md)
 preserves rejected experiments and all observed notebook intervals. The
 retained display transfer reduces its isolated 2048² copy from 2.4 to 0.3 ms;
 this does not establish a universal notebook speedup. The 2× regression and
@@ -362,7 +362,7 @@ not release qualification.
 
 ## 2026-10-24: operation-based performance folders
 
-Group performance documentation under IO, SSB, virtual detectors, DPC,
+Group performance documentation under IO, direct ptychography, virtual detectors, DPC,
 rendering and parity. Dated reports retain their numerical content and original
 acceptance limits; old published URLs redirect to the new locations with their
 section fragments. Cross-operation records have one owner and linked entry

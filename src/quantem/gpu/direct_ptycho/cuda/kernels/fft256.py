@@ -1,4 +1,4 @@
-"""Custom fixed-size CUDA FFT kernels for SSB (256x256).
+"""Custom fixed-size CUDA FFT kernels for direct ptychography (256x256).
 
 Geometry (alpha², cos2phi, sin2phi, aperture) for q-k and q+k vectors is
 computed on-the-fly from small 1D arrays (kx_bf, ky_bf, qx_1d, qy_1d) plus
@@ -307,7 +307,7 @@ __global__ void ifft256_cols_accumulate_t64_mr8(
 
 
 class CustomFFT256(CustomFFTBase):
-    """Custom 256x256 IFFT kernels tuned for the fastest SSB path."""
+    """Custom 256x256 IFFT kernels tuned for the fastest direct ptychography path."""
 
     def __init__(self) -> None:
         super().__init__(

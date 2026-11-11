@@ -2,7 +2,7 @@
 
 The array fallback once summed every input with a uint64 accumulator. For
 simulated intensities or normalised float32 data every value below 1 truncated
-to 0, the mean diffraction pattern came back empty, and the SSB session stopped
+to 0, the mean diffraction pattern came back empty, and the direct ptychography session stopped
 with "No bright-field pixels found". Integer counts still accumulate in uint64.
 """
 

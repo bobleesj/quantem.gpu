@@ -77,7 +77,7 @@ and master/metadata hashes, were unchanged.
 Focused hardware, metadata, benchmark and repository checks: **64 passed**.
 The strict acquisition runner reported **145 passed, 6 failed, 23 skipped**.
 All six failures reproduced on an isolated export of the unchanged base:
-one uint64 SSB dtype-dispatch failure and five FP8 hot-pixel-policy failures.
+one uint64 direct ptychography dtype-dispatch failure and five FP8 hot-pixel-policy failures.
 The two full public collections were unavailable. The broad acceptance gate
 therefore remains incomplete; these findings are not a release qualification.
 CUDA and native Swift loading are separate paths and are not certified by the
@@ -108,7 +108,7 @@ no crop, binning, clipping, or hot-pixel correction. Exhaustive independent
 source comparison checked **154,618,822,656 values with zero differences**.
 The three reloads also passed shape, dtype, detector-binning, and source/working
 geometry checks. Recorded calibration is carried; missing convergence angle
-remains unknown. No SSB result is claimed.
+remains unknown. No direct ptychography result is claimed.
 
 One-time conversion took **780.246 s** overall: HDF5 loading/encoding took
 27.636 s, QEM writing including file flush/fsync took 28.759 s, and exhaustive

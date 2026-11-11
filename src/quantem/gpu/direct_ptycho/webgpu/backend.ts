@@ -3,15 +3,15 @@
 import { getGPUDevice, getGPUInfo, isSoftwareGPUAdapter } from "../../device/webgpu";
 import {
   getWebGPUFFTConfig,
-  SUPPORTED_SSB_SIZES,
-  type SupportedSsbSize,
+  SUPPORTED_DIRECT_SIZES,
+  type SupportedDirectSize,
 } from "./kernels";
 import type {
-  SSBOptimizationResult,
+  DirectOptimizationResult,
   WebGPUOptimizationOptions,
   WebGPUReconstructionOptions,
   WebGPUSampleOptions,
-  SSBProtocol,
+  DirectProtocol,
 } from "./protocol";
 import { fit } from "./optimizer";
 import { RansResidentSet } from "../../detector/webgpu/rans";
@@ -24,7 +24,7 @@ const MAX_GQK_CHUNK_BYTES = 1024 * 1024 * 1024;
 // raises it with cal.json gpu_memory_gb.
 const GQK_GPU_BUDGET_BYTES = 4.5 * 1024 * 1024 * 1024;
 
-function gqkBudgetBytes(cal: SsbCal): number {
+function gqkBudgetBytes(cal: DirectCal): number {
   const raw = cal.gpu_memory_gb;
   if (Number.isFinite(raw) && Number(raw) > 0) return Number(raw) * 1024 * 1024 * 1024;
   return GQK_GPU_BUDGET_BYTES;
@@ -33,7 +33,7 @@ const REDUCE_BF_GROUP = 32;
 const BF_COLUMN_UNPACK_WORKGROUP_X = 32;
 const BF_COLUMN_UNPACK_WORKGROUP_Y = 8;
 
-function supportedSsbSize(n: number): SupportedSsbSize | null {
+function supportedDirectSize(n: number): SupportedDirectSize | null {
   return getWebGPUFFTConfig(n)?.size ?? null;
 }
 
@@ -63,7 +63,7 @@ function normaliseSourcePath(path: string): string {
 
 let localDirHandle: FileSystemDirectoryHandle | null = null;
 
-export function setSSBLocalDirectory(handle: FileSystemDirectoryHandle): void {
+export function setDirectLocalDirectory(handle: FileSystemDirectoryHandle): void {
   localDirHandle = handle;
   localSourceResolver = async (path: string) => {
     const parts = normaliseSourcePath(path).split("/").filter(Boolean);
@@ -74,7 +74,7 @@ export function setSSBLocalDirectory(handle: FileSystemDirectoryHandle): void {
   };
 }
 
-export function setSSBLocalFiles(files: ArrayLike<File>): void {
+export function setDirectLocalFiles(files: ArrayLike<File>): void {
   const byPath = new Map<string, File>();
   const byName = new Map<string, File>();
   for (let i = 0; i < files.length; i++) {
@@ -96,7 +96,7 @@ export function setSSBLocalFiles(files: ArrayLike<File>): void {
   };
 }
 
-export function ssbNeedsLocalSource(): boolean {
+export function directNeedsLocalSource(): boolean {
   try {
     return globalThis.location?.protocol === "file:" && !localSourceResolver;
   } catch {
@@ -136,7 +136,7 @@ async function readSourceBytes(url: string, byteOffset?: number, byteLength?: nu
 // path (via PUT/DELETE handled by the exported project server). Writes are
 // restricted to the snapshots/ subfolder on both transports.
 // ---------------------------------------------------------------------------
-export function ssbFolderWritable(): boolean {
+export function directFolderWritable(): boolean {
   if (localDirHandle) return true;
   try {
     const proto = globalThis.location?.protocol || "";
@@ -166,7 +166,7 @@ async function snapshotsDirHandle(): Promise<FileSystemDirectoryHandle> {
   return localDirHandle.getDirectoryHandle("snapshots", { create: true });
 }
 
-export async function writeSSBFolderFile(path: string, body: Blob | string): Promise<void> {
+export async function writeDirectFolderFile(path: string, body: Blob | string): Promise<void> {
   const clean = normaliseSourcePath(path);
   const name = validateSnapshotWritePath(clean, "write");
   if (localDirHandle) {
@@ -181,7 +181,7 @@ export async function writeSSBFolderFile(path: string, body: Blob | string): Pro
   if (!res.ok) throw new Error(`${clean}: HTTP ${res.status} (open this project with its .command launcher or the QuantEM CLI to enable snapshot writes)`);
 }
 
-export async function deleteSSBFolderFile(path: string): Promise<void> {
+export async function deleteDirectFolderFile(path: string): Promise<void> {
   const clean = normaliseSourcePath(path);
   const name = validateSnapshotWritePath(clean, "delete");
   if (localDirHandle) {
@@ -193,7 +193,7 @@ export async function deleteSSBFolderFile(path: string): Promise<void> {
   if (!res.ok) throw new Error(`${clean}: HTTP ${res.status}`);
 }
 
-export async function readSSBFolderJson<T>(path: string): Promise<T | null> {
+export async function readDirectFolderJson<T>(path: string): Promise<T | null> {
   try {
     const bytes = await readSourceBytes(path);
     return JSON.parse(new TextDecoder().decode(bytes)) as T;
@@ -202,12 +202,12 @@ export async function readSSBFolderJson<T>(path: string): Promise<T | null> {
   }
 }
 
-export async function readSSBFolderBytes(path: string): Promise<Uint8Array> {
+export async function readDirectFolderBytes(path: string): Promise<Uint8Array> {
   return readSourceBytes(path);
 }
 
 /** The layout of a ShowPtycho folder's `snapshots/cal.json`, which this engine reads as written. */
-export const BROWSER_CALIBRATION_SCHEMA = "quantem.ssb-browser-calibration/3";
+export const BROWSER_CALIBRATION_SCHEMA = "quantem.direct-browser-calibration/4";
 
 /** `snapshots/cal.json`: optics in kV, mrad and Angstrom; the bright-field reciprocal coordinates in the scan frame. */
 type BrowserCalibration = {
@@ -242,13 +242,13 @@ type BrowserCalibration = {
 };
 
 /** The calibration with its angles in the radians the kernels evaluate in, converted once at entry. */
-type SsbCal = BrowserCalibration & {
+type DirectCal = BrowserCalibration & {
   semiangle_rad: number;
   angular_sampling_rad: [number, number];
 };
 
 /** The bright-field columns a ShowPtycho folder declares (`source.bf_columns` of its manifest). */
-type BfColumnSsbSource = {
+type BfColumnDirectSource = {
   kind: "bf_columns";
   url: string;
   dtype?: "uint8" | "uint16";
@@ -261,7 +261,7 @@ type BfColumnSsbSource = {
 };
 
 /** An unchanged acquisition; BF coordinates refer to the calibrated detector crop. */
-type FullDetectorSsbSource = Omit<BfColumnSsbSource, "kind" | "encoding" | "scan_shape"> & {
+type FullDetectorDirectSource = Omit<BfColumnDirectSource, "kind" | "encoding" | "scan_shape"> & {
   kind: "full_detector";
   encoding: "qem";
   scan_shape: [number, number];
@@ -270,9 +270,9 @@ type FullDetectorSsbSource = Omit<BfColumnSsbSource, "kind" | "encoding" | "scan
   scan_detector_rotation_flipped: boolean;
   header_sha256: string;
 };
-type DetectorSsbSource = BfColumnSsbSource | FullDetectorSsbSource;
+type DetectorDirectSource = BfColumnDirectSource | FullDetectorDirectSource;
 
-function fullDetectorColumns(cal: SsbCal, source: FullDetectorSsbSource): Uint32Array {
+function fullDetectorColumns(cal: DirectCal, source: FullDetectorDirectSource): Uint32Array {
   const shape = source.detector_shape;
   const origin = source.detector_origin_px;
   const crop = cal.detector_shape;
@@ -299,19 +299,19 @@ function fullDetectorColumns(cal: SsbCal, source: FullDetectorSsbSource): Uint32
     const row = rows[index], col = cols[index];
     if (!Number.isSafeInteger(row) || !Number.isSafeInteger(col)
         || row < 0 || row >= crop[0] || col < 0 || col >= crop[1]) {
-      throw new Error("SSB BF coordinates must lie inside the calibrated detector crop.");
+      throw new Error("Direct ptychography BF coordinates must lie inside the calibrated detector crop.");
     }
     const sourceRow = origin[0] + (source.scan_detector_rotation_flipped ? col : row);
     const sourceCol = origin[1] + (source.scan_detector_rotation_flipped ? row : col);
     columns[index] = sourceRow * shape[1] + sourceCol;
   }
   if (new Set(columns).size !== count) {
-    throw new Error("SSB BF coordinates contain duplicates; export a complete unique BF selection.");
+    throw new Error("Direct ptychography BF coordinates contain duplicates; export a complete unique BF selection.");
   }
   return columns;
 }
 
-type SsbBuffers = {
+type DirectBuffers = {
   params: GPUBuffer;
   paramsChunks: GPUBuffer[];
   aberrations: GPUBuffer;
@@ -336,7 +336,7 @@ type SsbBuffers = {
   qy: GPUBuffer;
 };
 
-type SsbPipelines = {
+type DirectPipelines = {
   rows: GPUComputePipeline;
   cols: GPUComputePipeline;
   reducePartial: GPUComputePipeline;
@@ -344,12 +344,12 @@ type SsbPipelines = {
   objSum: GPUComputePipeline;
   objFftRows: GPUComputePipeline;
   objFftCols: GPUComputePipeline;
-  // thick-sample variants of the two passes that apply the SSB correction (makeSsbShader(n, true))
+  // thick-sample variants of the two passes that apply the direct ptychography correction (makeDirectShader(n, true))
   rowsThick: GPUComputePipeline;
   objSumThick: GPUComputePipeline;
 };
 
-type SsbBindGroups = {
+type DirectBindGroups = {
   rows: GPUBindGroup[];
   cols: GPUBindGroup[];
   reducePartial: GPUBindGroup[];
@@ -361,7 +361,7 @@ type SsbBindGroups = {
   objSumThick: GPUBindGroup[];
 };
 
-export type WebGPUSSBResult = {
+export type WebGPUDirectResult = {
   phase: Float32Array;
   width: number;
   height: number;
@@ -444,8 +444,8 @@ function makeFftStages(n: number): string {
   return lines.join("\n");
 }
 
-// Thick-sample WGSL pieces. Compiled into a separate shader variant (makeSsbShader(n, true)) so the standard (thin) SSB shader text,
-// and therefore its compiled code and results, stay exactly as before; only ssbRows and ssbObjSum differ between variants.
+// Thick-sample WGSL pieces. Compiled into a separate shader variant (makeDirectShader(n, true)) so the standard (thin) direct ptychography shader text,
+// and therefore its compiled code and results, stay exactly as before; only directRows and directObjSum differ between variants.
 const THICK_PARAMS_FIELDS = `
   thickness: f32,
   tilt_row_rad: f32,
@@ -455,7 +455,7 @@ const THICK_PARAMS_FIELDS = `
   _pad2: u32,`;
 const THICK_GAMMA_SIGNATURE = "fn gamma_mul(qx: f32, qy: f32, kx: f32, ky: f32, alpha_k2: f32, pk: vec2<f32>, G: vec2<f32>) -> vec2<f32> {";
 const THIN_GAMMA_SIGNATURE = "fn gamma_mul(qx: f32, qy: f32, kx: f32, ky: f32, pk: vec2<f32>, G: vec2<f32>) -> vec2<f32> {";
-// Thick, tilted crystal (CUDA _thick_correct_kernel): each SSB term is averaged over the sample depth t. Term 1 dephases at
+// Thick, tilted crystal (CUDA _thick_correct_kernel): each direct ptychography term is averaged over the sample depth t. Term 1 dephases at
 // rate1 = -factor (alpha_m^2 - alpha_k^2) - 2 pi q.theta and term 2 at rate2 = +factor (alpha_p^2 - alpha_k^2) - 2 pi q.theta, so
 // the depth average multiplies them by sinc(rate t / 2). Without it the two overlap terms of a thick sample partly cancel at
 // frequencies where free-space propagation differs across the depth. Thickness 0 gives weights exactly 1.
@@ -471,7 +471,7 @@ const THICK_TERMS = `  var t1 = cmul(pm, pk_conj);
 const THIN_TERMS = `  let t1 = cmul(pm, pk_conj);
   let t2 = cmul(pp_conj, pk);`;
 
-function makeSsbShader(n: number, thick = false, native = n, cacheProbe = false): string {
+function makeDirectShader(n: number, thick = false, native = n, cacheProbe = false): string {
   const workgroupSize = Math.min(n, 256);
   const half = native / 2;
   const halfW = half + 1;
@@ -624,7 +624,7 @@ ${makeFftStages(n)}
 }
 
 @compute @workgroup_size(${workgroupSize})
-fn ssbRows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
+fn directRows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
   let tid = lid.x;
   let row = wid.y;
   let local_bf = wid.z;
@@ -660,7 +660,7 @@ fn ssbRows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
 }
 
 @compute @workgroup_size(${workgroupSize})
-fn ssbCols(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
+fn directCols(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
   let tid = lid.x;
   let col = wid.y;
   let local_bf = wid.z;
@@ -748,12 +748,12 @@ fn finalizePartialGroups(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 // ---------------------------------------------------------------------------
-// Object-redraw fast path (ported from the CUDA SSB engine, 2026-07-17):
+// Object-redraw fast path (ported from the CUDA direct ptychography engine, 2026-07-17):
 // mean_bf(ifft2(corrected_bf)) == ifft2(mean_bf(corrected_bf)), so the drag
 // path sums gamma-corrected G(q,k) over BF pixels in Fourier space and runs
 // ONE 2D inverse FFT, instead of two FFT passes + atan2 per BF pixel. This
 // displays angle(mean(object)) - the same estimator as the Python
-// SSB.result() reference - and skips the per-BF phase stack entirely.
+// DirectPtycho.result() reference - and skips the per-BF phase stack entirely.
 // The loss/variance commit path still uses the exact per-BF pipeline above,
 // because mean(angle(object)) != angle(mean(object)).
 // ---------------------------------------------------------------------------
@@ -777,7 +777,7 @@ fn prepareProbe(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 ` : ""}
 @compute @workgroup_size(256)
-fn ssbObjSum(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn directObjSum(@builtin(global_invocation_id) gid: vec3<u32>) {
   let linear = gid.x + gid.y * 65535u * 256u;
   if (linear >= params.n * params.output_cols) { return; }
   let row = linear / params.output_cols;
@@ -818,7 +818,7 @@ fn ssbObjSum(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(256)
-fn ssbMirrorColumns(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn directMirrorColumns(@builtin(global_invocation_id) gid: vec3<u32>) {
   let idx = gid.x + gid.y * 65535u * 256u;
   if (idx >= params.plane) { return; }
   let row = idx / ${n}u;
@@ -830,7 +830,7 @@ fn ssbMirrorColumns(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(${workgroupSize})
-fn ssbObjFftRows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
+fn directObjFftRows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
   let tid = lid.x;
   let row = wid.y;
   for (var off = 0u; off < ${n}u; off = off + ${workgroupSize}u) {
@@ -845,7 +845,7 @@ fn ssbObjFftRows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
 }
 
 @compute @workgroup_size(${workgroupSize})
-fn ssbObjFftCols(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
+fn directObjFftCols(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
   let tid = lid.x;
   let col = wid.y;
   for (var off = 0u; off < ${n}u; off = off + ${workgroupSize}u) {
@@ -894,7 +894,7 @@ function makeBufferFromArray(
   );
 }
 
-function makeSourceFftConstants(n: SupportedSsbSize): string {
+function makeSourceFftConstants(n: SupportedDirectSize): string {
   const twiddles: string[] = [];
   for (let len = 2; len <= n; len *= 2) {
     const half = len / 2;
@@ -919,7 +919,7 @@ const SOURCE_FFT_BITREV: array<u32, ${n}> = array<u32, ${n}>(
 );`;
 }
 
-function makeSourceFftStages(n: SupportedSsbSize): string {
+function makeSourceFftStages(n: SupportedDirectSize): string {
   const workgroupSize = Math.min(n, 256);
   const lines: string[] = ["  workgroupBarrier();"];
   for (let len = 2; len <= n; len *= 2) {
@@ -944,7 +944,7 @@ function makeSourceFftStages(n: SupportedSsbSize): string {
 }
 
 // BF-column unpack (detector counts -> complex G(q,k) columns) and the 2D source FFT of each column.
-function makeBfColumnGqkShader(n: SupportedSsbSize): string {
+function makeBfColumnGqkShader(n: SupportedDirectSize): string {
   const workgroupSize = Math.min(n, 256);
   return `
 ${makeSourceFftConstants(n)}
@@ -1028,7 +1028,7 @@ fn fftCols(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
 }
 
 
-function makeGqkTransformShader(n: SupportedSsbSize): string {
+function makeGqkTransformShader(n: SupportedDirectSize): string {
   const half = n / 2;
   const halfW = half + 1;
   const storedPlane = n * halfW;
@@ -1084,10 +1084,10 @@ function sampleThickness(sample?: WebGPUSampleOptions): number {
 
 // Params uniform: 22 original words + thickness, tilt_row_rad, tilt_col_rad + 3 pad words (multiple of 16 bytes); the last
 // six are declared only in the thick shader variant.
-const SSB_PARAMS_BYTES = 112;
+const DIRECT_PARAMS_BYTES = 112;
 
 export function makeParams(
-  cal: SsbCal,
+  cal: DirectCal,
   n: number,
   c10: number,
   c12: number,
@@ -1102,7 +1102,7 @@ export function makeParams(
   outputCols = n,
 ): ArrayBuffer {
   const plane = n * n;
-  const b = new ArrayBuffer(SSB_PARAMS_BYTES);
+  const b = new ArrayBuffer(DIRECT_PARAMS_BYTES);
   const u = new Uint32Array(b);
   const f = new Float32Array(b);
   const phi12Rad = phi12Deg * Math.PI / 180;
@@ -1126,7 +1126,7 @@ export function makeParams(
   u[19] = computeLoss ? 1 : 0;
   u[20] = Math.max(1, Math.round(activeBfCount || u[0]));
   u[21] = fullAberration ? 1 : 0;
-  // Thick-sample depth average (Angstrom, radians). Absent or non-positive thickness leaves the standard SSB gamma.
+  // Thick-sample depth average (Angstrom, radians). Absent or non-positive thickness leaves the standard direct ptychography gamma.
   const thickness = sampleThickness(sample);
   // A depth spread given without a tilt is an untilted crystal: indexing the omitted pair threw a TypeError.
   const tiltMrad = sample?.sampleTiltMrad ?? [0, 0];
@@ -1192,11 +1192,11 @@ export function packAberrations(
   return { data: out, active };
 }
 
-function baseRotationDeg(cal: SsbCal): number {
+function baseRotationDeg(cal: DirectCal): number {
   return Number.isFinite(cal.scan_detector_rotation_deg) ? Number(cal.scan_detector_rotation_deg) : 0;
 }
 
-function rotateBfCoord(cal: SsbCal, kx: number, ky: number, scanDetectorRotationDeg?: number): [number, number] {
+function rotateBfCoord(cal: DirectCal, kx: number, ky: number, scanDetectorRotationDeg?: number): [number, number] {
   if (scanDetectorRotationDeg == null || !Number.isFinite(scanDetectorRotationDeg)) return [kx, ky];
   const delta = (Number(scanDetectorRotationDeg) - baseRotationDeg(cal)) * Math.PI / 180;
   if (Math.abs(delta) < 1e-12) return [kx, ky];
@@ -1208,7 +1208,7 @@ function rotateBfCoord(cal: SsbCal, kx: number, ky: number, scanDetectorRotation
   ];
 }
 
-function bfGeometryFromCoord(cal: SsbCal, kx: number, ky: number): [number, number, number, number] {
+function bfGeometryFromCoord(cal: DirectCal, kx: number, ky: number): [number, number, number, number] {
   const dx2 = kx * kx;
   const dy2 = ky * ky;
   const r2 = dx2 + dy2;
@@ -1224,7 +1224,7 @@ function bfGeometryFromCoord(cal: SsbCal, kx: number, ky: number): [number, numb
   return [alpha2, cos2phi, sin2phi, Math.max(0, Math.min(1, edge))];
 }
 
-function collectActiveBfIndices(cal: SsbCal, numBf: number, scanDetectorRotationDeg?: number): Uint32Array {
+function collectActiveBfIndices(cal: DirectCal, numBf: number, scanDetectorRotationDeg?: number): Uint32Array {
   const active: number[] = [];
   for (let i = 0; i < cal.num_bright_field_pixels; i++) {
     const [kx, ky] = rotateBfCoord(cal, cal.bright_field_k_row[i], cal.bright_field_k_col[i], scanDetectorRotationDeg);
@@ -1242,7 +1242,7 @@ function collectActiveBfIndices(cal: SsbCal, numBf: number, scanDetectorRotation
   return selected;
 }
 
-function packGeometry(cal: SsbCal, indices: Uint32Array, scanDetectorRotationDeg?: number): { geom: Float32Array; trig: Float32Array } {
+function packGeometry(cal: DirectCal, indices: Uint32Array, scanDetectorRotationDeg?: number): { geom: Float32Array; trig: Float32Array } {
   const count = Math.max(1, indices.length);
   const geom = new Float32Array(count * 4);
   const trig = new Float32Array(count * 2);
@@ -1325,9 +1325,9 @@ async function fetchPackedBfColumnBytes(
 // works on the previous one.
 async function buildBfColumnGqkChunks(
   device: GPUDevice,
-  cal: SsbCal,
-  source: DetectorSsbSource,
-  n: SupportedSsbSize,
+  cal: DirectCal,
+  source: DetectorDirectSource,
+  n: SupportedDirectSize,
   plane: number,
   activeSourceIndices: Uint32Array,
   storageChunkCapacity: number,
@@ -1354,8 +1354,8 @@ async function buildBfColumnGqkChunks(
     percent: 10,
     sourceFrames: plane,
   });
-  const module = device.createShaderModule({ code: makeBfColumnGqkShader(n), label: `SSB BF-column unpack+FFT ${n}` });
-  const compactModule = device.createShaderModule({ code: makeGqkTransformShader(n), label: `SSB gqk compact ${n}` });
+  const module = device.createShaderModule({ code: makeBfColumnGqkShader(n), label: `Direct ptychography BF-column unpack+FFT ${n}` });
+  const compactModule = device.createShaderModule({ code: makeGqkTransformShader(n), label: `Direct ptychography gqk compact ${n}` });
   const [unpackPipe, rowsPipe, colsPipe, compactPipe] = await Promise.all([
     device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "bfColumnsToGqk" } }),
     device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "fftRows" } }),
@@ -1398,7 +1398,7 @@ async function buildBfColumnGqkChunks(
     if (ans.scanCount !== plane || (expectedShape
       ? expectedShape.some((value, axis) => ans!.shape?.[axis] !== value) || ans.nativeDtype !== source.dtype
       : ans.detSize !== source.num_bright_field_pixels)) {
-      throw new Error("QEM geometry or native count dtype does not match the SSB source; export the review again.");
+      throw new Error("QEM geometry or native count dtype does not match the direct ptychography source; export the review again.");
     }
     decodeMs += performance.now() - decodeStarted;
   }
@@ -1423,7 +1423,7 @@ async function buildBfColumnGqkChunks(
     const waitT = performance.now();
     await previous;
     gpuWaitMs += performance.now() - waitT;
-    const full = device.createBuffer({ size: chunkBf * plane * 8, usage: GPUBufferUsage.STORAGE, label: `ssb transient bf-column G(q,k) ${bfOffset}` });
+    const full = device.createBuffer({ size: chunkBf * plane * 8, usage: GPUBufferUsage.STORAGE, label: `direct transient bf-column G(q,k) ${bfOffset}` });
     const temporaries: GPUBuffer[] = [full];
     pending = temporaries;
     const enc = device.createCommandEncoder();
@@ -1432,10 +1432,10 @@ async function buildBfColumnGqkChunks(
       await ans.columnsComplex(0, selectedColumns.slice(bfOffset, bfOffset + chunkBf), full);
       decodeMs += performance.now() - decodeT;
     } else {
-      const dataBuffer = makeBufferFromBytes(device, packed!, GPUBufferUsage.STORAGE, `ssb bf-column packed ${bfOffset}`);
-      const params = uniformU32(device, [0, 0, 0, mode, chunkBf, plane, 0, 0], `ssb bf-column unpack params ${bfOffset}`);
+      const dataBuffer = makeBufferFromBytes(device, packed!, GPUBufferUsage.STORAGE, `direct bf-column packed ${bfOffset}`);
+      const params = uniformU32(device, [0, 0, 0, mode, chunkBf, plane, 0, 0], `direct bf-column unpack params ${bfOffset}`);
       temporaries.push(dataBuffer, params);
-      const pass = enc.beginComputePass({ label: "ssb bf-column unpack" });
+      const pass = enc.beginComputePass({ label: "direct bf-column unpack" });
       pass.setPipeline(unpackPipe);
       pass.setBindGroup(0, device.createBindGroup({ layout: unpackPipe.getBindGroupLayout(0), entries: [
         { binding: 0, resource: { buffer: dataBuffer } },
@@ -1446,7 +1446,7 @@ async function buildBfColumnGqkChunks(
       pass.end();
     }
     // Row then column FFT of every column of the chunk, in place.
-    const fftParams = uniformU32(device, [chunkBf, plane, 0, 0], `ssb bf-column fft params ${bfOffset}`);
+    const fftParams = uniformU32(device, [chunkBf, plane, 0, 0], `direct bf-column fft params ${bfOffset}`);
     temporaries.push(fftParams);
     for (const pipeline of [rowsPipe, colsPipe]) {
       const pass = enc.beginComputePass();
@@ -1458,11 +1458,11 @@ async function buildBfColumnGqkChunks(
       pass.dispatchWorkgroups(1, n, chunkBf);
       pass.end();
     }
-    const resident = device.createBuffer({ size: chunkBf * storedPlane * GQK_BYTES_PER_VALUE, usage: GPUBufferUsage.STORAGE, label: `ssb gqk ${GQK_MODE} chunk ${gqkChunks.length}` });
+    const resident = device.createBuffer({ size: chunkBf * storedPlane * GQK_BYTES_PER_VALUE, usage: GPUBufferUsage.STORAGE, label: `direct gqk ${GQK_MODE} chunk ${gqkChunks.length}` });
     gqkChunks.push(resident);
-    const compactParams = uniformU32(device, [chunkBf, bfOffset, 0, 0], `ssb gqk compact params ${bfOffset}`);
+    const compactParams = uniformU32(device, [chunkBf, bfOffset, 0, 0], `direct gqk compact params ${bfOffset}`);
     temporaries.push(compactParams);
-    const pass = enc.beginComputePass({ label: "ssb gqk compact" });
+    const pass = enc.beginComputePass({ label: "direct gqk compact" });
     pass.setPipeline(compactPipe);
     pass.setBindGroup(0, device.createBindGroup({ layout: compactPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: full } },
@@ -1484,7 +1484,7 @@ async function buildBfColumnGqkChunks(
     ? `open ${fetchMs.toFixed(1)} ms stream/admit ${decodeMs.toFixed(1)} ms`
     : `fetch ${fetchMs.toFixed(1)} ms`;
   console.log(
-    `[ssb] BF-column source prepared ${activeSourceIndices.length} BF from ${plane} scan positions `
+    `[direct] BF-column source prepared ${activeSourceIndices.length} BF from ${plane} scan positions `
     + `read ${(fetchBytes / 1e9).toFixed(2)} GB ${source.encoding || source.dtype || "uint16"}, `
     + `${readTiming} GPU wait ${gpuWaitMs.toFixed(1)} ms total ${totalMs.toFixed(1)} ms`,
   );
@@ -1520,7 +1520,7 @@ function chooseChunkCapacity(nbf: number, plane: number, device: GPUDevice): num
   return Math.max(REDUCE_BF_GROUP, Math.floor(raw / REDUCE_BF_GROUP) * REDUCE_BF_GROUP);
 }
 
-export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
+export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
   readonly backend = "webgpu" as const;
   readonly precision = {
     real_dtype: "float32",
@@ -1534,14 +1534,14 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     probePipeline: GPUComputePipeline; probeGroup: GPUBindGroup;
     mirrorPipeline: GPUComputePipeline; mirrorGroup: GPUBindGroup;
   } | null = null;
-  private cal: SsbCal;
-  private n: SupportedSsbSize;
+  private cal: DirectCal;
+  private n: SupportedDirectSize;
   private plane: number;
-  private source: DetectorSsbSource;
+  private source: DetectorDirectSource;
   private device: GPUDevice | null = null;
-  private buffers: SsbBuffers | null = null;
-  private pipelines: SsbPipelines | null = null;
-  private bindGroups: SsbBindGroups | null = null;
+  private buffers: DirectBuffers | null = null;
+  private pipelines: DirectPipelines | null = null;
+  private bindGroups: DirectBindGroups | null = null;
   private setupPromise: Promise<void> | null = null;
   private operationQueue: Promise<void> = Promise.resolve();
   private initialized = false;
@@ -1558,13 +1558,13 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   ) {
     if (!globalThis.isSecureContext || !navigator.gpu) {
       throw new Error(
-        "SSB WebGPU folder needs browser WebGPU. Open it from http://127.0.0.1, localhost, or HTTPS; LAN-IP HTTP pages cannot use WebGPU.",
+        "Direct ptychography WebGPU folder needs browser WebGPU. Open it from http://127.0.0.1, localhost, or HTTPS; LAN-IP HTTP pages cannot use WebGPU.",
       );
     }
     const calibration = JSON.parse(calJson) as BrowserCalibration;
     // Earlier calibrations name other quantities (num_bf, rotation_angle_deg below 180); none is reinterpreted.
     if (calibration.schema !== BROWSER_CALIBRATION_SCHEMA) {
-      throw new Error(`SSB calibration schema ${JSON.stringify(calibration.schema)} is not read; this engine reads ${BROWSER_CALIBRATION_SCHEMA}. Export the ShowPtycho folder again.`);
+      throw new Error(`Direct ptychography calibration schema ${JSON.stringify(calibration.schema)} is not read; this engine reads ${BROWSER_CALIBRATION_SCHEMA}. Export the ShowPtycho folder again.`);
     }
     this.cal = {
       ...calibration,
@@ -1576,29 +1576,29 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       || this.cal.precision?.complex_dtype !== "complex64"
     ) {
       throw new Error(
-        "SSB WebGPU requires the quantem.gpu float32/complex64 SSB precision contract.",
+        "Direct ptychography WebGPU requires the quantem.gpu float32/complex64 direct ptychography precision contract.",
       );
     }
     const ny = Number(this.cal.g_shape?.[1] || 0);
     const nx = Number(this.cal.g_shape?.[2] || 0);
-    const n = supportedSsbSize(ny === nx ? ny : 0);
+    const n = supportedDirectSize(ny === nx ? ny : 0);
     if (!n) {
       throw new Error(
-        `WebGPU SSB supports square ${SUPPORTED_SSB_SIZES.join("/")} scan grids, got ${this.cal.g_shape?.join("x")}`,
+        `WebGPU direct ptychography supports square ${SUPPORTED_DIRECT_SIZES.join("/")} scan grids, got ${this.cal.g_shape?.join("x")}`,
       );
     }
     this.n = n;
     this.plane = n * n;
-    this.source = JSON.parse(detectorSource.json) as DetectorSsbSource;
+    this.source = JSON.parse(detectorSource.json) as DetectorDirectSource;
     if (this.source.kind === "full_detector") {
       fullDetectorColumns(this.cal, this.source);
     } else if (this.source.kind !== "bf_columns") {
-      throw new Error("SSB WebGPU reads BF columns or full-detector QEM; export this unsupported source again.");
+      throw new Error("Direct ptychography WebGPU reads BF columns or full-detector QEM; export this unsupported source again.");
     }
   }
 
   get readyLabel(): string {
-    return `WebGPU SSB ready: ${this.n}x${this.n}, ${this.cal.num_bright_field_pixels} BF pixels, ${this.source.kind === "full_detector" ? "full-detector QEM" : "detector BF columns"}`;
+    return `WebGPU direct ptychography ready: ${this.n}x${this.n}, ${this.cal.num_bright_field_pixels} BF pixels, ${this.source.kind === "full_detector" ? "full-detector QEM" : "detector BF columns"}`;
   }
 
   async prepare(): Promise<void> {
@@ -1607,7 +1607,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
 
   async fit(
     options: WebGPUOptimizationOptions,
-  ): Promise<SSBOptimizationResult> {
+  ): Promise<DirectOptimizationResult> {
     return fit(options);
   }
 
@@ -1672,7 +1672,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     });
     await previous.catch(() => undefined);
     try {
-      if (this.closed) throw new Error("SSB backend is closed; create a new backend to reconstruct again.");
+      if (this.closed) throw new Error("Direct ptychography backend is closed; create a new backend to reconstruct again.");
       return await operation();
     } finally {
       release();
@@ -1725,7 +1725,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     const device = this.device || await getGPUDevice();
     if (!device) throw new Error("WebGPU device unavailable");
     const fftConfig = getWebGPUFFTConfig(n);
-    if (!fftConfig) throw new Error(`Missing WebGPU SSB FFT configuration for ${n}.`);
+    if (!fftConfig) throw new Error(`Missing WebGPU direct ptychography FFT configuration for ${n}.`);
     if (
       device.limits.maxComputeInvocationsPerWorkgroup < fftConfig.workgroupSize
       || device.limits.maxComputeWorkgroupSizeX < fftConfig.workgroupSize
@@ -1733,7 +1733,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       throw new Error(
         `WebGPU adapter supports workgroup x=${device.limits.maxComputeWorkgroupSizeX}, `
         + `invocations=${device.limits.maxComputeInvocationsPerWorkgroup}; `
-        + `${n}x${n} SSB needs ${fftConfig.workgroupSize} threads plus ${(n * 8 / 1024).toFixed(1)} KB workgroup storage.`,
+        + `${n}x${n} direct ptychography needs ${fftConfig.workgroupSize} threads plus ${(n * 8 / 1024).toFixed(1)} KB workgroup storage.`,
       );
     }
     this.device = device;
@@ -1746,7 +1746,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     const budgetMaxBf = Math.max(1, Math.floor(gqkBudgetBytes(this.cal) / perBfBytes));
     if (activeSourceIndices.length > budgetMaxBf) {
       throw new Error(
-        `Exact full-BF WebGPU SSB needs ${activeSourceIndices.length} active BF pixels, `
+        `Exact full-BF WebGPU direct ptychography needs ${activeSourceIndices.length} active BF pixels, `
         + `but the ${(gqkBudgetBytes(this.cal) / 1e9).toFixed(1)} GB GPU budget fits ${budgetMaxBf} `
         + `(${(perBfBytes / 1e6).toFixed(1)} MB/BF in ${GQK_MODE} mode). `
         + "Export the review again with the current package and use a GPU with enough memory; "
@@ -1763,14 +1763,14 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     const dispatchCount = Math.ceil(activeBfCount / storageChunkCapacity);
     const partialGroups = Math.ceil(activeBfCount / REDUCE_BF_GROUP);
     console.log(
-      `[ssb] WebGPU SSB setup start ${nbf}/${this.cal.num_bright_field_pixels} BF `
+      `[direct] WebGPU direct ptychography setup start ${nbf}/${this.cal.num_bright_field_pixels} BF `
       + `${(expectedBytes / 1e6).toFixed(1)} MB source; `
       + `${nonzeroBfCount}/${nbf} active aperture BF `
       + `${(activeBytes / 1e6).toFixed(1)} MB upload `
       + `in chunks of ${storageChunkCapacity}`,
     );
     console.log(
-      `[ssb] WebGPU limits buffer=${device.limits.maxBufferSize} `
+      `[direct] WebGPU limits buffer=${device.limits.maxBufferSize} `
       + `storageBinding=${device.limits.maxStorageBufferBindingSize} `
       + `storageBuffers=${device.limits.maxStorageBuffersPerShaderStage}`,
     );
@@ -1794,22 +1794,22 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         + `maxStorage ${(maxStorage / 1e6).toFixed(1)} MB, maxBuffer ${(maxBuffer / 1e6).toFixed(1)} MB.`,
       );
     }
-    const module = device.createShaderModule({ code: makeSsbShader(n), label: `SSB SSB WGSL ${n} ${GQK_MODE}` });
-    const thickModule = device.createShaderModule({ code: makeSsbShader(n, true), label: `SSB SSB thick WGSL ${n} ${GQK_MODE}` });
+    const module = device.createShaderModule({ code: makeDirectShader(n), label: `Direct ptychography WGSL ${n} ${GQK_MODE}` });
+    const thickModule = device.createShaderModule({ code: makeDirectShader(n, true), label: `Direct ptychography thick WGSL ${n} ${GQK_MODE}` });
     const [
       rows, cols, reducePartial, finalizeGroups, objSum, objFftRows, objFftCols, rowsThick, objSumThick,
     ] = await Promise.all([
-      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbRows" } }),
-      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbCols" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "directRows" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "directCols" } }),
       device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "reducePartialGroups" } }),
       device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "finalizePartialGroups" } }),
-      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbObjSum" } }),
-      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbObjFftRows" } }),
-      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbObjFftCols" } }),
-      device.createComputePipelineAsync({ layout: "auto", compute: { module: thickModule, entryPoint: "ssbRows" } }),
-      device.createComputePipelineAsync({ layout: "auto", compute: { module: thickModule, entryPoint: "ssbObjSum" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "directObjSum" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "directObjFftRows" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "directObjFftCols" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module: thickModule, entryPoint: "directRows" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module: thickModule, entryPoint: "directObjSum" } }),
     ]);
-    const pipelines: SsbPipelines = {
+    const pipelines: DirectPipelines = {
       rows,
       cols,
       reducePartial,
@@ -1835,44 +1835,44 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     );
     const { gqkChunks, chunkBfCounts, residentBytes } = built;
     console.log(
-      `[ssb] gqk mode ${GQK_MODE}: resident ${(residentBytes / 1e9).toFixed(2)} GB `
+      `[direct] gqk mode ${GQK_MODE}: resident ${(residentBytes / 1e9).toFixed(2)} GB `
       + `for ${chunkBfCounts.reduce((acc, bf) => acc + bf, 0)} active BF pixels`,
     );
-    const buffers: SsbBuffers = {
-      params: device.createBuffer({ size: SSB_PARAMS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, label: "ssb ssb params" }),
+    const buffers: DirectBuffers = {
+      params: device.createBuffer({ size: DIRECT_PARAMS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, label: "direct params" }),
       paramsChunks: Array.from({ length: dispatchCount }, (_, index) => device.createBuffer({
-        size: SSB_PARAMS_BYTES,
+        size: DIRECT_PARAMS_BYTES,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        label: `ssb ssb params chunk ${index}`,
+        label: `direct params chunk ${index}`,
       })),
       aberrations: makeBufferFromArray(
         device,
         packAberrations(0, 0, 0).data,
         GPUBufferUsage.STORAGE,
-        "ssb aberrations",
+        "direct aberrations",
       ),
       gqkChunks,
       gqkMode: GQK_MODE,
       gqkResidentBytes: residentBytes,
       chunkBfCounts,
       chunkCapacity: storageChunkCapacity,
-      stage: device.createBuffer({ size: storageChunkCapacity * plane * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, label: "ssb ssb stage" }),
-      phaseStack: device.createBuffer({ size: storageChunkCapacity * plane * 4, usage: GPUBufferUsage.STORAGE, label: "ssb phase stack" }),
-      partialSum: device.createBuffer({ size: partialGroups * plane * 4, usage: GPUBufferUsage.STORAGE, label: "ssb phase partial sum" }),
-      partialSumSq: device.createBuffer({ size: partialGroups * plane * 4, usage: GPUBufferUsage.STORAGE, label: "ssb phase partial sumsq" }),
+      stage: device.createBuffer({ size: storageChunkCapacity * plane * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, label: "direct stage" }),
+      phaseStack: device.createBuffer({ size: storageChunkCapacity * plane * 4, usage: GPUBufferUsage.STORAGE, label: "direct phase stack" }),
+      partialSum: device.createBuffer({ size: partialGroups * plane * 4, usage: GPUBufferUsage.STORAGE, label: "direct phase partial sum" }),
+      partialSumSq: device.createBuffer({ size: partialGroups * plane * 4, usage: GPUBufferUsage.STORAGE, label: "direct phase partial sumsq" }),
       partialGroups,
       activeBfCount,
       nonzeroBfCount,
       activeSourceIndices: activeIndices,
-      phase: device.createBuffer({ size: plane * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, label: "ssb phase" }),
-      variance: device.createBuffer({ size: plane * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, label: "ssb variance" }),
-      bfGeom: makeBufferFromArray(device, geom, GPUBufferUsage.STORAGE, "ssb bf geometry"),
-      bfTrig: makeBufferFromArray(device, trig, GPUBufferUsage.STORAGE, "ssb bf trig"),
-      qx: makeBufferFromArray(device, new Float32Array(this.cal.scan_q_row), GPUBufferUsage.STORAGE, "ssb qx"),
-      qy: makeBufferFromArray(device, new Float32Array(this.cal.scan_q_col), GPUBufferUsage.STORAGE, "ssb qy"),
+      phase: device.createBuffer({ size: plane * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, label: "direct phase" }),
+      variance: device.createBuffer({ size: plane * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, label: "direct variance" }),
+      bfGeom: makeBufferFromArray(device, geom, GPUBufferUsage.STORAGE, "direct bf geometry"),
+      bfTrig: makeBufferFromArray(device, trig, GPUBufferUsage.STORAGE, "direct bf trig"),
+      qx: makeBufferFromArray(device, new Float32Array(this.cal.scan_q_row), GPUBufferUsage.STORAGE, "direct qx"),
+      qy: makeBufferFromArray(device, new Float32Array(this.cal.scan_q_col), GPUBufferUsage.STORAGE, "direct qy"),
     };
     device.pushErrorScope("validation");
-    // ssbRows and ssbObjSum (thin and thick variants) read the same resources
+    // directRows and directObjSum (thin and thick variants) read the same resources
     const correctionEntries = (params: GPUBuffer, index: number): GPUBindGroupEntry[] => [
       { binding: 0, resource: { buffer: params } },
       { binding: 1, resource: { buffer: buffers.gqkChunks[index] } },
@@ -1883,7 +1883,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       { binding: 6, resource: { buffer: buffers.qy } },
       { binding: 12, resource: { buffer: buffers.aberrations } },
     ];
-    const bindGroups: SsbBindGroups = {
+    const bindGroups: DirectBindGroups = {
       rows: buffers.paramsChunks.map((params, index) => device.createBindGroup({
         layout: pipelines.rows.getBindGroupLayout(0),
         entries: correctionEntries(params, index),
@@ -1931,7 +1931,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       })),
       objFftRows: device.createBindGroup({
         layout: pipelines.objFftRows.getBindGroupLayout(0),
-        // ssbObjFftRows uses only the stage plane (sizes are compile-time
+        // directObjFftRows uses only the stage plane (sizes are compile-time
         // constants), so the auto layout exposes just binding 2.
         entries: [
           { binding: 2, resource: { buffer: buffers.stage } },
@@ -1948,7 +1948,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     };
     const bindError = await device.popErrorScope();
     if (bindError) {
-      throw new Error(`WebGPU SSB bind group validation failed: ${bindError.message}`);
+      throw new Error(`WebGPU direct ptychography bind group validation failed: ${bindError.message}`);
     }
     this.buffers = buffers;
     this.pipelines = pipelines;
@@ -1958,7 +1958,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     this.geometryRotationDeg = scanDetectorRotationDeg == null || !Number.isFinite(scanDetectorRotationDeg) ? baseRotationDeg(this.cal) : Number(scanDetectorRotationDeg);
     this.geometryBfCount = null;
     console.log(
-      `[ssb] WebGPU SSB setup ready ${nbf}/${this.cal.num_bright_field_pixels} BF `
+      `[direct] WebGPU direct ptychography setup ready ${nbf}/${this.cal.num_bright_field_pixels} BF `
       + `(${nonzeroBfCount} active) in ${(performance.now() - setupT0).toFixed(1)} ms`,
     );
     this.emitProgress({
@@ -2008,16 +2008,16 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   }
 
   async reconstruct(c10A: number, c12A: number, phi12Rad: number,
-    options: WebGPUReconstructionOptions = {}): Promise<WebGPUSSBResult> {
+    options: WebGPUReconstructionOptions = {}): Promise<WebGPUDirectResult> {
     const factor = options.upsample ?? 1;
-    if (![1, 2, 4, 8].includes(factor)) throw new Error("WebGPU SSB upsample must be 1, 2, 4, or 8.");
+    if (![1, 2, 4, 8].includes(factor)) throw new Error("WebGPU direct ptychography upsample must be 1, 2, 4, or 8.");
     return this.runExclusive(async () => {
       options.signal?.throwIfAborted();
       // Loss is a native-grid diagnostic. It must not change the displayed estimator on release.
       const wantsLoss = options.computeLoss !== false;
       const native = wantsLoss || factor === 1
         ? await this.reconstructNative(c10A, c12A, phi12Rad, {...options, computeLoss: wantsLoss}) : null;
-      let result: WebGPUSSBResult;
+      let result: WebGPUDirectResult;
       if (factor === 1) {
         result = wantsLoss
           ? await this.reconstructNative(c10A, c12A, phi12Rad, {...options, computeLoss: false}) : native!;
@@ -2030,13 +2030,13 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   }
 
   private async reconstructOutput(c10: number, c12: number, phi12: number,
-    factor: number, options: WebGPUReconstructionOptions): Promise<WebGPUSSBResult> {
+    factor: number, options: WebGPUReconstructionOptions): Promise<WebGPUDirectResult> {
     const numBrightFieldPixels = this.clampBfCount(options.numBrightFieldPixels);
     await this.setup(numBrightFieldPixels, options.scanDetectorRotationDeg);
     const device = this.device!, buffers = this.buffers!, n = this.n * factor;
     const thick = sampleThickness(options.sample) > 0;
     if (n * 8 > device.limits.maxComputeWorkgroupStorageSize) {
-      throw new Error(`${n}×${n} SSB needs ${n * 8} bytes of workgroup storage; select a smaller output factor on this GPU.`);
+      throw new Error(`${n}×${n} direct ptychography needs ${n * 8} bytes of workgroup storage; select a smaller output factor on this GPU.`);
     }
     if (!this.outputPlan || this.outputPlan.n !== n || this.outputPlan.thick !== thick) {
       this.outputPlan?.owned.forEach(buffer => buffer.destroy()); this.outputPlan = null;
@@ -2045,13 +2045,13 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         const out = device.createBuffer({size, usage}); owned.push(out); return out;
       };
       try {
-        const module = device.createShaderModule({code: makeSsbShader(n, thick, this.n, true)});
-        const [sum, rows, cols, probePipeline, mirrorPipeline] = await Promise.all(["ssbObjSum", "ssbObjFftRows", "ssbObjFftCols", "prepareProbe", "ssbMirrorColumns"].map(entryPoint =>
+        const module = device.createShaderModule({code: makeDirectShader(n, thick, this.n, true)});
+        const [sum, rows, cols, probePipeline, mirrorPipeline] = await Promise.all(["directObjSum", "directObjFftRows", "directObjFftCols", "prepareProbe", "directMirrorColumns"].map(entryPoint =>
           device.createComputePipelineAsync({layout: "auto", compute: {module, entryPoint}})));
         const stage = make(n * n * 8), phase = make(n * n * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
-        const params = make(SSB_PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+        const params = make(DIRECT_PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
         const probe = make(buffers.activeBfCount * 8);
-        const chunks = buffers.gqkChunks.map(() => make(SSB_PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST));
+        const chunks = buffers.gqkChunks.map(() => make(DIRECT_PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST));
         const frequencies = [this.cal.scan_q_row, this.cal.scan_q_col].map(native => {
           const q = Float32Array.from({length: n}, (_, i) => (i < n / 2 ? i : i - n) * native[1]);
           const buffer = make(q.byteLength); device.queue.writeBuffer(buffer, 0, q); return buffer;
@@ -2114,7 +2114,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     c12: number,
     phi12: number,
     options: WebGPUReconstructionOptions = {},
-  ): Promise<WebGPUSSBResult> {
+  ): Promise<WebGPUDirectResult> {
     // Engine units: Angstrom and radians. The scientist-facing widget converts nm at its boundary.
     const phi12Deg = phi12 * 180 / Math.PI;
     const numBrightFieldPixels = this.clampBfCount(options.numBrightFieldPixels);
@@ -2129,7 +2129,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       const pipelines = this.pipelines;
       const bindGroups = this.bindGroups;
       if (!device || !buffers || !pipelines || !bindGroups) {
-        throw new Error("WebGPU SSB buffers are not ready after setup");
+        throw new Error("WebGPU direct ptychography buffers are not ready after setup");
       }
       const aberrations = packAberrations(c10, c12, phi12Deg, options.higherOrder);
       // thickness > 0 selects the thick-sample shader variant; otherwise the standard pipelines run unchanged
@@ -2137,10 +2137,10 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       device.queue.writeBuffer(buffers.aberrations, 0, aberrations.data as unknown as BufferSource);
       const t0 = performance.now();
       let enc = device.createCommandEncoder();
-      // Object-redraw fast path (ported from the CUDA SSB engine): sum
+      // Object-redraw fast path (ported from the CUDA direct ptychography engine): sum
       // corrected G over BF pixels in Fourier space, one iFFT, angle once -
       // skips two FFT passes + atan2 per BF pixel. Displays angle(mean(obj)),
-      // the same estimator as the Python SSB.result() reference (verified
+      // the same estimator as the Python DirectPtycho.result() reference (verified
       // corr 0.997 vs backend, 0.9965 vs the exact browser path at identical
       // state). Loss commits always use the exact per-BF path below.
       if (!computeLoss) {
@@ -2153,7 +2153,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
             0,
             makeParams(this.cal, this.n, c10, c12, phi12Deg, numBrightFieldPixels, bfOffset, chunkBf, false, buffers.activeBfCount, aberrations.active, options.sample),
           );
-          const pass = enc.beginComputePass({ label: "ssb ssb obj sum" });
+          const pass = enc.beginComputePass({ label: "direct obj sum" });
           pass.setPipeline(thick ? pipelines.objSumThick : pipelines.objSum);
           pass.setBindGroup(0, (thick ? bindGroups.objSumThick : bindGroups.objSum)[chunkIndex]);
           pass.dispatchWorkgroups(Math.ceil(this.plane / 256));
@@ -2164,12 +2164,12 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           0,
           makeParams(this.cal, this.n, c10, c12, phi12Deg, numBrightFieldPixels, 0, 1, false, buffers.activeBfCount, aberrations.active, options.sample),
         );
-        let pass = enc.beginComputePass({ label: "ssb ssb obj fft rows" });
+        let pass = enc.beginComputePass({ label: "direct obj fft rows" });
         pass.setPipeline(pipelines.objFftRows);
         pass.setBindGroup(0, bindGroups.objFftRows);
         pass.dispatchWorkgroups(1, this.n);
         pass.end();
-        pass = enc.beginComputePass({ label: "ssb ssb obj fft cols" });
+        pass = enc.beginComputePass({ label: "direct obj fft cols" });
         pass.setPipeline(pipelines.objFftCols);
         pass.setBindGroup(0, bindGroups.objFftCols);
         pass.dispatchWorkgroups(1, this.n);
@@ -2212,17 +2212,17 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
             options.sample,
           ),
         );
-        let pass = enc.beginComputePass({ label: "ssb ssb rows" });
+        let pass = enc.beginComputePass({ label: "direct rows" });
         pass.setPipeline(thick ? pipelines.rowsThick : pipelines.rows);
         pass.setBindGroup(0, (thick ? bindGroups.rowsThick : bindGroups.rows)[chunkIndex]);
         pass.dispatchWorkgroups(1, this.n, chunkBf);
         pass.end();
-        pass = enc.beginComputePass({ label: "ssb ssb cols" });
+        pass = enc.beginComputePass({ label: "direct cols" });
         pass.setPipeline(pipelines.cols);
         pass.setBindGroup(0, bindGroups.cols[chunkIndex]);
         pass.dispatchWorkgroups(1, this.n, chunkBf);
         pass.end();
-        pass = enc.beginComputePass({ label: "ssb ssb reduce chunk" });
+        pass = enc.beginComputePass({ label: "direct reduce chunk" });
         pass.setPipeline(pipelines.reducePartial);
         pass.setBindGroup(0, bindGroups.reducePartial[chunkIndex]);
         pass.dispatchWorkgroups(Math.ceil(Math.ceil(chunkBf / REDUCE_BF_GROUP) * this.plane / 256));
@@ -2254,7 +2254,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           options.sample,
         ),
       );
-      const pass = enc.beginComputePass({ label: "ssb ssb reduce" });
+      const pass = enc.beginComputePass({ label: "direct reduce" });
       pass.setPipeline(pipelines.finalizeGroups);
       pass.setBindGroup(0, bindGroups.finalizeGroups);
       pass.dispatchWorkgroups(Math.ceil(this.plane / 256));

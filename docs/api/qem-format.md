@@ -151,7 +151,7 @@ group keep it unchanged on re-save and ignore it otherwise. Nothing derived and 
 - `role` is `film`, `substrate`, `support` or `particle`. Component labels are free text.
 - `cif` names a JSON document in `source_documents[]` holding the CIF text (`{"cif": "..."}`) and its sha256.
 - A thickness is always an estimate: `thickness_estimates` lists each with `method` (`diffraction_ridge`,
-  `pacbed_fit`, `ssb_depth`, `ptychography_multislice`, `cross_section`, `nominal`), `value` in `angstrom`, optional
+  `pacbed_fit`, `direct_depth`, `ptychography_multislice`, `cross_section`, `nominal`), `value` in `angstrom`, optional
   `uncertainty` or `range`, `region` (a component label, `{rows, cols}` or `{point}` in scan positions, or absent for
   the whole scan), `reference`, `date`, and at most one `preferred`.
 - Python validates the group (`validate_sample`); the Swift reader keeps it unchanged and does not interpret it yet.

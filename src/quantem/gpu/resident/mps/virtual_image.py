@@ -341,9 +341,9 @@ class MetalVirtualImage:
     ) -> np.ndarray:
         """Gather detector pixels over all scan positions into ``(pixel, frame)`` float32 storage.
 
-        SSB fits and reconstructs from bright-field detector pixels, one scan
+        Direct ptychography fits and reconstructs from bright-field detector pixels, one scan
         image per pixel. A provided ``out`` allocation is wrapped as a no-copy
-        Metal buffer, so SSB gathers directly into MLX-owned unified memory.
+        Metal buffer, so direct ptychography gathers directly into MLX-owned unified memory.
         """
         rows = np.asarray(rows, dtype=np.int64).reshape(-1)
         cols = np.asarray(cols, dtype=np.int64).reshape(-1)

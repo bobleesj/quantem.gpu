@@ -1,4 +1,4 @@
-"""Export a fitted SSB model in ShowPtycho's calibration format."""
+"""Export a fitted direct ptychography model in ShowPtycho's calibration format."""
 
 import json
 from copy import deepcopy
@@ -7,18 +7,19 @@ from pathlib import Path
 from uuid import uuid4
 
 from quantem.gpu.geometry import sample_to_propagator_tilt
-from quantem.gpu.optics.physics import ssb_upsample_factor
+from quantem.gpu.optics.physics import direct_auto_upsample
 
+# 9: the schema takes the direct-ptychography name, quantem.direct-calibration; the layout is that of 8.
 # 8: the output factor is "upsample" with "upsample_mode" (were "upsampling", "upsampling_mode"), the conventional
-#    method is "phase_of_mean" (was "ssb"), the direct strengths are phase_damp and amplitude_damp (were
+#    method is "phase_of_mean", the direct strengths are phase_damp and amplitude_damp (were
 #    phase_damping and amplitude_damping), and "phase_estimator" is gone. The method and its options are one
 #    "reconstruction" dict, {"method": ..., "phase_damp": ..., ...}, as ShowPtycho's Save writes it (a first /8
 #    writer here put "reconstruction_method" beside "reconstruction_options"; scripts/rewrite_saved_records.py
 #    folds those into "reconstruction").
 # 7: the output factor is "upsampling" (was "upsampling_factor") and reconstruction_options names the direct
 #    strengths phase_damping and amplitude_damping (were phase_regularization and amplitude_regularization).
-# An earlier record is rewritten once with quantem.widget's scripts/rewrite_ssb_calibration.py.
-CALIBRATION_SCHEMA = "quantem.ssb-calibration/8"
+# An earlier record is rewritten once with quantem.widget's scripts/rewrite_direct_calibration.py.
+CALIBRATION_SCHEMA = "quantem.direct-calibration/9"
 # Every calibration record a reader accepts, the current one first.
 READABLE_CALIBRATION_SCHEMAS = (CALIBRATION_SCHEMA,)
 
@@ -80,7 +81,7 @@ def save_calibration(result, path):
                          "fit it, and save its calibration to preserve the region's acquisition identity.")
     method = result.reconstruction_method
     if method not in ("phase_of_mean", "phase", "complex"):
-        raise ValueError(f"Unsupported direct reconstruction method {method!r}; save an SSB, phase or complex result.")
+        raise ValueError(f"Unsupported direct reconstruction method {method!r}; save a direct ptychography, phase or complex result.")
     context = deepcopy(result.calibration_context)
     identity = context["session_identity"]
     if "source" not in identity:
@@ -99,7 +100,7 @@ def save_calibration(result, path):
         sample, depth = None, None
     if (sample is None) != (depth is None) or (depth is not None and depth < 0):
         raise ValueError("Sample tilt and positive depth spread must describe one complete model.")
-    factor = (ssb_upsample_factor(scan_sampling_A=geometry["scan_sampling_A"],
+    factor = (direct_auto_upsample(scan_sampling_A=geometry["scan_sampling_A"],
                                    semiangle_mrad=geometry["semiangle_mrad"], voltage_kV=geometry["voltage_kV"])
               if method == "phase_of_mean" else result.upsample)
     record = {

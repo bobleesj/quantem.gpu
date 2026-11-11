@@ -1,7 +1,7 @@
-"""Thick, tilted-sample SSB on CUDA: depth-averaged correction and the least-squares fit objective.
+"""Thick, tilted-sample direct ptychography on CUDA: depth-averaged correction and the least-squares fit objective.
 
-Standard SSB treats the sample as one plane at the probe defocus. A crystal of thickness t tilted by theta sees a range of
-defoci and shifts through its depth; averaging the SSB transfer terms over that depth gives each its own sinc weight (see
+Standard direct ptychography treats the sample as one plane at the probe defocus. A crystal of thickness t tilted by theta sees a range of
+defoci and shifts through its depth; averaging the direct ptychography transfer terms over that depth gives each its own sinc weight (see
 ``kernels/engine.py``). ``ThickSample`` evaluates that model on one engine's prepared bright-field spectra ``G_qk``:
 phase images for previews and reconstruction, and the agreement that ``aberrations(tilt=True)`` maximises.
 """
@@ -30,7 +30,7 @@ from quantem.gpu.direct_ptycho.units import ENGINE_PER_NM, aberrations_to_engine
 
 
 class ThickSample:
-    """The thick-sample model on one ``SSBEngine``'s prepared ``G_qk`` and rotation geometry.
+    """The thick-sample model on one ``DirectEngine``'s prepared ``G_qk`` and rotation geometry.
 
     The engine owns the evidence and the current rotation; this object owns what only the thick model needs: the
     spatial-frequency band of the fit objective and the float64 wave-sum scratch buffer, each rebuilt only when the
@@ -61,11 +61,11 @@ class ThickSample:
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
-        """SSB phase of a thick, tilted crystal at ``upsample``, and the native-grid phase-variance loss.
+        """Direct ptychography phase of a thick, tilted crystal at ``upsample``, and the native-grid phase-variance loss.
 
-        Each pixel's SSB correction is averaged over the sample depth (see ``thick_correct_kernel``);
+        Each pixel's direct ptychography correction is averaged over the sample depth (see ``thick_correct_kernel``);
         ``sample_tilt_mrad`` = (row, col) in the scan frame, ``thickness`` in the C10 unit, and thickness 0 reproduces
-        standard SSB. The corrected spectra are summed in bounded BF groups before a single inverse FFT and phase
+        standard direct ptychography. The corrected spectra are summed in bounded BF groups before a single inverse FFT and phase
         extraction (``phase_of_mean``); upsample aliases are read directly from the native spectra without a per-BF
         expanded image. Linear averaging commutes with the inverse FFT, but not with phase extraction. The loss,
         when asked for, is ``phase_variance``'s on the native grid.
@@ -93,7 +93,7 @@ class ThickSample:
     ) -> tuple[cp.ndarray, float]:
         """The phase-variance objective on the native grid: (mean over BF pixels of each corrected phase, loss).
 
-        Same definitions as ``SSBEngine.reconstruct_with_loss`` (the loss is the mean over the image of the per-pixel
+        Same definitions as ``DirectEngine.reconstruct_with_loss`` (the loss is the mean over the image of the per-pixel
         variance of the bright-field phases), with each pixel's correction averaged over the sample depth. C10/C12
         optics run ``_native_phase_variance``; higher orders the reference loop below: element-wise correction, then
         one inverse FFT per pixel, in chunks of bright-field pixels.
@@ -218,9 +218,9 @@ class ThickSample:
     ) -> cp.ndarray:
         """The BF sum of corrected spectra, (rows, unique columns) complex128, before the mirror and the FFT.
 
-        ``pairs`` 1 or 2 sums only the single-sideband or only the triple-overlap
+        ``pairs`` 1 or 2 sums only the double-overlap or only the triple-overlap
         terms (fine grids); their sum is the full spectrum (0), which the
-        SSB drag window uses to interpolate the first and evaluate the second.
+        Direct ptychography drag window uses to interpolate the first and evaluate the second.
         """
         engine = self.engine
         cache = engine._cache
@@ -392,7 +392,7 @@ class ThickSample:
         band_inv_A: tuple[float, float] = (0.2, 0.9),
         chunk_bytes: int = 1 << 30,
     ) -> float:
-        """Least-squares fit of the thick-sample SSB model to G over a spatial-frequency band (larger = better).
+        """Least-squares fit of the thick-sample direct ptychography model to G over a spatial-frequency band (larger = better).
 
         sum over q in the band of |sum_k G conj(gamma)|^2 / sum_k |gamma|^2 (see ``thick_fit_kernel``). This is the objective
         that recovers sample tilt: on simulated BaTiO3 15 nm tilted (3, -4) mrad it finds (3.0, -4.1) and ~0 for the untilted
@@ -582,16 +582,16 @@ def _pair_kernel(pairs: int, higher_order: bool):
 
         correction = kernels._HIGHER_CORRECTION_SOURCE if higher_order else kernels._THICK_CORRECTION_SOURCE
         _pair_kernels[key] = cp.RawKernel(
-            f"#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n#define SSB_WAVE_PAIRS {pairs}\n"
-            + ("#define SSB_WAVE_ORDER\n#define SSB_WAVE_QLIST\n" if pairs == 2 else "") + correction
+            f"#define DIRECT_WAVE\n#define DIRECT_WAVE_BOUNDS\n#define DIRECT_WAVE_PAIRS {pairs}\n"
+            + ("#define DIRECT_WAVE_ORDER\n#define DIRECT_WAVE_QLIST\n" if pairs == 2 else "") + correction
             + kernels._THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
     return _pair_kernels[key]
 
 
 class WaveWindow:
-    """The fine-grid SSB spectrum along one aberration control, for redrawing while it is dragged.
+    """The fine-grid direct ptychography spectrum along one aberration control, for redrawing while it is dragged.
 
-    Serves: ShowPtycho SSB drags of C10, C12 or phi12 with a fitted higher-order
+    Serves: ShowPtycho direct ptychography drags of C10, C12 or phi12 with a fitted higher-order
     probe held, at 3x on the full 512 x 512 scan.
 
     A term with one sideband aperture open has gamma / |gamma| = sign(w)
@@ -613,7 +613,7 @@ class WaveWindow:
         self.shape = None
 
     def step(self) -> bool:
-        """Add the single-sideband spectrum at the next node; True once the window is complete."""
+        """Add the double-overlap spectrum at the next node; True once the window is complete."""
         if self.series.ready:
             return True
         spectrum = self._spectrum(self.series.nodes[self.series.added], pairs=1)

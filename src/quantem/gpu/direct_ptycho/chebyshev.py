@@ -2,7 +2,7 @@
 
 Serves: ShowPtycho drags of one control (C10, C12, phi12 typically) at 3x on
 the full 512 x 512 scan. Whatever a window holds (regularized normal
-equations, or the single-sideband part of the SSB spectrum) is a sum over BF
+equations, or the double-overlap part of the direct ptychography spectrum) is a sum over BF
 pixels of f_k exp(i (c - c0) u_k), an entire function of the control c, so on
 [c0 - h, c0 + h] its Chebyshev series converges like 2 (z / 2)^(N + 1) / (N + 1)!,
 z = h max|u|. The reach z sets the width: 10 for a magnitude (C10 +-6.8 nm,

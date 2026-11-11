@@ -4,7 +4,7 @@ import Metal4DSTEMStreamingIO
 import MetalDirectPtychoKernels
 import Native4DSTEMIO
 
-// End-to-end native SSB fit timing on one measured acquisition: low-order branch fits, the branch test, and the
+// End-to-end native direct ptychography fit timing on one measured acquisition: low-order branch fits, the branch test, and the
 // fifth-order refinement, with the objective and every fitted parameter. The first run reads the original HDF5
 // through the resident loader and writes the exact selected BF counts to --cache; later runs map that cache.
 //
@@ -27,9 +27,9 @@ import Native4DSTEMIO
 // row/column, depth), and with --baseline RESULT.json the same for that run's kept low-order fit.
 //   metal-direct-ptycho-fit-benchmark --cache DIR --direct-parity LIMITS.json --cuda-dir DIR [--limits 2,10] [--factors 1,3]
 //     [--output PARITY.json] [--phase-out DIR]
-//     ssb, phase and complex of the limits' optics against CUDA's arrays, with timings (DirectParity.swift).
+//     direct, phase and complex of the limits' optics against CUDA's arrays, with timings (DirectParity.swift).
 //   metal-direct-ptycho-fit-benchmark --cache FIXTURE --fixture-parity FIXTURE [--oracle-dir DIR] [--optics NAME]
-//     [--methods ssb,phase,complex] [--output PARITY.json] [--phase-out DIR]
+//     [--methods direct,phase,complex] [--output PARITY.json] [--phase-out DIR]
 //     every reconstruction of a fixture's references.json natively, with per-setting parity and timing.
 //   metal-direct-ptycho-fit-benchmark --cache FIXTURE --direct-drag FIXTURE [--optics NAME] [--factors 3] [--steps 30]
 //     [--output DRAG.json]
@@ -199,7 +199,7 @@ func log(_ message: String) {
   FileHandle.standardError.write(Data((message + "\n").utf8))
 }
 
-/// The app's flagged-pixel handling (Live4DSTEM `SSBFlaggedPixels`, Python `io.load`): each flagged pixel takes,
+/// The app's flagged-pixel handling (Live4DSTEM `DirectFlaggedPixels`, Python `io.load`): each flagged pixel takes,
 /// at every scan position, the median of the valid pixels in the smallest square around it that has any.
 struct FlaggedPixels {
   var pixels: [Int] = []
@@ -263,7 +263,7 @@ func readColumns(
 }
 
 /// Read the original acquisition once and keep its exact selected BF columns beside a case record, prepared as
-/// the app prepares SSB: flagged pixels median-filled and kept, the BF disk measured on the filled totals, the
+/// the app prepares direct ptychography: flagged pixels median-filled and kept, the BF disk measured on the filled totals, the
 /// rotation from the marker-free filled moments, and the dark field of the branch test.
 func export(options: Options, device: MTLDevice) throws {
   guard let input = options.input else {
@@ -328,7 +328,7 @@ func export(options: Options, device: MTLDevice) throws {
     excludedPixels: excluded,
     scanRows: metadata.scanRows, scanColumns: metadata.scanColumns)
   // Rotation from exact moments without the markers, with each flagged pixel's filled column
-  // (Live4DSTEM `SSBMeasuredEvidence.rotation`).
+  // (Live4DSTEM `DirectMeasuredEvidence.rotation`).
   guard let moments = try resident.preparedDPCMomentValues() else {
     throw failure("The resident has no exact DPC moments for the rotation estimate")
   }
@@ -405,7 +405,7 @@ func export(options: Options, device: MTLDevice) throws {
   )
 }
 
-/// The app's branch-test dark field (`SSBMeasuredEvidence.darkFieldMask`): exact counts of the valid detector
+/// The app's branch-test dark field (`DirectMeasuredEvidence.darkFieldMask`): exact counts of the valid detector
 /// pixels at or beyond 1.1 BF radii from the calibrated centre, per scan position, as float32.
 func exportDarkField(options: Options, record: CaseRecord, to url: URL, device: MTLDevice) throws {
   guard let input = options.input else {
@@ -830,7 +830,7 @@ for repeatIndex in 0..<(options.fifthOnly == nil ? options.repeats : 0) {
   }
 }
 let summary: [String: Any] = [
-  "schema": "quantem-gpu-ssb-fit-benchmark/v1", "cache": options.cache.path,
+  "schema": "quantem-gpu-direct-fit-benchmark/v1", "cache": options.cache.path,
   "search": options.search.rawValue,
   "load_s": Date().timeIntervalSince(loadStarted), "results": results,
 ]

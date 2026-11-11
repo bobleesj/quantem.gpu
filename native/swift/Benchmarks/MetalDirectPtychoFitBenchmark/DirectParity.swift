@@ -98,7 +98,7 @@ func modelPoint(_ record: [String: Any]) throws -> DirectPtychoModelPoint {
     depthSpreadNanometers: depth, higherOrder: terms)
 }
 
-/// `--direct-parity LIMITS.json --cuda-dir DIR`: each method (ssb, phase, complex) of the chosen limits' optics at
+/// `--direct-parity LIMITS.json --cuda-dir DIR`: each method (direct, phase, complex) of the chosen limits' optics at
 /// the automatic factor, against CUDA's `limit<L>-<method>-{phase,amplitude}.npy` from the same optics, with stage
 /// timings: the first call (layout and kernel specialization), a repeat (prepared system kept) and a damping change.
 func directParity(
@@ -114,7 +114,7 @@ func directParity(
     let rotation = sweep["rotation_deg"] as? Double,
     let records = sweep["limits"] as? [[String: Any]]
   else { throw failure("\(sweepURL.path) is not a limit sweep") }
-  let auto = try calibration.ssbUpsamplingFactor()
+  let auto = try calibration.directAutoUpsample()
   let engine = try MetalDirectPtychoEngine(device: device, geometry: geometry)
   try engine.prepare(brightfield: counts, countType: countType)
   let model = try engine.jointModel(scanDetectorRotationDegrees: rotationEstimate)
@@ -156,12 +156,12 @@ func directParity(
           continue
         }
         row["first_ms"] = Date().timeIntervalSince(started) * 1e3
-        if method != .ssb { row["first_stages"] = timing(model.lastDirectTiming) }
+        if method != .phaseOfMean { row["first_stages"] = timing(model.lastDirectTiming) }
         started = Date()
         _ = try model.reconstruct(
           point, upsamplingFactor: factor, method: method, regularization: regularization)
         row["repeat_ms"] = Date().timeIntervalSince(started) * 1e3
-        if method != .ssb {
+        if method != .phaseOfMean {
           row["repeat_stages"] = timing(model.lastDirectTiming)
           started = Date()
           _ = try model.reconstruct(
@@ -250,7 +250,7 @@ func fixtureParity(
       as? [String: Any],
     let references = manifest["references"] as? [[String: Any]]
   else { throw failure("\(directory.path) is not a fixture (optics.json, references.json)") }
-  let auto = try calibration.ssbUpsamplingFactor()
+  let auto = try calibration.directAutoUpsample()
   let engine = try MetalDirectPtychoEngine(device: device, geometry: geometry)
   try engine.prepare(brightfield: counts, countType: countType)
   let model = try engine.jointModel(scanDetectorRotationDegrees: rotationEstimate)
@@ -308,7 +308,7 @@ func fixtureParity(
         continue
       }
       row["first_ms"] = Date().timeIntervalSince(started) * 1e3
-      if method != .ssb, let t = model.lastDirectTiming {
+      if method != .phaseOfMean, let t = model.lastDirectTiming {
         row["first_stages"] =
           [
             "layout_ms": t.layoutSeconds * 1e3, "prepare_ms": t.prepareSeconds * 1e3,
@@ -357,7 +357,7 @@ func fixtureParity(
       }
       let gate = gates(phase: phaseParity, amplitude: amplitudeParity)
       row["gates"] = gate
-      if gate.values.contains(false) && method != .ssb { failures += 1 }
+      if gate.values.contains(false) && method != .phaseOfMean { failures += 1 }
       if let oracleDirectory {
         let oracle = oracleDirectory.appendingPathComponent(name).appendingPathComponent(
           (file as NSString).lastPathComponent)

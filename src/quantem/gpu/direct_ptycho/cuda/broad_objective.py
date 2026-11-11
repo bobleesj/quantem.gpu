@@ -17,14 +17,14 @@ old2 = "fmaf(p2, c12s[b], fmaf(p1, c12c[b], p0 * c10[b]))"
 assert code.count(old1) == 1 and code.count(old2) == 1
 code = code.replace(
     old1,
-    "(ssb_chi_full(kxv-qx, kyv-qy, wl, coefficients+b*28)-ssb_chi_full(kxv,kyv,wl,coefficients+b*28))",
+    "(direct_chi_full(kxv-qx, kyv-qy, wl, coefficients+b*28)-direct_chi_full(kxv,kyv,wl,coefficients+b*28))",
 )
 code = code.replace(
     old2,
-    "(ssb_chi_full(kxv+qx, kyv+qy, wl, coefficients+b*28)-ssb_chi_full(kxv,kyv,wl,coefficients+b*28))",
+    "(direct_chi_full(kxv+qx, kyv+qy, wl, coefficients+b*28)-direct_chi_full(kxv,kyv,wl,coefficients+b*28))",
 )
 code = (
-    "#define SSB_DEVICE __device__ __forceinline__\n#define SSB_COEFFICIENTS const float*\n"
+    "#define DIRECT_DEVICE __device__ __forceinline__\n#define DIRECT_COEFFICIENTS const float*\n"
     + CHI_SOURCE
     + "\n"
     + code

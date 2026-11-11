@@ -1,6 +1,6 @@
 """Checks of a backend's exact-derivative fit against the plain-torch float64 reference (``tests.parity.torch_agreement``).
 
-Used by ``tests/hardware/{cuda,mps}/test_ssb_exact_derivatives.py`` on the weak-phase simulation of ``thin_object``.
+Used by ``tests/hardware/{cuda,mps}/test_direct_exact_derivatives.py`` on the weak-phase simulation of ``thin_object``.
 The reference reads the session's own float32 G, k and band (``TorchAgreement.from_session``) and computes in float64
 on the CPU, so a difference is the kernels' float32 arithmetic or a wrong derivative, never different inputs.
 """
@@ -16,27 +16,27 @@ BOUNDS = np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-2
 LOW_SCALE = np.array([100.0, 100.0, 100.0, 5.0, 5.0, 100.0])
 
 
-def reference(ssb, chunk=256):
+def reference(direct, chunk=256):
     from tests.parity.torch_agreement import TorchAgreement
 
-    return TorchAgreement.from_session(ssb, chunk=chunk)
+    return TorchAgreement.from_session(direct, chunk=chunk)
 
 
-def fifth_objective(ssb):
+def fifth_objective(direct):
     from quantem.gpu.direct_ptycho.fifth_order_fit import _objective
 
-    return _objective(ssb, gradients=True)
+    return _objective(direct, gradients=True)
 
 
-def low_order(ssb):
-    backend = ssb._backend()
-    if ssb.backend == "cuda":
+def low_order(direct):
+    backend = direct._backend()
+    if direct.backend == "cuda":
         from quantem.gpu.direct_ptycho.cuda.exact_derivatives import LowOrderDerivatives
 
         return LowOrderDerivatives(backend._get_accelerator())
     from quantem.gpu.direct_ptycho.mps.exact_derivatives import LowOrderDerivatives
 
-    backend.cache_rotation(math.radians(ssb.scan_detector_rotation_deg))
+    backend.cache_rotation(math.radians(direct.scan_detector_rotation_deg))
     return LowOrderDerivatives(backend._prepared)
 
 
@@ -50,13 +50,13 @@ def away_from_the_optimum():
     return z
 
 
-def check_fifth_order_gradient(ssb, stride):
+def check_fifth_order_gradient(direct, stride):
     """Value and exact gradient of the kernels against float64 autograd, and the gradient against central
     differences of the production float32 objective."""
-    objective = fifth_objective(ssb)
+    objective = fifth_objective(direct)
     z = away_from_the_optimum()
     values, gradient = objective.values_and_gradients(z, stride)
-    truth_value, truth_gradient = reference(ssb).subsample(stride).value_and_gradient(z)
+    truth_value, truth_gradient = reference(direct).subsample(stride).value_and_gradient(z)
     assert values[0] == pytest.approx(truth_value, rel=1e-5)
     assert relative(gradient[0], truth_gradient) < 2e-3
     step = 2e-3
@@ -69,12 +69,12 @@ def check_fifth_order_gradient(ssb, stride):
         assert values[0] == pytest.approx(float(objective.evaluate(z, 5)[0]), rel=1e-6)
 
 
-def check_band_halves(ssb):
+def check_band_halves(direct):
     """The two ring halves of the half-band check partition the band: their values and gradients add up to the full
     objective's, and unit weights change nothing."""
     from quantem.gpu.direct_ptycho.fifth_order_fit import ring_parity
 
-    objective = fifth_objective(ssb)
+    objective = fifth_objective(direct)
     z = away_from_the_optimum()
     full_values, full_gradient = objective.values_and_gradients(z, 1)
     parity = ring_parity(*objective.band_frequencies())
@@ -87,16 +87,16 @@ def check_band_halves(ssb):
     np.testing.assert_array_equal(unit_gradient, full_gradient)
 
 
-def check_low_order_derivatives(ssb):
+def check_low_order_derivatives(direct):
     """Value, exact gradient and exact Hessian of the low-order kernel against float64 autograd."""
     from tests.parity.torch_agreement import fifth_from_low
 
-    low = low_order(ssb)
+    low = low_order(direct)
     phi = math.radians(TRUTH["phi12_deg"] + 7) * 2
     z6 = np.array([10 * TRUTH["C10_nm"] + 8, 25 * math.cos(phi), 25 * math.sin(phi), 1.5, -2.0, 150.0])
     low.values(z6[None])
     value, gradient, hessian = low.derivatives([0])[0]
-    truth = reference(ssb)
+    truth = reference(direct)
     z = fifth_from_low(z6).numpy()
     truth_value, truth_gradient = truth.value_and_gradient(z)
     truth_hessian = truth.hessian(z, range(6)) / np.outer(LOW_SCALE, LOW_SCALE)
@@ -114,10 +114,10 @@ def check_opposite_branch(simulation, backend):
     mapped[0, 0] = -point[0, 0]
     mapped[0, 2] = point[0, 2] + math.pi / 2
     mapped[0, 3:5] = -point[0, 3:5]
-    with session(data, detector_mrad, backend) as ssb:
-        first = float(ssb._backend().sample_agreement(point, (0.2, 0.9))[0])
-        ssb.set_rotation(180.0)
-        second = float(ssb._backend().sample_agreement(mapped, (0.2, 0.9))[0])
+    with session(data, detector_mrad, backend) as direct:
+        first = float(direct._backend().sample_agreement(point, (0.2, 0.9))[0])
+        direct.set_rotation(180.0)
+        second = float(direct._backend().sample_agreement(mapped, (0.2, 0.9))[0])
     assert second == pytest.approx(first, rel=1e-5)
 
 
@@ -145,9 +145,9 @@ def check_fit(simulation, backend):
     """The default fit (exact low-order Newton, exact-gradient fifth order, mapped branch) reaches the float64 optimum
     of the reference: at fifth order, and over the six low-order coordinates with the higher orders held at 0."""
     data, _, detector_mrad = simulation
-    with session(data, detector_mrad, backend) as ssb:
-        exact = ssb.aberrations(show=False, verbose=False, check_rotation="both", higher_order_limit=2)
-        truth = reference(ssb)
+    with session(data, detector_mrad, backend) as direct:
+        exact = direct.aberrations(show=False, verbose=False, check_rotation="both", higher_order_limit=2)
+        truth = reference(direct)
         fitted = np.asarray(exact.optimizer["coordinates"])
         assert truth.agreement(fitted) >= truth.agreement(float64_optimum(truth, fitted)) * (1 - 2e-7)
         # the low-order fit is the standard start of the fifth-order refinement
@@ -169,15 +169,15 @@ def check_wide_fit(simulation, backend):
     from quantem.gpu.direct_ptycho.fifth_order_fit import _refine_with_gradients, fifth_order_bounds, ring_parity
 
     data, _, detector_mrad = simulation
-    with session(data, detector_mrad, backend) as ssb:
-        fit = ssb.aberrations(show=False, verbose=False)
+    with session(data, detector_mrad, backend) as direct:
+        fit = direct.aberrations(show=False, verbose=False)
         check = fit.optimizer["higher_order_consistency"]
         assert check["trusted"] and check["shown_limit"] == 20.0 and fit.optimizer["higher_order_limit"] == 20.0
         assert check["half_band_rms_rad"] < 0.1
         assert [half["ring_parity"] for half in check["halves"]] == [0, 1]
         assert check["checked_coordinates"] == fit.optimizer["coordinates"]
         assert fit.timings["higher_order_consistency_s"] > 0 and "higher_order_fallback_s" not in fit.timings
-        objective = fifth_objective(ssb)
+        objective = fifth_objective(direct)
         parity = ring_parity(*objective.band_frequencies())
         assert check["halves"][1]["frequencies"] == int(parity.sum())
         half = objective.with_band_weights(parity == 1)

@@ -1,4 +1,4 @@
-"""What a microscopist calls: drift on any form of a phase series (stack, NumPy, list, stream, SSB results) gives the
+"""What a microscopist calls: drift on any form of a phase series (stack, NumPy, list, stream, direct ptychography results) gives the
 same Drift, and corrected moves every frame back onto frame 0 over the region all frames share, with the sign of
 displacement_A (I_f(r) = I_0(r - d_f))."""
 

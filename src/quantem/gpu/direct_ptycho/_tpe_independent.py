@@ -64,7 +64,7 @@ from optuna.trial import TrialState
 # broad fit); another version could change both silently, so any other version stops here.
 if optuna.__version__ != "4.9.0":
     raise ImportError(
-        f"quantem.gpu's broad SSB search needs optuna==4.9.0, found {optuna.__version__}; "
+        f"quantem.gpu's broad direct ptychography search needs optuna==4.9.0, found {optuna.__version__}; "
         'install it with pip install "optuna==4.9.0".'
     )
 from optuna.samplers._tpe import _truncnorm  # noqa: E402
@@ -245,7 +245,7 @@ def make_independent_sampler(*, seed: int, bounds: np.ndarray) -> optuna.sampler
     bounds : numpy.ndarray
         Lower and upper bounds in parameter order, shape ``(n, 2)``. The caller
         must request ``p0`` through ``p<n-1>`` in order, in every trial, with one
-        worker. This private factory is used by the fixed broad SSB search.
+        worker. This private factory is used by the fixed broad direct ptychography search.
     """
     space = {f"p{i}": FloatDistribution(float(low), float(high)) for i, (low, high) in enumerate(bounds)}
     return _IndependentSampler(seed=seed, space=space)

@@ -7,7 +7,7 @@ import XCTest
 final class DirectPtychoRotationRefinementTests: XCTestCase {
   func testMetalPriorPreservesTheInitialTrialsAndFifthOrderWorkflow() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
-    let model = try SSBFifthOrderGradientTests.model(device)
+    let model = try DirectFifthOrderGradientTests.model(device)
     let fixedOptions = DirectPtychoFitOptions(compareStandard: false, maximumOrder: 1)
     let fixed = try DirectPtychoModelFit.findAberrations(
       model: model, rotationDegrees: 17.25,
@@ -48,7 +48,7 @@ final class DirectPtychoRotationRefinementTests: XCTestCase {
 
   func testBoundedEntryRejectsInvalidOriginalOptionsBeforeRetargetingOrEvaluation() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
-    let model = try SSBFifthOrderGradientTests.model(device)
+    let model = try DirectFifthOrderGradientTests.model(device)
     let originalRotation = model.scanDetectorRotationDegrees
     let invalidOptions = [
       DirectPtychoFitOptions(maximumOrder: 2),
@@ -70,7 +70,7 @@ final class DirectPtychoRotationRefinementTests: XCTestCase {
 
   func testBoundedEntryCancelsBeforePublishingAnyFit() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
-    let model = try SSBFifthOrderGradientTests.model(device)
+    let model = try DirectFifthOrderGradientTests.model(device)
     XCTAssertThrowsError(
       try DirectPtychoModelFit.findAberrations(
         model: model, rotationDegrees: 17.25,
@@ -85,7 +85,7 @@ final class DirectPtychoRotationRefinementTests: XCTestCase {
 
   func testCancellationDuringAngularWalkDoesNotPublishOrRefine() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
-    let model = try SSBFifthOrderGradientTests.model(device)
+    let model = try DirectFifthOrderGradientTests.model(device)
     var cancelled = false
     var angularUpdates = 0
     XCTAssertThrowsError(
@@ -107,7 +107,7 @@ final class DirectPtychoRotationRefinementTests: XCTestCase {
 
   func testNoTiltPrimaryRemainsNoTiltThroughoutBoundedRotation() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
-    let model = try SSBFifthOrderGradientTests.model(device)
+    let model = try DirectFifthOrderGradientTests.model(device)
     let options = DirectPtychoFitOptions(tilt: false, maximumOrder: 1)
     let bounded = try DirectPtychoModelFit.findAberrations(
       model: model, rotationDegrees: 17.25,
@@ -129,7 +129,7 @@ final class DirectPtychoRotationRefinementTests: XCTestCase {
 
   func testRequestedStandardComparisonUsesTheSelectedRotation() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
-    let model = try SSBFifthOrderGradientTests.model(device)
+    let model = try DirectFifthOrderGradientTests.model(device)
     let options = DirectPtychoFitOptions(compareStandard: true, maximumOrder: 1)
     let bounded = try DirectPtychoModelFit.findAberrations(
       model: model, rotationDegrees: 17.25,
@@ -152,7 +152,7 @@ final class DirectPtychoRotationRefinementTests: XCTestCase {
 
   func testOmittedAndNilPriorKeepTheSameFixedRotationFit() throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
-    let model = try SSBFifthOrderGradientTests.model(device)
+    let model = try DirectFifthOrderGradientTests.model(device)
     let options = DirectPtychoFitOptions(compareStandard: false, maximumOrder: 1)
     let omitted = try DirectPtychoModelFit.findAberrations(
       model: model, rotationDegrees: 17.25,

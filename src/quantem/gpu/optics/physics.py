@@ -1,4 +1,4 @@
-"""Electron wavelength and SSB sampling from microscope calibration."""
+"""Electron wavelength and direct ptychography sampling from microscope calibration."""
 
 import math
 from collections.abc import Sequence
@@ -11,9 +11,9 @@ ELECTRON_MASS = 9.1093837015e-31  # Electron rest mass (kg)
 ELECTRON_CHARGE = 1.602176634e-19  # Elementary charge (C)
 SPEED_OF_LIGHT = 299792458  # Speed of light (m/s)
 
-# The SSB output factors a reconstruction accepts, and the largest one upsample="auto" chooses.
-SSB_UPSAMPLING_FACTORS = (1, 2, 3, 4, 8)
-SSB_AUTO_UPSAMPLING_MAX = 4
+# The direct ptychography output factors a reconstruction accepts, and the largest one upsample="auto" chooses.
+DIRECT_UPSAMPLE_CHOICES = (1, 2, 3, 4, 8)
+DIRECT_AUTO_UPSAMPLE_MAX = 4
 
 # Wavelengths in Angstroms at common microscope voltages in kV, at full precision.
 COMMON_VOLTAGES = {
@@ -128,13 +128,13 @@ def wrap_degrees(angle_deg: float, period_deg: float) -> float:
     return 0.0 if wrapped == period_deg else wrapped
 
 
-def ssb_upsample_requirement(
+def direct_upsample_requirement(
     *,
     voltage_kV: float,
     semiangle_mrad: float,
     scan_sampling_A: float | Sequence[float],
 ) -> float:
-    """Calculate the fractional output sampling needed for nominal SSB support.
+    """Calculate the fractional output sampling needed for nominal direct ptychography support.
 
     Parameters
     ----------
@@ -156,7 +156,7 @@ def ssb_upsample_requirement(
     This inexpensive metadata calculation does not load data, fit aberrations,
     or establish measured resolution. Detector truncation, dose, model validity,
     and scan aliases can reduce recoverable information below this ideal bound.
-    It does not use the detector's maximum collection angle as SSB bandwidth.
+    It does not use the detector's maximum collection angle as direct ptychography bandwidth.
     """
     try:
         voltage = float(voltage_kV)
@@ -180,14 +180,14 @@ def ssb_upsample_requirement(
     return max(spacing) / target_spacing
 
 
-def ssb_upsample_factor(
+def direct_auto_upsample(
     *,
     voltage_kV: float,
     semiangle_mrad: float,
     scan_sampling_A: float | Sequence[float],
-    max_factor: int = SSB_AUTO_UPSAMPLING_MAX,
+    max_factor: int = DIRECT_AUTO_UPSAMPLE_MAX,
 ) -> int:
-    """Choose automatic SSB output sampling from the scan sampling, at most 4× by default.
+    """Choose automatic direct ptychography output sampling from the scan sampling, at most 4× by default.
 
     Parameters
     ----------
@@ -206,7 +206,7 @@ def ssb_upsample_factor(
     int
         Smallest of 1, 2, 3, 4 and 8, up to ``max_factor``, whose output
         Nyquist frequency covers nominal support on both scan axes, or
-        ``max_factor`` when none does. Use ``ssb_upsample_requirement`` to
+        ``max_factor`` when none does. Use ``direct_upsample_requirement`` to
         inspect the fractional requirement.
 
     Notes
@@ -221,16 +221,16 @@ def ssb_upsample_factor(
     --------
     At 300 kV and 30 mrad, a 1 Å step needs about 6.1×:
 
-    >>> ssb_upsample_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0)
+    >>> direct_auto_upsample(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0)
     4
-    >>> ssb_upsample_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0, max_factor=8)
+    >>> direct_auto_upsample(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=1.0, max_factor=8)
     8
     """
-    if isinstance(max_factor, bool) or not isinstance(max_factor, Integral) or max_factor not in SSB_UPSAMPLING_FACTORS:
+    if isinstance(max_factor, bool) or not isinstance(max_factor, Integral) or max_factor not in DIRECT_UPSAMPLE_CHOICES:
         raise ValueError("max_factor must be 1, 2, 3, 4, or 8.")
-    required = ssb_upsample_requirement(
+    required = direct_upsample_requirement(
         voltage_kV=voltage_kV, semiangle_mrad=semiangle_mrad,
         scan_sampling_A=scan_sampling_A,
     )
-    return next((factor for factor in SSB_UPSAMPLING_FACTORS
+    return next((factor for factor in DIRECT_UPSAMPLE_CHOICES
                  if factor <= max_factor and factor >= required - 1e-12), int(max_factor))

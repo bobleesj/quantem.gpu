@@ -1,8 +1,8 @@
-"""Aberration units at the SSB boundary: the public API is nm and degrees, the engines work in Angstrom and radians.
+"""Aberration units at the direct ptychography boundary: the public API is nm and degrees, the engines work in Angstrom and radians.
 
 Every backend evaluates chi = (pi / lambda[A]) alpha^2 (C10 + C12 cos 2(phi - phi12)) with no conversion, so the
 numbers it takes and returns are Angstrom and radians. Before 2026-09-24 they were passed through and reported as "nm"
-(known-defocus check: abTEM C10 = -100 A came back as C10 = -100.26 "nm"). The SSB session converts here, so every
+(known-defocus check: abTEM C10 = -100 A came back as C10 = -100.26 "nm"). The direct ptychography session converts here, so every
 aberration a user or a stored record sees carries its unit in its key (``C10_nm``, ``C12_nm``, ``phi12_deg``), while
 kernels, backend parity tests and fixtures keep Angstrom and radians.
 """
@@ -30,7 +30,7 @@ def sampling_pair(name: str, value) -> tuple[float, float]:
     ``scan_sampling_A=0.264`` and ``scan_sampling_A=(0.264, 0.264)`` describe the same scan, as
     ``data.calibration.scan_sampling_A = 0.264`` does. The value is always stored and reported as the pair, so a
     record never holds a scalar that could be read as a pair that lost an axis. NumPy values (``np.float32``) become
-    Python floats, which the backends index safely. SSB and parallax read their samplings through here, so one rule
+    Python floats, which the backends index safely. Direct ptychography and parallax read their samplings through here, so one rule
     and one message cover both.
     """
     if np.ndim(value) == 0 and value is not None and not isinstance(value, (str, bytes, bool)):
@@ -64,7 +64,7 @@ def validate_aberrations(aberrations: dict[str, float] | None, *, higher_order: 
         if extra:
             details.append(f"unknown {sorted(extra)}")
         raise ValueError(
-            "SSB aberrations must contain exactly C10_nm, C12_nm, and phi12_deg "
+            "Direct ptychography aberrations must contain exactly C10_nm, C12_nm, and phi12_deg "
             f"(nm, nm, degrees); {', '.join(details)}."
         )
     return {name: float(aberrations[name]) for name in accepted if name in aberrations}

@@ -1,4 +1,4 @@
-"""Reconstructed focus/depth comparisons around a jointly fitted SSB model."""
+"""Reconstructed focus/depth comparisons around a jointly fitted direct ptychography model."""
 
 from collections.abc import Sequence
 from pathlib import Path
@@ -36,7 +36,7 @@ def show_focus(
     if mode not in ("interactive", "static"):
         raise ValueError(f"Use mode='interactive' or 'static' for focus images; got {mode!r}.")
     if save is not None and mode != "static":
-        raise ValueError("save exports a static figure; use ssb.show('focus', mode='static', save='focus.png').")
+        raise ValueError("save exports a static figure; use direct.show('focus', mode='static', save='focus.png').")
     if layout not in ("grid", "stack"):
         raise ValueError(f"Use layout='grid' for Show2D or 'stack' for Show3D; got {layout!r}.")
     width_inches = panel_inches("medium" if size is None else size)
@@ -46,7 +46,7 @@ def show_focus(
     if offsets.ndim != 1 or not offsets.size or not np.isfinite(offsets).all():
         raise ValueError("Give finite focus_offsets_nm, for example (-5, 0, 5), relative to the joint fit.")
     if fit.sample_tilt_mrad is None or fit.depth_spread_nm is None:
-        raise ValueError("Focus/depth images require a joint fit. Run ssb.aberrations(tilt=True) first.")
+        raise ValueError("Focus/depth images require a joint fit. Run direct.aberrations(tilt=True) first.")
     depths = (
         np.unique(np.maximum(0.0, fit.depth_spread_nm + np.array([-5.0, 0.0, 5.0])))
         if depth_spread_nm is None else np.atleast_1d(np.asarray(depth_spread_nm, dtype=float))
@@ -94,7 +94,7 @@ def show_focus(
     finally:
         session.set_rotation(rotation)
 
-    title = f"SSB focus/depth · {factor}× auto · phase (rad)"
+    title = f"Direct ptychography focus/depth · {factor}× auto · phase (rad)"
     if region is not None:
         title += f" · rows {region[0]}:{region[1]}, columns {region[2]}:{region[3]}"
     lower, upper = fit.phase_limits

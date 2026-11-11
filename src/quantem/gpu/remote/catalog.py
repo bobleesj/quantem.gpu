@@ -228,7 +228,7 @@ class Catalog:
                         "scan_sampling_A": scan_sampling,
                         "detector_sampling_mrad": detector_mrad,
                         "detector_sampling_inv_A": detector_inv_A,
-                        "has_ssb": False,
+                        "has_direct": False,
                     }
                 )
             if files:

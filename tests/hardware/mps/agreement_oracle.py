@@ -1,9 +1,9 @@
-"""Test oracle: the per-term model agreement of the thick-sample SSB model with higher-order aberrations, on MPS.
+"""Test oracle: the per-term model agreement of the thick-sample direct ptychography model with higher-order aberrations, on MPS.
 
 The fifth-order objective (``mps.fifth_order``) compiles the same agreement kernel; this module runs it on trial rows
 so the tests can check that kernel against independent float64 models and the objective against the kernel.
 
-Same objective as ``thick_sample.thick_fit_batch`` (the least-squares agreement of the SSB model with G(q, k) over a
+Same objective as ``thick_sample.thick_fit_batch`` (the least-squares agreement of the direct ptychography model with G(q, k) over a
 band of q, larger is better), with the probe phase chi evaluated from the 14-term Krivanek polynomial of
 ``higher_order`` instead of C10 and C12 only. The fit's angle-sum kernel (``resident_fit``) depends on chi being a
 quadratic form, which coma, trefoil and spherical aberration are not, so this is the per-term kernel: chi at k - q
@@ -97,7 +97,7 @@ def packed(rows: np.ndarray) -> np.ndarray:
 @lru_cache(maxsize=1)
 def _probe_kernel():
     return require_mlx().fast.metal_kernel(
-        name="ssb_higher_order_probe",
+        name="direct_higher_order_probe",
         input_names=["kx", "ky", "scalars", "trial"],
         output_names=["probe_geometry", "probe_chi"],
         header=_THICK_FIT_BATCH_HEADER + _CHI_HEADER,
@@ -108,7 +108,7 @@ def _probe_kernel():
 @lru_cache(maxsize=1)
 def _agreement_kernel():
     return require_mlx().fast.metal_kernel(
-        name="ssb_higher_order_agreement",
+        name="direct_higher_order_agreement",
         input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky", "trial", "scalars", "probe_geometry",
                      "probe_chi"],
         output_names=["numer_real", "numer_imag", "denom"],

@@ -114,7 +114,7 @@ The final focused MPS collection, streamed-HDF5, benchmark-runner and public-rep
 checks passed 48 tests, with one CUDA-only lifetime check skipped on MPS. The
 physical CUDA collection checks passed 16 tests, with two Metal-only lifetime
 checks skipped. The final native acceptance gate passed all nine tests. Broader physical MPS acceptance reports 145 passed, six failed,
-and 23 blocked tests. The failures are one uint64 fixed-SSB case and five FP8
+and 23 blocked tests. The failures are one uint64 fixed-direct case and five FP8
 product cases, reproduced on the unchanged base in the preceding loading
 experiment. CUDA acceptance reports 145 passed, five failed FP8 product tests,
 and 23 blocked tests. Missing public collections remain blocked, not passed.

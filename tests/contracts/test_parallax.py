@@ -120,10 +120,10 @@ def test_parallax_repeats_bit_identically(tmp_path) -> None:
 
 @pytest.mark.slow
 def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
-    """A wave-optical acquisition with a known probe gives back its C10, C12, phi12 and rotation, in SSB's convention.
+    """A wave-optical acquisition with a known probe gives back its C10, C12, phi12 and rotation, in direct ptychography's convention.
 
-    The probe is SSB's model (``aperture * exp(-i chi)``) and the scan axes are turned 20 degrees from the
-    detector axes, which SSB describes as ``scan_detector_rotation_deg=340`` (-20 degrees) with phi12 in the scan frame (0.4 - 20
+    The probe is direct ptychography's model (``aperture * exp(-i chi)``) and the scan axes are turned 20 degrees from the
+    detector axes, which direct ptychography describes as ``scan_detector_rotation_deg=340`` (-20 degrees) with phi12 in the scan frame (0.4 - 20
     degrees). The fit used to read the detector frequencies off an unshifted FFT grid around a centred disk and
     to scale them with the scan step. Parallax is a geometric-optics estimate of the shifts, so the
     coefficients are held to 1-2 %, not to rounding; the exact algebra is the next test.
@@ -155,7 +155,7 @@ def test_parallax_fit_recovers_exact_shifts_on_a_centred_disk() -> None:
     """Shifts made from known coefficients come back to rounding, for an off-centre disk on a full detector.
 
     The model is the one ``aberrations_from_shifts`` documents: scan-frame shifts ``alpha @ A R`` for beam
-    angles ``alpha`` measured from the disk centre (92.6, 99.3) of a 192 x 192 detector. SSB's rotation r turns the
+    angles ``alpha`` measured from the disk centre (92.6, 99.3) of a 192 x 192 detector. Direct ptychography's rotation r turns the
     detector frame back by r, so phi12 comes back in the scan frame as ``phi12 + r``.
     """
     from quantem.gpu.parallax.workflow import aberrations_from_shifts
@@ -200,10 +200,10 @@ def test_detector_bins_around_the_disk_centre_are_whole() -> None:
 
 
 def test_parallax_uses_a_fractional_radius_as_given_and_takes_samplings_as_pairs(tmp_path) -> None:
-    """A fractional radius selects the pixels inside it, and a sampling is one number or a (row, col) pair as for SSB.
+    """A fractional radius selects the pixels inside it, and a sampling is one number or a (row, col) pair as for direct ptychography.
 
     The radius went through ``int()``, so 4.9 selected the pixels of radius 4. One number for a sampling means both
-    axes in SSB and parallax alike (``units.sampling_pair``); anything else that is not a pair is refused.
+    axes in direct ptychography and parallax alike (``units.sampling_pair``); anything else that is not a pair is refused.
     """
     _cuda()
     from quantem.gpu import io, parallax
@@ -344,7 +344,7 @@ def _synthetic_parallax_counts(scan_shape=(12, 12), detector_shape=(16, 16), rad
 
 
 def _wave_optical_counts(*, c10_nm, c12_nm, phi12, rotation_deg, det_sampling_mrad, scan=128, det=64, step=2):
-    """Counts of a weak phase object scanned by SSB's model probe: ``aperture * exp(-i chi)`` at 300 kV, 25 mrad.
+    """Counts of a weak phase object scanned by direct ptychography's model probe: ``aperture * exp(-i chi)`` at 300 kV, 25 mrad.
 
     The specimen is a smooth random phase (0.4 rad rms) on a grid of the detector's real-space pixels, four times
     the scanned field so a turned scan never wraps; the scan steps ``step`` pixels along axes turned by

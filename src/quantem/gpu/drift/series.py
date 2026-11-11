@@ -1,14 +1,14 @@
 """How far the specimen moved between the frames of a time series, from each frame's phase image, and the
 series moved back into register.
 
-    found = drift(phases, sampling_A=0.124)    # or drift(stream), drift([result, ...]): the SSB stream's own phases
+    found = drift(phases, sampling_A=0.124)    # or drift(stream), drift([result, ...]): the direct ptychography stream's own phases
     found.show(phases)                         # the path, and the mean before and after correction
     aligned, mean = found.corrected(phases)    # every frame moved onto frame 0, over the region all frames share
 
 Convention: displacement_A[f] = (row, col) Å is where frame f sees the specimen against frame 0, so frame f's image
 is frame 0's moved by it, I_f(r) = I_0(r - d_f), and corrected reads I_f(r + d_f). The drift measured on one
-reconstruction applies to any other of the same frames (SSB, phase-only and amplitude + phase agree on the time series to
-0.05 Å, docs/performance/ssb/reports/2026-10-24-drift-method-comparison.md).
+reconstruction applies to any other of the same frames (direct ptychography, phase-only and amplitude + phase agree on the time series to
+0.05 Å, docs/performance/direct/reports/2026-10-24-drift-method-comparison.md).
 
 Both registrations return one Drift. Which one:
 
@@ -61,7 +61,7 @@ class Drift:
         figure, axes = plt.subplots(1, 2 if others else 1, figsize=(10 if others else 6, 3.6), layout="constrained", squeeze=False)
         axes = axes[0]
         for axis, label, colour in ((0, "row", "#1f6fb4"), (1, "column", "#d9661f")):
-            axes[0].errorbar(frames, self.displacement_A[:, axis], yerr=self.sigma_A[:, axis], fmt="o-", ms=3, color=colour, label=f"{label}, SSB")
+            axes[0].errorbar(frames, self.displacement_A[:, axis], yerr=self.sigma_A[:, axis], fmt="o-", ms=3, color=colour, label=f"{label}, direct ptychography")
         styles = ["--", ":", "-."]
         for (name, values), style in zip((others or {}).items(), styles):
             values = np.asarray(values)
@@ -70,7 +70,7 @@ class Drift:
             axes[1].plot(frames, np.linalg.norm(values - self.displacement_A, axis=1), "o" + style, ms=3, label=name)
         axes[0].set(xlabel="frame", ylabel="displacement (Å)", title="Where each frame saw the specimen")
         if others:
-            axes[1].set(xlabel="frame", ylabel="|difference| from SSB (Å)", title="Other measures against it", yscale="symlog", ylim=(0, None))
+            axes[1].set(xlabel="frame", ylabel="|difference| from direct ptychography (Å)", title="Other measures against it", yscale="symlog", ylim=(0, None))
             axes[1].axhline(3.16, color="#999999", lw=0.8)
             axes[1].text(frames[0], 3.4, "one lattice vector", fontsize=8, color="#666666")
         for axis in axes:
@@ -82,8 +82,8 @@ class Drift:
     def corrected(self, images, sampling_A=None):
         """Every frame of images moved back onto frame 0's specimen, cropped to the region every frame
         sees: aligned (frames, rows, cols) and their mean (rows, cols), float32 beside the data. images
-        is what drift took (a stack, a stream, a list of SSB results), the same frames in the same
-        order and with the same frame-0 origin, from any reconstruction: the drift measured on SSB
+        is what drift took (a stack, a stream, a list of direct ptychography results), the same frames in the same
+        order and with the same frame-0 origin, from any reconstruction: the drift measured on direct ptychography
         places phase-only or amplitude + phase frames as well. sampling_A is the images' own Å per
         pixel, read from a stream or result, else the drift's: displacement_A is in Å, so frames at
         another pixel size move by as many of their own pixels. Frame f moves by -displacement_A[f]
@@ -150,13 +150,13 @@ class Drift:
 
 def drift(images, frames=None, *, sampling_A=None, neighbours=3, band_A=(50.0, 0.67), reach_A=30.0, outlier_A=0.5):
     """Every frame's displacement against the first from images, one phase image per frame: a stack
-    (frames, rows, cols) or list of them (torch, CuPy or NumPy, NumPy moved to the GPU), an SSB stream
-    (its phase, frame names and sampling), or a list of SSB results. sampling_A (row, col) or one
+    (frames, rows, cols) or list of them (torch, CuPy or NumPy, NumPy moved to the GPU), a direct ptychography stream
+    (its phase, frame names and sampling), or a list of direct ptychography results. sampling_A (row, col) or one
     number, Å per pixel, defaults to the stream's or results' own, else 1 (displacements in pixels). Each pair up to neighbours apart is
     registered by its own search within reach_A (register_spectra); the pairs that agree within
     outlier_A with the more confident ones are kept (consistent) and d solved from them by least
     squares with d_0 = 0. band_A keeps periods between 50 Å (slower is the image's background) and
-    0.67 Å (1.5 Å⁻¹; past it SSB's transfer is noise). The lattices' Bragg spots (spots) are found
+    0.67 Å (1.5 Å⁻¹; past it direct ptychography's transfer is noise). The lattices' Bragg spots (spots) are found
     on the series' mean power spectrum."""
     images, frames, sampling_A = phases(images, frames, sampling_A)
     images = images.float()

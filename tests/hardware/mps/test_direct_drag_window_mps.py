@@ -7,7 +7,7 @@ rounding of the node preparations, amplified by at most the Lebesgue constant L 
 Chebyshev interpolation (3.1 for a magnitude, 3.5 for an azimuth), to the float32 rounding of the exact preparation.
 CUDA's tolerance there is 2e-6 of the largest phase; this 39-pixel scene's phase is only 0.02 rad, so its float32 floor
 sits higher, and the tolerance is the larger of 2e-6 and (L + 1) times the exact image's own error against the
-float64 model (``test_ssb_direct_mps``). On measured 512 x 512 scans the previews agree with the exact image within
+float64 model (``test_direct_mps``). On measured 512 x 512 scans the previews agree with the exact image within
 about 1e-6 of its largest phase. log|w| of a complex64 wave near |w| = 1 is quantized at 2**-23.
 """
 
@@ -16,13 +16,13 @@ import pytest
 
 from quantem.gpu.direct_ptycho import direct_workflow
 
-from .test_ssb_direct_mps import POINTS, _reference_prepare, _reference_solve, _scene, _session
-from .test_ssb_thick_sample_mps import _require_mps
+from .test_direct_mps import POINTS, _reference_prepare, _reference_solve, _scene, _session
+from .test_direct_thick_sample_mps import _require_mps
 
 pytestmark = pytest.mark.slow
 
 OPTIONS = dict(smoothness_inv_A=1.0, detector_weighting="uniform")
-# the "default" preset of test_ssb_direct_mps, which its float64 reference solves
+# the "default" preset of test_direct_mps, which its float64 reference solves
 STRENGTH = 0.03
 
 

@@ -22,10 +22,10 @@ WebGPU paths.
 | `MetalDisplayKernels` | range, histogram, transfer function, colormap | `.../MetalDisplayKernels` |
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |
-| `MetalDirectPtychoKernels` | native 128×128, 256×256 and 512×512 SSB: Fourier preparation, model-agreement fitting through fifth order, SSB redraw and regularized phase and complex reconstruction | `.../MetalDirectPtychoKernels` |
+| `MetalDirectPtychoKernels` | native 128×128, 256×256 and 512×512 direct ptychography: Fourier preparation, model-agreement fitting through fifth order, direct ptychography redraw and regularized phase and complex reconstruction | `.../MetalDirectPtychoKernels` |
 
 The native package does not provide the Python `screening.prepare` cache
-contract. It does provide detector, CoM, DPC/iDPC, display, FFT, load, and SSB
+contract. It does provide detector, CoM, DPC/iDPC, display, FFT, load, and direct ptychography
 primitives that a native client can compose without changing their scientific
 meaning.
 
@@ -55,7 +55,7 @@ there.
 | `MetalDisplayKernels` | `display.metal`, packaged colormaps | `MetalDisplayKernelsTests` |
 | `MetalImageFFT` | `fft.metal`, MPS/MPSGraph frameworks | `MetalImageFFTTests` |
 | `MetalImageRuntime` | `MetalDisplayKernels` | `MetalImageRuntimeTests` |
-| `MetalDirectPtychoKernels` | custom radix-8 FFT and Hermitian SSB preparation; joint-model fit, SSB redraw and regularized direct reconstruction | `MetalDirectPtychoKernelsTests` plus `metal-direct-ptycho-fit-benchmark` and `metal-direct-ptycho-redraw-benchmark` |
+| `MetalDirectPtychoKernels` | custom radix-8 FFT and Hermitian direct ptychography preparation; joint-model fit, direct ptychography redraw and regularized direct reconstruction | `MetalDirectPtychoKernelsTests` plus `metal-direct-ptycho-fit-benchmark` and `metal-direct-ptycho-redraw-benchmark` |
 
 The package imports no application UI framework. A client owns presentation,
 scheduling, and user-visible memory-policy choices; it must not copy or fork
@@ -142,5 +142,5 @@ complete Swift/Metal signoff.
 
 Read [Native 4D-STEM IO](../api/native_4dstem_io.md) and
 [Metal image APIs](../api/metal_image.md) for image and IO types. Read the
-[SSB API](../api/ssb.md) for `MetalDirectPtychoGeometry`, `MetalDirectPtychoEngine`, result
+[direct ptychography API](../api/direct.md) for `MetalDirectPtychoGeometry`, `MetalDirectPtychoEngine`, result
 provenance, and the application boundary.

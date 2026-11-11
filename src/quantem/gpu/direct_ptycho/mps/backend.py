@@ -1,4 +1,4 @@
-"""The MLX/Metal implementation of the SSB backend protocol behind :class:`quantem.gpu.SSB` on Apple GPUs."""
+"""The MLX/Metal implementation of the direct ptychography backend protocol behind :class:`quantem.gpu.direct` on Apple GPUs."""
 
 import dataclasses
 import math
@@ -27,7 +27,7 @@ from quantem.gpu.direct_ptycho.mps.hardware import (
 from quantem.gpu.direct_ptycho.mps.optimizer import fit_sample
 from quantem.gpu.direct_ptycho.mps.optimizer import optimize as optimize_mps
 from quantem.gpu.direct_ptycho.mps.prepared import (
-    PreparedMpsSSB,
+    PreparedMpsDirect,
     as_sampling,
     prepare_selection,
     resolve_bf_selection,
@@ -38,7 +38,7 @@ from quantem.gpu.direct_ptycho.mps.thick_sample import reconstruct_thick
 from quantem.gpu.direct_ptycho.mps.upsample import _reconstruct_upsampled, phase_variance_higher_order
 
 
-class MpsSSBBackend:
+class MpsDirectBackend:
     """MLX/Metal implementation of ``quantem.gpu.direct_ptycho.contract.DirectPtychoProtocol``.
 
     The prepared state (``prepared.py``) owns MPS preparation and device state. UI and export consumers
@@ -201,7 +201,7 @@ class MpsSSBBackend:
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
     ) -> tuple[np.ndarray, float | None]:
-        """SSB phase (of the bright-field mean wave) at the output factor, unfolding measured aliases on Metal.
+        """Direct ptychography phase (of the bright-field mean wave) at the output factor, unfolding measured aliases on Metal.
 
         The loss is the native-grid phase variance over bright-field pixels (``phase_variance``,
         ``sample_phase_variance`` or ``phase_variance_higher_order``).
@@ -232,7 +232,7 @@ class MpsSSBBackend:
     def sample_phase_variance(self, aberrations: dict[str, float], sample: dict[str, float]) -> tuple[np.ndarray, float]:
         """The phase-variance objective for a thick, tilted sample: (mean BF phase, loss), ``thick_sample.reconstruct_thick``.
 
-        ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "depth_spread_A"} (depth spread in the C10 unit, Angstrom; 0 = standard SSB).
+        ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "depth_spread_A"} (depth spread in the C10 unit, Angstrom; 0 = standard direct ptychography).
         """
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
@@ -475,7 +475,7 @@ class MpsSSBBackend:
             suffix = "u16"
         else:
             raise TypeError(
-                "MPS SSB BF-column export requires uint8 or uint16 detector "
+                "MPS direct ptychography BF-column export requires uint8 or uint16 detector "
                 f"storage, got {dtype}."
             )
         path = Path(f"{Path(path_stem)}.{suffix}")
@@ -658,11 +658,11 @@ class MpsSSBBackend:
 
 
 class _MpsBfSubset:
-    """Context manager that swaps an MPS backend onto a reduced-BF ``PreparedMpsSSB`` for drag previews.
+    """Context manager that swaps an MPS backend onto a reduced-BF ``PreparedMpsDirect`` for drag previews.
 
     Why: the preview cost is linear in the BF count, so a 25 % subset is ~4x faster while dragging. The subset is built
     on first use and rebuilt only when the backend's prepared evidence or rotation geometry changes, so entering the
-    context per preview call is free. ``backend`` is the :class:`MpsSSBBackend` whose prepared evidence is swapped.
+    context per preview call is free. ``backend`` is the :class:`MpsDirectBackend` whose prepared evidence is swapped.
     """
 
     def __init__(self, backend, num_bright_field_pixels: int) -> None:
@@ -677,7 +677,7 @@ class _MpsBfSubset:
         """Number of BF pixels in the subset (logical, including compacted ones)."""
         return int(self._current().num_bright_field_pixels)
 
-    def _current(self) -> PreparedMpsSSB:
+    def _current(self) -> PreparedMpsDirect:
         """The subset for the backend's current prepared evidence.
 
         A new preparation or a rotation retarget replaces the prepared arrays, so
@@ -698,7 +698,7 @@ class _MpsBfSubset:
 
     def __enter__(self) -> Self:
         if self._saved is not None:
-            raise RuntimeError("The prepared SSB BF subset is already active.")
+            raise RuntimeError("The prepared direct ptychography BF subset is already active.")
         subset = self._current()
         self._saved = self._backend._prepared
         self._backend._prepared = subset
@@ -719,7 +719,7 @@ class _MpsBfSubset:
         self._source = None
 
 
-def _subset_prepared(prepared: PreparedMpsSSB, num_bright_field_pixels: int) -> PreparedMpsSSB:
+def _subset_prepared(prepared: PreparedMpsDirect, num_bright_field_pixels: int) -> PreparedMpsDirect:
     """``prepared`` restricted to every ``num_bright_field_pixels / count``-th logical BF pixel (the CUDA ``prepare_bf_subset`` rule).
 
     Logical BF pixels that were compacted away (aperture 0, not stored) stay unstored and still count in ``num_bright_field_pixels``,
@@ -821,4 +821,4 @@ def _bf_geometry_1d_numpy(
     )
 
 
-__all__ = ["MpsSSBBackend"]
+__all__ = ["MpsDirectBackend"]

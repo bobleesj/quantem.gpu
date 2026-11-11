@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 from quantem.gpu.direct_ptycho.mps.kernels.radix import small_fft_macros, twiddle_512, twiddle_n
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, pk_batch_from_prepared
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirect, pk_batch_from_prepared
 
 
 def _depth_code(thick: bool) -> tuple[str, str, str]:
@@ -25,7 +25,7 @@ def _depth_code(thick: bool) -> tuple[str, str, str]:
         "float ap_kv = metal::clamp(k_edge, 0.0f, 1.0f);"
         if thick else ""
     )
-    # depth weights of the two SSB terms; |x| < 1e-6 gives w = 1 exactly (standard SSB), as in thick_sample
+    # depth weights of the two direct ptychography terms; |x| < 1e-6 gives w = 1 exactly (standard direct ptychography), as in thick_sample
     thick_weights = (
         "float shift = 6.283185307179586f * (qxv * theta_row + qyv * theta_col); "
         "float x1 = 0.5f * thickness * (-factor * (alpha2_m - alpha_kv) - shift); "
@@ -342,7 +342,7 @@ def _row_ifft512_dynamic_kernel(
         source = source.replace("metal::sqrt(", "metal::precise::sqrt(")
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_row_ifft512_dyn_n{int(batch)}_b{int(chunk)}_"
+            f"direct_row_ifft512_dyn_n{int(batch)}_b{int(chunk)}_"
             f"g{int(gqk_cols)}_t{int(tiled_output)}{storage_name}_d{int(thick)}"
         ),
         input_names=[
@@ -366,7 +366,7 @@ def _row_ifft512_dynamic_kernel(
 
 
 def row_ifft512_from_dynamic_geometry(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     start: int,
     stop: int,
@@ -450,7 +450,7 @@ def _row_ifft_small_dynamic_kernel(
     rows_per_group: int = 4,
     thick: bool = False,
 ):
-    """Fused SSB correction + row IFFT for 128/256/1024 scans.
+    """Fused direct ptychography correction + row IFFT for 128/256/1024 scans.
 
     ``thick=True`` builds gamma = w1 t1 - w2 t2 with the thick-sample depth weights w = sinc(rate t / 2) of
     ``thick_sample`` from one extra input ``thick_params`` = (thickness, tilt_row_rad, tilt_col_rad). The thick
@@ -679,7 +679,7 @@ def _row_ifft_small_dynamic_kernel(
         source = source.replace("metal::sqrt(", "metal::precise::sqrt(")
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_row_ifft{n}_dyn_n{int(batch)}_b{int(chunk)}_"
+            f"direct_row_ifft{n}_dyn_n{int(batch)}_b{int(chunk)}_"
             f"g{int(gqk_cols)}_r{int(rows_per_group)}_sb1"
             + ("_thick" if thick else "")
         ),
@@ -704,7 +704,7 @@ def _row_ifft_small_dynamic_kernel(
 
 
 def row_ifft_small_from_dynamic_geometry(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     start: int,
     stop: int,
@@ -717,7 +717,7 @@ def row_ifft_small_from_dynamic_geometry(
     """Fused dynamic correction + 128/256/1024 row IFFT for exact MPS phase/loss.
 
     ``thick`` = (thickness, tilt_row_rad, tilt_col_rad) switches on the thick-sample depth weights
-    (``_row_ifft_small_dynamic_kernel(thick=True)``); None is standard SSB.
+    (``_row_ifft_small_dynamic_kernel(thick=True)``); None is standard direct ptychography.
     """
     mx = prepared.mx
     if prepared.scan_shape not in ((128, 128), (256, 256), (1024, 1024)):

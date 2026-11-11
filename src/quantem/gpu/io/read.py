@@ -81,7 +81,7 @@ def read(data, *, scan_region=None, detector_region=None, output="torch"):
         if column0 == 0 and column1 == shape[1]:
             # Whole scan rows are one consecutive scan range, which the decoder writes
             # cropped into its output: that output is the result. Block by block, every
-            # count was decoded into scratch and copied again (an SSB bright-field crop
+            # count was decoded into scratch and copied again (a direct ptychography bright-field crop
             # of a 512 x 512 scan spent 45% of its read on the copies).
             decode = (
                 payload.decode_scan_range_torch if device.type == "mps"

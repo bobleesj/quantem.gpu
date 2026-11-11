@@ -13,7 +13,7 @@ public IO, detector, and DPC functions rather than duplicating their kernels.
 | catalog | `src/quantem/gpu/remote/catalog.py::Catalog` | session folders, master discovery, readiness |
 | residency | `src/quantem/gpu/remote/residency.py::Residency` | GPU pool, admission, placement, eviction |
 | bin and crop plan | `src/quantem/gpu/remote/plan.py::BrowsePlan` | binned and cropped views of one resident |
-| saved SSB phases | `src/quantem/gpu/remote/saved_ssb.py` | acquisition-verified saved phase transfer |
+| saved direct ptychography phases | `src/quantem/gpu/remote/saved_direct.py` | acquisition-verified saved phase transfer |
 | transport tests | `tests/contracts/remote` | routes, headers, errors, admission, lifecycle, dense parity |
 
 ## Version negotiation
@@ -41,7 +41,7 @@ the default scan position or mask.
 | `GET /api/browse/realspace` | BF, ABF, ADF, HAADF, DF exact count images; CoMrow, CoMcol, CoMmag, DPC, iCoM |
 | `GET /api/browse/realspace-shape` | exact counts inside a circle, square, or annulus detector |
 | `GET /api/browse/cbed` | exact diffraction pattern at one scan position |
-| `GET /api/ssb/saved-results` | saved SSB phases verified against the acquisition identity |
+| `GET /api/direct/saved-results` | saved direct ptychography phases verified against the acquisition identity |
 
 Binary 2D images use `application/octet-stream` with width, height, and dtype
 headers. Integer count images are encoded as little-endian unsigned 32-bit

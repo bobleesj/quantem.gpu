@@ -129,7 +129,7 @@ const BUILD_WGSL = COMMON_WGSL + /* wgsl */ `
   }
   if (c.bad || c.cursor != c.end || (!c.raw && c.mode != 5u && c.state != LOWER)) { atomicAdd(&out[p.N * 2u], 1u); }
 }`;
-// Exact BF columns for SSB: reuse the validated recurrence and checkpoints.
+// Exact BF columns for direct ptychography: reuse the validated recurrence and checkpoints.
 const COLUMNS_WGSL = COMMON_WGSL + /* wgsl */ `
 @compute @workgroup_size(64) fn decode_columns(@builtin(global_invocation_id) g: vec3u) {
   let i = g.x; if (i >= p.n_cols) { return; }

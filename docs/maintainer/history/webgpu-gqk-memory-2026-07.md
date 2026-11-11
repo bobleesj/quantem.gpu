@@ -6,8 +6,8 @@
 > `quantem.widget` so the compute repository retains the experimental setup,
 > formulas, measurements, rejected ideas, and debugging lessons. It is not a
 > claim that every flag, source path, transport, or timing below still matches
-> the current runtime. [SSB performance](../ssb-performance.md) holds the later
-> (also historical) backend notes; use [SSB architecture](../ssb-architecture.md)
+> the current runtime. [direct ptychography performance](../direct-performance.md) holds the later
+> (also historical) backend notes; use [direct ptychography architecture](../direct-architecture.md)
 > for current ownership and API contracts.
 
 ## What must be reverified
@@ -39,8 +39,8 @@ collaborators can open these folders on ordinary laptops?
 
 - Dataset: a real experimental 4D-STEM acquisition
   (512x512 scan, 192x192 Arina, 19.3 GB raw, max pixel 17 counts).
-  Calibration: fresh SSB fit, 200 Optuna trials + Nelder-Mead refine
-  (`Show4DSTEM.compute_ssb`, rotation seeded from a prior batch fit).
+  Calibration: fresh direct ptychography fit, 200 Optuna trials + Nelder-Mead refine
+  (`Show4DSTEM.compute_direct`, rotation seeded from a prior batch fit).
 - Current export command: `quantem showptycho <master> --calibration <fit.json>`
   with the historical BF-column companion enabled
   (WebGPU folder, compressed HDF5 + `bf_columns.u8` companion, 5.9 GB on disk).
@@ -55,7 +55,7 @@ collaborators can open these folders on ordinary laptops?
   (default, or `?gqk=exact`) and compact preview (`?gqk=preview` or
   `?gqk=herm16`). Earlier reference-agreement runs also measured the old n x n storage
   baseline before that runtime path was removed. The engine stashes
-  `globalThis.__quantemSsbLast = {gqkMode, residentGqkBytes, gpuMs, phase, ...}`
+  `globalThis.__quantemDirectLast = {gqkMode, residentGqkBytes, gpuMs, phase, ...}`
   after every reconstruct, and the harness pulls the raw `Float32Array` phase
   out over CDP for an offline NumPy reference check. Same aberrations, same BF set
   (preview 0.30 => 3941 requested, 408 active aperture pixels) in all runs.
@@ -119,7 +119,7 @@ runtime and now exists only as historical baseline data in this report.
 - `GqkMode` = `herm | herm16`, resolved from `?gqk=` URL param or
   `globalThis.__QUANTEM_SHOWPTYCHO_GQK_MODE__`; default `herm`. Public aliases:
   `exact` -> `herm`, `preview` -> `herm16`.
-- `makeSsbShader(n, mode)` templates a `fetch_g(local_bf, bf_global, row, x)`
+- `makeDirectShader(n, mode)` templates a `fetch_g(local_bf, bf_global, row, x)`
   WGSL helper: direct read for `x <= n/2`, mirror `(r,c) = ((n-row) % n, n-x)`
   + conjugate otherwise; `herm16` additionally
   `unpack2x16snorm(word) * gqkScale[bf_global]`.
@@ -129,7 +129,7 @@ runtime and now exists only as historical baseline data in this report.
   `pack2x16snorm(clamp(v/scale))`) per chunk, destroying each temporary chunk
   immediately — build peak only briefly exceeds the old peak by one compacted
   chunk; the *resident* session footprint is what shrinks.
-- `__quantemSsbLast` debug hook on every reconstruct for harnesses.
+- `__quantemDirectLast` debug hook on every reconstruct for harnesses.
 
 ## Rejected / deferred ideas
 
@@ -158,7 +158,7 @@ runtime and now exists only as historical baseline data in this report.
 - `collectActiveBfIndices` drops zero-aperture-weight BF pixels: the
   "3941/13137 BF" UI label overstates the resident set (408 active here).
   Memory projections must use *active* BF counts.
-- `FULL_STACK_GPU_BUDGET_BYTES` (4.5 GB) in the synced ShowPtycho WebGPU SSB
+- `FULL_STACK_GPU_BUDGET_BYTES` (4.5 GB) in the synced ShowPtycho WebGPU direct ptychography
   source is still dead code
   — the VRAM clamp for the BF slider remains unimplemented. With `herm` default
   the pressure is halved but a 512^2 full-BF drag can still device-lost a small
@@ -166,12 +166,12 @@ runtime and now exists only as historical baseline data in this report.
 
 ## Backend coverage checklist (for follow-up agents)
 
-Status as of 2026-07-16. The math is backend-independent: every SSB backend
+Status as of 2026-07-16. The math is backend-independent: every direct ptychography backend
 builds `G(q,k)` as the scan-space FFT of real intensity traces, so the
 Hermitian identity `G(-q,k) = conj(G(q,k))` holds everywhere, and the
 per-BF-pixel snorm16/int16 block quantization transfers directly.
 
-| Optimization | WebGPU (`quantem.gpu/direct_ptycho/webgpu/backend.ts`, generated under the matching widget engine tree) | CUDA (`quantem.gpu/ssb/cuda`) | MPS (`quantem.gpu/ssb/mps`) |
+| Optimization | WebGPU (`quantem.gpu/direct_ptycho/webgpu/backend.ts`, generated under the matching widget engine tree) | CUDA (`quantem.gpu/direct/cuda`) | MPS (`quantem.gpu/direct/mps`) |
 |---|---|---|---|
 | Exact Hermitian half-plane G(q,k) (2x, bit-exact, faster) | **DONE — default** | TODO — `self.G_qk` is n x n complex64; also the streaming `result_buffer`/staging buffers (batch x bf x scan^2 x c64) would halve | TODO — `mx.complex64` n x n storage; gamma kernels at mps.py:430-440 already compute conj explicitly, mirror fetch slots in there |
 | Compact preview snorm16/int16 block storage (4x, ~1e-4 rad error) | **DONE — opt-in** `?gqk=preview` (`?gqk=herm16` alias) | TODO — cupy int16 pairs + per-BF f32 scale; dequant inside the variance/correction kernels | TODO — mx int16 + scale; check MLX gather perf before committing |
@@ -192,7 +192,7 @@ reconstruction with the optimization off and on (same aberrations, same BF
 set), assert `max|dphase|` is 0.0 for Hermitian and < ~1e-3 of the phase span
 for int16; then compare per-drag wall time — Hermitian must not be slower
 (it reads half the bytes; if it is slower, the mirror fetch broke coalescing).
-Raw reference-agreement harness for the WebGPU case: CDP + `globalThis.__quantemSsbLast`
+Raw reference-agreement harness for the WebGPU case: CDP + `globalThis.__quantemDirectLast`
 (this doc's Setup section).
 
 ## Scan-size sweep (added same day)
@@ -232,7 +232,7 @@ Conclusions:
   1024 treat it as preview-only, or implement **per-q-row block scales**
   (n scales per BF pixel instead of 1, +0.4 % memory) to pull the error back
   down — noted as the follow-up for whoever extends the quantization.
-- Repro: masters under a local private SSB sweep directory, harness
+- Repro: masters under a local private direct ptychography sweep directory, harness
   `sweep_run.py` in the session scratchpad, per-mode viewer selection via
   `?gqk=`.
 
@@ -261,7 +261,7 @@ Conclusions:
    `array_equal` assertion is a far stronger regression net than atol=1e-6.
 5. **Measure the active set, not the labeled set.** UI said 3941 BF pixels;
    only 408 carried nonzero aperture weight. Memory projections from labels
-   were 10x off. Instrument the engine (resident-bytes counter, `__quantemSsbLast`
+   were 10x off. Instrument the engine (resident-bytes counter, `__quantemDirectLast`
    hook) instead of computing footprints from UI numbers.
 6. **A reference-agreement harness is one page of code.** URL-param mode switch + a
    globalThis hook holding the raw Float32Array + CDP pull + numpy compare.
@@ -303,7 +303,7 @@ Measured (512x512 experimental folder, M-series, herm storage, 408 active BF):
 | path | per-reconstruct | estimator |
 |---|---|---|
 | exact per-BF (before / loss commits) | 18 ms | mean(angle(object)) |
-| object fast path (drags, default now) | **7-8 ms (2.5x)** | angle(mean(object)) - same as Python `SSB.result()` |
+| object fast path (drags, default now) | **7-8 ms (2.5x)** | angle(mean(object)) - same as Python `DirectPtycho.result()` |
 
 Correctness: fast vs exact at identical state corr 0.9965; fast vs the Python
 CUDA `result()` object phase corr 0.997 (better than the exact mean-phase
@@ -316,8 +316,8 @@ conclusion (corr 0.3) was a BASELINE ERROR - contrasting a 408-BF preview
 subset against the full-13137-BF reference; the exact path scored the same
 0.379 against that wrong baseline. Rule: when validating an estimator change,
 hold BF subset, aberrations, and estimator definition fixed and compare
-apples-to-apples first. Opt-out: `globalThis.__QUANTEM_SSB_OBJ_FAST__ = false`.
-Also gained: `__QUANTEM_SSB_OBJ_ONLY_CHUNK__` chunk-isolation debug toggle.
+apples-to-apples first. Opt-out: `globalThis.__QUANTEM_DIRECT_OBJ_FAST__ = false`.
+Also gained: `__QUANTEM_DIRECT_OBJ_ONLY_CHUNK__` chunk-isolation debug toggle.
 
 ### Object fast path across all sizes (same session)
 

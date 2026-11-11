@@ -1,7 +1,7 @@
-"""CUDA kernels of the SSB engine: phase reductions, the probe at each bright-field pixel, and the thick-sample model.
+"""CUDA kernels of the direct ptychography engine: phase reductions, the probe at each bright-field pixel, and the thick-sample model.
 
 The size-specific inverse-FFT kernels live in the ``fft{128,256,512,1024}`` modules; these are the size-independent
-kernels ``SSBEngine`` and ``ThickSample`` launch around them.
+kernels ``DirectEngine`` and ``ThickSample`` launch around them.
 """
 
 import cupy as cp
@@ -25,7 +25,7 @@ accumulate_phase_moments = cp.ElementwiseKernel(
     total_sum = prior_sum + s;
     total_square = prior_square + q;
     """,
-    "ssb_accumulate_phase_moments",
+    "direct_accumulate_phase_moments",
 )
 
 # Fused kernel: sum + sumsq of per-BF angles in a single pass.
@@ -56,9 +56,9 @@ void sum_sumsq_phase(
 }
 ''', 'sum_sumsq_phase')
 
-# Thick-sample SSB correction (sample tilt + thickness), for ThickSample.run.
-# Standard SSB treats the sample as one plane at the probe defocus. For a crystal of thickness t tilted by theta (straight
-# columns), the slice at depth z (from mid-depth) sees the defocus C10 + z and sits shifted by z theta. Averaging the two SSB
+# Thick-sample direct ptychography correction (sample tilt + thickness), for ThickSample.run.
+# Standard direct ptychography treats the sample as one plane at the probe defocus. For a crystal of thickness t tilted by theta (straight
+# columns), the slice at depth z (from mid-depth) sees the defocus C10 + z and sits shifted by z theta. Averaging the two direct ptychography
 # terms over depth gives each its own real weight (sinc of the depth-phase rate times t / 2):
 #   t1 = P(q - k) conj(P(k)),   rate1 = -pi lambda (|q - k|^2 - |k|^2) - 2 pi q . theta
 #   t2 = conj(P(q + k)) P(k),   rate2 = +pi lambda (|q + k|^2 - |k|^2) - 2 pi q . theta
@@ -104,14 +104,14 @@ _THICK_CORRECTION_SOURCE = _THICK_GEOMETRY_SOURCE + r"""
 // and block (thick_probe_k) and passes them to thick_correct_k for every frequency.
 __device__ float4 thick_probe_k(float kx, float ky, float wavelength, float semiangle_rad, float ang_y_rad,
     float ang_x_rad, float C10, float C12, float cos2phi12, float sin2phi12, float factor, float *chi_k
-#ifdef SSB_HIGHER_ORDER
+#ifdef DIRECT_HIGHER_ORDER
     , const float* coefficients
 #endif
     ) {
         float4 g_k = thick_probe_geometry(kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
         *chi_k = factor * g_k.x * fmaf(C12, fmaf(g_k.y, cos2phi12, g_k.z * sin2phi12), C10);
-#ifdef SSB_HIGHER_ORDER
-        *chi_k = ssb_chi_full(kx, ky, wavelength, coefficients);
+#ifdef DIRECT_HIGHER_ORDER
+        *chi_k = direct_chi_full(kx, ky, wavelength, coefficients);
 #endif
         return g_k;
 }
@@ -119,31 +119,31 @@ __device__ float2 thick_correct_k(float2 G, float qx, float qy, float kx, float 
     float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
     float C10, float C12, float cos2phi12, float sin2phi12, float factor,
     float thickness, float theta_r, float theta_c
-#ifdef SSB_HIGHER_ORDER
+#ifdef DIRECT_HIGHER_ORDER
     , const float* coefficients
 #endif
     ) {
 
         float4 g_m = thick_probe_geometry(qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
         float4 g_p = thick_probe_geometry(qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
-#ifdef SSB_WAVE
+#ifdef DIRECT_WAVE
         // Closed apertures have exactly zero weight. Keep every BF pixel and
         // the soft aperture edge, but omit phases and depth weights at zero.
         if (g_k.w == 0.0f || (g_m.w == 0.0f && g_p.w == 0.0f)) return make_float2(0.0f, 0.0f);
 #endif
-#if defined(SSB_WAVE_PAIRS) && SSB_WAVE_PAIRS == 1
-        // single-sideband terms only: gamma / |gamma| = sign(w) exp(-i (chi_m - chi_k)), entire in the optics
+#if defined(DIRECT_WAVE_PAIRS) && DIRECT_WAVE_PAIRS == 1
+        // double-overlap terms only: gamma / |gamma| = sign(w) exp(-i (chi_m - chi_k)), entire in the optics
         if (g_m.w != 0.0f && g_p.w != 0.0f) return make_float2(0.0f, 0.0f);
-#elif defined(SSB_WAVE_PAIRS) && SSB_WAVE_PAIRS == 2
+#elif defined(DIRECT_WAVE_PAIRS) && DIRECT_WAVE_PAIRS == 2
         // both sidebands open (triple overlap): the normalization depends on the optics
         if (g_m.w == 0.0f || g_p.w == 0.0f) return make_float2(0.0f, 0.0f);
 #endif
         float chi_m = factor * g_m.x * fmaf(C12, fmaf(g_m.y, cos2phi12, g_m.z * sin2phi12), C10);
         float chi_p = factor * g_p.x * fmaf(C12, fmaf(g_p.y, cos2phi12, g_p.z * sin2phi12), C10);
-#ifdef SSB_HIGHER_ORDER
+#ifdef DIRECT_HIGHER_ORDER
         // chi(k - q): G(q, k) ~ P(k - q) conj P(k) - P(k) conj P(k + q); odd orders change sign under q - k
-        chi_m = ssb_chi_full(kx - qx, ky - qy, wavelength, coefficients);
-        chi_p = ssb_chi_full(qx + kx, qy + ky, wavelength, coefficients);
+        chi_m = direct_chi_full(kx - qx, ky - qy, wavelength, coefficients);
+        chi_p = direct_chi_full(qx + kx, qy + ky, wavelength, coefficients);
 #endif
         float w1 = 1.0f, w2 = 1.0f;
         if (thickness > 0.0f) {
@@ -171,20 +171,20 @@ __device__ float2 thick_correct(float2 G, float qx, float qy, float kx, float ky
     float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
     float C10, float C12, float cos2phi12, float sin2phi12, float factor,
     float thickness, float theta_r, float theta_c
-#ifdef SSB_HIGHER_ORDER
+#ifdef DIRECT_HIGHER_ORDER
     , const float* coefficients
 #endif
     ) {
         float chi_k;
         float4 g_k = thick_probe_k(kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10, C12, cos2phi12,
                                    sin2phi12, factor, &chi_k
-#ifdef SSB_HIGHER_ORDER
+#ifdef DIRECT_HIGHER_ORDER
                                    , coefficients
 #endif
                                    );
         return thick_correct_k(G, qx, qy, kx, ky, g_k, chi_k, wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
                                C10, C12, cos2phi12, sin2phi12, factor, thickness, theta_r, theta_c
-#ifdef SSB_HIGHER_ORDER
+#ifdef DIRECT_HIGHER_ORDER
                                , coefficients
 #endif
                                );
@@ -208,7 +208,7 @@ thick_correct_kernel = cp.ElementwiseKernel(
     name="thick_correct_kernel",
 )
 
-# Serves: every SSB redraw (sliders, previews, run) on the fine grid; tuned on 3x of a 512 x 512 scan with
+# Serves: every direct ptychography redraw (sliders, previews, run) on the fine grid; tuned on 3x of a 512 x 512 scan with
 # about 9300 BF pixels (30 ms with a 14-term fit, 22.5 ms with C10/C12/phi12 only), where thick.py pairs q, -q.
 # Sum corrected spectra in bounded BF groups. Read aliases from the native
 # spectrum directly, avoiding an expanded (detector, row, col) output volume.
@@ -232,23 +232,23 @@ extern "C" __global__ void thick_wave_sum(
     float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
     float C10, float C12, float cos2phi12, float sin2phi12, float factor,
     float thickness, float theta_r, float theta_c
-#ifdef SSB_HIGHER_ORDER
+#ifdef DIRECT_HIGHER_ORDER
     , const float* coefficients
 #endif
-#ifdef SSB_WAVE_ORDER
+#ifdef DIRECT_WAVE_ORDER
     , const int* order   // BF pixel at each position of the sum, in compact detector cells
 #endif
-#ifdef SSB_WAVE_QLIST
+#ifdef DIRECT_WAVE_QLIST
     , const int* qlist, int num_q   // the only frequencies that can contribute; partial holds one slot each
 #endif
     ) {
-#ifdef SSB_WAVE_ORDER
+#ifdef DIRECT_WAVE_ORDER
 #define WAVE_BF(b) order[b]
 #else
 #define WAVE_BF(b) (b)
 #endif
     int plane = rows * output_cols;
-#ifdef SSB_WAVE_QLIST
+#ifdef DIRECT_WAVE_QLIST
     int slot = blockIdx.x * blockDim.x + threadIdx.x;
     int q = slot < num_q ? qlist[slot] : plane;
     size_t slots = num_q;
@@ -266,7 +266,7 @@ extern "C" __global__ void thick_wave_sum(
     size_t offset = 0, stride = (size_t)native_rows * stored_cols;
     bool conjugate = false;
     if (q == 0) {
-#if !defined(SSB_WAVE_PAIRS) || SSB_WAVE_PAIRS == 1
+#if !defined(DIRECT_WAVE_PAIRS) || DIRECT_WAVE_PAIRS == 1
         // the scan mean belongs to one class of a split sum, not both
         sum = make_double2((double)dc.x * (stop-start), (double)dc.y * (stop-start));
 #endif
@@ -282,7 +282,7 @@ extern "C" __global__ void thick_wave_sum(
         // every correction in it is exactly zero. Preserve the soft edge with
         // an outward rounding margin; the nonzero arithmetic stays unchanged.
         bool overlap = true;
-#ifdef SSB_WAVE_BOUNDS
+#ifdef DIRECT_WAVE_BOUNDS
         int group = first_bf / group_size + blockIdx.y;
         float row_min = bounds[group*4], row_max = bounds[group*4+1];
         float col_min = bounds[group*4+2], col_max = bounds[group*4+3];
@@ -294,7 +294,7 @@ extern "C" __global__ void thick_wave_sum(
         overlap = fminf(minus_row*minus_row + minus_col*minus_col,
                         plus_row*plus_row + plus_col*plus_col) <= radius*radius;
 #endif
-#if defined(SSB_WAVE_PAIRS) && SSB_WAVE_PAIRS == 2
+#if defined(DIRECT_WAVE_PAIRS) && DIRECT_WAVE_PAIRS == 2
         // both shifted apertures must meet the group, and they overlap only for |q| <= half the support
         overlap = fmaxf(minus_row*minus_row + minus_col*minus_col,
                         plus_row*plus_row + plus_col*plus_col) <= radius*radius;
@@ -321,7 +321,7 @@ extern "C" __global__ void thick_wave_sum(
         for (int b = tile + threadIdx.x; b < tile_stop; b += blockDim.x) {
             probe_k[b - tile] = thick_probe_k(krow[WAVE_BF(b)], kcol[WAVE_BF(b)], wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10,
                                               C12, cos2phi12, sin2phi12, factor, &chi_k[b - tile]
-#ifdef SSB_HIGHER_ORDER
+#ifdef DIRECT_HIGHER_ORDER
                                               , coefficients
 #endif
                                               );
@@ -333,7 +333,7 @@ extern "C" __global__ void thick_wave_sum(
             if (conjugate) g.y = -g.y;
             float2 v = thick_correct_k(g, qr, qc, krow[WAVE_BF(b)], kcol[WAVE_BF(b)], probe_k[b - tile], chi_k[b - tile],
                 wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10, C12, cos2phi12, sin2phi12, factor, thickness, theta_r, theta_c
-#ifdef SSB_HIGHER_ORDER
+#ifdef DIRECT_HIGHER_ORDER
                 , coefficients
 #endif
                 );
@@ -347,9 +347,9 @@ extern "C" __global__ void thick_wave_sum(
     partial[(size_t)blockIdx.y * slots + slot] = sum;
 }
 """
-thick_wave_sum_kernel = cp.RawKernel("#define SSB_WAVE\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
+thick_wave_sum_kernel = cp.RawKernel("#define DIRECT_WAVE\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
 thick_wave_sum_bounded_kernel = cp.RawKernel(
-    "#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE,
+    "#define DIRECT_WAVE\n#define DIRECT_WAVE_BOUNDS\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE,
     "thick_wave_sum",
 )
 
@@ -406,12 +406,12 @@ extern "C" __global__ void thick_phase_moments(const float2* __restrict__ images
 
 # The same polynomial as Metal. No higher-order coefficients enter fitting.
 _HIGHER_CORRECTION_SOURCE = (
-    "#define SSB_HIGHER_ORDER\n#define SSB_DEVICE __device__ __forceinline__\n"
-    "#define SSB_COEFFICIENTS const float*\n" + CHI_SOURCE + _THICK_CORRECTION_SOURCE
+    "#define DIRECT_HIGHER_ORDER\n#define DIRECT_DEVICE __device__ __forceinline__\n"
+    "#define DIRECT_COEFFICIENTS const float*\n" + CHI_SOURCE + _THICK_CORRECTION_SOURCE
 )
-thick_wave_sum_full_kernel = cp.RawKernel("#define SSB_WAVE\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
+thick_wave_sum_full_kernel = cp.RawKernel("#define DIRECT_WAVE\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
 thick_wave_sum_bounded_full_kernel = cp.RawKernel(
-    "#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE,
+    "#define DIRECT_WAVE\n#define DIRECT_WAVE_BOUNDS\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE,
     "thick_wave_sum",
 )
 thick_correct_full_kernel = cp.ElementwiseKernel(
@@ -432,7 +432,7 @@ thick_correct_full_kernel = cp.ElementwiseKernel(
     name="thick_correct_full_kernel",
 )
 
-# Least-squares fit of the SSB model G(q, k) = Psi(q) gamma(q, k) (unnormalised gamma of thick_correct_kernel): per q the best
+# Least-squares fit of the direct ptychography model G(q, k) = Psi(q) gamma(q, k) (unnormalised gamma of thick_correct_kernel): per q the best
 # Psi explains |sum_k G conj(gamma)|^2 / sum_k |gamma|^2 of the data, so the sum of that over a spatial-frequency band measures how
 # much of G the model with these aberrations, tilt and thickness accounts for. Unlike the phase-variance loss (phase-only
 # correction, pixels weighted equally) it uses how strongly each pixel carries the signal, which is what tilt changes.
@@ -478,7 +478,7 @@ thick_fit_kernel = cp.ElementwiseKernel(
 # Batched thick-sample fit (fast path for ThickSample.fit_batch): one thread per band q on the stored half-plane, loop over
 # bright-field pixels k, up to THICK_FIT_MAX_BATCH parameter sets per pass so G is read once per batch. Geometry of q-k, q+k, k
 # (apertures, alpha^2, 2phi) is computed once per (k, q) and shared by every parameter set; pairs with no overlap are skipped.
-# Same model as thick_fit_kernel (and tests/parity/torch_ssb.py): gamma = w1 P(q-k) conj P(k) - w2 conj P(q+k) P(k).
+# Same model as thick_fit_kernel (and tests/parity/torch_direct.py): gamma = w1 P(q-k) conj P(k) - w2 conj P(q+k) P(k).
 # The kernel is arithmetic-bound (its time grows with the number of parameter sets, not with the G reads), so the work per
 # (k, q, parameter set) is kept small: chi is linear in (C10, C12 cos 2 phi12, C12 sin 2 phi12), so chi(q -+ k) - chi(k) is
 # a three-term dot product of per-(k, q) geometry differences with per-set coefficients, and the tilt shift 2 pi q.theta

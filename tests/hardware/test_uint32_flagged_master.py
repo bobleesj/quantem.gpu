@@ -169,7 +169,7 @@ def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(
             assert loaded.metadata["flagged_markers_stored_as_zero"] == 0
 
 
-def test_ssb_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, capsys):
+def test_direct_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, capsys):
     """DirectPtycho.open takes io.load's default median fill and prints one line naming how to keep raw values."""
     from quantem.gpu import DirectPtycho
 
@@ -181,5 +181,5 @@ def test_ssb_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, capsy
         correction = session.source_provenance["hot_pixel_correction"]
         assert (correction["method"], correction["pixel_count"], correction["applied"]) == ("median", 4, True)
     out = capsys.readouterr().out
-    assert "SSB: 4 flagged detector pixels replaced by their 3 x 3 neighbor median" in out
+    assert "Direct ptycho: 4 flagged detector pixels replaced by their 3 x 3 neighbor median" in out
     assert 'io.load(path, hot_pixel_correction="none") and use DirectPtycho(data)' in out

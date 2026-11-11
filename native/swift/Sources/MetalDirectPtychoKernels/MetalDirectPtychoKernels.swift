@@ -1,7 +1,7 @@
 import Foundation
 import Metal
 
-/// Unsigned source counts are read at their native width before float32 SSB arithmetic.
+/// Unsigned source counts are read at their native width before float32 direct ptychography arithmetic.
 public enum MetalDirectPtychoCountType: Int, Codable, Sendable {
   case uint8 = 1
   case uint16 = 2
@@ -10,7 +10,7 @@ public enum MetalDirectPtychoCountType: Int, Codable, Sendable {
   public var byteWidth: Int { rawValue }
 }
 
-/// Aberrations used by the native single-sideband reconstruction.
+/// Aberrations used by the native direct-ptychography reconstruction.
 ///
 /// The kernels evaluate chi = (pi / lambda[A]) alpha^2 (C10 + C12 cos 2(phi - phi12)) with no
 /// conversion, so C10 and C12 are Angstrom and phi12 radians. A stored record states them as
@@ -34,7 +34,7 @@ public struct MetalDirectPtychoAberrations: Codable, Equatable, Sendable {
   }
 }
 
-/// Calibrated reciprocal-space geometry for a native square SSB session.
+/// Calibrated reciprocal-space geometry for a native square direct ptychography session.
 ///
 /// `qxByRow` is indexed by scan Fourier row and `qyByColumn` by scan Fourier
 /// column. Bright-field arrays remain in their logical source order. The
@@ -101,7 +101,7 @@ public struct MetalDirectPtychoGeometry: Codable, Sendable {
   }
 }
 
-/// Scientific provenance attached to every native Metal SSB result.
+/// Scientific provenance attached to every native Metal direct ptychography result.
 public struct MetalDirectPtychoProvenance: Codable, Equatable, Sendable {
   public let scanRows: Int
   public let scanColumns: Int
@@ -118,7 +118,7 @@ public struct MetalDirectPtychoProvenance: Codable, Equatable, Sendable {
   public let brightfieldSelection: String
 }
 
-/// A native Metal SSB reconstruction saved by an earlier version (`MetalSSBSavedRun`).
+/// A native Metal direct ptychography reconstruction saved by an earlier version (`MetalDirectSavedRun`).
 ///
 /// Both buffers contain row-major `complex64` values with the native scan shape
 /// recorded in `provenance` (128, 256, or 512 pixels per side).
@@ -133,7 +133,7 @@ public struct MetalDirectPtychoResult: @unchecked Sendable {
   public let provenance: MetalDirectPtychoProvenance
 }
 
-/// Errors raised by the native Metal SSB engine.
+/// Errors raised by the native Metal direct ptychography engine.
 public enum MetalDirectPtychoError: LocalizedError {
   case missingResource(String)
   case missingFunction(String)
@@ -153,26 +153,26 @@ public enum MetalDirectPtychoError: LocalizedError {
     case .missingFunction(let name):
       "MetalDirectPtychoKernels is missing the \(name) function."
     case .libraryCompilation(let message):
-      "Metal SSB kernel compilation failed: \(message)"
+      "Metal direct ptychography kernel compilation failed: \(message)"
     case .commandQueue:
-      "Metal could not create the SSB command queue."
+      "Metal could not create the direct ptychography command queue."
     case .invalidGeometry(let message):
-      "The SSB geometry is invalid: \(message)"
+      "The direct ptychography geometry is invalid: \(message)"
     case .inputBufferTooSmall(let required, let actual):
-      "The SSB bright-field input needs \(required) bytes, but the buffer contains \(actual)."
+      "The direct ptychography bright-field input needs \(required) bytes, but the buffer contains \(actual)."
     case .allocation(let purpose):
-      "Metal could not allocate the SSB \(purpose)."
+      "Metal could not allocate the direct ptychography \(purpose)."
     case .notPrepared:
-      "Prepare the SSB bright-field input before reconstructing or fitting."
+      "Prepare the direct ptychography bright-field input before reconstructing or fitting."
     case .tooManyCacheChunks(let required, let supported):
-      "The SSB cache needs \(required) chunks, but this kernel supports \(supported)."
+      "The direct ptychography cache needs \(required) chunks, but this kernel supports \(supported)."
     case .commandExecution(let message):
-      "The Metal SSB command failed: \(message)"
+      "The Metal direct ptychography command failed: \(message)"
     }
   }
 }
 
-/// GPU-resident preparation of native 128, 256, or 512 square SSB evidence.
+/// GPU-resident preparation of native 128, 256, or 512 square direct ptychography evidence.
 ///
 /// The engine consumes plane-major unsigned bright-field counts without narrowing,
 /// Fourier-transforms every bright-field plane and keeps as many Hermitian `G(k)`
@@ -233,7 +233,7 @@ public final class MetalDirectPtychoEngine {
   private var prepared = false
   private var preparationGeneration: UInt64 = 0
 
-  /// Create a reusable SSB engine.
+  /// Create a reusable direct ptychography engine.
   ///
   /// - Parameters:
   ///   - device: Apple Metal device that owns all source and result buffers.
@@ -526,7 +526,7 @@ public final class MetalDirectPtychoEngine {
       validatePreparation: { [self] in
         guard prepared, preparationGeneration == generation else {
           throw MetalDirectPtychoError.invalidGeometry(
-            "The SSB source was prepared again. Create a new joint model before evaluating or reconstructing."
+            "The direct ptychography source was prepared again. Create a new joint model before evaluating or reconstructing."
           )
         }
       }, isCancelled: isCancelled)
@@ -584,7 +584,7 @@ public final class MetalDirectPtychoEngine {
     }
   }
 
-  /// Convert a saved complex object (`MetalSSBSavedRun.reconstruction`) to its scalar phase, in
+  /// Convert a saved complex object (`MetalDirectSavedRun.reconstruction`) to its scalar phase, in
   /// radians, on Metal. The engine's geometry must have the saved run's scan size.
   public func phase(of result: MetalDirectPtychoResult) throws -> MTLBuffer {
     guard result.provenance.scanRows == size, result.provenance.scanColumns == size,
@@ -597,7 +597,7 @@ public final class MetalDirectPtychoEngine {
     if objectPhasePipeline == nil {
       objectPhasePipeline = try Self.makePipeline(
         device: device,
-        library: Self.makeLibrary(device: device), name: "ssb_object_phase")
+        library: Self.makeLibrary(device: device), name: "direct_object_phase")
     }
     let output = try Self.allocate(
       device: device, length: plane * 4,
@@ -804,7 +804,7 @@ public final class MetalDirectPtychoEngine {
       geometry.qyByColumn.count == geometry.qxByRow.count
     else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "Native Metal SSB supports square 128, 256, or 512 scans; supply matching reciprocal-space coordinates without cropping or binning."
+        "Native Metal direct ptychography supports square 128, 256, or 512 scans; supply matching reciprocal-space coordinates without cropping or binning."
       )
     }
     let allArrays =
@@ -905,7 +905,7 @@ public final class MetalDirectPtychoEngine {
   private static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
     do {
       return try device.makeLibrary(
-        source: MetalDirectPtychoShaderSource.load(["ssb_fft", "ssb"]),
+        source: MetalDirectPtychoShaderSource.load(["direct_fft", "direct"]),
         options: nil
       )
     } catch {

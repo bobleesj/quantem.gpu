@@ -18,7 +18,7 @@ second manifest in this directory.
 | [MetalDisplayKernels](Sources/MetalDisplayKernels) | Image normalization, colormaps, histograms, and display shaders |
 | [MetalImageFFT](Sources/MetalImageFFT) | Resident `logMagnitude`: `fftshift(log1p(abs(fft2(source))))` |
 | [MetalImageRuntime](Sources/MetalImageRuntime) | Histogram windows, range, and display contracts |
-| [MetalDirectPtychoKernels](Sources/MetalDirectPtychoKernels) | Direct Ptycho: Fourier preparation, aberration fit, and the SSB, Phase and Complex reconstructions |
+| [MetalDirectPtychoKernels](Sources/MetalDirectPtychoKernels) | Direct Ptycho: Fourier preparation, aberration fit, and the direct ptychography, Phase and Complex reconstructions |
 
 ```text
 native/swift/
@@ -44,7 +44,7 @@ sit in `Sources/MetalCountResources/Resources`.
 
 `Metal4DSTEMLoadPlan` and `Metal4DSTEMStreamingPlan` declare load/scratch
 geometry. `Metal4DSTEMResidentCacheIO` validates cache integrity and provenance.
-Packed counts, dense counts, and derived SSB Fourier storage are different
+Packed counts, dense counts, and derived direct ptychography Fourier storage are different
 objects: support for one does not establish support for the others.
 `MetalANSResidentSource` accepts validated ANS arrays for exact DP and binary
 mask sums. Saved `.qem` copies open through
@@ -66,7 +66,7 @@ accounted for separately from the packed counts. An optional sum-cache experimen
 is available only in explicitly instrumented builds; it is not the default
 memory or performance contract.
 
-## Staged SSB fitting
+## Staged direct ptychography fitting
 
 `DirectPtychoModelFit.findAberrations` runs 200 low-order TPE trials, then a
 trust-region Newton on the exact gradient and Hessian of the agreement (C10,

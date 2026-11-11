@@ -1,4 +1,4 @@
-"""Plot recorded SSB objectives without evaluating the model again."""
+"""Plot recorded direct ptychography objectives without evaluating the model again."""
 
 import math
 
@@ -27,7 +27,7 @@ def plot_convergence(result, *, axsize, rows=None, columns=None, compare=None, x
                 groups.setdefault(key, []).append(record)
     if not groups:
         raise ValueError("This result has no recorded search history. Use the result returned by "
-                         "ssb.aberrations(), or reload a fit saved with its history.")
+                         "direct.aberrations(), or reload a fit saved with its history.")
     if "broad" in groups and x == "time" and not _broad_history(result)[-1]:
         raise ValueError("This fit has no complete elapsed-time history. Use x='evaluations', or rerun it.")
     count = len(groups)
@@ -114,7 +114,7 @@ def _comparison_fits(result, compare):
               "scan_detector_rotation_flipped")
     for label, fit in entries:
         if not isinstance(fit, DirectPtychoResult):
-            raise ValueError(f"Comparison {label!r} is not an SSB fit. Supply fitted results.")
+            raise ValueError(f"Comparison {label!r} is not a direct ptychography fit. Supply fitted results.")
         if id(fit) in seen:
             continue
         seen.add(id(fit))
@@ -126,7 +126,7 @@ def _comparison_fits(result, compare):
                 or any(fit.optimizer.get(name) != result.optimizer.get(name)
                        for name in ("model", "fit_band_inv_A", "primary_seed", "primary_trials"))):
             raise ValueError("Compare fits of the same data, calibration, region and objective. "
-                             "Use trials=(200, 400, 600) on one SSB session.")
+                             "Use trials=(200, 400, 600) on one direct ptychography session.")
         # Geometry is captured at fit time and survives saving; it includes detector sampling.
         first_context = (result.calibration_context or {}).get("session_identity")
         next_context = (fit.calibration_context or {}).get("session_identity")

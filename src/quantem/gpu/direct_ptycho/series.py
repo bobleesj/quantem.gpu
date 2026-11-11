@@ -1,7 +1,7 @@
-"""SSB reconstruction of an acquisition series (``DirectPtycho.run_series``) and the Live layout it reads and writes.
+"""Direct ptychography reconstruction of an acquisition series (``DirectPtycho.run_series``) and the Live layout it reads and writes.
 
 A series directory holds raw ``*_master.h5`` acquisitions and, under ``live/screen/<dataset>`` (or the ``save_dir``
-a caller names, such as Live's ``<output>/live/screen``), the products QuantEM Live already made: ``config.json`` with the fitted SSB settings, bright- and dark-field images, and saved SSB results.
+a caller names, such as Live's ``<output>/live/screen``), the products QuantEM Live already made: ``config.json`` with the fitted direct ptychography settings, bright- and dark-field images, and saved direct ptychography results.
 These functions find the acquisitions in natural order, resolve each acquisition's physical settings (Live result,
 then ``dataset.yaml``, then the caller), and keep fresh fits discoverable in the same layout, so a series run reuses
 Live's work and Live reuses the series run's work.
@@ -45,7 +45,7 @@ def run_series(
     save_dir: str | Path | None = None,
     progress: bool = True,
 ) -> DirectPtychoSeriesResult:
-    """Reconstruct an SSB series with independent or fixed-probe fitting (``DirectPtycho.run_series``; ``cls`` is ``DirectPtycho``).
+    """Reconstruct a direct ptychography series with independent or fixed-probe fitting (``DirectPtycho.run_series``; ``cls`` is ``DirectPtycho``).
 
     Existing QuantEM Live products under ``save_dir`` (default
     ``<source>/live/screen``) are discovered and reused automatically. Missing
@@ -85,7 +85,7 @@ def run_series(
     refinement : str or None, default "auto"
         ``"auto"``, the exact-derivative fit (``aberrations()``), or None for no local refinement.
     backend : {"auto", "cuda", "mps"}, default "auto"
-        Accelerated SSB backend. CPU is never used.
+        Accelerated direct ptychography backend. CPU is never used.
     save_dir : str or Path, optional
         Directory holding one folder per acquisition (``<dataset>/config.json``
         and its saved fits), the layout ``live screen --output OUT`` writes as
@@ -103,7 +103,7 @@ def run_series(
     refinement = check_refinement(refinement)
     source_root = Path(source_directory).expanduser().resolve()
     if not source_root.is_dir():
-        raise FileNotFoundError(f"SSB source directory not found: {source_root}")
+        raise FileNotFoundError(f"Direct ptychography source directory not found: {source_root}")
     fixed_probe = probe_reference_frame is not None
     results_root = (source_root / "live" / "screen" if save_dir is None
                     else Path(save_dir).expanduser().resolve())
@@ -141,14 +141,14 @@ def run_series(
                 raise FileNotFoundError(
                     f"Raw probe-reference acquisition not found: {source}"
                 )
-            with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
-                reference_result = ssb.aberrations(
+            with cls.open(str(source), backend=backend, **open_settings(settings)) as direct:
+                reference_result = direct.aberrations(
                     search="primary", trials=trials,
                     refinement=refinement,
-                    save_dir=reference_path / "ssb-fit",
+                    save_dir=reference_path / "direct-fit",
                     verbose=False,
                 )
-                detector_sampling_mrad = ssb.detector_sampling_mrad
+                detector_sampling_mrad = direct.detector_sampling_mrad
             write_fit_metadata(reference_path, settings, reference_result, detector_sampling_mrad)
             reference_fit = {
                 "aberrations": reference_result.aberrations,
@@ -164,11 +164,11 @@ def run_series(
         from tqdm.auto import tqdm
 
         print(
-            "Checking exact saved SSB results and reconstructing any "
+            "Checking exact saved direct ptychography results and reconstructing any "
             "missing acquisitions.",
             flush=True,
         )
-        iterator = tqdm(iterator, desc="SSB series", unit="frame")
+        iterator = tqdm(iterator, desc="Direct ptycho series", unit="frame")
     phases = []
     bright_fields = []
     dark_fields = []
@@ -177,25 +177,25 @@ def run_series(
         settings = acquisition_settings(screen_path, document, **physical)
         source = source_root / f"{screen_path.name}_master.h5"
         if not source.is_file():
-            raise FileNotFoundError(f"Raw SSB acquisition not found: {source}")
+            raise FileNotFoundError(f"Raw direct ptychography acquisition not found: {source}")
         if fixed_probe:
             settings = {**settings, "scan_detector_rotation_deg": reference_rotation,
                         "scan_detector_rotation_flipped": reference_flipped}
-        with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
+        with cls.open(str(source), backend=backend, **open_settings(settings)) as direct:
             if fixed_probe:
-                result = ssb.run(
+                result = direct.run(
                     aberrations=reference_aberrations,
-                    save_dir=screen_path / "ssb-locked",
+                    save_dir=screen_path / "direct-locked",
                     verbose=False,
                 )
             else:
-                result = ssb.aberrations(
+                result = direct.aberrations(
                     search="primary", trials=trials,
                     refinement=refinement,
-                    save_dir=screen_path / "ssb-fit",
+                    save_dir=screen_path / "direct-fit",
                     verbose=False,
                 )
-            detector_sampling_mrad = ssb.detector_sampling_mrad
+            detector_sampling_mrad = direct.detector_sampling_mrad
         if not fixed_probe:
             write_fit_metadata(screen_path, settings, result, detector_sampling_mrad)
         # one float32 stack whatever array type the backend's phase is
@@ -363,7 +363,7 @@ def acquisition_settings(
 ) -> dict[str, object]:
     """Return the physical settings for one acquisition.
 
-    Each value comes from the caller, else the saved Live SSB fit, else ``dataset.yaml``; a beam or scan step none of
+    Each value comes from the caller, else the saved Live direct ptychography fit, else ``dataset.yaml``; a beam or scan step none of
     them gives is an error that names the three places to fix it. A rotation none of them gives stays None, and
     ``DirectPtycho.open`` estimates it with its detector axes. The flip is the caller's, else the saved fit's when the
     rotation is the saved one, else unflipped for a recorded rotation.
@@ -492,13 +492,13 @@ def screen_record_fit(config: dict[str, object]) -> dict[str, object]:
     """The fit a QuantEM Live screening record's result is: its tilt-corrected fit, else ``computed.phase_of_mean``.
 
     A record of Live's default mode holds the tilt-corrected fit in ``computed.phase_of_mean`` and it is returned as it is
-    (``stored_fit(config)``, the same dict). A ``--ssb-mode both`` record holds the ordinary fit there and the
-    tilt-corrected one in ``computed.ssb_tilt``; that block's optics, rotation, sample tilt and depth spread are then
+    (``stored_fit(config)``, the same dict). A ``--direct-mode both`` record holds the ordinary fit there and the
+    tilt-corrected one in ``computed.direct_tilt``; that block's optics, rotation, sample tilt and depth spread are then
     returned over ``computed.phase_of_mean``'s beam, sampling and bright-field calibration, which the two fits share. A failed
     tilt fit, or one of another schema, is no result. Records are read as written.
     """
     plain = stored_fit(config)
-    tilt = stored_fit(config, "ssb_tilt")
+    tilt = stored_fit(config, "direct_tilt")
     if not plain or tilt.get("state") != "complete" or tilt.get("sample_tilt_mrad") is None:
         return plain
     keys = ("aberrations", "scan_detector_rotation_deg", "scan_detector_rotation_flipped", "sample_tilt_mrad",
@@ -516,7 +516,7 @@ def saved_fit(screen_path: Path) -> dict[str, object] | None:
         settings = stored_fit(json.loads(config_path.read_text()))
         if "aberrations" in settings and "scan_detector_rotation_deg" in settings:
             return {**settings, "aberrations": validate_aberrations(settings["aberrations"])}
-    metadata_path = screen_path / "ssb-fit" / "ssb-aberrations.json"
+    metadata_path = screen_path / "direct-fit" / "direct-aberrations.json"
     if metadata_path.is_file():
         metadata = json.loads(metadata_path.read_text())
         result = metadata.get("result") or {}
@@ -541,7 +541,7 @@ def virtual_images(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return the acquisition's bright- and dark-field images, from Live's screening or a fresh screening run.
 
-    A fresh run saves every screening product beside the SSB result, as Live would.
+    A fresh run saves every screening product beside the direct ptychography result, as Live would.
     """
     bright_field_path = screen_path / "bf.npy"
     dark_field_path = screen_path / "df.npy"
@@ -578,7 +578,7 @@ def _dataset_yaml_settings(
     document: dict[str, object],
     dataset: str,
 ) -> dict[str, object]:
-    """Resolve one dataset's physical SSB settings from a ``quantem.dataset/2`` file (``formats.dataset_yaml``).
+    """Resolve one dataset's physical direct ptychography settings from a ``quantem.dataset/2`` file (``formats.dataset_yaml``).
 
     The beam is the session's ``microscope``; the scan step ``[row, col]`` and the scan-to-detector rotation are the
     file entry's own, else the session's, matched and ordered as quantem.live does (``dataset_yaml.file_entry``:
@@ -601,7 +601,7 @@ def _dataset_yaml_settings(
 
 
 def screen_record_settings(record: str | Path) -> dict[str, object]:
-    """The ``DirectPtycho.open`` keywords a QuantEM Live screening record holds for its acquisition's stored SSB fit.
+    """The ``DirectPtycho.open`` keywords a QuantEM Live screening record holds for its acquisition's stored direct ptychography fit.
 
     ``record`` is one acquisition's screening folder (``<output>/live/screen/<dataset>``) or its ``config.json``.
     The keywords are everything the fit used: the beam (``voltage_kV``, ``semiangle_mrad``), ``scan_sampling_A`` and
@@ -627,12 +627,12 @@ def screen_record_settings(record: str | Path) -> dict[str, object]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     fit = screen_record_fit(config)
     if not fit:
-        raise ValueError(f"{config_path} holds no SSB fit of schema {FIT_SCHEMA!r}; screen it again with QuantEM Live.")
+        raise ValueError(f"{config_path} holds no direct ptychography fit of schema {FIT_SCHEMA!r}; screen it again with QuantEM Live.")
     required = ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad", "aberrations",
                 "scan_detector_rotation_deg")
     missing = [name for name in required if fit.get(name) is None]
     if missing:
-        raise ValueError(f"{config_path}: the stored SSB fit has no {', '.join(missing)}.")
+        raise ValueError(f"{config_path}: the stored direct ptychography fit has no {', '.join(missing)}.")
     center = fit.get("bright_field_center_px")
     radius = fit.get("bright_field_radius_px")
     return {
@@ -676,14 +676,14 @@ def open_screen_record(
     (``source_master``) and every calibration of its fit, so the session opens with the fitted aberrations, the
     physical rotation and its flip, the bright-field disk and the detector and scan sampling, and the sample tilt
     and depth spread of a tilt-corrected fit (the record's result when it has one, ``screen_record_fit``), and
-    ``ssb.show()`` opens ShowPtycho there. Pass ``source`` when the raw file has moved.
+    ``direct.show()`` opens ShowPtycho there. Pass ``source`` when the raw file has moved.
 
     Examples
     --------
     >>> from quantem.gpu.direct_ptycho.series import open_screen_record  # doctest: +SKIP
-    >>> ssb = open_screen_record("OUT/live/screen/scan_018")  # doctest: +SKIP
-    >>> ssb.run()  # doctest: +SKIP
-    >>> ssb.show(show_fft=True, save_dir="ssb-results")  # doctest: +SKIP
+    >>> direct = open_screen_record("OUT/live/screen/scan_018")  # doctest: +SKIP
+    >>> direct.run()  # doctest: +SKIP
+    >>> direct.show(show_fft=True, save_dir="direct-results")  # doctest: +SKIP
     """
     from quantem.gpu.direct_ptycho.workflow import DirectPtycho
 
@@ -697,10 +697,10 @@ def open_screen_record(
             raise ValueError(f"{config_path} names no source_master; pass source=.")
     if not Path(source).exists():
         raise FileNotFoundError(f"Raw source {source} of {config_path} not found; pass source= where it now is.")
-    ssb = DirectPtycho.open(str(source), backend=backend, verbose=verbose, **settings)
+    direct = DirectPtycho.open(str(source), backend=backend, verbose=verbose, **settings)
     sample = screen_record_sample(config_path)
     if sample is not None:
         # the tilt-corrected fit's sample model: without it the session reconstructs its mid-depth C10 at tilt 0
-        ssb.sample_tilt_mrad = sample["sample_tilt_mrad"]
-        ssb.depth_spread_nm = sample["depth_spread_nm"]
-    return ssb
+        direct.sample_tilt_mrad = sample["sample_tilt_mrad"]
+        direct.depth_spread_nm = sample["depth_spread_nm"]
+    return direct

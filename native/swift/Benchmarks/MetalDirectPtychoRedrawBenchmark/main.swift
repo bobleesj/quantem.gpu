@@ -2,7 +2,7 @@ import Foundation
 import Metal
 import MetalDirectPtychoKernels
 
-// Interactive SSB redraw timing: the phase re-rendered while one control changes, after a fit.
+// Interactive direct ptychography redraw timing: the phase re-rendered while one control changes, after a fit.
 //
 // The geometry is that of a 512 x 512 (or, with --scans, 256 x 256) x 192 x 192 acquisition at 300 kV, 30 mrad and a 0.373 A step with about
 // 8,800 bright-field pixels. Counts are deterministic synthetic values: the reconstruction's work depends on the
@@ -11,7 +11,7 @@ import MetalDirectPtychoKernels
 // phase); preparation and warmup are excluded.
 //
 //   swift run -c release metal-direct-ptycho-redraw-benchmark [--scans 256,512] [--factors 1,2,3,4] [--orders low,fifth] [--runs 20]
-//     [--warmup 3] [--method ssb|phase|complex] [--dump <folder>] [--json <file>]
+//     [--warmup 3] [--method direct|phase|complex] [--dump <folder>] [--json <file>]
 //
 // `--method phase|complex` times the regularized direct reconstructions (default regularization), which prepare their
 // normal equations again at every C10 change.
@@ -27,7 +27,7 @@ struct Options {
   var warmup = 3
   var dump: URL?
   var json: URL?
-  var method = DirectPtychoReconstructionMethod.ssb
+  var method = DirectPtychoReconstructionMethod.phaseOfMean
 
   init(_ arguments: [String]) {
     var iterator = arguments.dropFirst().makeIterator()
@@ -72,7 +72,7 @@ for scan in options.scans {
   let count = setup.pixels.count
   let plane = scan * scan
   print(
-    "scan \(scan)^2, bright-field pixels \(count), auto output \(try calibration.ssbUpsamplingFactor())x"
+    "scan \(scan)^2, bright-field pixels \(count), auto output \(try calibration.directAutoUpsample())x"
   )
 
   guard let counts = device.makeBuffer(length: count * plane, options: .storageModeShared) else {

@@ -1,4 +1,4 @@
-"""GPU-resident fifth-order SSB model agreement on Apple GPUs.
+"""GPU-resident fifth-order direct ptychography model agreement on Apple GPUs.
 
 The Metal polynomial and depth model are those of the per-term agreement kernel
 below, which the tests also run on its own against a float64 model. The final weighted reduction also stays on the GPU; only one
@@ -21,7 +21,7 @@ from quantem.gpu.direct_ptycho.mps.thick_sample import (
     _band,
 )
 
-# Model agreement per (q, BF chunk, trial tile) of the thick-sample SSB model with chi from the Krivanek polynomial.
+# Model agreement per (q, BF chunk, trial tile) of the thick-sample direct ptychography model with chi from the Krivanek polynomial.
 _AGREEMENT_SOURCE = """
     uint q = thread_position_in_grid.x;
     uint chunk = thread_position_in_grid.y;
@@ -81,8 +81,8 @@ _AGREEMENT_SOURCE = """
 """
 
 _HEADER = (
-    "#define SSB_DEVICE inline\n"
-    "#define SSB_COEFFICIENTS const device float*\n"
+    "#define DIRECT_DEVICE inline\n"
+    "#define DIRECT_COEFFICIENTS const device float*\n"
     + _THICK_FIT_BATCH_HEADER + CHI_SOURCE
 )
 
@@ -91,7 +91,7 @@ _HEADER = (
 def _probe_kernel():
     """Evaluate candidate probe phases while reusing the static geometry."""
     return require_mlx().fast.metal_kernel(
-        name="ssb_fifth_order_probe",
+        name="direct_fifth_order_probe",
         input_names=["kx", "ky", "scalars", "trial"],
         output_names=["probe_chi"],
         header=_HEADER,
@@ -99,7 +99,7 @@ def _probe_kernel():
             uint k = thread_position_in_grid.x;
             uint b = thread_position_in_grid.y;
             if (k >= NUM_BF || b >= TOTAL) return;
-            probe_chi[k * TOTAL + b] = ssb_chi_full(
+            probe_chi[k * TOTAL + b] = direct_chi_full(
                 kx[k], ky[k], scalars[0], trial + b * 31 + 3);
         """,
     )
@@ -109,14 +109,14 @@ def _probe_kernel():
 def _agreement_kernel():
     """Reuse the established model with the CUDA/Metal shared polynomial."""
     return require_mlx().fast.metal_kernel(
-        name="ssb_fifth_order_agreement",
+        name="direct_fifth_order_agreement",
         input_names=[
             "G", "band_flat", "band_qx", "band_qy", "kx", "ky",
             "trial", "scalars", "probe_geometry", "probe_chi",
         ],
         output_names=["numer_real", "numer_imag", "denom"],
         header=_HEADER,
-        source=_AGREEMENT_SOURCE.replace("ho_chi<NT>", "ssb_chi_full"),
+        source=_AGREEMENT_SOURCE.replace("ho_chi<NT>", "direct_chi_full"),
     )
 
 
@@ -125,7 +125,7 @@ class Objective(Coordinates):
 
     Parameters
     ----------
-    prepared : PreparedMpsSSB
+    prepared : PreparedMpsDirect
         Native-grid Fourier evidence and detector geometry. All stored active
         bright-field pixels contribute; no preview subset is selected here.
     partial_bytes : int, optional

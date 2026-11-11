@@ -1,4 +1,4 @@
-"""Reproducible SSB workflow timings using the installed compute backend."""
+"""Reproducible direct ptychography workflow timings using the installed compute backend."""
 
 from __future__ import annotations
 
@@ -151,15 +151,15 @@ def _regions(shape: tuple[int, int], sizes: tuple[int, ...]) -> list[tuple[str, 
     return result
 
 
-def run_ssb_preview(
-    ssb: DirectPtycho,
+def run_direct_preview(
+    direct: DirectPtycho,
     *,
     upsample: tuple[int, ...] = (1, 2, 3, 4, 8),
     runs: int = 6,
     defocus_step_nm: float = 0.1,
     progress: Callable[[str], None] | None = None,
 ) -> dict:
-    """Measure changed-defocus redraws of an existing full-field SSB session.
+    """Measure changed-defocus redraws of an existing full-field direct ptychography session.
 
     Retain the session's aberrations, rotation, tilt, depth and complete
     bright-field support. Only C10 changes along a deterministic trajectory;
@@ -169,7 +169,7 @@ def run_ssb_preview(
 
     Parameters
     ----------
-    ssb : quantem.gpu.SSB
+    direct : quantem.gpu.direct
         Calibrated session, normally restored from a reviewed joint fit.
     upsample : tuple of int
         Output factors to measure. Supported factors are 1, 2, 3, 4 and 8.
@@ -194,8 +194,8 @@ def run_ssb_preview(
 
     Examples
     --------
-    >>> from quantem.gpu.benchmark import run_ssb_preview
-    >>> report = run_ssb_preview(ssb, upsample=(1, 4), runs=11)  # doctest: +SKIP
+    >>> from quantem.gpu.benchmark import run_direct_preview
+    >>> report = run_direct_preview(direct, upsample=(1, 4), runs=11)  # doctest: +SKIP
     """
     if runs < 2:
         raise ValueError("Use runs >= 2 for a first observation and warm timings.")
@@ -205,33 +205,33 @@ def run_ssb_preview(
         raise ValueError("Choose upsample factors from (1, 2, 3, 4, 8).")
     if not np.isfinite(defocus_step_nm) or defocus_step_nm == 0:
         raise ValueError("Use a finite, nonzero defocus_step_nm to measure new images.")
-    backend = ssb.backend
+    backend = direct.backend
     if backend not in ("mps", "cuda"):
-        raise ValueError("Open the SSB session on MPS or CUDA before benchmarking.")
-    if ssb.known_aberrations is None:
-        raise ValueError("Restore or fit the SSB calibration before measuring redraws.")
-    optics = dict(ssb.known_aberrations)
+        raise ValueError("Open the direct ptychography session on MPS or CUDA before benchmarking.")
+    if direct.known_aberrations is None:
+        raise ValueError("Restore or fit the direct ptychography calibration before measuring redraws.")
+    optics = dict(direct.known_aberrations)
     sample = {
-        "sample_tilt_mrad": tuple(ssb.sample_tilt_mrad or (0.0, 0.0)),
-        "depth_spread_nm": float(ssb.depth_spread_nm or 0.0),
+        "sample_tilt_mrad": tuple(direct.sample_tilt_mrad or (0.0, 0.0)),
+        "depth_spread_nm": float(direct.depth_spread_nm or 0.0),
     }
     bright_field_pixels, preparation_s = _timed(
-        lambda: ssb.num_bright_field_pixels, backend
+        lambda: direct.num_bright_field_pixels, backend
     )
     report = {
-        "schema": "quantem.gpu.ssb-preview-benchmark/1",
+        "schema": "quantem.gpu.direct-preview-benchmark/2",
         "environment": _environment(backend),
-        "scan_shape": list(ssb.scan_shape),
+        "scan_shape": list(direct.scan_shape),
         "bright_field_pixels": bright_field_pixels,
         "aberrations": optics,
         "sample": sample,
-        "rotation_deg": float(ssb.scan_detector_rotation_deg),
+        "rotation_deg": float(direct.scan_detector_rotation_deg),
         "calibration": {
-            "voltage_kV": ssb.voltage_kV,
-            "semiangle_mrad": ssb.semiangle_mrad,
-            "scan_sampling_A": list(ssb.scan_sampling_A),
-            "detector_sampling_mrad": list(ssb.detector_sampling_mrad),
-            "scan_detector_rotation_flipped": ssb.scan_detector_rotation_flipped,
+            "voltage_kV": direct.voltage_kV,
+            "semiangle_mrad": direct.semiangle_mrad,
+            "scan_sampling_A": list(direct.scan_sampling_A),
+            "detector_sampling_mrad": list(direct.detector_sampling_mrad),
+            "scan_detector_rotation_flipped": direct.scan_detector_rotation_flipped,
         },
         "preparation_s": preparation_s,
         "reconstruction_includes_host_delivery": backend == "mps",
@@ -244,7 +244,7 @@ def run_ssb_preview(
             values = {**optics, "C10_nm": optics["C10_nm"] + index * defocus_step_nm}
             (phase, _), compute_s = _timed(
                 partial(
-                    ssb.preview,
+                    direct.preview,
                     values,
                     compute_loss=False,
                     upsample=factor,
@@ -283,7 +283,7 @@ def run_ssb_preview(
     return report
 
 
-def run_ssb(
+def run_direct(
     source: str | Path,
     *,
     backend: str = "auto",
@@ -342,8 +342,8 @@ def run_ssb(
 
     Examples
     --------
-    >>> from quantem.gpu.benchmark import run_ssb
-    >>> report = run_ssb("scan.qem")  # doctest: +SKIP
+    >>> from quantem.gpu.benchmark import run_direct
+    >>> report = run_direct("scan.qem")  # doctest: +SKIP
     """
     from quantem.gpu import DirectPtycho, io
     from quantem.gpu.device import resolve
@@ -431,12 +431,12 @@ def run_ssb(
             if progress:
                 progress(f"Measurement {index + 1}/{runs}: full field")
             with contextlib.redirect_stdout(text_io.StringIO()):
-                ssb, session_s = _timed(partial(DirectPtycho, data, backend=selected), selected)
+                direct, session_s = _timed(partial(DirectPtycho, data, backend=selected), selected)
             session_times.append(session_s)
-            with ssb:
+            with direct:
                 fitted, seconds = _timed(
                     partial(
-                        ssb.aberrations,
+                        direct.aberrations,
                         search="standard",
                         trials=trials,
                         seed=seed,
@@ -454,7 +454,7 @@ def run_ssb(
                 keep("full_field_fit", seconds, fitted.phase, record)
                 output, output_s = _timed(
                     partial(
-                        ssb.run,
+                        direct.run,
                         fitted,
                         upsample="auto",
                         compute_loss=False,
@@ -482,19 +482,19 @@ def run_ssb(
                         raise RuntimeError(
                             "Full-field phase differs from the frozen reference. Check source, calibration and precision; do not replace the reference automatically."
                         )
-                factor = int(output.phase.shape[0] // ssb.scan_shape[0])
+                factor = int(output.phase.shape[0] // direct.scan_shape[0])
                 row_offset, col_offset = (
                     (padded - measured) // 2
-                    for padded, measured in zip(ssb.scan_shape, shape[:2])
+                    for padded, measured in zip(direct.scan_shape, shape[:2])
                 )
-                bf_pixels = ssb.num_bright_field_pixels
+                bf_pixels = direct.num_bright_field_pixels
                 used_calibration = {
-                    "voltage_kV": ssb.voltage_kV,
-                    "semiangle_mrad": ssb.semiangle_mrad,
-                    "scan_sampling_A": list(ssb.scan_sampling_A),
-                    "detector_sampling_mrad": list(ssb.detector_sampling_mrad),
-                    "bright_field_center_px": list(ssb.bright_field_center_px),
-                    "bright_field_radius_px": ssb.bright_field_radius_px,
+                    "voltage_kV": direct.voltage_kV,
+                    "semiangle_mrad": direct.semiangle_mrad,
+                    "scan_sampling_A": list(direct.scan_sampling_A),
+                    "detector_sampling_mrad": list(direct.detector_sampling_mrad),
+                    "bright_field_center_px": list(direct.bright_field_center_px),
+                    "bright_field_radius_px": direct.bright_field_radius_px,
                 }
                 for label, bounds in regions:
                     if progress:
@@ -503,7 +503,7 @@ def run_ssb(
                     start = time.perf_counter()
                     regional, prepare_s = _timed(
                         partial(
-                            ssb.select_region,
+                            direct.select_region,
                             bounds,
                             aberrations=fitted.aberrations,
                             scan_detector_rotation_deg=fitted.scan_detector_rotation_deg,
@@ -527,7 +527,7 @@ def run_ssb(
                         local_bf = regional.num_bright_field_pixels
                     (phase, _), reconstruct_s = _timed(
                         partial(
-                            ssb.preview,
+                            direct.preview,
                             local.aberrations,
                             sample_tilt_mrad=local.sample_tilt_mrad,
                             depth_spread_nm=local.depth_spread_nm,
@@ -546,7 +546,7 @@ def run_ssb(
                     _synchronize(selected)
                     elapsed = time.perf_counter() - start
                     if local_bf != bf_pixels or tuple(phase.shape) != tuple(
-                        n * factor for n in ssb.scan_shape
+                        n * factor for n in direct.scan_shape
                     ):
                         raise RuntimeError(
                             "Regional correction changed the BF support or full-scan output shape."
@@ -560,7 +560,7 @@ def run_ssb(
                     )
                     keep(label, elapsed, crop, record)
         return {
-            "schema": "quantem.gpu.ssb-benchmark/1",
+            "schema": "quantem.gpu.direct-benchmark/2",
             "environment": environment,
             "reference_parity": reference_checks,
             "acquisition": {

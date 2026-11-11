@@ -1,4 +1,4 @@
-"""Custom fixed-size CUDA FFT kernels for SSB (1024x1024).
+"""Custom fixed-size CUDA FFT kernels for direct ptychography (1024x1024).
 
 1024 = 4^5.  This backend provides the full reconstruct path: fused gamma
 multiplication, row IFFT, column IFFT, and fused column phase accumulation.
@@ -589,7 +589,7 @@ void ifft1024_cols_accumulate_split512_t64(
 
 
 class CustomFFT1024(CustomFFTBase):
-    """Custom 1024x1024 IFFT kernels for SSB reconstruction and optimization."""
+    """Custom 1024x1024 IFFT kernels for direct ptychography reconstruction and optimization."""
 
     def __init__(self) -> None:
         super().__init__(

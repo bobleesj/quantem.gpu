@@ -125,8 +125,8 @@ def generate_h5(directory: Path) -> None:
     (directory / "h5-cases.json").write_text(json.dumps(records))
 
 
-def generate_ssb(directory: Path) -> None:
-    """Write identical raw and QEM bright-field columns for browser SSB."""
+def generate_direct(directory: Path) -> None:
+    """Write identical raw and QEM bright-field columns for browser direct ptychography."""
     directory.mkdir(parents=True, exist_ok=True)
     size, radius = 128, 3
     row, col = np.mgrid[-radius:radius + 1, -radius:radius + 1]
@@ -135,8 +135,8 @@ def generate_ssb(directory: Path) -> None:
     rows = row[disk] * angular_sampling / wavelength
     cols = col[disk] * angular_sampling / wavelength
     counts = np.random.default_rng(47).poisson(5, (size, size, 1, len(rows))).astype(np.uint16)
-    save_array(directory / "ssb columns.qem", counts, chunk_scans=1024)
-    counts.reshape(size * size, -1).T.copy().tofile(directory / "ssb-columns.u16")
+    save_array(directory / "direct columns.qem", counts, chunk_scans=1024)
+    counts.reshape(size * size, -1).T.copy().tofile(directory / "direct-columns.u16")
     # An off-centre crop on a rectangular full detector. A flagged BF pixel
     # remains measured evidence: source admission must not mask or replace it.
     detector_rows, detector_cols = row[disk] + radius, col[disk] + radius
@@ -144,10 +144,10 @@ def generate_ssb(directory: Path) -> None:
     full_counts[..., detector_rows + 1, detector_cols + 2] = counts[..., 0, :]
     valid = np.ones((12, 13), bool)
     valid[detector_rows[0] + 1, detector_cols[0] + 2] = False
-    save_array(directory / "ssb-full.qem", full_counts,
+    save_array(directory / "direct-full.qem", full_counts,
                metadata={"valid_pixels": valid}, chunk_scans=1024)
     calibration = {
-        "schema": "quantem.ssb-browser-calibration/3",
+        "schema": "quantem.direct-browser-calibration/4",
         "num_bright_field_pixels": len(rows), "g_shape": [len(rows), size, size],
         "wavelength_A": wavelength, "semiangle_mrad": (radius + 0.25) * angular_sampling * 1e3,
         "detector_sampling_mrad": [angular_sampling * 1e3] * 2,
@@ -161,7 +161,7 @@ def generate_ssb(directory: Path) -> None:
         "scan_detector_rotation_deg": 0,
         "precision": {"real_dtype": "float32", "complex_dtype": "complex64"},
     }
-    (directory / "ssb-calibration.json").write_text(json.dumps(calibration))
+    (directory / "direct-calibration.json").write_text(json.dumps(calibration))
 
 
 # Krivanek (n, m) and the probe of the higher-order sign fixture: magnitudes in A, azimuths in degrees
@@ -171,8 +171,8 @@ HIGHER_ORDER_TRUTH = {"C10": (-50.0, 0.0), "C12": (20.0, 30.0), "C21": (400.0, 6
 HIGHER_ORDER_TOLERANCE_RAD = 1e-5
 
 
-def generate_ssb_higher_order(directory: Path) -> None:
-    """Write a weak-phase SSB folder with coma, trefoil and C30, and its float64 reconstructions.
+def generate_direct_higher_order(directory: Path) -> None:
+    """Write a weak-phase direct ptychography folder with coma, trefoil and C30, and its float64 reconstructions.
 
     An exact thin-object simulation: a periodic random phase (0.05 rad rms, |q| < 2.5 1/A) on a 6 A cell of
     64 x 64 pixels, the probe p(r - r0) at every pixel, and the far-field grid itself as the detector (3.3 mrad
@@ -181,7 +181,7 @@ def generate_ssb_higher_order(directory: Path) -> None:
     The reference reconstructs the same counts in float64, written from the physics with chi in polar form:
     for a thin object G(q, k) ~ P(k - q) conj P(k) - P(k) conj P(k + q). The kernels once evaluated the first
     term at q - k, which reverses coma and trefoil on that sideband only; that form misses the reference here
-    by about 0.03 rad. ssb-higher-order-sign.ts holds the browser engine to the k - q reference.
+    by about 0.03 rad. direct-higher-order-sign.ts holds the browser engine to the k - q reference.
     """
     directory.mkdir(parents=True, exist_ok=True)
     volts = 300e3
@@ -225,7 +225,7 @@ def generate_ssb_higher_order(directory: Path) -> None:
     qr, qc = np.meshgrid(q, q, indexing="ij")
     detector_rows, detector_cols = ((index + grid // 2) % grid for index in np.nonzero(bright))
     calibration = {
-        "schema": "quantem.ssb-browser-calibration/3",
+        "schema": "quantem.direct-browser-calibration/4",
         "num_bright_field_pixels": len(bf), "g_shape": [len(bf), scan, scan],
         "wavelength_A": wavelength, "semiangle_mrad": semiangle * 1e3, "detector_sampling_mrad": [sampling * 1e3] * 2,
         "dc_value": [dc, 0.0], "detector_shape": [grid, grid],
@@ -297,5 +297,5 @@ def generate_ssb_higher_order(directory: Path) -> None:
 if __name__ == "__main__":
     generate(Path(sys.argv[1]))
     generate_h5(Path(sys.argv[1]))
-    generate_ssb(Path(sys.argv[1]))
-    generate_ssb_higher_order(Path(sys.argv[1]) / "ssb-higher-order")
+    generate_direct(Path(sys.argv[1]))
+    generate_direct_higher_order(Path(sys.argv[1]) / "direct-higher-order")

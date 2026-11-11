@@ -7,7 +7,7 @@ once for the public fit record. The search retains groups of eight, 24 TPE
 candidates, the startup budget, and three distinct Newton starts.
 
 Objective: ``fit_resident`` (tilt=True) maximizes the least-squares
-agreement of the thick-sample SSB model with G(q, k) on CUDA and MPS.
+agreement of the thick-sample direct ptychography model with G(q, k) on CUDA and MPS.
 ``fit_standard_resident`` (tilt=False) is the same search and objective with
 the sample tilt and depth spread held at 0, on CUDA and MPS
 (``cuda/optimizer.py``, ``mps/optimizer.py``).
@@ -256,14 +256,14 @@ def _random(device, seed, trials, width):
     # conversion is independent for every number, so give it a GPU thread.
     # Four exactly represented 16-bit words retain the original 53-bit stream.
     words = device.run(
-        "ssb_joint_random_words",
+        "direct_joint_random_words",
         {},
         [(trials * width, 4)],
         RANDOM_BODY,
         constants=constants,
     )[0]
     return device.run(
-        "ssb_joint_uniform",
+        "direct_joint_uniform",
         {"words": words},
         [(trials, width, 3)],
         UNIFORM_BODY,
@@ -274,7 +274,7 @@ def _random(device, seed, trials, width):
 
 def _decode(device, points, bounds):
     return device.run(
-        "ssb_joint_decode",
+        "direct_joint_decode",
         {"points": points, "bounds": bounds},
         [points.shape],
         DECODE_BODY,
@@ -285,7 +285,7 @@ def _decode(device, points, bounds):
 
 def _trial(device, points):
     return device.run(
-        "ssb_joint_trial",
+        "direct_joint_trial",
         {"points": points},
         [(points.shape[0], 7)],
         TRIAL_BODY,
@@ -306,7 +306,7 @@ out0[i]=float(rank);
 
 def _rank(device, scores):
     return device.run(
-        "ssb_joint_rank",
+        "direct_joint_rank",
         {"scores": scores},
         [(len(scores),)],
         RANK_BODY,
@@ -342,7 +342,7 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
         else:
             ranks = _rank(device, scores)
             density = device.run(
-                "ssb_joint_density",
+                "direct_joint_density",
                 {"history": history, "scores": scores, "ranks": ranks},
                 [(done + 1, 5, 3)],
                 DENSITY_BODY,
@@ -350,7 +350,7 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
                 constants=constants,
             )[0]
             candidates = device.run(
-                "ssb_joint_sample",
+                "direct_joint_sample",
                 {"history": history, "density": density, "random": tpe_random},
                 [(batch, 24, 6, 3)],
                 SAMPLE_BODY,
@@ -358,7 +358,7 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
                 constants=constants,
             )[0]
             components = device.run(
-                "ssb_joint_components",
+                "direct_joint_components",
                 {"history": history, "density": density, "candidates": candidates},
                 [(batch, 24, done + 1, 3)],
                 COMPONENT_BODY,
@@ -366,7 +366,7 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
                 constants=constants,
             )[0]
             maxima = device.run(
-                "ssb_joint_mixture_max",
+                "direct_joint_mixture_max",
                 {"density": density, "components": components},
                 [(batch, 24, 4, 3)],
                 MAX_MIXTURE_BODY,
@@ -374,7 +374,7 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
                 constants=constants,
             )[0]
             powers = device.run(
-                "ssb_joint_mixture_exp",
+                "direct_joint_mixture_exp",
                 {"density": density, "components": components, "maxima": maxima},
                 [(batch, 24, done + 1, 2, 3)],
                 EXP_MIXTURE_BODY,
@@ -382,7 +382,7 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
                 constants=constants,
             )[0]
             ratios = device.run(
-                "ssb_joint_mixture_sum",
+                "direct_joint_mixture_sum",
                 {"components": powers, "maxima": maxima},
                 [(batch, 24, 3)],
                 SUM_MIXTURE_BODY,
@@ -390,7 +390,7 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
                 constants=constants,
             )[0]
             points = device.run(
-                "ssb_joint_select",
+                "direct_joint_select",
                 {"candidates": candidates, "scores": ratios},
                 [(batch, 6, 3)],
                 SELECT_BODY,
@@ -491,7 +491,7 @@ def fit_resident(
         )
         thin_ranks = _rank(device, thin_scores)
         thin_point, thin_value = device.run(
-            "ssb_joint_best",
+            "direct_joint_best",
             {"points": thin_points, "scores": thin_scores, "ranks": thin_ranks},
             [(1, 6, 3), (1, 3)],
             "if(index>0)return;for(int i=0;i<COUNT;i++)if(int(ranks[i])==0){for(int d=0;d<6;d++)store_real(out0,d,load_real(points,i*6+d));store_real(out1,0,load_real(scores,i));}",
@@ -532,7 +532,7 @@ def fit_resident(
     else:
         ranks = _rank(device, scores)
         point, value = device.run(
-            "ssb_joint_best",
+            "direct_joint_best",
             {"points": points, "scores": scores, "ranks": ranks},
             [(1, 6, 3), (1, 3)],
             "if(index>0)return;for(int i=0;i<COUNT;i++)if(int(ranks[i])==0){for(int d=0;d<6;d++)store_real(out0,d,load_real(points,i*6+d));store_real(out1,0,load_real(scores,i));}",
@@ -606,7 +606,7 @@ def fit_standard_resident(
     polish_starts: int = 3,
     derivatives=None,
 ) -> dict[str, object]:
-    """Standard SSB fit (tilt=False): the joint fit's search and objective with sample tilt and depth spread at 0.
+    """Standard direct ptychography fit (tilt=False): the joint fit's search and objective with sample tilt and depth spread at 0.
 
     ``lower`` and ``upper`` bound (C10, C12, phi12) in engine units (Angstrom, Angstrom, rad); a coefficient with
     ``lower == upper`` is held at that value in every trial. The search is the resident multivariate TPE of the
@@ -690,7 +690,7 @@ def fit_standard_resident(
         best, fit = host_points[order[0]], float(host_scores[order[0]])
     timings["refinement_s"] = time.perf_counter() - begin
     if not math.isfinite(fit) or fit <= 0:
-        raise ValueError("The standard SSB fit found no positive finite model agreement. Check the scan sampling and "
+        raise ValueError("The standard direct ptychography fit found no positive finite model agreement. Check the scan sampling and "
                          "the signal in the fitting band.")
     best = np.asarray(best, dtype=np.float64)
     best[1] = abs(best[1])

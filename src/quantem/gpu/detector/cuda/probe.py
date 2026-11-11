@@ -1,4 +1,4 @@
-"""CUDA probe detection used by exact SSB and parallax setup."""
+"""CUDA probe detection used by exact direct ptychography and parallax setup."""
 
 import numpy as np
 

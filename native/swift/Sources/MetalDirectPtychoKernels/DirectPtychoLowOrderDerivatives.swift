@@ -1,8 +1,8 @@
 import Foundation
 import Metal
 
-/// The low-order agreement with its exact gradient and Hessian (`ssb_low_order_derivatives.metal`,
-/// ssb-low-order-derivatives v0.3), for the trust-region Newton of the primary fit. Coordinates are the Newton's z:
+/// The low-order agreement with its exact gradient and Hessian (`direct_low_order_derivatives.metal`,
+/// direct-low-order-derivatives v0.3), for the trust-region Newton of the primary fit. Coordinates are the Newton's z:
 /// C10, C12 cos 2 phi12, C12 sin 2 phi12 (Angstrom), tilt row and column (mrad) and depth spread (Angstrom; the
 /// objective is even in it, so a negative z uses its magnitude and the depth derivatives change sign).
 ///
@@ -72,7 +72,7 @@ final class DirectPtychoLowOrderDerivatives {
 
   private func workspace(_ name: String, bytes: Int, shared: Bool = false) throws -> MTLBuffer {
     if let existing = workspaces[name], existing.length >= bytes { return existing }
-    let buffer = try SSBCoherentReconstruction.allocate(device, bytes, shared: shared)
+    let buffer = try DirectCoherentReconstruction.allocate(device, bytes, shared: shared)
     workspaces[name] = buffer
     return buffer
   }
@@ -82,7 +82,7 @@ final class DirectPtychoLowOrderDerivatives {
       throw MetalDirectPtychoError.invalidGeometry(
         "Supply six finite low-order coordinates per candidate.")
     }
-    return try SSBCoherentReconstruction.buffer(
+    return try DirectCoherentReconstruction.buffer(
       device,
       rows.flatMap { z -> [Float] in
         [
@@ -178,7 +178,7 @@ final class DirectPtychoLowOrderDerivatives {
     let values = try rows.indices.map { candidate -> Double in
       var total = 0.0
       for i in 0..<n { total += Double(terms[candidate * n + i]) }
-      guard total.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
+      guard total.isFinite else { throw DirectOptimizationError.nonFiniteLoss }
       return total
     }
     staged = (rows, trial, inputs)
@@ -202,7 +202,7 @@ final class DirectPtychoLowOrderDerivatives {
       "partial", bytes: indices.count * derivativeChunks * Self.fields * n * 4)
     let output = try workspace(
       "output", bytes: indices.count * (Self.outputs - 1) * n * 4, shared: true)
-    let selected = try SSBCoherentReconstruction.buffer(device, indices.map { UInt32($0) })
+    let selected = try DirectCoherentReconstruction.buffer(device, indices.map { UInt32($0) })
     guard let ab = workspaces["ab"], let ss = workspaces["ss"], let value = workspaces["value"]
     else {
       throw MetalDirectPtychoError.commandQueue
@@ -392,7 +392,7 @@ final class DirectPtychoLowOrderDerivatives {
 
   /// Field sums to the Newton's derivatives; d|z5|/dz5 = sign(z5).
   private static func result(_ totals: [Double], depth: Double) throws -> Result {
-    guard totals.allSatisfy(\.isFinite) else { throw SSBOptimizationError.nonFiniteLoss }
+    guard totals.allSatisfy(\.isFinite) else { throw DirectOptimizationError.nonFiniteLoss }
     let sign = depth < 0 ? -1.0 : 1.0
     var gradient = Array(totals[1...6])
     gradient[5] *= sign

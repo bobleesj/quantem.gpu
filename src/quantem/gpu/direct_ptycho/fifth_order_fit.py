@@ -1,4 +1,4 @@
-"""Fifth-order SSB fitting with a shared initialization and refinement path.
+"""Fifth-order direct ptychography fitting with a shared initialization and refinement path.
 
 The candidate generator and float64 refinement solvers run on the CPU. Scientific
 objective evaluation and reconstruction run on the selected GPU. This is a hybrid solver.
@@ -17,13 +17,13 @@ from ._tpe_independent import make_independent_sampler
 from .persistence import load_result, result_paths
 
 
-def _objective(ssb, gradients=False):
+def _objective(direct, gradients=False):
     """Use the same coordinates and model on the session's physical backend.
 
     ``gradients=True`` returns the same objective with exact gradients (CUDA and MPS).
     """
-    backend = ssb._backend()
-    if ssb.backend == "cuda":
+    backend = direct._backend()
+    if direct.backend == "cuda":
         if gradients:
             from .cuda.exact_derivatives import FifthOrderGradients
 
@@ -31,10 +31,10 @@ def _objective(ssb, gradients=False):
         from .cuda.broad_batch import Objective
 
         return Objective(backend._get_accelerator())
-    if ssb.backend == "mps":
+    if direct.backend == "mps":
         from .mps.fifth_order import Objective
 
-        backend.cache_rotation(np.deg2rad(ssb.scan_detector_rotation_deg))
+        backend.cache_rotation(np.deg2rad(direct.scan_detector_rotation_deg))
         if gradients:
             from .mps.exact_derivatives import FifthOrderGradients
 
@@ -43,9 +43,9 @@ def _objective(ssb, gradients=False):
     raise NotImplementedError("Fifth-order fitting requires a CUDA or MPS session.")
 
 
-def _exact_gradients(ssb) -> bool:
+def _exact_gradients(direct) -> bool:
     """Whether the session's backend serves exact fifth-order gradients."""
-    return ssb.backend in ("cuda", "mps")
+    return direct.backend in ("cuda", "mps")
 
 
 def _refine_with_gradients(objective, start, bounds, norm, cap, *, on_progress=None):
@@ -166,7 +166,7 @@ def higher_order_consistency(objective, start, checked, limit, cap, *, tilt=True
     and depth not; ``fifth_order_parameters.aperture_phase``). Real higher-order aberrations are the probe's and the
     same in both halves; terms that fit noise or scattering the model does not describe are not. The fit is trusted
     when the statistic is at most MAX_HALF_BAND_RMS_RAD; ``shown_limit`` is then ``limit``, else 2. The record
-    names match the native ``SSBHigherOrderConsistency``.
+    names match the native ``DirectHigherOrderConsistency``.
     """
     from .fifth_order_parameters import aperture_phase, aperture_rms
 
@@ -211,7 +211,7 @@ def fifth_order_bounds(higher_order_limit, *, tilt=True) -> np.ndarray:
 
 
 def fit_fifth_order(
-    ssb, *, search, trials, seed, save_dir, force, verbose,
+    direct, *, search, trials, seed, save_dir, force, verbose,
     primary_options, compute_loss=False, compare_standard=True,
     show=True, on_initial_fit=None, size="medium", columns=2, show_convergence=False,
     higher_order_limit=DEFAULT_HIGHER_ORDER_LIMIT, tilt=True,
@@ -226,11 +226,11 @@ def fit_fifth_order(
     (``higher_order_consistency``, with exact gradients); when the halves disagree the +-2 fit is returned, its
     higher orders marked not trusted, and the checked wide fit stays in the record.
     ``sample_agreement`` is the fraction of the band's power the fit explains, as the low-order fit's.
-    ``compare_standard`` measures the primary fit's ``tilt_fit_gain`` (one standard-SSB search); the fifth-order
+    ``compare_standard`` measures the primary fit's ``tilt_fit_gain`` (one standard-direct search); the fifth-order
     fit's gain is that gain times its agreement over the primary's.
     """
     higher_order_limit = validate_higher_order_limit(higher_order_limit)
-    if not _exact_gradients(ssb):
+    if not _exact_gradients(direct):
         raise NotImplementedError("Fifth-order fitting requires a CUDA or MPS session.")
     refinement = "bfgs"
     if trials < 1:
@@ -240,7 +240,7 @@ def fit_fifth_order(
     from .fifth_order_parameters import public_params, vector
     from .fit_display import FitDisplay
 
-    display = FitDisplay(ssb, enabled=show, size=size, columns=columns,
+    display = FitDisplay(direct, enabled=show, size=size, columns=columns,
                          show_convergence=show_convergence)
 
     primary_trials = trials if search == "standard" else 200
@@ -270,14 +270,14 @@ def fit_fifth_order(
         settings["broad_starts"] = BROAD_STARTS
     paths = result_paths(save_dir, "aberrations") if save_dir is not None else None
     signature = (
-        ssb._result_signature("aberrations", settings)
+        direct._result_signature("aberrations", settings)
         if paths is not None
         else None
     )
-    if paths is not None and not force and ssb.source_kind != "array":
-        reused = load_result(paths=paths, signature=signature, backend=ssb.backend)
+    if paths is not None and not force and direct.source_kind != "array":
+        reused = load_result(paths=paths, signature=signature, backend=direct.backend)
         if reused is not None:
-            ssb._aberration_search = ssb._accept_result(reused)
+            direct._aberration_search = direct._accept_result(reused)
             display.update(reused, final=True)
             if show_convergence and display.display is not None:
                 display.display(reused.show("convergence", size=size))
@@ -285,7 +285,7 @@ def fit_fifth_order(
     wall_started = time.perf_counter()
     display.progress(0)
     started = time.perf_counter()
-    primary = ssb._find_aberrations(
+    primary = direct._find_aberrations(
         ("apply" if primary_options["check_rotation"] == "both" else
          "auto" if primary_options["check_rotation"] else "off"),
         trials=primary_trials,
@@ -305,7 +305,7 @@ def fit_fifth_order(
     initial_handoff_s = time.perf_counter() - handoff_started
     # Keep plotting/caller work out of the numerical fit and convergence clocks.
     started += initial_handoff_s
-    objective = _objective(ssb, gradients=True)
+    objective = _objective(direct, gradients=True)
     bounds = fifth_order_bounds(higher_order_limit, tilt=tilt)
     norm = float(objective.evaluate(vector(primary, 1), 1)[0])
     if not np.isfinite(norm) or norm <= 0:
@@ -418,9 +418,9 @@ def fit_fifth_order(
     chosen.sample_tilt_mrad = sample_tilt if tilt else None
     chosen.depth_spread_nm = depth if tilt else None
     chosen.objective = "broad_fifth_agreement"
-    band_power = ssb._backend().band_power((0.2, 0.9))
+    band_power = direct._backend().band_power((0.2, 0.9))
     chosen.sample_agreement = float(best_score) / band_power
-    # the primary's gain over standard SSB times the fifth-order agreement over the primary's (same objective)
+    # the primary's gain over standard direct ptychography times the fifth-order agreement over the primary's (same objective)
     chosen.tilt_fit_gain = (None if primary.tilt_fit_gain is None
                             else float(primary.tilt_fit_gain) * float(best_score / norm))
     chosen.parameter_slices = None
@@ -478,7 +478,7 @@ def fit_fifth_order(
     chosen.refine_nfev = nfev
     chosen.refine_elapsed_s = refine_elapsed_s
     reconstruction_started = time.perf_counter()
-    result = ssb.run(
+    result = direct.run(
         chosen, upsample=1, compute_loss=compute_loss, force=True
     )
     # reconstruct carries fit provenance only when compatible; assign the new fit explicitly.
@@ -515,15 +515,15 @@ def fit_fifth_order(
     if show_convergence:
         result.timings["convergence_display_s"] = display.display_s
     if paths is not None:
-        result = ssb._save_result(result, paths=paths, signature=signature)
-    ssb._aberration_search = ssb._accept_result(result)
+        result = direct._save_result(result, paths=paths, signature=signature)
+    direct._aberration_search = direct._accept_result(result)
     return result
 
 
-def parameter_evaluator(ssb, result, band):
+def parameter_evaluator(direct, result, band):
     """Vary primary parameters while retaining the fitted broad optical model."""
 
-    objective = _objective(ssb)
+    objective = _objective(direct)
     coordinates = np.asarray(result.optimizer["coordinates"], dtype=float)
 
     def evaluate(rows):

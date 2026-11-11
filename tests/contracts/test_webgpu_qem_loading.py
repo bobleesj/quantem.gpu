@@ -1,4 +1,4 @@
-"""Run the CPU-only WebGPU contracts in Node.js: .qem loading and SSB option packing."""
+"""Run the CPU-only WebGPU contracts in Node.js: .qem loading and direct ptychography option packing."""
 
 import shutil
 import subprocess
@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize(
     "contract",
     ["qem-checksum", "qem-http", "qem-stream", "qem-resident",
-     "rans-batch", "qem-series-lookahead", "ssb-options"],
+     "rans-batch", "qem-series-lookahead", "direct-options"],
 )
 def test_qem_loading_contract(tmp_path: Path, contract: str) -> None:
     """Bundle one tests/webgpu contract with esbuild and run it with node --test."""

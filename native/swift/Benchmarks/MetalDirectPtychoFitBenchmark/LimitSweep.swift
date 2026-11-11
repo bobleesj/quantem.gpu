@@ -25,7 +25,7 @@ func limitSweep(
   let start = DirectPtychoModelPoint(
     c10Nanometers: c10, c12Nanometers: c12, phi12Degrees: phi12, sampleTiltMrad: tilt,
     depthSpreadNanometers: depth)
-  let factor = try calibration.ssbUpsamplingFactor()
+  let factor = try calibration.directAutoUpsample()
   let engine = try MetalDirectPtychoEngine(device: device, geometry: geometry)
   try engine.prepare(brightfield: counts, countType: countType)
   let model = try engine.jointModel(scanDetectorRotationDegrees: rotationEstimate)

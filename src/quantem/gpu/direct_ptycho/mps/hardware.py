@@ -1,4 +1,4 @@
-"""The Apple GPU side of MPS SSB: the MLX import, the machine's memory and chip, and the measured chunk sizes.
+"""The Apple GPU side of MPS direct ptychography: the MLX import, the machine's memory and chip, and the measured chunk sizes.
 
 Chunk sizes and pair-packing policies were measured per memory class and chip (M5 Max, 24-128 GB). They set how many
 bright-field planes a Metal dispatch handles. The phase and loss chunk also sets where the float32 bright-field sums
@@ -18,7 +18,7 @@ def require_mlx():
         import mlx.core as mx
     except ModuleNotFoundError as exc:
         raise RuntimeError(
-            "MPS SSB preview requires MLX on Apple Silicon. Install with "
+            "MPS direct ptychography preview requires MLX on Apple Silicon. Install with "
             "`python -m pip install mlx` in the Mac environment."
         ) from exc
     return mx

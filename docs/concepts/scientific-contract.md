@@ -160,7 +160,7 @@ counts when A is reopened, not a result retained from B.
 These requirements do not prescribe a common session state machine. Existing
 tests retain the specific ownership and publication checks:
 
-- `tests/hardware/test_native_ssb.py`: SSB refuses encoded storage, never
+- `tests/hardware/test_native_direct.py`: direct ptychography refuses encoded storage, never
   releases borrowed data, and releases the acquisition `DirectPtycho.open` loads.
 
 ### Frozen vectors and executed scope

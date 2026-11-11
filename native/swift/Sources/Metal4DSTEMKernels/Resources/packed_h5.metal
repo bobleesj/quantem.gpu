@@ -768,7 +768,7 @@ kernel void compact_h5_selected_diffraction(
         );
 }
 
-// Exact detector-column gather for bounded resident consumers such as SSB.
+// Exact detector-column gather for bounded resident consumers such as direct ptychography.
 // p = scans in shard, total scans, shard offset, column count, tile count,
 //     scan tile, header words, header encoding, payload layout.
 kernel void compact_h5_detector_columns(

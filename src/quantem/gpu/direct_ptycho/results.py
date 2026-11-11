@@ -1,4 +1,4 @@
-"""Backend-neutral SSB fit, source, evaluation, and reconstruction results."""
+"""Backend-neutral direct ptychography fit, source, evaluation, and reconstruction results."""
 
 from collections.abc import Iterator, Mapping, Sequence
 from copy import deepcopy
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class DirectPtychoResult(Mapping[str, float]):
-    """Result from SSB ptychographic reconstruction.
+    """Result from direct ptychographic reconstruction.
 
     The primary output is ``object_wave``, the complex transmission function.
     Convenience properties ``phase`` and ``amplitude`` are derived from it.
@@ -44,16 +44,16 @@ class DirectPtychoResult(Mapping[str, float]):
     annular_counts : array or None
         Measured guide on the native scan grid, when a neural phase model is used.
     sample_tilt_mrad : tuple[float, float] | None
-        Sample tilt (row, col) in mrad, scan frame, from ``aberrations(tilt=True)``; None for standard SSB.
+        Sample tilt (row, col) in mrad, scan frame, from ``aberrations(tilt=True)``; None for standard direct ptychography.
     depth_spread_nm : float | None
         Depth over which the tilted columns spread in the thick-sample model (a model parameter, not a measured
-        thickness); None for standard SSB.
+        thickness); None for standard direct ptychography.
     sample_agreement : float | None
         The fraction of G's power in the fit band (0.2-0.9 1/A) that the fitted model explains, in [0, 1]: the
         agreement sum_q |sum_k G conj(gamma)|^2 / sum_k |gamma|^2 over sum_q sum_k |G|^2, its upper bound. The
         low-order and fifth-order fits report the same quantity; noise and unmodelled structure keep it below 1.
     tilt_fit_gain : float | None
-        The fit's agreement over the best standard-SSB agreement (tilt and depth spread 0) on the same data
+        The fit's agreement over the best standard-direct agreement (tilt and depth spread 0) on the same data
         (> 1: the tilt explains more); None when ``compare_standard=False``.
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees, in [0, 360). The CoM curl fixes it only modulo 180 degrees;
@@ -77,7 +77,7 @@ class DirectPtychoResult(Mapping[str, float]):
     object_sampling_A : tuple[float, float] | None
         Pixel size of the reconstructed image in Angstrom, (row, col): the scan step divided by ``upsample``.
     reconstruction_method : str
-        ``ssb``, ``phase`` or ``complex``. The regularized methods are experimental.
+        ``direct``, ``phase`` or ``complex``. The regularized methods are experimental.
     reconstruction_options : dict[str, object]
         Method, strengths, smoothness prior and detector weighting used by a
         regularized reconstruction; saved and restored with the result.
@@ -87,7 +87,7 @@ class DirectPtychoResult(Mapping[str, float]):
     amplitude_estimated : bool
         False for phase-only paths, whose complex wave has unit amplitude. A
         ``phase_of_mean`` result that estimates its amplitude is a backend fit's
-        working image, which the session replaces with its SSB phase.
+        working image, which the session replaces with its direct ptychography phase.
     loss : float | None
         Variance loss value.
     elapsed_s : float | None
@@ -97,7 +97,7 @@ class DirectPtychoResult(Mapping[str, float]):
     optimizer : dict[str, object]
         Numerical search/refinement device, precision, and Newton diagnostics.
     objective : str | None
-        What ``aberrations()`` maximized: ``"agreement"`` (the least-squares agreement of the SSB model with the
+        What ``aberrations()`` maximized: ``"agreement"`` (the least-squares agreement of the direct ptychography model with the
         data, with or without tilt) or ``"broad_fifth_agreement"`` (the same through fifth order); None for a result
         that was not fitted.
     refinement : str | None
@@ -114,7 +114,7 @@ class DirectPtychoResult(Mapping[str, float]):
         Complete saved scientific signature, provenance, and result metadata.
     parameter_slices : dict[str, object] or None
         Measured conditional focus-depth and tilt objective slices, added by
-        ``ssb.measure_parameters(result)``. Includes units, rotation and timing;
+        ``direct.measure_parameters(result)``. Includes units, rotation and timing;
         reloading or showing them does not rerun the objective.
     """
     object_wave: object
@@ -178,7 +178,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> aberrations = ssb.aberrations()
+        >>> aberrations = direct.aberrations()
         >>> defocus_nm = aberrations["C10_nm"]
         """
         return self.aberrations[coefficient]
@@ -193,7 +193,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
     def __repr__(self) -> str:
         method = self.reconstruction_method
-        lines = ["SSB Result" if method == "phase_of_mean" else f"Direct {method} result"]
+        lines = ["Direct ptycho result" if method == "phase_of_mean" else f"Direct {method} result"]
         lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsample}x output")
         if not self.amplitude_estimated:
             lines.append("  Amplitude      not estimated (unit-amplitude phase representation)")
@@ -205,7 +205,7 @@ class DirectPtychoResult(Mapping[str, float]):
             lines.append(f"  Objective      {self.objective}")
         if self.trial_records is not None:
             lines.append(f"  Trials         {self._trial_count}")
-        lines.append(f"  SSB rotation   {self.scan_detector_rotation_deg:.2f}°")
+        lines.append(f"  direct ptychography rotation   {self.scan_detector_rotation_deg:.2f}°")
         if self.rotation_refined:
             lines.append(f"  Refined from   {self.rotation_estimate_deg:.2f}° (estimate)")
         if self.rotation_branches is not None:
@@ -364,9 +364,9 @@ class DirectPtychoResult(Mapping[str, float]):
         if self.timings:
             record["timings"] = dict(self.timings)
         if None not in (self.voltage_kV, self.semiangle_mrad, self.object_sampling_A):
-            from quantem.gpu.optics import ssb_upsample_requirement
+            from quantem.gpu.optics import direct_upsample_requirement
 
-            required = ssb_upsample_requirement(
+            required = direct_upsample_requirement(
                 voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                 scan_sampling_A=tuple(float(step) * self.upsample for step in self.object_sampling_A),
             )
@@ -384,7 +384,7 @@ class DirectPtychoResult(Mapping[str, float]):
             row["Suggested rotation (deg)"] = record["suggested_rotation_deg"]
         if self.rotation_refined:
             row["Estimated rotation (deg)"] = record["rotation_estimate_deg"]
-        row["SSB-selected rotation (deg)"] = record["scan_detector_rotation_deg"]
+        row["Direct ptycho rotation (deg)"] = record["scan_detector_rotation_deg"]
         if self.rotation_branches is not None:
             row["180° branch by"] = {"columns": "atomic columns", "phase_tail": "phase tail"}[
                 record["rotation_branch_decided_by"]]
@@ -402,7 +402,7 @@ class DirectPtychoResult(Mapping[str, float]):
         if "nominal_upsample_requirement" in record:
             row["Output sampling (×)"] = record["upsample"]
             row["Nominal requirement (×)"] = record["nominal_upsample_requirement"]
-        model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
+        model = "standard direct ptychography" if self.sample_tilt_mrad is None else "tilt-aware direct ptychography"
         table = pd.DataFrame.from_dict(row, orient="index", columns=[model]).rename_axis("Parameter")
         columns = resolve_columns(len(table), columns=columns, default=1)
         if columns == 1:
@@ -498,7 +498,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.run(aberrations)
+        >>> result = direct.run(aberrations)
         >>> probe = result.probe()
         >>> probe_fourier = result.probe(space="fourier")
         """
@@ -578,9 +578,9 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> fit = ssb.aberrations(search="broad")
+        >>> fit = direct.aberrations(search="broad")
         >>> fit.show("convergence")
-        >>> fit.save_calibration("ssb-results/calibration.json")
+        >>> fit.save_calibration("direct-results/calibration.json")
         """
         from quantem.gpu.direct_ptycho.calibration import save_calibration
 
@@ -654,7 +654,7 @@ class DirectPtychoResult(Mapping[str, float]):
             Include saved objective slices beside a single phase image by
             default. This only displays recorded values; it runs no fitting
             or GPU evaluations. Use ``view="parameters"`` for the plots alone.
-            Measure them first with ``ssb.measure_parameters(result)``.
+            Measure them first with ``direct.measure_parameters(result)``.
         interactive : bool, optional
             Inspect saved phase images with QuantEM Show2D instead of Matplotlib.
             Comparisons retain full fields, marked zooms and optional FFTs.
@@ -713,7 +713,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.run(aberrations, upsample="auto")
+        >>> result = direct.run(aberrations, upsample="auto")
         >>> result.show()
         >>> result.show("probe")
         >>> result.show(size="large")
@@ -722,7 +722,7 @@ class DirectPtychoResult(Mapping[str, float]):
         >>> phase_001.show(compare=[phase_003, phase_005], region="bottom-left",
         ...                interactive=True, show_fft=True, columns=3, size="large")
         >>> result.show("rotation")
-        >>> ssb.measure_parameters(aberrations)
+        >>> direct.measure_parameters(aberrations)
         >>> aberrations.show("parameters")
         >>> aberrations.show("depth", size="large")
         >>> aberrations.show("tilt", size="small")
@@ -814,7 +814,7 @@ class DirectPtychoResult(Mapping[str, float]):
             if self.rotation_branches is None:
                 raise ValueError(
                     "This result has no 180-degree branch comparison: its rotation was given or recorded, or "
-                    "check_rotation=False. Run ssb.scan_rotations(report=False, ) to fit and compare both branches.")
+                    "check_rotation=False. Run direct.scan_rotations(report=False, ) to fit and compare both branches.")
             return self.rotation_branches.show(axsize=axsize, cmap=cmap, save=save)
         if view == "convergence":
             from quantem.gpu.direct_ptycho.convergence import plot_convergence
@@ -880,7 +880,7 @@ class DirectPtychoResult(Mapping[str, float]):
 
 @dataclass
 class DirectPtychoSeriesResult:
-    """One independent or fixed-probe SSB reconstruction series."""
+    """One independent or fixed-probe direct ptychography reconstruction series."""
 
     phase: np.ndarray
     bright_field: np.ndarray
@@ -940,7 +940,7 @@ def column_sign(phase: object) -> float:
 
     The projected potential of atoms is positive, so on the correct scan-detector rotation a resolved crystal's phase
     histogram has a long tail on the positive side (few bright columns over a flatter background). Rotating the scan by
-    180 degrees negates the phase and the sign. SSB loses the absolute phase level, hence the median rather than zero.
+    180 degrees negates the phase and the sign. Direct ptychography loses the absolute phase level, hence the median rather than zero.
     """
     # float64 so the third moment of a large image is not rounded away
     values = host_array(phase).astype(np.float64).ravel()
@@ -1032,19 +1032,19 @@ def _is_cupy_array(value: object) -> bool:
 
 def _announce_below_auto(result: DirectPtychoResult) -> None:
     """Say in one line when a shown phase is coarser than ``upsample="auto"`` and how to get the auto one."""
-    from quantem.gpu.optics.physics import ssb_upsample_factor
+    from quantem.gpu.optics.physics import direct_auto_upsample
 
     if None in (result.voltage_kV, result.semiangle_mrad, result.object_sampling_A):
         return
     try:
-        auto = ssb_upsample_factor(
+        auto = direct_auto_upsample(
             voltage_kV=result.voltage_kV, semiangle_mrad=result.semiangle_mrad,
             scan_sampling_A=tuple(float(step) * result.upsample for step in result.object_sampling_A))
     except ValueError:
         return
     if result.upsample < auto:
-        print(f"SSB: showing this phase at {result.upsample}x, the grid it was reconstructed on; "
-              f"ssb.run(result, upsample='auto') shows it at {auto}x.")
+        print(f"Direct ptycho: showing this phase at {result.upsample}x, the grid it was reconstructed on; "
+              f"direct.run(result, upsample='auto') shows it at {auto}x.")
 
 
 @cache
@@ -1073,7 +1073,7 @@ def _grouped_report():
 
 
 def _format_aberrations(aberrations: dict) -> str:
-    """Format SSB aberration dict as aligned key-value lines."""
+    """Format direct ptychography aberration dict as aligned key-value lines."""
     lines = []
     if "C10_nm" in aberrations:
         lines.append(f"  Defocus (C10)  {aberrations['C10_nm']:.1f} nm")

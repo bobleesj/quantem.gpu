@@ -18,7 +18,7 @@ covered. No spatial padding, detector binning or precision reduction is used.
 Scalar twiddles are fixed metadata; waves and their gradients remain on GPU.
 Safe Metal arithmetic and PyTorch 2.8 or newer are required.
 
-This is an optional wave transform. SSB reconstruction, its estimator,
+This is an optional wave transform. Direct ptychography reconstruction, its estimator,
 accumulation, calibration and existing backend dispatch remain unchanged.
 CUDA retains its existing implementation.
 

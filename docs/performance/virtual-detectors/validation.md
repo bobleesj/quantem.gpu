@@ -35,7 +35,7 @@ resident data, plus a dense-mask strategy such as `total - complement`.
 - MPS Metal `uint8` masked-sum, detector-sum, mean-DP, and CoM kernels are
   present.
 - WebGPU source ownership is split across the relevant scientific domains, with the
-  Show4DSTEM engine and ShowPtycho SSB engine copied as canonical source
+  Show4DSTEM engine and ShowPtycho direct ptychography engine copied as canonical source
   package data. Widget build/export syncs these sources before bundling.
   BF/DF/ADF has a GPU-resident buffer path; DPC row/col now uses a WGSL CoM
   reducer, WGSL mean reducer, one-ULP mean-side correction, and WGSL

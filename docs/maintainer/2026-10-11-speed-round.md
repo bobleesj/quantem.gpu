@@ -1,11 +1,11 @@
 # Speed round after rc16: where the time went and what changed - 2026-10-11
 
-> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/direct.md).
 
 ## Question
 
 Which waits of a 4D-STEM session on CUDA can be shortened without changing a
-value: the aberration fits, the SSB session build, the mean pattern and centre
+value: the aberration fits, the direct ptychography session build, the mean pattern and centre
 of mass of an encoded acquisition, loading a master into the encoded resident,
 scan-ROI reductions and dense CuPy detector sessions? Every path was profiled
 before it was changed, and every change had to leave the output bits alone.
@@ -67,7 +67,7 @@ from an empty pool on a busy GPU:
 | fixed | 0 in every attempt |
 
 `tests/hardware/cuda/test_streamed_h5.py::test_decode_right_after_freeing_batches_with_queued_reads_keeps_their_counts`
-(real master through `QUANTEM_SSB_ARINA_MASTER`) fails on the base tree in 3 of
+(real master through `QUANTEM_DIRECT_ARINA_MASTER`) fails on the base tree in 3 of
 3 runs and passes on the fixed tree in 3 of 3. `io.load` was not affected
 before this round because it waited between blocks, but the running detector
 total added here queues one more kernel after that wait, so the same hazard
@@ -112,7 +112,7 @@ evaluation.) The row kernel is 80% of an evaluation and does not depend on the
 chunk; the column kernel is fastest at the current chunk. Each evaluation moves
 8.8 GB of spectra and 2 x 17.6 GB of intermediate planes and evaluates two sine
 and cosine pairs per spectrum sample, and the earlier record
-(`ssb-performance.md`) lists more than twenty rejected micro-optimizations of
+(`direct-performance.md`) lists more than twenty rejected micro-optimizations of
 these two kernels. No change that keeps the loss bits was found, so the fit
 is unchanged: same loss, same aberrations, same phase digest.
 
@@ -165,7 +165,7 @@ independent of the position would make that true and let the polish share
 launches, at the price of changing fitted values in their last digits on some
 acquisitions once.
 
-### SSB session build on an encoded acquisition
+### Direct ptychography session build on an encoded acquisition
 
 Profile (stage timers): the bright-field crop (mean pattern plus decode)
 130 to 190 ms, bright-field selection 35 to 49 ms, spectra G(q, k) 404 to
@@ -320,7 +320,7 @@ Kernel modules compile on first use and CuPy keeps them in its on-disk cache:
 | paired counts codec | 932 | 12 |
 | HDF5 bitshuffle and LZ4 | 265 | 9 |
 | dense detector | 457 | 8 |
-| SSB FFT 256 / 512 / 1024 | 209 / 381 / 700 | 12 / 12 / 13 |
+| Direct ptychography FFT 256 / 512 / 1024 | 209 / 381 / 700 | 12 / 12 / 13 |
 | thick-sample fit batch | 89 | 10 |
 
 Nothing was changed here. Importing Numba where the header walk is first used
@@ -329,7 +329,7 @@ would take 0.12 s off sessions that never read an HDF5 master.
 ## The repository benchmarks, rc16 against the final tree
 
 `tests/benchmarks/data_paths.py` (median of 7 after a warm-up) and
-`scripts/benchmark_ssb.py` (median of the warm repeats), rc16 (`b771520`) then
+`scripts/benchmark_direct.py` (median of the warm repeats), rc16 (`b771520`) then
 the final tree, two rounds, on the 512 x 512 scan, started while the GPU was
 idle. Every digest is equal between the trees in both rounds, on this scan and
 on the 256 x 256 one, including the digest of the retained encoded bytes.
@@ -347,11 +347,11 @@ on the 256 x 256 one, including the digest of the retained encoded bytes.
 | dense mean / BF / ADF / DF / centre of mass | 4.7 / 10.1 / 10.0 / 10.4 / 7.9, 4.4 / 3.1 / 3.1 / 3.4 / 3.1 | 4.4 / 3.1 / 3.1 / 3.4 / 3.1 in both |
 | dense, `immutable=True`: BF / ADF / DF / centre of mass | - | 2.4 / 2.4 / 1.8 / 0.01 in both |
 | paired mean / BF / DF / centre of mass / scan-ROI mean | 0.08 / 2.2 / 6.2 / 29.2 / 18.1, 0.10 / 2.3 / 2.3 / 16.7 / 7.6 | 0.07 / 1.7 / 1.6 / 15.5 / 5.7, 0.07 / 1.9 / 1.6 / 15.9 / 5.8 |
-| SSB reconstruct, without / with loss | 16 / 42, 16 / 44 | 16 / 44, 17 / 45 |
+| Direct ptychography reconstruct, without / with loss | 16 / 42, 16 / 44 | 16 / 44, 17 / 45 |
 | `aberrations`, s | 8.03, 5.95 | 5.95, 6.00 |
 | `aberrations(tilt=True)`, s | 4.52, 3.86 | 3.90, 3.92 |
 | `parallax.run` with the aberration fit | 330, 333 | 214, 214 |
-| SSB session build | 449, 283 | 306, 308 (first build 168, 241) |
+| Direct ptychography session build | 449, 283 | 306, 308 (first build 168, 241) |
 | `dpc.run` | 113, 112 | 203, 130 |
 
 Two rows need a caution. The GPU did not stay idle: another job came and went
@@ -407,7 +407,7 @@ suites with the Metal backend).
 ## Conclusion
 
 - No output bit changed on any merged path: every digest of
-  `scripts/benchmark_ssb.py` and `tests/benchmarks/data_paths.py` is equal
+  `scripts/benchmark_direct.py` and `tests/benchmarks/data_paths.py` is equal
   between rc16 and the final tree on both acquisitions, as are the in-process
   checks above. The digest of the retained encoded bytes follows the staging
   batch, which follows free GPU memory: under load one base run of five loaded

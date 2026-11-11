@@ -3,7 +3,7 @@
 `quantem.gpu` is distributed under the MIT License. The package also includes
 small portions of third-party source code listed below.
 
-## Optuna Gaussian sampling for SSB
+## Optuna Gaussian sampling for direct ptychography
 
 File: `src/quantem/gpu/direct_ptycho/_tpe_gaussian.py`
 

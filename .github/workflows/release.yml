@@ -160,7 +160,7 @@ jobs:
           if-no-files-found: error
 
   hardware:
-    name: SSB acceptance (${{ matrix.backend }})
+    name: Direct ptychography acceptance (${{ matrix.backend }})
     needs: build
     strategy:
       fail-fast: false
@@ -174,7 +174,7 @@ jobs:
       PYTORCH_MPS_FAST_MATH: "0"
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
-      QUANTEM_SSB_REFERENCE_PHASE: ${{ matrix.backend == 'cuda' && vars.SSB_CUDA_REFERENCE_PHASE || vars.SSB_MPS_REFERENCE_PHASE }}
+      QUANTEM_DIRECT_REFERENCE_PHASE: ${{ matrix.backend == 'cuda' && vars.DIRECT_CUDA_REFERENCE_PHASE || vars.DIRECT_MPS_REFERENCE_PHASE }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
@@ -185,7 +185,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CHECK_ENV="$RUNNER_TEMP/ssb-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.backend }}"
+          CHECK_ENV="$RUNNER_TEMP/direct-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.backend }}"
           python3 -m venv "$CHECK_ENV"
           echo "$CHECK_ENV/bin" >> "$GITHUB_PATH"
           WHEEL=$(find "$PWD/candidate" -name '*.whl')
@@ -203,22 +203,22 @@ jobs:
               revision="5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20",
               allow_patterns="4dstem/gold_512/*")
           with open(os.environ["GITHUB_ENV"], "a") as output:
-              print("QUANTEM_SSB_RELEASE_SOURCE=" + str(Path(root) / "4dstem/gold_512/gold_004_master.h5"), file=output)
+              print("QUANTEM_DIRECT_RELEASE_SOURCE=" + str(Path(root) / "4dstem/gold_512/gold_004_master.h5"), file=output)
           PYCODE
       - name: Full-data joint fitting and repeated reconstruction
         shell: bash
         run: |
-          test -f "${QUANTEM_SSB_REFERENCE_PHASE:?Configure the approved public-gold Auto phase reference for this runner}"
-          quantem-gpu benchmark-ssb "$QUANTEM_SSB_RELEASE_SOURCE" \
+          test -f "${QUANTEM_DIRECT_REFERENCE_PHASE:?Configure the approved public-gold Auto phase reference for this runner}"
+          quantem-gpu benchmark-direct "$QUANTEM_DIRECT_RELEASE_SOURCE" \
             --require-installed --backend "${{ matrix.backend }}" \
             --semiangle-mrad 30 --scan-sampling-a 0.5 --detector-sampling-mrad 0.46 \
-            --reference-phase "$QUANTEM_SSB_REFERENCE_PHASE" \
-            --out "$RUNNER_TEMP/ssb-${{ matrix.backend }}.json"
+            --reference-phase "$QUANTEM_DIRECT_REFERENCE_PHASE" \
+            --out "$RUNNER_TEMP/direct-${{ matrix.backend }}.json"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: ssb-${{ matrix.backend }}
-          path: ${{ runner.temp }}/ssb-${{ matrix.backend }}.json
+          name: direct-${{ matrix.backend }}
+          path: ${{ runner.temp }}/direct-${{ matrix.backend }}.json
           if-no-files-found: error
 
   testpypi:

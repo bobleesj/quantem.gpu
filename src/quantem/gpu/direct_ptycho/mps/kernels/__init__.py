@@ -1,4 +1,4 @@
-"""Deterministic fixed-size MPS/Metal SSB kernel registry."""
+"""Deterministic fixed-size MPS/Metal direct ptychography kernel registry."""
 
 from quantem.gpu.direct_ptycho.mps.kernels.common import MPSFFTConfig
 from quantem.gpu.direct_ptycho.mps.kernels.fft128 import CONFIG as FFT128
@@ -23,7 +23,7 @@ def get_fft_config(scan_size: int) -> MPSFFTConfig:
     except KeyError as exc:
         supported = ", ".join(str(value) for value in MPS_FFT_CONFIGS)
         raise ValueError(
-            f"MPS SSB supports square scan sizes {supported}; got {size}."
+            f"MPS direct ptychography supports square scan sizes {supported}; got {size}."
         ) from exc
 
 

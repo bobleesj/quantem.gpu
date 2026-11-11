@@ -122,10 +122,10 @@ def test_repeated_queries_keep_metal_memory_flat():
 
 
 def test_mean_pattern_of_integer_frames_builds_no_binned_copy():
-    """A mean pattern over integer Metal frames (MPS SSB's input) allocates no second copy of them.
+    """A mean pattern over integer Metal frames (MPS direct ptychography's input) allocates no second copy of them.
 
     The session used to start a background thread that built a detector-binned,
-    65535-clipped copy (a quarter of the data at bin2) while SSB ran.
+    65535-clipped copy (a quarter of the data at bin2) while direct ptychography ran.
     """
     import time
 

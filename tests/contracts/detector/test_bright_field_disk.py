@@ -68,7 +68,7 @@ def test_bright_field_disk_fit_finds_the_centre_and_the_edge_of_a_blurred_disk()
     assert fit.detector_sampling_mrad == (30 / fit.bright_field_edge_radius_px,) * 2
     assert fit.detector_sampling_mrad == detector.detector_sampling_mrad(pattern, 30)
     assert fit.method == "half-plateau disk edge"
-    # SSB's centre rule: the float64 centroid of the pixels above mean + std
+    # Direct ptychography's centre rule: the float64 centroid of the pixels above mean + std
     rows, cols = np.nonzero(pattern > pattern.mean() + pattern.std())
     assert fit.bright_field_center_px == (float(rows.mean()), float(cols.mean()))
 
@@ -105,7 +105,7 @@ def test_bright_field_disk_fit_shows_the_mean_pattern_with_its_edge_in_mrad():
 
 
 def test_fit_display_options_preserve_calibration_and_export(tmp_path):
-    """Use the same presentation keywords as detector and SSB figures."""
+    """Use the same presentation keywords as detector and direct ptychography figures."""
     from PIL import Image
 
     fit = detector.bright_field_disk(_blurred_disk(), semiangle_mrad=30)

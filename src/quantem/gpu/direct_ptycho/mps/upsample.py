@@ -14,14 +14,14 @@ from quantem.gpu.direct_ptycho._execution import checkpoint
 from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE, pack_coefficients
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sum_from_complex
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, ifft2_chunked
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirect, ifft2_chunked
 from quantem.gpu.direct_ptycho.mps.thick_sample import _THICK_FIT_BATCH_HEADER, _params
 
 # Bound the correction and FFT working arrays independently of the BF count.
 _WORK_BYTES = 512 << 20
 _PENDING_CHUNKS = 4
-_HEADER = ("#define SSB_PRECISE_GEOMETRY\n#define SSB_DEVICE inline\n"
-           "#define SSB_COEFFICIENTS const device float*\n"
+_HEADER = ("#define DIRECT_PRECISE_GEOMETRY\n#define DIRECT_DEVICE inline\n"
+           "#define DIRECT_COEFFICIENTS const device float*\n"
            + _THICK_FIT_BATCH_HEADER + CHI_SOURCE)
 
 
@@ -95,18 +95,18 @@ inline float2 alias_corrected(
         float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
         // chi(k - q), not chi(q - k): G(q, k) ~ P(k - q) conj P(k) - P(k) conj P(k + q), and the odd orders
         // (coma, trefoil) change sign between the two (Pennycook et al., Ultramicroscopy 151, 2015)
-        if (HIGHER) chi_m = ssb_chi_full(kr - qr, kc - qc, wl, coefficients);
+        if (HIGHER) chi_m = direct_chi_full(kr - qr, kc - qc, wl, coefficients);
         a = gm.w * gk.w;
-        if (SSB_ALIAS_DEPTH) {
+        if (DIRECT_ALIAS_DEPTH) {
             a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
         }
         sa = metal::precise::sincos(chi_m - chi_k, ca);
     }
     if (gp.w != 0.0f) {
         float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
-        if (HIGHER) chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
+        if (HIGHER) chi_p = direct_chi_full(qr + kr, qc + kc, wl, coefficients);
         b = gp.w * gk.w;
-        if (SSB_ALIAS_DEPTH) {
+        if (DIRECT_ALIAS_DEPTH) {
             b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
         }
         sb = metal::precise::sincos(chi_p - chi_k, cb);
@@ -123,7 +123,7 @@ def _alias_probe_kernel():
     """Calculate the geometry and phase at k once for all fine-grid q."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_alias_probe",
+        name="direct_alias_probe",
         input_names=["k_row", "k_col", "params", "coefficients"],
         output_names=["probe"],
         header=_HEADER,
@@ -134,7 +134,7 @@ def _alias_probe_kernel():
         float4 gk = tf_geometry(k_row[k], k_col[k], params[0], params[1], params[2], params[3]);
         for (uint i = 0; i < 4; ++i) probe[k * 5 + i] = gk[i];
         probe[k * 5 + 4] = params[8] * gk.x * (params[5] * (gk.y * params[6] + gk.z * params[7]) + params[4]);
-        if (HIGHER) probe[k * 5 + 4] = ssb_chi_full(k_row[k], k_col[k], params[0], coefficients);
+        if (HIGHER) probe[k * 5 + 4] = direct_chi_full(k_row[k], k_col[k], params[0], coefficients);
         """,
     )
 
@@ -144,7 +144,7 @@ def _alias_group_bounds_kernel():
     """Bound groups of BF coordinates without changing their contributions."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_alias_group_bounds",
+        name="direct_alias_group_bounds",
         input_names=["k_row", "k_col", "params"],
         output_names=["bounds"],
         compile_options={"math_mode": "safe"},
@@ -172,10 +172,10 @@ def _alias_correction_kernel(has_depth: bool = True):
     """Specialize the zero-depth model without changing optical arithmetic."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_alias_correction",
+        name="direct_alias_correction",
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients"],
         output_names=["corrected"],
-        header=(f"#define SSB_ALIAS_DEPTH {int(has_depth)}\n"
+        header=(f"#define DIRECT_ALIAS_DEPTH {int(has_depth)}\n"
                 + _HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER),
         compile_options={"math_mode": "safe"},
         source="""
@@ -228,11 +228,11 @@ def _coherent_alias_kernel(has_depth: bool = True):
     """
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_coherent_alias",
+        name="direct_coherent_alias",
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc",
                      "probe", "coefficients", "bounds", "row_indices", "col_indices", "previous"],
         output_names=["total"],
-        header=(f"#define SSB_ALIAS_DEPTH {int(has_depth)}\n"
+        header=(f"#define DIRECT_ALIAS_DEPTH {int(has_depth)}\n"
                 + _HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER),
         compile_options={"math_mode": "safe"},
         source="""
@@ -347,7 +347,7 @@ def _separable_table_kernel():
     """Row and column phasors exp(-i rf P_row(k)) and exp(-i cf P_col(k)) of every stored BF pixel."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_separable_tables",
+        name="direct_separable_tables",
         input_names=["p_row", "p_col", "row_f", "col_f"],
         output_names=["t_row", "t_col"],
         header=_SEPARABLE_HEADER,
@@ -449,7 +449,7 @@ _SEPARABLE_SOURCE = """
                 float rpf = max(metal::abs(qr + box.x), metal::abs(qr + box.y));
                 float cpf = max(metal::abs(qc + box.z), metal::abs(qc + box.w));
                 float far_m = rmf * rmf + cmf * cmf, far_p = rpf * rpf + cpf * cpf;
-                // Every pixel of the group in the same single-sideband or flat double-sideband class:
+                // Every pixel of the group in the same double-overlap or flat double-sideband class:
                 // the per-pixel classification below would give each the same accumulator and no weight.
                 bool pure_m = far_m < r2_pos_g && near_p > r2_zero_g;
                 bool pure_p = far_p < r2_pos_g && near_m > r2_zero_g;
@@ -761,7 +761,7 @@ _PAIRED_SOURCE = """
 # The flat classes of the two-term kernel carry over: a lone sideband with a weight proven positive keeps only the
 # sign of its sinc, and both sidebands inside the flat aperture share A(k), which cancels; soft edges evaluate the
 # unchanged geometry and keep the 1e-8 floor of |gamma|. Against float64 the spectrum error is below the per-term
-# kernel's (docs/performance/ssb/reports/2026-10-20-mps-tilt-speed.md).
+# kernel's (docs/performance/direct/reports/2026-10-20-mps-tilt-speed.md).
 _DEPTH_HEADER = """
 // sinc(x) as (numerator, denominator): its Taylor series to x^10 over 1 below |x| = 1, sin x over x above.
 inline float2 sep_sinc_parts(float x, float s) {
@@ -1010,7 +1010,7 @@ def _depth_table_kernel():
     """Row and column float4 tables (transfer phasor, depth phasor) of every stored BF pixel."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_separable_depth_tables",
+        name="direct_separable_depth_tables",
         input_names=["p_row", "p_col", "d_row", "d_col", "row_f", "col_f"],
         output_names=["t_row", "t_col"],
         header=_SEPARABLE_HEADER,
@@ -1044,7 +1044,7 @@ def _separable_depth_kernel():
     """The separable C10/C12 kernel with the thick-sample depth weights of every term."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_separable_coherent_depth",
+        name="direct_separable_coherent_depth",
         input_names=["g", "q_row", "q_col", "k_data", "params", "dc",
                      "bounds", "row_indices", "col_indices",
                      "psi_row", "psi_col", "psi_cross", "col_f",
@@ -1062,7 +1062,7 @@ def _paired_coherent_kernel():
     """The separable kernel computing the two fine-grid rows of one source row per thread, from one G read."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_separable_coherent_paired",
+        name="direct_separable_coherent_paired",
         input_names=["g", "q_row", "q_col", "k_data", "params", "dc",
                      "bounds", "row_indices", "col_indices", "t_row", "t_col",
                      "psi_row", "psi_col", "psi_cross", "col_f", "pairs", "previous"],
@@ -1078,7 +1078,7 @@ def _separable_coherent_kernel():
     """Accumulate every BF contribution of the C10/C12 transfer in separable form."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_separable_coherent",
+        name="direct_separable_coherent",
         input_names=["g", "q_row", "q_col", "k_data", "params", "dc",
                      "bounds", "row_indices", "col_indices", "t_row", "t_col",
                      "psi_row", "psi_col", "psi_cross", "col_f", "previous"],
@@ -1105,7 +1105,7 @@ _DEPTH_ALIASES = 3
 _DEPTH_UNROLL = 1
 
 
-def _separable_geometry(prepared: PreparedMpsSSB, n: int, params) -> dict:
+def _separable_geometry(prepared: PreparedMpsDirect, n: int, params) -> dict:
     """Aberration-independent state of the separable path for one output grid, cached on ``prepared``."""
     mx = prepared.mx
     cached = prepared.separable_geometry
@@ -1176,7 +1176,7 @@ def _alias_row_pairs(row_indices: np.ndarray, source_n: int, size: int = 2) -> n
     return np.asarray(pairs, dtype=np.uint32).reshape(-1, size)
 
 
-def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.ndarray, dc, n: int):
+def _separable_spectrum(prepared: PreparedMpsDirect, qr, qc, params, params_np: np.ndarray, dc, n: int):
     """The complete corrected C10/C12 spectrum (n x n), with every selected BF contribution."""
     mx = prepared.mx
     geometry = _separable_geometry(prepared, n, params)
@@ -1308,7 +1308,7 @@ def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.
 
 
 def _coherent_support(
-    prepared: PreparedMpsSSB, n: int, columns: int,
+    prepared: PreparedMpsDirect, n: int, columns: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Retain every nonzero aperture frequency, with an outward grid margin."""
     radius = (
@@ -1330,7 +1330,7 @@ def _coherent_support(
 
 
 def _coherent_spectrum(
-    prepared: PreparedMpsSSB, qr, qc, params, dc, probe, coefficients,
+    prepared: PreparedMpsDirect, qr, qc, params, dc, probe, coefficients,
     higher: bool, n: int, chunk: int, columns: int, has_depth: bool = True,
 ):
     """Accumulate every BF contribution in its original group and sum order."""
@@ -1398,7 +1398,7 @@ def _coherent_spectrum(
     return total
 
 
-def _coherent_columns(prepared: PreparedMpsSSB, n: int) -> int:
+def _coherent_columns(prepared: PreparedMpsDirect, n: int) -> int:
     """Use the unique half only when both Nyquist edges have zero support."""
     radius = (
         prepared.semiangle_rad
@@ -1415,7 +1415,7 @@ def _coherent_columns(prepared: PreparedMpsSSB, n: int) -> int:
     return n
 
 
-def _alias_inputs(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float,
+def _alias_inputs(prepared: PreparedMpsDirect, C10: float, C12: float, phi12: float,
                   sample_tilt_mrad: tuple[float, float], thickness: float, n: int,
                   higher_order_magnitudes: np.ndarray | None, higher_order_angles: np.ndarray | None):
     """The n x n output frequencies, kernel scalars, packed coefficients (and the host copy) and the DC value."""
@@ -1435,7 +1435,7 @@ def _alias_inputs(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float
     return qr, qc, params, mx.array(packed), packed, dc
 
 
-def _alias_probe(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float, params, coefficients,
+def _alias_probe(prepared: PreparedMpsDirect, C10: float, C12: float, phi12: float, params, coefficients,
                  packed: np.ndarray, higher: bool):
     """The per-BF probe terms of ``_alias_probe_kernel``, cached on ``prepared`` for the last optics."""
     stored = int(prepared.g_qk.shape[0])
@@ -1454,7 +1454,7 @@ def _alias_probe(prepared: PreparedMpsSSB, C10: float, C12: float, phi12: float,
 
 
 def _reconstruct_upsampled(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     C10: float,
     C12: float,
@@ -1465,7 +1465,7 @@ def _reconstruct_upsampled(
     higher_order_magnitudes: np.ndarray | None = None,
     higher_order_angles: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Return the full fine-grid SSB phase with every selected BF contribution.
+    """Return the full fine-grid direct ptychography phase with every selected BF contribution.
 
     The corrected spectra are accumulated before one inverse FFT and the phase of
     that bright-field mean wave is returned (``phase_of_mean``), in complex64
@@ -1504,7 +1504,7 @@ def _reconstruct_upsampled(
 
 
 def phase_variance_higher_order(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     C10: float,
     C12: float,

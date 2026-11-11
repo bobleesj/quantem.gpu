@@ -1,4 +1,4 @@
-"""Select and display recorded SSB search attempts without retaining image stacks."""
+"""Select and display recorded direct ptychography search attempts without retaining image stacks."""
 
 import math
 from copy import deepcopy

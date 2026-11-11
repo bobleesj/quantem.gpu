@@ -1,4 +1,4 @@
-"""Shared configuration for fixed-size MPS/Metal SSB FFT kernels."""
+"""Shared configuration for fixed-size MPS/Metal direct ptychography FFT kernels."""
 
 from dataclasses import dataclass
 

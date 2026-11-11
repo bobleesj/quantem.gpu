@@ -1,4 +1,4 @@
-"""Custom fixed-size CUDA FFT kernels for SSB (128x128).
+"""Custom fixed-size CUDA FFT kernels for direct ptychography (128x128).
 
 128 = 4^3 x 2: three radix-4 stages plus a final radix-2 stage.
 """
@@ -266,7 +266,7 @@ __global__ void ifft128_cols_accumulate_t32_mr8(
 
 
 class CustomFFT128(CustomFFTBase):
-    """Custom 128x128 IFFT kernels for resident ROI SSB calibration."""
+    """Custom 128x128 IFFT kernels for resident ROI direct ptychography calibration."""
 
     def __init__(self) -> None:
         super().__init__(

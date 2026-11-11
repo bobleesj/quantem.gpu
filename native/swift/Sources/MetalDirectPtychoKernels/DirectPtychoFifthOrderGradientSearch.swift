@@ -469,7 +469,7 @@ extension DirectPtychoModelFit {
       return (value.agreement, value.agreement64)
     }
     let initial = try values(start)
-    // Bit-identical to the production objective `fifthOrderAgreements` (`ssb-fifth-agreement`).
+    // Bit-identical to the production objective `fifthOrderAgreements` (`direct-fifth-agreement`).
     let normalization = initial.agreement
     guard normalization.isFinite, normalization > 0 else {
       throw MetalDirectPtychoError.invalidGeometry(

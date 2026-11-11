@@ -138,19 +138,19 @@ against the raw counts:
 - `runDenseVirtualImageParity`: totals above 2^24 on the direct and the
   large-aperture complement path equal the exact integer sum rounded once.
 
-## SSB bright-field subsets
+## Direct ptychography bright-field subsets
 
-`ssb-bf-subset.ts` builds a synthetic 128 x 128 SSB folder (441 bright-field
+`direct-bf-subset.ts` builds a synthetic 128 x 128 direct ptychography folder (441 bright-field
 uint16 columns, resident G(q,k) in chunks of 256) and runs in the same headed
 gate. After a full-BF load, reconstructions at 100 and 300 BF pixels (drag
 estimator and committed mean phase with loss) must equal an engine prepared with
 only that subset to 1e-6 rad and 1e-7 relative loss (float32 summation order),
 and returning to the full count must reproduce a fresh full engine exactly.
-`runSsbBuildPeak` prepares 1793 bright-field columns (8 chunks) while counting
+`runDirectBuildPeak` prepares 1793 bright-field columns (8 chunks) while counting
 live GPU buffer bytes: the build peak must not exceed the bytes the ready engine
 keeps, so the full-plane G(q,k) of every chunk is never resident at once.
 
-`ssb-qem.ts` exercises the exported-folder consumer with the same synthetic
+`direct-qem.ts` exercises the exported-folder consumer with the same synthetic
 bright-field counts stored as raw uint16 and QEM. HTTP QEM uses the shared
 authenticated streaming loader; a picked local file uses bounded slices. Both
 must read every byte once without a whole-file host read and reproduce the
@@ -158,10 +158,10 @@ complete regular and tilt/depth-corrected phase arrays and losses exactly.
 The test includes a filename with a space, a required URL query token, and 2x
 corrected reconstruction.
 
-## SSB odd aberration sign
+## Direct ptychography odd aberration sign
 
-`ssb-higher-order-sign.ts` runs in the same headed gate on a weak-phase folder
-that `make_qem_browser_fixture.generate_ssb_higher_order` simulates exactly: a
+`direct-higher-order-sign.ts` runs in the same headed gate on a weak-phase folder
+that `make_qem_browser_fixture.generate_direct_higher_order` simulates exactly: a
 periodic random phase (0.05 rad rms) under a 300 kV, 30 mrad probe with C10,
 C12, C21 (coma), C23 (trefoil) and C30, a 128 x 128 scan of 293 uint16
 bright-field columns. The fixture also reconstructs the counts in float64 from

@@ -1,4 +1,4 @@
-"""Exact derivatives of the MPS SSB agreement for the trust-region fits (``cuda/exact_derivatives.py`` on Metal).
+"""Exact derivatives of the MPS direct ptychography agreement for the trust-region fits (``cuda/exact_derivatives.py`` on Metal).
 
 The agreement S = sum_q w_q |N_q|^2 / D_q and its derivatives follow the CUDA module's docstring: variable projection
 with a_q = N_q / D_q and R = conj(a_q) (G - a_q gamma) gives dS/dtheta = sum 2 w Re(dgamma/dtheta conj R); the
@@ -21,7 +21,7 @@ from quantem.gpu.direct_ptycho.mps.resident_fit import _probe_geometry, band_sum
 from quantem.gpu.direct_ptycho.mps.thick_sample import _K_CHUNK, _THICK_FIT_BATCH_HEADER, _band
 
 _HEADER = (
-    "#define SSB_DEVICE inline\n#define SSB_COEFFICIENTS const device float*\n"
+    "#define DIRECT_DEVICE inline\n#define DIRECT_COEFFICIENTS const device float*\n"
     + _THICK_FIT_BATCH_HEADER + CHI_SOURCE + """
 inline float fg_sinc_slope(float x, thread float& sinc) {
     sinc = tf_sinc(x);
@@ -94,7 +94,7 @@ _FIFTH_GRADIENT_SOURCE = """
             float b1 = 0.0f, b2 = 0.0f, c1 = 0.0f, cp = 0.0f, s1 = 0.0f, sp = 0.0f;
             float d1 = 0.0f, d2 = 0.0f, h1 = 0.0f, h2 = 0.0f;
             if (a1 != 0.0f) {
-                s1 = metal::precise::sincos(ssb_chi_full(kxv - qx, kyv - qy, wl, row + 3) - chi_k, c1);
+                s1 = metal::precise::sincos(direct_chi_full(kxv - qx, kyv - qy, wl, row + 3) - chi_k, c1);
                 b1 = a1;
                 if (thick) {
                     float sinc;
@@ -104,7 +104,7 @@ _FIFTH_GRADIENT_SOURCE = """
                 }
             }
             if (a2 != 0.0f) {
-                sp = metal::precise::sincos(ssb_chi_full(qx + kxv, qy + kyv, wl, row + 3) - chi_k, cp);
+                sp = metal::precise::sincos(direct_chi_full(qx + kxv, qy + kyv, wl, row + 3) - chi_k, cp);
                 b2 = a2;
                 if (thick) {
                     float sinc;
@@ -274,7 +274,7 @@ _LOW_SOURCE = """
 @lru_cache(maxsize=1)
 def _fifth_gradient_kernel():
     return require_mlx().fast.metal_kernel(
-        name="ssb_exact_fifth_gradient",
+        name="direct_exact_fifth_gradient",
         input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky", "probe_geometry", "probe_chi",
                      "monomials", "trial", "scalars", "scale"],
         output_names=["partial"],
@@ -286,7 +286,7 @@ def _fifth_gradient_kernel():
 @lru_cache(maxsize=1)
 def _low_kernel():
     return require_mlx().fast.metal_kernel(
-        name="ssb_exact_low_order_derivatives",
+        name="direct_exact_low_order_derivatives",
         input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky", "probe_geometry", "trial", "scalars",
                      "scale"],
         output_names=["nd", "linear"],

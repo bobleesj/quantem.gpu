@@ -18,9 +18,9 @@ With ``save_dir`` each frame's optics and shift are written as it finishes, so a
 reconstructs the finished frames from them, with no refit and no registration, and continues.
 
 ``method`` adds the regularized phase-only and amplitude + phase reconstructions at each frame's optics,
-moved by the shifts measured on the SSB phase: on a measured 40-frame series at 1536 x 1536 (2026-10-24,
-one GPU) they cost a median 0.039 s and 0.050 s a frame beside SSB's 0.034 s, 0.84 s a frame in all,
-with shifts identical to SSB alone and a 26 GB peak above the reference session.
+moved by the shifts measured on the direct ptychography phase: on a measured 40-frame series at 1536 x 1536 (2026-10-24,
+one GPU) they cost a median 0.039 s and 0.050 s a frame beside direct ptychography's 0.034 s, 0.84 s a frame in all,
+with shifts identical to direct ptychography alone and a 26 GB peak above the reference session.
 """
 
 import copy
@@ -62,7 +62,7 @@ REACH_A = 30.0
 # 3: the shared settings name the output factor upsampling (upsampling_factor in 2).
 # 4: each frame's C10/C12 refit is the exact-gradient trust region, held coordinates fixed (main's /3).
 # 5: the shared settings name the output factor upsample (upsampling in 4).
-RECORD_SCHEMA = "quantem.ssb-stream-frame/5"
+RECORD_SCHEMA = "quantem.direct-stream-frame/6"
 
 
 def _regularization(key, strengths):
@@ -95,7 +95,7 @@ class _FrameStep:
     For each frame: open a session on its counts with the reference calibration, refit the
     three low-order coordinates (C10 and the two C12 components) from the previous frame's
     values with every other optic held at ``fit``'s, reconstruct each requested method at
-    those optics, and register the SSB phase against the last confidently placed frame onto
+    those optics, and register the direct ptychography phase against the last confidently placed frame onto
     one combined canvas per method. Both entry points call these methods, so a live frame
     and a recorded frame are processed by the same code.
     """
@@ -105,7 +105,7 @@ class _FrameStep:
         self.methods = methods
         self.neural_model = neural_model
         self.annulus_mrad = annulus_mrad
-        # SSB first: its phase is what each frame is registered on.
+        # Direct ptychography first: its phase is what each frame is registered on.
         self.runs = ("phase_of_mean", *(name for name in methods if name not in ("phase_of_mean", "neural")))
         self.reference = np.array(fit.optimizer["coordinates"])
         self.bounds = np.array(fit.optimizer["bounds"])[VARIED]
@@ -165,7 +165,7 @@ class _FrameStep:
         return chosen, reconstructed, sampling, seconds
 
     def place(self, index, reconstructed, sampling, saved=None):
-        """Register the frame's SSB phase and add every method's image to its canvas in register.
+        """Register the frame's direct ptychography phase and add every method's image to its canvas in register.
 
         Frame 0 starts the canvases and has no pair to score (infinite confidence). Later frames are
         registered against the last confidently placed frame unless ``saved`` gives the shift and
@@ -178,7 +178,7 @@ class _FrameStep:
                     whole=(0, 0), piece=cp.asarray(reconstructed["phase_of_mean"], dtype=cp.float64)))
                 self.placed.append((0, (0.0, 0.0)))
                 return (0.0, 0.0), float("inf")
-            # The SSB canvas registers the frames; every other image only follows its shifts.
+            # The direct ptychography canvas registers the frames; every other image only follows its shifts.
             self.canvases = {key: _start(reconstructed[key]) for key in ("phase_of_mean", *_keys(self.methods)) if key in reconstructed}
             self.placed = [(0, (0.0, 0.0))]
             return (0.0, 0.0), float("inf")
@@ -215,7 +215,7 @@ def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method=
     calibration (voltage, semiangle, scan step, fitted detector sampling and bright-field disk, rotation),
     so frames differ only in their counts. Frame ``k`` starts from frame ``k - 1``'s low-order values and
     maximizes the normalized model agreement ``A(z) / A(z_start)`` over the three coordinates; its
-    conventional SSB phase is reconstructed with the result, and so is each ``method`` (``"phase_of_mean"``,
+    conventional direct ptychography phase is reconstructed with the result, and so is each ``method`` (``"phase_of_mean"``,
     ``"phase"``, ``"complex"`` or a tuple of them) at the same optics, the regularized ones with
     ``strengths`` (``run``'s ``phase_damp``, ``amplitude_damp``, ``smoothness_inv_A``,
     ``detector_weighting``). ``fit`` must be a fifth-order fit (``search="standard"`` or ``"broad"``) of
@@ -223,7 +223,7 @@ def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method=
     standard search, the reference rotation kept): the baseline the defocus refit is compared with.
     ``refit="none"`` holds every aberration, sample tilt and depth at the initial fit, without fitting.
 
-    Each SSB phase is then registered against the last confidently placed frame (``_place``: lattice-safe
+    Each direct ptychography phase is then registered against the last confidently placed frame (``_place``: lattice-safe
     band registration with frame 0's Bragg spots), whatever the methods: the regularized images move by
     the shift measured on it, so every combined image shares one registration. With ``show`` in a
     notebook, one figure (latest frame and combined image of the first method, drift) refreshes at most
@@ -283,7 +283,7 @@ class PtychoFrame:
 
     index: int
     name: str
-    ssb_phase: "cp.ndarray" = field(repr=False)
+    direct_phase: "cp.ndarray" = field(repr=False)
     phase: "cp.ndarray | None" = field(repr=False)
     neural_phase: "cp.ndarray | None" = field(repr=False)
     complex_phase: "cp.ndarray | None" = field(repr=False)
@@ -301,7 +301,7 @@ class PtychoFrame:
         """Show this scan's phase and, when available, its measured annular image.
 
         The phase is neural when fitted, otherwise direct phase, complex-fit
-        phase or SSB in that order. Images have independent contrast and
+        phase or direct ptychography in that order. Images have independent contrast and
         calibrated scale bars. Returns a Matplotlib figure.
         """
         import matplotlib.pyplot as plt
@@ -309,7 +309,7 @@ class PtychoFrame:
         from quantem.gpu.display._layout import panel_figure, panel_inches
 
         for key, values in (("neural", self.neural_phase), ("phase", self.phase),
-                            ("complex", self.complex_phase), ("phase_of_mean", self.ssb_phase)):
+                            ("complex", self.complex_phase), ("phase_of_mean", self.direct_phase)):
             if values is not None:
                 break
         image = host_array(values)
@@ -340,7 +340,7 @@ class PtychoFrame:
 class DirectPtychoSeries:
     """A recorded series: per frame the low-order optics (``aberrations``, higher orders, tilt and depth
     are ``reference``'s), the exact parameters each reconstruction received (``fits``), the refit's
-    bookkeeping (``refits``: evaluations, stop, resumed from a record), the SSB phase every frame is
+    bookkeeping (``refits``: evaluations, stop, resumed from a record), the direct ptychography phase every frame is
     registered on (``phase``), one stack per requested image (``images``: each method's phase in rad,
     and ``"amplitude"`` with ``"complex"``), each image combined in register (``combined``) and how
     many frames reach each of its pixels (``cover``); after ``align``, ``sigma_A`` holds the pairwise
@@ -470,7 +470,7 @@ class DirectPtychoSeries:
         display_key = next((key for key in ("neural", "phase", "complex") if key in images), "phase_of_mean")
         damping = self.session.get("regularization", {}).get(display_key, {})
         return PtychoFrame(
-            index=self.total_frames - 1, name=self.frames[slot], ssb_phase=self.phase[slot],
+            index=self.total_frames - 1, name=self.frames[slot], direct_phase=self.phase[slot],
             phase=images.get("phase"), neural_phase=images.get("neural"),
             complex_phase=images.get("complex"), amplitude=images.get("amplitude"),
             displacement_A=(float(row), float(col)), placed=bool(self.placed[slot]),
@@ -498,7 +498,7 @@ class DirectPtychoSeries:
     @_locked
     def _add(self, source, *, final):
         """One frame of the series: load (a file), open the session with the reference calibration, refit,
-        reconstruct each method, store the images, place the SSB phase, refresh the views, write the record."""
+        reconstruct each method, store the images, place the direct ptychography phase, refresh the views, write the record."""
         state, step, methods = self._state, self._state.step, self.methods
         if state.frozen:
             raise RuntimeError("This series was aligned or reconstructed again; start a new series to add scans.")
@@ -637,7 +637,7 @@ class DirectPtychoSeries:
 
     def _store(self, index, reconstructed):
         """Write frame ``index``'s images into one stack per image, filled in place (stacking a list at the end
-        held every frame twice), and return the SSB stack and the images through this frame; a series of
+        held every frame twice), and return the direct ptychography stack and the images through this frame; a series of
         unknown length doubles its stacks when full."""
         state = self._state
         if self.max_frames is not None:
@@ -675,7 +675,7 @@ class DirectPtychoSeries:
     def align(self):
         """The final pass: every pair of frames up to three apart by its own lattice-safe search,
         solved by least squares (quantem.gpu.drift.drift), which outvotes a pair that took a wrong
-        lattice image where the live pass, one frame against the last, cannot. Measured on the SSB
+        lattice image where the live pass, one frame against the last, cannot. Measured on the direct ptychography
         phase; replaces shifts_A (specimen displacement against frame 0, Å), places every frame and
         rebuilds each combined image with it; returns the Drift with its pairs, closure and σ. Frames
         go to drift by index, so Drift.plot draws a numeric frame axis."""
@@ -734,7 +734,7 @@ class DirectPtychoSeries:
                 del data, frame, reconstructed
                 cp.get_default_memory_pool().free_all_blocks()
             self.images.update(stacks)
-            # phase is the SSB stack registration and align read; it stays the array images["phase_of_mean"] is
+            # phase is the direct ptychography stack registration and align read; it stays the array images["phase_of_mean"] is
             self.phase = stacks.get("phase_of_mean", self.phase)
             if method not in self.methods:
                 self.methods = (*self.methods, method)
@@ -910,7 +910,7 @@ class DirectPtychoSeries:
 
 # Each method and image as a microscopist names it: report columns, figure titles, viewer labels.
 _METHODS = {"neural": "Learned correction", "phase_of_mean": "Phase of the mean", "phase": "Smoothed phase", "complex": "Phase and amplitude"}
-_NAMES = {"neural": "Neural phase", "phase_of_mean": "SSB", "phase": "Direct phase", "complex": "Complex-fit phase",
+_NAMES = {"neural": "Neural phase", "phase_of_mean": "Direct ptycho", "phase": "Direct phase", "complex": "Complex-fit phase",
           "amplitude": "Relative amplitude"}
 # Pixels no frame reaches: a colour no gray value takes.
 _UNCOVERED = "#b9c7d6"
@@ -929,7 +929,7 @@ def _keys(methods):
 
 def _run(session, chosen, methods, upsample, strengths, *, neural=False):
     """Run each method once on one frame at ``chosen``: the images by name (phase in rad, and the
-    complex method's amplitude), the object sampling (Å per pixel) and seconds per method. SSB takes
+    complex method's amplitude), the object sampling (Å per pixel) and seconds per method. Direct ptychography takes
     no strengths; force rebuilds a regularized method's prepared equations for this frame's counts."""
     images, seconds, sampling = {}, {}, None
     for name in methods:
@@ -1080,7 +1080,7 @@ def _recorded(path, identity):
     series, the SHA-256 of the previous frame's record, the frame's acquisition_identity (its file
     name, size and the SHA-256 of its first MiB and of each linked data file, and how flagged pixels
     were held), the reference fit's coordinates,
-    bounds and saved signature, the calibration and upsample, and the SSB source hash. The record
+    bounds and saved signature, the calibration and upsample, and the direct ptychography source hash. The record
     then holds the exact float64 optics and shift the uninterrupted run would find again. A file cut
     short (a crash while it was copied, a full disk) is no record: the frame is computed again."""
     if not path.is_file():

@@ -265,7 +265,7 @@ def select_dpc_rotation_reference(
 ```
 
 The production search (`dpc.workflow.find_optimal_rotation`, used by
-`dpc.run`, `SSB` and `screening.prepare`) evaluates this objective from three
+`dpc.run`, `DirectPtycho` and `screening.prepare`) evaluates this objective from three
 precomputed curl/divergence moments instead of materializing every rotated
 candidate. Rotating by $a$ gives $\mathrm{curl}_a = \cos a\,\mathrm{curl} + \sin a\,\mathrm{div}$,
 so the score is $S(a) = M + A\cos 2a + B\sin 2a$ and its minimum lies at

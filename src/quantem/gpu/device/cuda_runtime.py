@@ -7,7 +7,7 @@ torch share put every library in ``site-packages/nvidia/cu13/lib``. CuPy finds t
 imports its FFT/BLAS modules. In an environment whose PyTorch uses conda's CUDA 13, importing torch first loads CUDA 13's
 cuFFT; pathfinder then sees "cufft already loaded" and skips the CUDA 12 file, and CuPy's FFT fails with
 ``ImportError: libcufft.so.11: cannot open shared object file`` (every notebook that imports quantem.widget, which imports
-torch, before running SSB). The two majors have different sonames, so both can be loaded: loading the wheel files by path,
+torch, before running direct ptychography). The two majors have different sonames, so both can be loaded: loading the wheel files by path,
 globally, at quantem.gpu import makes CuPy's modules resolve against them whatever the import order.
 Only the wheels that are installed are touched; conda-packaged CuPy (no nvidia-* wheels) is unaffected.
 

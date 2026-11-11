@@ -146,7 +146,7 @@ def _phase_cols512_reduced_kernel(num_bright_field_pixels: int, k_bf: int, compu
         #undef DIGITREV512
     """
     return mx.fast.metal_kernel(
-        name=f"ssb_phase_cols512_{name_suffix}_n{int(num_bright_field_pixels)}_k{int(k_bf)}",
+        name=f"direct_phase_cols512_{name_suffix}_n{int(num_bright_field_pixels)}_k{int(k_bf)}",
         input_names=["row_ifft", "twiddle"],
         output_names=output_names,
         source=source,
@@ -373,7 +373,7 @@ def _phase_cols512_radix8_batch_kernel(
         #define CSUB(a, b) float2((a).x - (b).x, (a).y - (b).y)
         #define CMUL(a, b) float2((a).x * (b).x - (a).y * (b).y, (a).x * (b).y + (a).y * (b).x)
         #define CMULI(a) float2(-(a).y, (a).x)
-        #define TW(i) as_type<float2>(SSB_TWIDDLE_512[(i) & 511u])
+        #define TW(i) as_type<float2>(DIRECT_TWIDDLE_512[(i) & 511u])
         #define OCTREV512(n) ((((n) & 7u) << 6) | (((n) & 56u)) | ((n) >> 6))
         #define W8_1(a) float2(0.70710678118654752f * ((a).x - (a).y), 0.70710678118654752f * ((a).x + (a).y))
         #define W8_3(a) float2(0.70710678118654752f * (-(a).x - (a).y), 0.70710678118654752f * ((a).x - (a).y))
@@ -466,7 +466,7 @@ def _phase_cols512_radix8_batch_kernel(
     """
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_phase_cols512_radix8_batch_n{batch}_bf{num_bright_field_pixels}_"
+            f"direct_phase_cols512_radix8_batch_n{batch}_bf{num_bright_field_pixels}_"
             f"k{k_bf}_t{int(tiled_input)}_s{storage_num_bf}_o{bf_offset}"
             f"_x{int(simd_radix8)}{range_name}_c{int(continuation)}_f{int(finalize)}"
         ),

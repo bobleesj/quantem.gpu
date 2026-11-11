@@ -1,6 +1,6 @@
-"""Detector-column sources that MPS SSB reads: NumPy arrays, MPS tensors, decoded frames and exact BF-column exports.
+"""Detector-column sources that MPS direct ptychography reads: NumPy arrays, MPS tensors, decoded frames and exact BF-column exports.
 
-MPS SSB streams one bright-field detector pixel over all scan positions at a time, so every source answers "these
+MPS direct ptychography streams one bright-field detector pixel over all scan positions at a time, so every source answers "these
 (row, col) columns as float32". An export from ShowPtycho or ``DirectPtycho.export_brightfield`` keeps exactly those columns as
 integers on disk with a declaration that names them; ``find_bf_columns`` looks for one beside the acquisition before
 ``DirectPtycho.open`` falls back to decoding the detector.
@@ -35,7 +35,7 @@ from quantem.gpu.direct_ptycho.padding import announce_padding, padded_side
 #    and scan_shape is [rows, cols]; earlier exports wrote bf_* keys and a scan_region object.
 # 3: the display-only phase negation is display_negate_phase (flip_phase before), and scan_detector_rotation_flipped
 #    is part of the layout.
-BROWSER_CALIBRATION_SCHEMA = "quantem.ssb-browser-calibration/3"
+BROWSER_CALIBRATION_SCHEMA = "quantem.direct-browser-calibration/4"
 
 
 def find_bf_columns(
@@ -95,7 +95,7 @@ def load_bf_columns_mps(
     *,
     verbose: bool = False,
 ):
-    """Load a ShowPtycho exact BF-column companion for MPS SSB as ``MpsBfColumnFrames``.
+    """Load a ShowPtycho exact BF-column companion for MPS direct ptychography as ``MpsBfColumnFrames``.
 
     Parameters
     ----------
@@ -244,7 +244,7 @@ def load_bf_columns_mps(
 
 
 class MpsBfColumnFrames:
-    """Exact disk-backed BF columns for MPS SSB fitting and reconstruction.
+    """Exact disk-backed BF columns for MPS direct ptychography fitting and reconstruction.
 
     The stored values remain integer-exact. File reads and unified-memory copies
     are host I/O, while detector sums, FFTs, objectives, refinement, and final
@@ -269,7 +269,7 @@ class MpsBfColumnFrames:
         verbose: bool = False,
     ) -> None:
         self.source_path = Path(path).expanduser().resolve()
-        # (row, col) mrad per detector pixel the columns were exported with; SSB uses it when given none
+        # (row, col) mrad per detector pixel the columns were exported with; direct ptychography uses it when given none
         self.detector_sampling_mrad = detector_sampling_mrad
         self.metadata = dict(metadata or {})
         self.scan_shape = tuple(int(value) for value in scan_shape)
@@ -458,8 +458,8 @@ class MpsBfColumnFrames:
 class EncodedBrightFieldCrop:
     """The bright-field crop of an encoded acquisition, left encoded: what ``crop_bright_field`` decodes, never decoded whole.
 
-    It stands in an SSB session where the decoded crop stood, with the same 4D shape (scan rows, scan columns, crop
-    rows, crop columns), dtype and counts (invalid detector pixels read 0). MPS SSB reads its bright-field columns from
+    It stands in a direct ptychography session where the decoded crop stood, with the same 4D shape (scan rows, scan columns, crop
+    rows, crop columns), dtype and counts (invalid detector pixels read 0). MPS direct ptychography reads its bright-field columns from
     the encoded source a few scan rows at a time, only while it builds G(q, k) (``EncodedBrightFieldFrames``), so a
     512 x 512 scan holds no 6 GB decoded copy. Slicing the scan axes (``crop[r0:r1, c0:c1]``) or swapping the
     detector axes returns another view of the same source. The source must stay open while a session reads it.
@@ -521,7 +521,7 @@ class EncodedBrightFieldCrop:
         invalid pixels."""
         if getattr(self.source.data, "is_released", False):
             raise RuntimeError(
-                "This SSB session reads its bright-field columns from the dataset it was given, which is closed. "
+                "This direct ptychography session reads its bright-field columns from the dataset it was given, which is closed. "
                 "Keep the dataset open while the session is in use."
             )
         first_row, _, first_col, last_col = self.scan_region
@@ -569,7 +569,7 @@ class EncodedBrightFieldCrop:
 
 
 class EncodedBrightFieldFrames:
-    """MPS SSB's column source over an ``EncodedBrightFieldCrop``: ``(positions, crop_row, crop_col)`` frames.
+    """MPS direct ptychography's column source over an ``EncodedBrightFieldCrop``: ``(positions, crop_row, crop_col)`` frames.
 
     ``scan_row_blocks`` decodes a few scan rows of the requested pixels at a time, which is all the G(q, k) build
     reads. A rectangular or too large scan is centred on the next supported square grid with its mean pattern, as
@@ -718,14 +718,14 @@ def copy_tensor_into(tensor, out: np.ndarray) -> np.ndarray:
         encoder = command.blitCommandEncoder()
         encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(source, offset, target, 0, nbytes)
         encoder.endEncoding()
-        complete_command(command, "SSB MPS column transfer")
+        complete_command(command, "Direct ptychography MPS column transfer")
     finally:
         target.release()
     return out
 
 
 def as_chunked_frames(data):
-    """Return the column source MPS SSB reads for ``data``: BF-column frames as given, arrays and tensors wrapped.
+    """Return the column source MPS direct ptychography reads for ``data``: BF-column frames as given, arrays and tensors wrapped.
 
     Integer MPS tensors are read in place through their Metal storage (``TensorChunkedFrames``); float tensors are
     gathered with Torch (``MpsTensorFrames``); NumPy arrays through ``ArrayFrames``; an encoded bright-field crop
@@ -744,8 +744,8 @@ def as_chunked_frames(data):
             return MpsTensorFrames(data)
         return TensorChunkedFrames(data)
     raise TypeError(
-        "MPS SSB reads a 3D/4D NumPy array or MPS tensor, or exact BF columns; "
-        "pass a loaded dataset to quantem.gpu.SSB, which reads its bright-field crop."
+        "MPS direct ptychography reads a 3D/4D NumPy array or MPS tensor, or exact BF columns; "
+        "pass a loaded dataset to quantem.gpu.direct, which reads its bright-field crop."
     )
 
 
@@ -784,7 +784,7 @@ class ArrayFrames:
             self._flat = array
         else:
             raise TypeError(
-                "MPS SSB preview expects 3D/4D detector data or chunk-backed "
+                "MPS direct ptychography preview expects 3D/4D detector data or chunk-backed "
                 f"MPS data, got shape {array.shape}."
             )
         self.shape = tuple(int(size) for size in self._flat.shape)

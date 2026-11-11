@@ -16,19 +16,19 @@ The [streaming index record](io/reports/2026-11-07-stream-index.md) measures
 The smaller tile mapping reaches 91% of available DRAM throughput in its kernel
 profile; the complete streaming pipeline remains below its unestablished limit.
 
-## Full-scan native Metal SSB, 2026-11-05
+## Full-scan native Metal direct ptychography, 2026-11-05
 
-The [Direct Ptycho preparation study](ssb/reports/2026-11-05-direct-ptycho-preparation.md)
+The [Direct Ptycho preparation study](direct/reports/2026-11-05-direct-ptycho-preparation.md)
 records exact FFT/model preparation improvements and faster bounded QEM column
 decoding. It separates these gains from the unfinished complete-workflow target.
 
-The [512 × 512 × 192 × 192 M5 measurement](ssb/reports/2026-11-05-mps-full-scan.md)
+The [512 × 512 × 192 × 192 M5 measurement](direct/reports/2026-11-05-mps-full-scan.md)
 records 200-trial fifth-order fitting, exact transfer parity, a rejected batching
 candidate, and native-app limitations. The two-second full-size target is not met.
 
-## Broad SSB candidate overhead, 2026-11-01
+## Broad direct ptychography candidate overhead, 2026-11-01
 
-The [density batching comparison](ssb/reports/2026-11-01-broad-density-batching.md) preserves every candidate and matched CUDA fit output while reducing host proposal overhead. Default standard fitting is unchanged; broad fitting remains a larger workload.
+The [density batching comparison](direct/reports/2026-11-01-broad-density-batching.md) preserves every candidate and matched CUDA fit output while reducing host proposal overhead. Default standard fitting is unchanged; broad fitting remains a larger workload.
 
 ## Joint ANS detector queries, 2026-10-25
 
@@ -37,20 +37,20 @@ measures 1.98× faster ADF and 2.65× faster displaced DF queries with exact
 full-image agreement. Measurements interleave both implementations under GPU
 contention and separate loading, query and host transfer from rendering.
 
-## SSB reconstruction and interaction, 2026-10-24
+## Direct ptychography reconstruction and interaction, 2026-10-24
 
-The [direct phase viewer handoff check](ssb/reports/2026-10-24-direct-live-handoff.md)
+The [direct phase viewer handoff check](direct/reports/2026-10-24-direct-live-handoff.md)
 records a corrected cache invalidation when opening a viewer at unchanged
 optics. Cached numerical regularization updates and first preparation are
 timed separately; these observations do not establish browser frame rate.
 
-The [native Metal redraw record](ssb/reports/2026-10-24-native-metal-ssb-redraw.md)
-times `MetalSSBJointModel.run` with every BF pixel, all 14 terms, tilt
+The [native Metal redraw record](direct/reports/2026-10-24-native-metal-direct-redraw.md)
+times `MetalDirectJointModel.run` with every BF pixel, all 14 terms, tilt
 and depth on Apple M5 Max: 512² fifth order at 3× falls from 215 ms to 29–34 ms
 per frame (median), 256² to 10 ms. Parity against the previous kernel is
 within 4e-6 rad. Displayed app frame rate is not part of this record.
 
-The [anonymous C10 cache and FFT transfer benchmark](rendering/reports/2026-10-24-ssb-c10-cache-transfer.md)
+The [anonymous C10 cache and FFT transfer benchmark](rendering/reports/2026-10-24-direct-c10-cache-transfer.md)
 retains full data and higher-order corrections. It separates CUDA cache
 experiments, an isolated WebGPU transfer improvement and actual notebook
 paints. The 2× notebook measurement does not improve on its baseline; 4×
@@ -163,29 +163,29 @@ decode and reusable staging at full resolution. The 2048² case improves from a
 34.80-second repeated control to 16.26–16.54 seconds, with identical complete
 encoded residency. Broader format-gate failures remain explicitly recorded.
 
-## SSB research optimization, 2026-10-22
+## Direct ptychography research optimization, 2026-10-22
 
-The [staging-memory record](ssb/reports/2026-10-22-ssb-staging-memory.md) measures lazy
+The [staging-memory record](direct/reports/2026-10-22-direct-staging-memory.md) measures lazy
 per-detector staging and smaller Fourier batches. The 256-square cases retain
 about 4.3 GiB less memory with exact phase and no consistent timing regression.
 Full 512-square peak memory is unchanged.
 
-The [independent TPE reuse record](ssb/reports/2026-10-22-independent-tpe-reuse.md)
+The [independent TPE reuse record](direct/reports/2026-10-22-independent-tpe-reuse.md)
 measures exact proposal reuse in the broad-search candidate on real 256/512
 scans and separately profiles synthetic 1024 reconstruction. The solver is
 hybrid; its CPU proposal stage is faster and CUDA phase kernels are unchanged.
 
-The [four-case preparation reuse record](ssb/reports/2026-10-22-rotation-comparison-reuse.md)
+The [four-case preparation reuse record](direct/reports/2026-10-22-rotation-comparison-reuse.md)
 qualifies the local comparison implementation. The separate
-[broad-fifth CUDA study](ssb/reports/2026-10-22-broad-fifth-cuda-study.md) reports private-model
+[broad-fifth CUDA study](direct/reports/2026-10-22-broad-fifth-cuda-study.md) reports private-model
 prototype gains and exact reference checks; it does not change the public
 higher-order estimator or qualify a release.
 
-## SSB joint fitting, 2026-10-21
+## Direct ptychography joint fitting, 2026-10-21
 
-The [dated installed-wheel SSB record](ssb/reports/2026-10-21-ssb-joint-benchmark.md)
+The [dated installed-wheel direct ptychography record](direct/reports/2026-10-21-direct-joint-benchmark.md)
 contains full-field, regional, move/resize and fresh-kernel widget evidence.
-Use [the reusable benchmark command](ssb/joint-fit.md) for new measurements.
+Use [the reusable benchmark command](direct/joint-fit.md) for new measurements.
 MPS measurements passed; CUDA qualification and release publication remain
 pending. This record does not replace the historical loader results below.
 
@@ -196,7 +196,7 @@ are dated records, not timings of the current `io.load`.
 
 ## Platform profile, 2026-08
 
-The August 2026 cross-platform load, screening, resident-product and SSB profile is archived in
+The August 2026 cross-platform load, screening, resident-product and direct ptychography profile is archived in
 [Platform profile, 2026-08](../maintainer/history/platform-profile-2026-08.md).
 
 ## Historical and rejected results
@@ -210,7 +210,7 @@ domain-specific maintainer records instead of being copied into this page.
 | July native CUDA/MPS IO and compressed-save work | Historical diagnostic; some host/storage fields were not retained | [Optimization ledger](../maintainer/backend-optimization-matrix.md) |
 | WebGPU local-file, selected-block, and display campaigns | Historical implementation evidence, not current full-stack or physical-8-GB signoff | [Optimization ledger](../maintainer/backend-optimization-matrix.md) and [WebGPU history](../maintainer/history/index.md) |
 | WebGPU full-native batch-2 load candidate | Refuted for performance: exact output but prepared-index/source-pages-unspecified p50/p95/max `1.128484/1.140200/1.141501 s` missed the strict subsecond gate and did not replace the accepted `1.080860 s` single observation | Sealed evidence `75eec9cccd5c1a9814068a83a23e67253227a363` |
-| SSB size sweeps and rejected kernel layouts | Historical or rejected unless promoted into the current table above | [SSB performance history](../maintainer/history/ssb-performance-to-2026-10-18.md) |
+| Direct ptychography size sweeps and rejected kernel layouts | Historical or rejected unless promoted into the current table above | [direct ptychography performance history](../maintainer/history/direct-performance-to-2026-10-18.md) |
 | Physical M2 Air application loading | Separate application-level evidence; never substituted for a library benchmark | [M2 Air Metal evidence](../maintainer/m2-air-lz4-match-unroll-2026-08-18.md) |
 | Rejected first-chunk screening and nondeterministic CUDA calibration | Failed scientific gates; retained to prevent repetition, never shown as current speed | [Revision and change ledger](changes.md) and [optimization ledger](../maintainer/backend-optimization-matrix.md) |
 
@@ -219,4 +219,4 @@ cache state, scientific plan, hardware, and acceptance status. The
 [revision and change ledger](changes.md) records why a current row replaced or
 remained separate from an older campaign.
 
-- [Initial fit and fifth-order refinement](ssb/reports/2026-10-22-ssb-initialization-and-refinement.md): matched initialization study and optimization lessons.
+- [Initial fit and fifth-order refinement](direct/reports/2026-10-22-direct-initialization-and-refinement.md): matched initialization study and optimization lessons.

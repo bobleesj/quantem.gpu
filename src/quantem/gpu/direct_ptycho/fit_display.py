@@ -6,7 +6,7 @@ import time
 class FitDisplay:
     """Render only in a live notebook; command-line fitting stays display-free."""
 
-    def __init__(self, ssb, *, enabled: bool, size: str = "medium", columns: int = 2,
+    def __init__(self, direct, *, enabled: bool, size: str = "medium", columns: int = 2,
                  show_convergence: bool = False,
                  scan_region: tuple[int, int, int, int] | None = None):
         from quantem.gpu.display._layout import panel_inches, resolve_columns
@@ -16,7 +16,7 @@ class FitDisplay:
         self.columns = resolve_columns(3, columns=columns)
         self.enabled = enabled
         self.show_convergence = show_convergence
-        self.ssb = ssb
+        self.direct = direct
         self.scan_region = scan_region
         self.handle = None
         self.convergence_handle = None
@@ -75,23 +75,23 @@ class FitDisplay:
         if self.display is None or not self.enabled:
             return
         try:
-            image = self.ssb.run(
+            image = self.direct.run(
                 fit, upsample="auto", compute_loss=False, verbose=False,
             )
             comparisons = ()
-            if final and self.ssb.backend == "cuda" and self.ssb._streamed is None:
+            if final and self.direct.backend == "cuda" and self.direct._streamed is None:
                 # Prepare only after fitting. Finish with phase so subsequent
                 # regularization exploration can reuse its prepared equations.
-                complex_image = self.ssb.run(
+                complex_image = self.direct.run(
                     fit, method="complex", upsample="auto", compute_loss=False,
                 )
-                phase_image = self.ssb.run(
+                phase_image = self.direct.run(
                     fit, method="phase", upsample="auto", compute_loss=False,
                 )
                 comparisons = (phase_image, complex_image)
             if self.scan_region is not None:
                 figure = _show_fit_region(
-                    image, self.scan_region, self.ssb.input_scan_shape, width=self.width,
+                    image, self.scan_region, self.direct.input_scan_shape, width=self.width,
                     final=final, compare=comparisons, columns=self.columns,
                 )
             elif comparisons:
@@ -113,7 +113,7 @@ class FitDisplay:
                 self.handle.update(figure)
         finally:
             # Rendering must not replace the native fit, loss or calibration.
-            self.ssb._accept_result(fit)
+            self.direct._accept_result(fit)
 
 
 def _show_fit_region(image, scan_region, scan_shape, *, width: float, final: bool,

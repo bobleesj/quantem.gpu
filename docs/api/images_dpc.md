@@ -60,9 +60,9 @@ milliradians. The unit is in the keyword name; a bound given both ways raises.
 |---|---|---|
 | `detector.mean(data)` | one supported 4D source | detector-shaped mean diffraction pattern |
 | `detector.bright_field_disk(data, semiangle_mrad=None)` | 2D mean diffraction pattern, or a 4D source whose mean pattern is used; optional convergence semiangle (mrad) | `BrightFieldDisk`: `bright_field_center_px` (row, column), `bright_field_radius_px` (equal-area radius of the pixels above mean + std, the default selection of `bf`), `bright_field_edge_radius_px`, `detector_sampling_mrad` (None without a semiangle), `method`, and `show()` (the mean pattern with the fitted edge, axes in mrad) |
-| `data.calibration.detector_sampling()` | a loaded acquisition with a recorded `semiangle_mrad` | the same `BrightFieldDisk`, computed on the encoded data and recorded on `data.calibration` (source **Fitted (bright-field disk)**); SSB and the viewers then read it |
+| `data.calibration.detector_sampling()` | a loaded acquisition with a recorded `semiangle_mrad` | the same `BrightFieldDisk`, computed on the encoded data and recorded on `data.calibration` (source **Fitted (bright-field disk)**); direct ptychography and the viewers then read it |
 | `detector.disk_edge_radius(mean_pattern)` | 2D mean diffraction pattern | radius in detector pixels at which the bright-field disk falls to half its plateau |
-| `detector.detector_sampling_mrad(mean_pattern, semiangle_mrad)` | 2D mean diffraction pattern and the convergence semiangle (mrad) | `(row, column)` detector sampling in mrad per pixel: `semiangle_mrad / disk_edge_radius(mean_pattern)`, the rule SSB, parallax and screening use when none is recorded |
+| `detector.detector_sampling_mrad(mean_pattern, semiangle_mrad)` | 2D mean diffraction pattern and the convergence semiangle (mrad) | `(row, column)` detector sampling in mrad per pixel: `semiangle_mrad / disk_edge_radius(mean_pattern)`, the rule direct ptychography, parallax and screening use when none is recorded |
 | `detector.bf(data, ...)` | 4D source; optional geometry overrides | scan-shaped bright-field sum |
 | `detector.adf(data, ...)` | 4D source; optional annular limits | scan-shaped annular dark-field sum |
 | `detector.df(data, ...)` | 4D source; optional inner limit | scan-shaped dark-field sum |
@@ -81,7 +81,7 @@ dpc_result.report()
 
 The table labels the scan-detector rotation in degrees, the detector-axis swap,
 and elapsed seconds. DPC's curl minimum does not resolve the 180° ambiguity;
-SSB can check the phase polarity before selecting a branch.
+Direct ptychography can check the phase polarity before selecting a branch.
 
 ## Shapes, coordinates, dtypes, and units
 
@@ -145,7 +145,7 @@ scan-detector rotation fixed, or omit it for the DPC rotation search. Inspect
 one is `scan_detector_rotation_deg`. The fitted value lies in [0, 180]: an
 unrotated scan fits the end point of the search grid, float32 pi, which reads
 `180.000005`, and 0 and 180 describe the same estimate. DPC does not estimate
-SSB aberrations.
+Direct ptychography aberrations.
 
 For a client that needs several launch products from the same source, use
 `screening.prepare()` and reuse its small derived state instead of traversing

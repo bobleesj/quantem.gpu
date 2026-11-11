@@ -12,7 +12,7 @@ setting up these products.
 | Map vendor fields and calibration | [Acquisition formats](../api/native-acquisition-formats.md) |
 | Read encoded inputs or write scaled output | [Encoded I/O](../api/native_resident.md) |
 | Calculate histograms, ranges, or display FFTs | [Image operations](../api/metal_image.md) |
-| Reconstruct SSB and search aberrations | [Native SSB below](#native-swift-and-metal) |
+| Reconstruct direct ptychography and search aberrations | [Native direct ptychography below](#native-swift-and-metal) |
 | Implement a portable file reader | [File formats](file-formats.md) |
 
 ## Public native products
@@ -42,9 +42,9 @@ Native Swift/Metal products for macOS and iOS clients:
   native load, resource, resident-cache, and exact prepared-product provenance.
   See [Native 4D-STEM load and cache contract](../api/native_4dstem_io.md).
 - `MetalDirectPtychoEngine` and `MetalDirectPtychoJointModel` for exact native 128×128, 256×256 and
-  512×512 SSB: the engine prepares the Fourier evidence, and the joint model fits
-  (`DirectPtychoModelFit`) and reconstructs SSB, Phase and Complex. See
-  [native SSB](#native-swift-and-metal).
+  512×512 direct ptychography: the engine prepares the Fourier evidence, and the joint model fits
+  (`DirectPtychoModelFit`) and reconstructs direct ptychography, Phase and Complex. See
+  [native direct ptychography](#native-swift-and-metal).
 
 Native clients call these endpoints directly. They are not a local Python
 backend.
@@ -101,7 +101,7 @@ staged fit is described in `native/swift/README.md`.
 
 The engine's own non-model reconstruction (`run(aberrations:)`), its
 phase-variance objective (`phaseVariance`), the seeded TPE and Nelder–Mead search
-over it (`optimize`, `SSBOptimizer`) and its optional BF sampling are retired.
+over it (`optimize`, `DirectOptimizer`) and its optional BF sampling are retired.
 `DirectPtychoFitOptions(objective: .phaseVariance)` still decodes from saved runs and is
 refused as a fit.
 
@@ -117,14 +117,14 @@ plots.
 `MetalDirectPtychoJointSavedRun` saves a joint-model result: the phase, the exact model
 point, calibration, sampling, region and fit record.
 
-`MetalSSBSavedRun` is the format of the retired non-model engine. It records
+`MetalDirectSavedRun` is the format of the retired non-model engine. It records
 both complex64 images, calibrated geometry, aberrations, rotation, fit history,
 seed, source identity, backend revision, reconstruction timings and provenance
 for a 128×128, 256×256 or 512×512 scan, in a versioned binary property list with
 SHA-256 checksums for the two image payloads. Runs saved with it still open:
 
 ```swift
-let previous = try MetalSSBSavedRun.load(
+let previous = try MetalDirectSavedRun.load(
     from: resultURL, matchingSourceIdentity: sourceSHA256)
 let images = try previous.reconstruction(device: device)
 let phase = try MetalDirectPtychoEngine(

@@ -64,7 +64,7 @@ export async function runQemBrowserParity(device: GPUDevice, baseURL: string): P
         for (let scan = 0; scan < scans; scan++) if (scanMask[scan]) for (let k = 0; k < K; k++) sums[k] += counts[scan * K + k];
         exact(`${item.name} ROI sum`, await compute.reduceFrames(scanMask, false), Float32Array.from(sums));
         exact(`${item.name} ROI mean`, await compute.reduceFrames(scanMask, true), Float32Array.from(sums, value => value / selected));
-        // SSB reads BF columns as complex64, including a reordered subset.
+        // Direct ptychography reads BF columns as complex64, including a reordered subset.
         const columns = Uint32Array.from([K - 1, 0, 2]);
         const output = device.createBuffer({size: columns.length * scans * 8,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC});
@@ -79,7 +79,7 @@ export async function runQemBrowserParity(device: GPUDevice, baseURL: string): P
           const actual = new Float32Array(readback.getMappedRange());
           for (let c = 0; c < columns.length; c++) for (let scan = 0; scan < scans; scan++) {
             if (actual[(c * scans + scan) * 2] !== counts[scan * K + columns[c]]
-              || actual[(c * scans + scan) * 2 + 1] !== 0) throw new Error("SSB complex BF columns changed counts/order");
+              || actual[(c * scans + scan) * 2 + 1] !== 0) throw new Error("Direct ptychography complex BF columns changed counts/order");
           }
         } finally { output.destroy(); readback.destroy(); }
         results[item.name] = true;

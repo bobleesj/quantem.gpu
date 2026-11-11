@@ -216,7 +216,7 @@ func objectiveBenchmark(
     }
   }
   let summary: [String: Any] = [
-    "schema": "quantem-gpu-ssb-objective-benchmark/v1", "device": device.name, "run": run.path,
+    "schema": "quantem-gpu-direct-objective-benchmark/v1", "device": device.name, "run": run.path,
     "rotation_deg": rotation, "band_count": model.bandCount, "repeats": repeats,
     "timing_boundary":
       "gpu: command-buffer gpuStartTime..gpuEndTime of one agreements call; wall: the call",

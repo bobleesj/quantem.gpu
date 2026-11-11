@@ -49,10 +49,10 @@ public struct DirectPtychoScanRegion: Codable, Equatable, Sendable {
 }
 
 extension MetalDirectPtychoCalibration {
-  /// The uncapped output sampling nominal circular-aperture SSB support needs: output Nyquist frequency equal to
+  /// The uncapped output sampling nominal circular-aperture direct ptychography support needs: output Nyquist frequency equal to
   /// 2 * semiangle / wavelength on the more coarsely sampled scan axis. Matches Python
-  /// `optics.physics.ssb_upsampling_requirement`.
-  public func ssbUpsamplingRequirement() throws -> Double {
+  /// `optics.physics.direct_upsample_requirement`.
+  public func directUpsampleRequirement() throws -> Double {
     let values = [voltageKV, semiangleMrad, scanSamplingRowAngstroms, scanSamplingColumnAngstroms]
     guard values.allSatisfy({ $0.isFinite && $0 > 0 }) else {
       throw MetalDirectPtychoError.invalidGeometry(
@@ -63,20 +63,20 @@ extension MetalDirectPtychoCalibration {
       / wavelength
   }
 
-  /// Automatic output sampling: the smallest of 1, 2, 3 and 4x covering nominal circular-aperture SSB support,
-  /// or 4x when the requirement exceeds the automatic limit. Matches Python `optics.physics.ssb_upsampling_factor`.
+  /// Automatic output sampling: the smallest of 1, 2, 3 and 4x covering nominal circular-aperture direct ptychography support,
+  /// or 4x when the requirement exceeds the automatic limit. Matches Python `optics.physics.direct_auto_upsample`.
   /// This is a grid selection, not a measured resolution claim or detector-angle cutoff; a capped 4x grid does not
-  /// imply full nominal bandwidth (`ssbUpsamplingRequirement` gives the requirement). 8x stays available as an
+  /// imply full nominal bandwidth (`directUpsampleRequirement` gives the requirement). 8x stays available as an
   /// explicit `DirectPtychoOutputSampling.factor(8)`.
-  public func ssbUpsamplingFactor() throws -> Int {
-    try ssbUpsamplingChoice().factor
+  public func directAutoUpsample() throws -> Int {
+    try directUpsampleChoice().factor
   }
 
   /// The automatic factor with the factor the scan sampling would support without the 4x cap, so a viewer can say
   /// when Auto is capped (as Python's notice does). The uncapped factor is the smallest supported factor (1, 2, 3,
   /// 4 or 8) covering the requirement, or 8x when none does.
-  public func ssbUpsamplingChoice() throws -> DirectPtychoUpsamplingChoice {
-    let required = try ssbUpsamplingRequirement()
+  public func directUpsampleChoice() throws -> DirectPtychoUpsamplingChoice {
+    let required = try directUpsampleRequirement()
     let covering = { (factors: [Int]) in factors.first(where: { Double($0) >= required - 1e-12 }) }
     let factor = covering([1, 2, 3, 4]) ?? 4
     let uncapped = covering(DirectPtychoOutputSampling.supportedFactors) ?? 8
@@ -100,7 +100,7 @@ public struct DirectPtychoUpsamplingChoice: Equatable, Hashable, Sendable {
   public var capped: Bool { uncappedFactor > factor }
 }
 
-/// SSB output sampling: Auto (from the acquisition calibration, 1x-4x) or an explicit factor. Upsampling
+/// Direct ptychography output sampling: Auto (from the acquisition calibration, 1x-4x) or an explicit factor. Upsampling
 /// unfolds the measured Fourier aliases on a finer output grid; it is not interpolation, and fitting and source
 /// data are unchanged.
 public enum DirectPtychoOutputSampling: Codable, Equatable, Hashable, Sendable {
@@ -119,11 +119,11 @@ public enum DirectPtychoOutputSampling: Codable, Equatable, Hashable, Sendable {
   public func resolve(_ calibration: MetalDirectPtychoCalibration) throws -> Int {
     switch self {
     case .auto:
-      return try calibration.ssbUpsamplingFactor()
+      return try calibration.directAutoUpsample()
     case .factor(let value):
       guard Self.supportedFactors.contains(value) else {
         throw MetalDirectPtychoError.invalidGeometry(
-          "Use an SSB sampling factor of 1, 2, 3, 4 or 8.")
+          "Use a direct ptychography sampling factor of 1, 2, 3, 4 or 8.")
       }
       return value
     }

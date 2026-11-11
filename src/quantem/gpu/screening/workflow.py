@@ -103,7 +103,7 @@ def prepare(
     moments. The rotation that minimizes the curl of the centre-of-mass field
     and the integrated DPC phase follow on the host. Integer products are
     identical on CUDA and MPS. Flagged detector pixels hold the median of
-    their valid neighbors, ``io.load``'s default, as in SSB. The raw
+    their valid neighbors, ``io.load``'s default, as in direct ptychography. The raw
     acquisition remains the evidence source for reconstruction.
 
     Float32 acquisitions use the existing GPU detector mean, intensity-sum
@@ -234,7 +234,7 @@ def _build_products(
     the probe fit; one batch of exact binary-mask sums then gives, per scan
     position, the total and the four bands, and the session's centre of mass
     divides exact detector moments by the exact total. Flagged pixels hold
-    ``io.load``'s default median fill, the values SSB fits.
+    ``io.load``'s default median fill, the values direct ptychography fits.
     """
     from quantem.gpu import detector
     from quantem.gpu.detector.workflow import _equal_area_disk

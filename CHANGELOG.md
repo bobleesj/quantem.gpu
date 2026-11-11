@@ -6,6 +6,52 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+### Renamed: direct ptychography (no aliases)
+
+"We don't want to use the term SSB, use Direct Ptycho" (11 Nov 2026). Every name that said SSB says direct
+ptychography: `direct_*` and `*Direct*` in code, "direct ptychography" (or "Direct ptycho" on a short label) in
+docs, messages and logs. Saved records move one version past their last id; the readers read only the new ids.
+`scripts/rewrite_saved_records.py` carries a results folder, stream folder or phase manifest over once (files,
+folders, keys and ids), and quantem.widget's `scripts/rewrite_direct_calibration.py` carries ShowPtycho folders.
+
+| Old | New | Where |
+|---|---|---|
+| `CudaSSBBackend`, `MpsSSBBackend` | `CudaDirectBackend`, `MpsDirectBackend` | classes (`quantem.gpu.direct_ptycho.cuda`, `.mps`) |
+| `SSBEngine`, `PreparedMpsSSB`, `StreamedSSB` | `DirectEngine`, `PreparedMpsDirect`, `StreamedDirect` | backend classes |
+| `quantem.gpu.remote.saved_ssb`, `SavedSSBResults` | `quantem.gpu.remote.saved_direct`, `SavedDirectResults` | module, class |
+| route `/api/ssb/saved-results` | `/api/direct/saved-results` | remote server route |
+| `quantem.gpu.formats.ssb_phase` | `quantem.gpu.formats.direct_phase` | module |
+| `optics.ssb_upsample_factor()` | `optics.direct_auto_upsample()` | function |
+| `optics.ssb_upsample_requirement()` | `optics.direct_upsample_requirement()` | function |
+| `optics.physics.SSB_UPSAMPLING_FACTORS`, `SSB_AUTO_UPSAMPLING_MAX` | `DIRECT_UPSAMPLE_CHOICES`, `DIRECT_AUTO_UPSAMPLE_MAX` | constants |
+| `benchmark.run_ssb(...)`, `benchmark.run_ssb_preview(ssb, ...)` | `benchmark.run_direct(...)`, `benchmark.run_direct_preview(direct, ...)` | functions, keyword |
+| `quantem-gpu benchmark-ssb` | `quantem-gpu benchmark-direct` | CLI command |
+| `FitDisplay(ssb, ...)`, `FitDisplay.ssb` | `FitDisplay(direct, ...)`, `FitDisplay.direct` | argument, attribute |
+| `PtychoFrame.ssb_phase` | `PtychoFrame.direct_phase` | field |
+| `"SSB-selected rotation (deg)"` | `"Direct ptycho rotation (deg)"` | `report()` column |
+| `thickness_method="ssb_depth"` | `"direct_depth"` | value |
+| `computed.ssb_tilt`, `ssb_result`, `ssb_result_source_identity`, `has_ssb`, `ssb_source_sha256`, timing `ssb_s` | `computed.direct_tilt`, `direct_result`, `direct_result_source_identity`, `has_direct`, `direct_source_sha256`, `direct_s` | record keys |
+| `ssb-aberrations.{json,npz}`, `ssb-run.{json,npz}`, `ssb.json` with `ssb.npy`, `ssb_phase.npy`, `ssb_phase_tilt.npy`; folders `ssb-fit`, `ssb-locked`, `ssb-results` | `direct-aberrations.*`, `direct-run.*`, `direct.json` with `direct.npy`, `direct_phase.npy`, `direct_phase_tilt.npy`; `direct-fit`, `direct-locked`, `direct-results` | saved files and folders |
+| `quantem.ssb-result/14` | `quantem.direct-result/15` | record id |
+| `quantem.ssb-calibration/8` | `quantem.direct-calibration/9` | record id |
+| `quantem.ssb-browser-calibration/3` | `quantem.direct-browser-calibration/4` | record id (a ShowPtycho calibration, read by `load_bf_columns_mps` and the WebGPU backend) |
+| `quantem.ssb-fit/7` | `quantem.direct-fit/8` (`persistence.SCHEMA` 8) | record id |
+| `quantem.ssb-phase/2`, `quantem.ssb-phase-results/2` | `quantem.direct-phase/3`, `quantem.direct-phase-results/3` | record ids |
+| `quantem.ssb-stream-frame/5`, `quantem.ssb-parameter-slices/1` | `quantem.direct-stream-frame/6`, `quantem.direct-parameter-slices/2` | record ids |
+| `quantem.ssb-joint-run/1`, `quantem.ssb-saved-run/2` (native) | `quantem.direct-joint-run/2`, `quantem.direct-saved-run/3` | record ids |
+| `quantem.gpu.ssb-benchmark/1`, `quantem.gpu.ssb-preview-benchmark/1` | `quantem.gpu.direct-benchmark/2`, `quantem.gpu.direct-preview-benchmark/2` | benchmark record ids |
+| `QUANTEM_GPU_SSB_MASTER`, `QUANTEM_GPU_SSB_REFERENCE_NPZ`, `QUANTEM_MPS_SSB_OBJECT_CHUNK_BF`, `QUANTEM_MPS_SSB_OBJECT_REDRAW_CHUNK_BF`, `QUANTEM_MPS_SSB_OBJECT_THREADGROUP`, `QUANTEM_MPS_SSB_PHASE_COL_K_BF`, `QUANTEM_SSB_ARINA_MASTER`, `QUANTEM_SSB_CPU_ORACLE`, `QUANTEM_SSB_PARITY_FULL`, `QUANTEM_SSB_PARITY_FULL_REPORT`, `QUANTEM_SSB_PARITY_GPURUN`, `QUANTEM_SSB_PARITY_PYTHON`, `QUANTEM_SSB_PARITY_REPORT`, `QUANTEM_SSB_PARITY_REPORT_PATH`, `QUANTEM_SSB_PARITY_RUNS`, `QUANTEM_SSB_PARITY_SOURCE`, `QUANTEM_SSB_REFERENCE_PHASE`, `QUANTEM_SSB_RELEASE_SOURCE` | the same with `DIRECT` for `SSB` | environment variables |
+| `scripts/benchmark_ssb.py`, `check_ssb_parity.sh`, `check_ssb_fit_trajectory.sh`, `ssb_agreement_gate.py`, `build_metal_ssb_joint_reference.py` | `scripts/benchmark_direct.py`, `check_direct_parity.sh`, `check_direct_fit_trajectory.sh`, `direct_agreement_gate.py`, `build_metal_direct_joint_reference.py` | scripts |
+| WebGPU `WebGPUSSBBackend`, `WebGPUSSBResult`, `SSBOptimizationResult`, `SSBPrecision`, `SSBProtocol` | `WebGPUDirectBackend`, `WebGPUDirectResult`, `DirectOptimizationResult`, `DirectPrecision`, `DirectProtocol` | TypeScript classes and types |
+| WebGPU `SUPPORTED_SSB_SIZES`, `SupportedSsbSize` | `SUPPORTED_DIRECT_SIZES`, `SupportedDirectSize` | TypeScript constant, type |
+| WebGPU `setSSBLocalDirectory`, `setSSBLocalFiles`, `ssbNeedsLocalSource`, `ssbFolderWritable`, `writeSSBFolderFile`, `deleteSSBFolderFile`, `readSSBFolderJson`, `readSSBFolderBytes` | `setDirectLocalDirectory`, `setDirectLocalFiles`, `directNeedsLocalSource`, `directFolderWritable`, `writeDirectFolderFile`, `deleteDirectFolderFile`, `readDirectFolderJson`, `readDirectFolderBytes` | TypeScript functions |
+| Swift `MetalSSBSavedRun`, `SSBPhaseArtifact`, `SSBBrightfieldSampling`, `SSBOptimizationError`, `SSBOptimizationPoint`, `SSBOptimizationResult`, `SSBOptimizationTrial` | `MetalDirectSavedRun`, `DirectPhaseArtifact`, `DirectBrightfieldSampling`, `DirectOptimizationError`, `DirectOptimizationPoint`, `DirectOptimizationResult`, `DirectOptimizationTrial` | Swift types |
+| Swift `ssbUpsamplingFactor()`, `ssbUpsamplingRequirement()`, `ssbUpsamplingChoice()` | `directAutoUpsample()`, `directUpsampleRequirement()`, `directUpsampleChoice()` | Swift methods |
+| Swift `DirectPtychoReconstructionMethod.ssb` (raw value `"ssb"`) | `.phaseOfMean` (raw value `"phase_of_mean"`) | Swift enum case |
+| native kernels `ssb-redraw`, `ssb-per-term`, `ssb-fifth-agreement`, `ssb-joint-agreement`, `ssb-low-order-derivatives`, `ssb-fifth-gradient`, `ssb-direct`; `ssb*.metal`; `.jointssb` | `direct-redraw`, `direct-per-term`, `direct-fifth-agreement`, `direct-joint-agreement`, `direct-low-order-derivatives`, `direct-fifth-gradient`, `direct-regularized`; `direct*.metal` (`ssb_direct.metal` is `direct_regularized.metal`); `.jointdirect` | kernel registry names, shader files |
+| CUDA and MPS kernel names `ssb_*` (`ssb_chi_full`, `atan2f_ssb_poly`, ...) | `direct_*` (`direct_chi_full`, `atan2f_direct_poly`, ...) | kernel names |
+| log tags `SSB: ...`, prose "SSB", "single-sideband ptychography" | `Direct ptycho: ...`, "direct ptychography" | messages and docs |
+
 ### Renamed (no aliases)
 
 One vocabulary across quantem.gpu, quantem.widget and quantem.live. The old names below are removed: no alias,

@@ -41,9 +41,9 @@ def test_compare_methods_and_change_only_regularization(acquisition):
             show=False,
             verbose=False,
         )
-        ssb = ptycho.run(optics, upsample="auto", compute_loss=False)
+        direct = ptycho.run(optics, upsample="auto", compute_loss=False)
         again = ptycho.run(optics, method="phase_of_mean", upsample="auto", compute_loss=False)
-        cp.testing.assert_array_equal(ssb.object_wave, again.object_wave)
+        cp.testing.assert_array_equal(direct.object_wave, again.object_wave)
         phase = ptycho.run(optics, method="phase", upsample="auto")
         original = phase.object_wave.copy()
         prepared = ptycho._prepared_direct[1]["phase"]
@@ -67,7 +67,7 @@ def test_compare_methods_and_change_only_regularization(acquisition):
         cp.testing.assert_array_equal(cp.asarray(preview), changed.phase)
         assert (
             loss is None
-        )  # Do not relabel prediction error as SSB phase variance.
+        )  # Do not relabel prediction error as direct ptychography phase variance.
         complex_result = ptycho.run(
             optics,
             method="complex",

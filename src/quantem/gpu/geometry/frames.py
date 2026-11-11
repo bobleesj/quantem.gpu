@@ -1,10 +1,10 @@
-"""Scan-detector frame arithmetic shared by SSB, ptychography and session tools.
+"""Scan-detector frame arithmetic shared by direct ptychography, ptychography and session tools.
 
-SSB states the sample tilt in the scan frame (``sample_tilt_mrad``, (row, col) along the scan axes). A ptychographic
+Direct ptychography states the sample tilt in the scan frame (``sample_tilt_mrad``, (row, col) along the scan axes). A ptychographic
 reconstruction places its object and propagator in the detector frame, so its tilt (``propagator_tilt_mrad``) is
 the same vector expressed along the detector's (row, col) axes. The two frames differ by the scan-detector rotation
 ``theta`` (``scan_detector_rotation_deg``) and, when ``scan_detector_rotation_flipped`` is true, by a swap of the
-detector's row and column axes, the convention SSB, DPC and screening apply to the centre of mass:
+detector's row and column axes, the convention direct ptychography, DPC and screening apply to the centre of mass:
 
     scan = R(theta) . D . detector,  R(theta) = [[cos, -sin], [sin, cos]],  D = swap when flipped, else identity
 
@@ -36,7 +36,7 @@ def sample_to_propagator_tilt(
     scan_detector_rotation_deg: float,
     scan_detector_rotation_flipped: bool = False,
 ) -> tuple[float, float]:
-    """Express an SSB sample tilt (scan frame) along the detector axes, the frame of the ptychographic propagator.
+    """Express a direct ptychography sample tilt (scan frame) along the detector axes, the frame of the ptychographic propagator.
 
     ``propagator = D . R(-theta) . sample``: the scan-frame vector turned by minus the scan-detector rotation, then
     its components swapped when the detector axes are flipped. Unflipped, this is
@@ -73,7 +73,7 @@ def propagator_to_sample_tilt(
     scan_detector_rotation_deg: float,
     scan_detector_rotation_flipped: bool = False,
 ) -> tuple[float, float]:
-    """Express a ptychographic propagator tilt (detector frame) along the scan axes, as SSB's ``sample_tilt_mrad``.
+    """Express a ptychographic propagator tilt (detector frame) along the scan axes, as direct ptychography's ``sample_tilt_mrad``.
 
     The inverse of :func:`sample_to_propagator_tilt`: ``sample = R(theta) . D . propagator``. Unflipped, this is
     ``(o_r cos theta - o_c sin theta, o_r sin theta + o_c cos theta)``.

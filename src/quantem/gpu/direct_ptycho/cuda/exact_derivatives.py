@@ -1,4 +1,4 @@
-"""Exact derivatives of the CUDA SSB agreement for the trust-region fits.
+"""Exact derivatives of the CUDA direct ptychography agreement for the trust-region fits.
 
 Both fit objectives are the least-squares agreement S = sum_q w_q |N_q|^2 / D_q of the transfer model with the
 measured double-overlap data, N_q = sum_k G(q, k) conj(gamma), D_q = sum_k |gamma|^2,
@@ -41,7 +41,7 @@ from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE
 
 # tf_geometry and tf_sinc exactly as the production objective kernels define them.
 _GEOMETRY_SOURCE = thick_fit_batch_kernel.code.split('extern "C"')[0]
-_CHI_SOURCE = "#define SSB_DEVICE __device__ __forceinline__\n#define SSB_COEFFICIENTS const float*\n" + CHI_SOURCE
+_CHI_SOURCE = "#define DIRECT_DEVICE __device__ __forceinline__\n#define DIRECT_COEFFICIENTS const float*\n" + CHI_SOURCE
 
 _K_CHUNK = 256
 
@@ -67,7 +67,7 @@ extern "C" __global__ void fifth_chi_k(const float* __restrict__ kx, const float
     int k = blockIdx.x * blockDim.x + threadIdx.x;
     int b = blockIdx.y;
     if (k >= num_bf || b >= B) return;
-    chi[(long long)b * num_bf + k] = ssb_chi_full(kx[k], ky[k], wl, coefficients + b * 28);
+    chi[(long long)b * num_bf + k] = direct_chi_full(kx[k], ky[k], wl, coefficients + b * 28);
 }
 
 // One thread per band frequency q, one block row per chunk of 256 BF pixels, one block plane per candidate.
@@ -125,8 +125,8 @@ extern "C" __global__ void __launch_bounds__(256) fifth_gradient(
             float2 g = G[(long long)k * plane + off];
             float chi_k = chis[k - k0];
             float s1, c1, sp, cp_;
-            __sincosf(ssb_chi_full(kxv - qx, kyv - qy, wl, coef) - chi_k, &s1, &c1);
-            __sincosf(ssb_chi_full(kxv + qx, kyv + qy, wl, coef) - chi_k, &sp, &cp_);
+            __sincosf(direct_chi_full(kxv - qx, kyv - qy, wl, coef) - chi_k, &s1, &c1);
+            __sincosf(direct_chi_full(kxv + qx, kyv + qy, wl, coef) - chi_k, &sp, &cp_);
             float b1 = a1, b2 = a2, d1 = 0.0f, d2 = 0.0f, h1 = 0.0f, h2 = 0.0f;
             if (half_t > 0.0f) {
                 float m0 = factor * (gm.x - gk.x), p0 = factor * (gp.x - gk.x);
@@ -387,7 +387,7 @@ _power_terms = cp.ElementwiseKernel(
     double re = (double)numerator.real(), im = (double)numerator.imag();
     power = denominator > 0.0f ? (double)weight * ((re * re + im * im) / (double)denominator) : 0.0;
     """,
-    "ssb_exact_power_terms",
+    "direct_exact_power_terms",
 )
 
 

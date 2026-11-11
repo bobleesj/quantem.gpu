@@ -11,7 +11,7 @@
 - Chunk assembly and load-to-device.
 - Device selection and backend errors.
 - Heavy BF/DF/DPC image compute.
-- SSB compute APIs.
+- Direct ptychography compute APIs.
 
 `quantem.widget` owns:
 
@@ -20,7 +20,7 @@
 - HTML/notebook export.
 - Display wrappers around arrays and reduced images from `quantem.gpu`.
 
-`quantem.live` calls `quantem.gpu` for product and SSB compute instead of
+`quantem.live` calls `quantem.gpu` for product and direct ptychography compute instead of
 keeping second copies.
 
 ## Dense, packed, and experimental status
@@ -135,10 +135,10 @@ Before publishing an rc:
 ## Do not regress
 
 - Do not move GPU decompression back into widget.
-- Do not make SSB depend on anywidget.
+- Do not make direct ptychography depend on anywidget.
 - Do not use `quantem.cuda` as the public package name.
 - Do not treat CPU fallback speed as acceptable for GPU workflows.
-- Do not use fast-mode SSB as parity evidence.
+- Do not use fast-mode direct ptychography as parity evidence.
 - Do not copy `MetalImageFFT` or `Native4DSTEMIO` source into Live4DSTEM.
 - Do not add a local Python FFT or HDF5 helper to the Mac app.
 

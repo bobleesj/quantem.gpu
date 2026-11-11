@@ -5,12 +5,12 @@ export interface WebGPUOptimizationOptions {
   readonly seed: number;
 }
 
-export interface SSBPrecision {
+export interface DirectPrecision {
   readonly real_dtype: "float32";
   readonly complex_dtype: "complex64";
 }
 
-export interface SSBOptimizationResult {
+export interface DirectOptimizationResult {
   readonly aberrations: Readonly<Record<string, number>>;
   readonly loss: number;
   readonly numTrials: number;
@@ -28,7 +28,7 @@ export interface WebGPUReconstructionOptions {
   /** Higher orders by name: magnitudes in Angstrom (`C21_A`, `C30_A`, ...), azimuths in degrees (`phi21_deg`, ...).
    * A key outside that set throws. */
   readonly higherOrder?: Record<string, number>;
-  /** Thick, tilted crystal: tilt in mrad (scan frame, [row, col]), depth spread in Angstrom (C10 unit). Absent or 0 = thin SSB. */
+  /** Thick, tilted crystal: tilt in mrad (scan frame, [row, col]), depth spread in Angstrom (C10 unit). Absent or 0 = thin direct ptychography. */
   readonly sample?: WebGPUSampleOptions;
 }
 
@@ -38,13 +38,13 @@ export interface WebGPUSampleOptions {
   readonly depthSpreadA: number;
 }
 
-export interface SSBProtocol<Result> {
+export interface DirectProtocol<Result> {
   readonly backend: "webgpu";
-  readonly precision: SSBPrecision;
+  readonly precision: DirectPrecision;
   prepare(): Promise<void>;
   fit(
     options: WebGPUOptimizationOptions,
-  ): Promise<SSBOptimizationResult>;
+  ): Promise<DirectOptimizationResult>;
   reconstruct(
     c10A: number,
     c12A: number,

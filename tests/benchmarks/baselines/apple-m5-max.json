@@ -50,13 +50,13 @@
    "p90_ms": 4389.807,
    "min_ms": 4290.101
   },
-  "ssb_session": {
+  "direct_session": {
    "n": 2,
    "p50_ms": 6663.47,
    "p90_ms": 6758.115,
    "min_ms": 6568.825
   },
-  "ssb_prepare": {
+  "direct_prepare": {
    "n": 1,
    "p50_ms": 867.885,
    "p90_ms": 867.885,

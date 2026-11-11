@@ -1,7 +1,7 @@
 import Foundation
 import Metal
 
-/// A phase-only native joint SSB result with complete calibration and source ROI.
+/// A phase-only native joint direct ptychography result with complete calibration and source ROI.
 /// Separate from the legacy complex-wave format: no object amplitude is inferred.
 public struct MetalDirectPtychoJointSavedRun: Codable, Sendable {
   public let schema: String
@@ -38,7 +38,7 @@ public struct MetalDirectPtychoJointSavedRun: Codable, Sendable {
     guard result.phase.storageMode == .shared else {
       throw MetalDirectPtychoError.invalidGeometry("Complete the phase readback before saving.")
     }
-    schema = "quantem.ssb-joint-run/1"
+    schema = "quantem.direct-joint-run/2"
     self.sourceIdentity = sourceIdentity
     self.backendRevision = backendRevision
     self.sourceRows = sourceRows
@@ -57,7 +57,7 @@ public struct MetalDirectPtychoJointSavedRun: Codable, Sendable {
     self.fit = fit
     self.provenance = provenance
     phase = Data(bytes: result.phase.contents(), count: rows * columns * 4)
-    phaseSHA256 = SSBPhaseArtifact.digest(phase)
+    phaseSHA256 = DirectPhaseArtifact.digest(phase)
     try validate(sourceIdentity: sourceIdentity)
   }
   public func save(to url: URL) throws {
@@ -70,7 +70,7 @@ public struct MetalDirectPtychoJointSavedRun: Codable, Sendable {
     let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
     guard size > 0, size <= 256 << 20 else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "Choose a complete joint SSB result smaller than 256 MB.")
+        "Choose a complete joint direct ptychography result smaller than 256 MB.")
     }
     let result = try PropertyListDecoder().decode(Self.self, from: Data(contentsOf: url))
     try result.validate(sourceIdentity: sourceIdentity)
@@ -87,20 +87,20 @@ public struct MetalDirectPtychoJointSavedRun: Codable, Sendable {
     return buffer
   }
   private func validate(sourceIdentity: String) throws {
-    guard schema == "quantem.ssb-joint-run/1", self.sourceIdentity == sourceIdentity,
+    guard schema == "quantem.direct-joint-run/2", self.sourceIdentity == sourceIdentity,
       !sourceIdentity.isEmpty, !backendRevision.isEmpty,
       [1, 2, 3, 4, 8].contains(upsamplingFactor), sourceRows > 0, sourceColumns > 0,
       rows > 0, columns > 0, rows <= 4096, columns <= 4096,
       rows % upsamplingFactor == 0, columns % upsamplingFactor == 0,
       rows / upsamplingFactor == (region?.size ?? sourceRows),
       columns / upsamplingFactor == (region?.size ?? sourceColumns),
-      phase.count == rows * columns * 4, phaseSHA256 == SSBPhaseArtifact.digest(phase),
+      phase.count == rows * columns * 4, phaseSHA256 == DirectPhaseArtifact.digest(phase),
       rotationDegrees.isFinite,
       outputSampling.map({ $0 == .auto ? upsamplingFactor <= 4 : $0 == .factor(upsamplingFactor) })
         ?? true
     else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "This joint SSB result is incomplete, corrupted or belongs to another source.")
+        "This joint direct ptycho result is incomplete, corrupted or belongs to another source.")
     }
     try region?.validate(sourceRows: sourceRows, sourceColumns: sourceColumns)
     try parameters.validate()
@@ -108,9 +108,9 @@ public struct MetalDirectPtychoJointSavedRun: Codable, Sendable {
       try point.validate()
       guard point.jointParameters == parameters else {
         throw MetalDirectPtychoError.invalidGeometry(
-          "The saved Double model point does not match its displayed SSB parameters.")
+          "The saved Double model point does not match its displayed direct ptycho parameters.")
       }
     }
-    _ = try calibration.ssbUpsamplingFactor()
+    _ = try calibration.directAutoUpsample()
   }
 }

@@ -34,7 +34,7 @@ def _phase_sums_kernel(batch: int, chunk: int, ny: int, nx: int):
         sumsq_out[elem] = sq;
     """
     return mx.fast.metal_kernel(
-        name=f"ssb_phase_sums_n{int(batch)}_b{int(chunk)}_{int(ny)}_{int(nx)}",
+        name=f"direct_phase_sums_n{int(batch)}_b{int(chunk)}_{int(ny)}_{int(nx)}",
         input_names=["obj"],
         output_names=["sum_out", "sumsq_out"],
         source=source,
@@ -102,7 +102,7 @@ def _phase_sum_kernel(batch: int, chunk: int, ny: int, nx: int):
         sum_out[batch * PLANE + row * NX + col] = s;
     """
     return mx.fast.metal_kernel(
-        name=f"ssb_phase_sum_n{int(batch)}_b{int(chunk)}_{int(ny)}_{int(nx)}",
+        name=f"direct_phase_sum_n{int(batch)}_b{int(chunk)}_{int(ny)}_{int(nx)}",
         input_names=["obj"],
         output_names=["sum_out"],
         source=source,

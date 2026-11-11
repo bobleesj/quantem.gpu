@@ -1,4 +1,4 @@
-"""Refine an estimated scan-detector rotation inside the SSB fit: a 1-D search over the angle, one polish per angle.
+"""Refine an estimated scan-detector rotation inside the direct ptychography fit: a 1-D search over the angle, one polish per angle.
 
 G(q, k) does not depend on the rotation; only the bright-field k vectors do, so a session changes the angle with
 ``set_rotation`` (the k geometry is retargeted, G is not rebuilt) and each angle costs one polish of the fit

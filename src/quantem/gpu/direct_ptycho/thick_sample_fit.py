@@ -1,4 +1,4 @@
-"""Shared constants of the joint (thick-sample) SSB fit.
+"""Shared constants of the joint (thick-sample) direct ptychography fit.
 
 The joint fit itself is the resident search of ``_resident_search.fit_resident`` with the trust-region Newton on the
 exact derivatives of ``cuda`` or ``mps.exact_derivatives`` (``_exact_newton``). Units: C10, C12, depth_spread_A in the

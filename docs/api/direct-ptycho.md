@@ -1,7 +1,7 @@
 # Choose a direct reconstruction
 
-`DirectPtycho` owns acquisition preparation, SSB-based optical fitting and
-three direct reconstruction methods. The default remains conventional SSB.
+`DirectPtycho` owns acquisition preparation, direct-ptychography-based optical fitting and
+three direct reconstruction methods. The default remains conventional direct ptychography.
 Regularized phase and complex reconstruction are experimental methods on CUDA
 and MPS (Apple GPUs); both backends solve the same model, and their images
 agree within twice CUDA's own float32 error. This API does not imply that a
@@ -16,7 +16,7 @@ from quantem.gpu import DirectPtycho
 ptycho = DirectPtycho.open("scan.qem")
 optics = ptycho.aberrations(tilt=True)
 
-ssb = ptycho.run(optics, upsample="auto")
+direct = ptycho.run(optics, upsample="auto")
 phase = ptycho.run(
     optics, method="phase", phase_damp=0.03,
     upsample="auto", save_dir="results",
@@ -87,8 +87,8 @@ Use `show=False, show_convergence=True` for the chart without the phase preview.
 For a primary-only fit, inspect `fit.show("convergence")` after fitting.
 
 In a notebook, standard/broad fitting first shows a lightweight conventional
-SSB preview. When fitting finishes on resident CUDA data, that same output
-shows three panels in two columns: **conventional SSB**, **regularized phase-only**,
+Direct ptychography preview. When fitting finishes on resident CUDA data, that same output
+shows three panels in two columns: **conventional direct ptychography**, **regularized phase-only**,
 and **amplitude + phase**. Every panel shows phase in radians using the same fitted
 optics, Auto sampling and shared contrast. The regularized previews use the
 `reconstruct` defaults: phase strength 0.03, amplitude strength 0.03 when applicable,
@@ -96,7 +96,7 @@ smoothness crossover 1 Å⁻¹, and uniform weighting. They are comparison choic
 not a selected winner. Use explicit `reconstruct` calls to tune or retain alternatives.
 Preparation happens once per model after fitting and is included in display
 time, not the optical-fit time. `show=False` skips it. MPS and streamed sessions
-continue to show conventional SSB here (on MPS, call `reconstruct` with `method="phase"`
+continue to show conventional direct ptychography here (on MPS, call `reconstruct` with `method="phase"`
 or `"complex"`); streamed sessions have no regularized methods. Subsequent
 phase-strength changes reuse the prepared phase equations.
 
@@ -112,7 +112,7 @@ fit = ptycho.aberrations(
 `scan_region` uses scan positions `(row_start, row_stop, col_start, col_stop)`
 with exclusive stops. The square region must fit inside the acquisition and
 currently have 128, 256, 512 or 1024 positions per side. Only that region
-contributes to fitting. The initial preview shows full-field SSB with a box and
+contributes to fitting. The initial preview shows full-field direct ptychography with a box and
 a matching zoom. The final CUDA comparison puts all three full fields above
 their matching fit-region zooms. All previews apply the regional optics to the
 full acquisition; no second full-field fit is run.
@@ -136,7 +136,7 @@ is not evidence of measured spatial resolution.
 
 | Method | Unknowns | Reconstruction |
 |---|---|---|
-| `"phase_of_mean"` | Conventional corrected SSB phase | Existing sideband reconstruction |
+| `"phase_of_mean"` | Conventional corrected direct ptychography phase | Existing sideband reconstruction |
 | `"phase"` | Phase, with amplitude fixed to one | Regularized weak-phase linear solve |
 | `"complex"` | Relative log-amplitude and phase | Coupled regularized weak-object linear solve |
 
@@ -180,7 +180,7 @@ not supply missing independent measurements or validate apparent atom peaks.
 ## Review and reuse
 
 ```python
-phase.show(compare=ssb, region="top-left", cmap="gray", size="large")
+phase.show(compare=direct, region="top-left", cmap="gray", size="large")
 phase.reconstruction_options
 phase.reconstruction_diagnostics
 ptycho.show(view="regularization", upsample="auto")
@@ -212,7 +212,7 @@ and object sampling. FFT appearance is a diagnostic, not an independent
 resolution measurement. Interactive image panning does not redefine the saved
 crop or its FFT; change `region` and rerun `show` to compare another crop.
 
-Comparison titles identify conventional SSB, regularized phase-only, or
+Comparison titles identify conventional direct ptychography, regularized phase-only, or
 amplitude + phase, including recorded damping strengths. Upsampling
 is labeled separately from the phase units. Full fields remain above the
 matching marked zooms with a shared contrast range. Choose `region="center"`
@@ -224,7 +224,7 @@ reuses prepared normal equations. Phase updates use a cached eigendecomposition;
 complex updates solve the small coupled systems with the two chosen strengths.
 Changing optics, rotation, model, sampling, weighting or the smoothness prior
 builds a new system. A selected region owns a separate session. The session
-retains one prepared system to bound memory. As for conventional SSB, input
+retains one prepared system to bound memory. As for conventional direct ptychography, input
 arrays must remain unchanged during the session; create a new session after
 changing measured data. `force=True` rebuilds the prepared equations.
 
@@ -236,7 +236,7 @@ and numerical controls are saved with the result.
 
 The regularized training prediction error is in
 `result.reconstruction_diagnostics["training_relative_sse"]`. It is distinct
-from conventional SSB's phase-variance `loss`, and neither is an independent
+from conventional direct ptychography's phase-variance `loss`, and neither is an independent
 resolution measurement. Compare held-out data and repeatability as well as
 images with shared display scales.
 
@@ -318,10 +318,10 @@ a new series from saved scans with `max_frames=None` for post-hoc alignment.
 Insufficient overlap with the last confident scan stops registration with a
 recovery message instead of resetting global drift or clipping a scan.
 
-Every frame is reconstructed by SSB, and by each method in `method`
+Every frame is reconstructed by direct ptychography, and by each method in `method`
 (`"phase_of_mean"`, `"phase"`, `"complex"` or a tuple) at that frame's optics, with
 `reconstruct`'s strengths (`phase_damp=...`). Each frame is registered on its
-SSB phase against the last confidently placed frame (lattice-safe band
+Direct ptychography phase against the last confidently placed frame (lattice-safe band
 registration from `quantem.gpu.drift`, Bragg spots from the first frame) and
 added in register to `series.combined[...]`. A frame whose pair confidence
 falls below 0.04 is measured but not added. In a notebook, `show=True` (the
@@ -332,7 +332,7 @@ series, which can differ from the session used to obtain the initial fit.
 On a measured 40-frame series (512 x 512 scan, 192 x 192 detector, 1536 x 1536
 output, one GPU) a frame costs a median 0.84 s with phase-only and amplitude +
 phase: 0.49 s reading the file, 0.05 s refitting, 0.03-0.05 s per method,
-0.013 s registering. Registration on SSB, phase-only or
+0.013 s registering. Registration on direct ptychography, phase-only or
 amplitude + phase agrees within 0.05 Å.
 
 - `series.report()`: per frame, the refit optics, evaluations, shift against
@@ -377,12 +377,12 @@ Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.
 The public methods are `aberrations()`, `run()`, and `scan_rotations()`.
 Update old `fit_aberrations()`, `reconstruct()`, and rotation-comparison calls to these
 names; the renamed methods do not retain aliases. Saved records take the new
-names too (`quantem.ssb-result/14`, `quantem.ssb-calibration/8`); the CHANGELOG
+names too (`quantem.direct-result/15`, `quantem.direct-calibration/9`); the CHANGELOG
 names the script that rewrites existing files once. The series entry point is
 `DirectPtycho.series(...)`; there is no `stream(...)` spelling.
 The package is `quantem.gpu.direct_ptycho` (for example
 `from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA`); there is no
-`quantem.gpu.ssb` alias.
+`quantem.gpu.direct` alias.
 The established `DirectPtychoResult` type holds all three direct methods; `method=`
 is the one control of which reconstruction runs.
 
@@ -434,6 +434,5 @@ Damping changes the object solution without changing the probe. These controls
 explore a model at its fitted reference plane; they do not measure a separate
 probe or establish specimen depth resolution. Reset All restores launch settings.
 
-The Python workflow is `DirectPtycho`; the former `SSB` class alias has been
-removed. Use `aberrations()` for optical fitting. The scientific algorithm
+The Python workflow is `DirectPtycho`; there is no other class name for it. Use `aberrations()` for optical fitting. The scientific algorithm
 name `method="phase_of_mean"` remains available alongside `"phase"` and `"complex"`.

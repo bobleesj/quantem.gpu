@@ -124,7 +124,7 @@ def run(
     >>> from quantem.gpu import DirectPtycho, io, parallax
     >>> data = io.load("scan_master.h5", device="cuda")
     >>> result = parallax.run(data, aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
-    >>> ssb = DirectPtycho(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
+    >>> direct = DirectPtycho(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
     ...           aberrations=result.aberrations, scan_detector_rotation_deg=result.scan_detector_rotation_deg)
     """
     if not isinstance(data, Dataset4dstem):
@@ -148,8 +148,8 @@ def run(
             "aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
             "calibration: semiangle_mrad, or detector_sampling_mrad in mrad per detector pixel."
         )
-    # A sampling is a (row, col) pair, as SSB reads it: one number was broadcast to both axes here,
-    # while SSB refuses it, so the same call meant two things in the two workflows.
+    # A sampling is a (row, col) pair, as direct ptychography reads it: one number was broadcast to both axes here,
+    # while direct ptychography refuses it, so the same call meant two things in the two workflows.
     scan_sampling_A = None if scan_sampling_A is None else sampling_pair("scan_sampling_A", scan_sampling_A)
     detector_sampling_mrad = None if detector_sampling_mrad is None else sampling_pair("detector_sampling_mrad", detector_sampling_mrad)
     # CuPy allocates and launches on its current device and torch exports DLPack from its own: both are the
@@ -184,7 +184,7 @@ def run(
 
         aberrations = scan_detector_rotation_deg = None
         if aberrations:
-            # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
+            # Direct ptychography's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
             if detector_sampling_mrad is None:
                 mean_pattern = detector.mean(data) if mean_pattern is None else mean_pattern
                 detector_sampling_mrad = detector.detector_sampling_mrad(mean_pattern, semiangle_mrad)
@@ -212,7 +212,7 @@ def run(
 def aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float], float]:
     """Fit defocus, two-fold astigmatism and the scan-detector rotation to parallax shifts.
 
-    With SSB's aberration function ``chi = (pi / lambda) alpha^T A alpha``,
+    With direct ptychography's aberration function ``chi = (pi / lambda) alpha^T A alpha``,
     ``A = [[C10 + C12 cos 2 phi12, C12 sin 2 phi12], [C12 sin 2 phi12, C10 - C12 cos 2 phi12]]``,
     the bright-field image at beam angle ``alpha`` (radians, detector frame)
     sees the specimen ``A alpha`` away from the probe position, so the shift
@@ -250,7 +250,7 @@ def aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float], flo
         rotation_rad = rotation_rad % (2 * math.pi) - math.pi
         aberration = -aberration
     a, b, c = aberration[0, 0], (aberration[1, 0] + aberration[0, 1]) / 2, aberration[1, 1]
-    # A is in Angstrom like the shifts; SSB takes C10 and C12 in nm
+    # A is in Angstrom like the shifts; direct ptychography takes C10 and C12 in nm
     aberrations = {
         "C10_nm": float(a + c) / 20,
         "C12_nm": math.hypot((a - c) / 2, b) / 10,

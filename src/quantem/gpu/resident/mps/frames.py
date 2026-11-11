@@ -1,6 +1,6 @@
 """Integer 4D-STEM frames held in Metal unified-memory chunks.
 
-MPS SSB borrows an integer Torch MPS tensor as ``ChunkedFrames`` so bright-field
+MPS direct ptychography borrows an integer Torch MPS tensor as ``ChunkedFrames`` so bright-field
 column gathers and virtual-detector sums run in raw Metal on the resident
 buffers, without a copy or a dtype cast.
 """

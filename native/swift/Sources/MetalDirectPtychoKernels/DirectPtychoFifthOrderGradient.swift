@@ -4,7 +4,7 @@ import Metal
 /// The fifth-order agreement and its exact gradient for a batch of candidates, on all BF pixels or every n-th.
 /// Pass 1 is the objective itself (`DirectPtychoFifthOrderAgreement.encodeBatch`: `fifth_probe`, `fifth_agreement_rows`,
 /// `fifth_power`, `fifth_score`), so the agreement on all BF pixels is bit-identical to `fifthOrderAgreements`.
-/// Pass 2 (`fifth_gradient_rows`, ssb-fifth-gradient v0.2) uses the per-frequency projection a_q = N_q / D_q of
+/// Pass 2 (`fifth_gradient_rows`, direct-fifth-gradient v0.2) uses the per-frequency projection a_q = N_q / D_q of
 /// pass 1 (`fifth_gradient_scale`). Threadgroup partials of the gradient are reduced on the host in Double.
 final class DirectPtychoFifthOrderGradient {
   private struct Grid {
@@ -31,7 +31,7 @@ final class DirectPtychoFifthOrderGradient {
   private let objective: DirectPtychoFifthOrderAgreement
   private let scale, gradient: MTLComputePipelineState
   private var workspaces: [String: MTLBuffer] = [:]
-  /// d chi / d packed coefficient as row^a col^b polynomials (`SSBRedrawPolynomial.full` of each unit coefficient).
+  /// d chi / d packed coefficient as row^a col^b polynomials (`DirectRedrawPolynomial.full` of each unit coefficient).
   private var basis: (wavelength: Float, polynomials: [[Double]])?
   /// GPU time of the latest command buffer (`evaluate` or `retainedGradients`).
   private(set) var lastGPUSeconds = 0.0
@@ -56,7 +56,7 @@ final class DirectPtychoFifthOrderGradient {
 
   private func workspace(_ name: String, bytes: Int, shared: Bool = false) throws -> MTLBuffer {
     if let existing = workspaces[name], existing.length >= bytes { return existing }
-    let buffer = try SSBCoherentReconstruction.allocate(device, bytes, shared: shared)
+    let buffer = try DirectCoherentReconstruction.allocate(device, bytes, shared: shared)
     workspaces[name] = buffer
     return buffer
   }
@@ -134,7 +134,7 @@ final class DirectPtychoFifthOrderGradient {
       (0..<bandCount).reduce(0.0) { $0 + Double(power[row * bandCount + $1]) }
     }
     guard values.allSatisfy(\.isFinite), values64.allSatisfy(\.isFinite) else {
-      throw SSBOptimizationError.nonFiniteLoss
+      throw DirectOptimizationError.nonFiniteLoss
     }
     if !withGradients {
       // One batch keeps every row's projections in the workspaces.
@@ -280,7 +280,7 @@ final class DirectPtychoFifthOrderGradient {
   private func basisPolynomials(_ wavelength: Float) -> [[Double]] {
     if let basis, basis.wavelength == wavelength { return basis.polynomials }
     let polynomials = (0..<28).map { j in
-      SSBRedrawPolynomial.fullDouble(
+      DirectRedrawPolynomial.fullDouble(
         coefficients: (0..<28).map { $0 == j ? 1.0 : 0.0 }, wavelength: Double(wavelength))
     }
     basis = (wavelength, polynomials)
@@ -312,7 +312,7 @@ final class DirectPtychoFifthOrderGradient {
       result.append(Value(agreement: values[row], agreement64: values64[row], gradient: gradient))
     }
     guard result.allSatisfy({ $0.gradient.allSatisfy(\.isFinite) }) else {
-      throw SSBOptimizationError.nonFiniteLoss
+      throw DirectOptimizationError.nonFiniteLoss
     }
     return result
   }

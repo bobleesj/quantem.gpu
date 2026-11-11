@@ -4,7 +4,7 @@ import Metal
 /// Batched all-BF fifth-order agreement with persistent, bounded GPU partials and GPU score reduction.
 /// The model supplies its already gathered native-grid evidence and reusable probe geometry.
 ///
-/// Evaluation is `fifth_agreement_rows` (ssb-fifth-agreement, `ssb_fifth_agreement.metal`), also the value pass of
+/// Evaluation is `fifth_agreement_rows` (direct-fifth-agreement, `direct_fifth_agreement.metal`), also the value pass of
 /// `DirectPtychoFifthOrderGradient` on all or every n-th BF pixel.
 final class DirectPtychoFifthOrderAgreement {
   private struct Grid {
@@ -47,7 +47,7 @@ final class DirectPtychoFifthOrderAgreement {
     power = try pipeline("fifth_power")
     score = try pipeline("fifth_score")
     let table = Self.tiles(q, width: Self.tileWidth)
-    tiles = try SSBCoherentReconstruction.buffer(device, table)
+    tiles = try DirectCoherentReconstruction.buffer(device, table)
     tileCount = table.count
   }
 
@@ -89,7 +89,7 @@ final class DirectPtychoFifthOrderAgreement {
 
   private func workspace(_ name: String, bytes: Int, shared: Bool = false) throws -> MTLBuffer {
     if let existing = workspaces[name], existing.length >= bytes { return existing }
-    let buffer = try SSBCoherentReconstruction.allocate(device, bytes, shared: shared)
+    let buffer = try DirectCoherentReconstruction.allocate(device, bytes, shared: shared)
     workspaces[name] = buffer
     return buffer
   }
@@ -197,12 +197,12 @@ final class DirectPtychoFifthOrderAgreement {
 
   func batch(_ rows: ArraySlice<[Float]>, geometry: MetalDirectPtychoGeometry) throws -> Batch {
     let polynomials = rows.flatMap {
-      SSBRedrawPolynomial.full(
+      DirectRedrawPolynomial.full(
         coefficients: Array($0[3..<31]), wavelength: geometry.wavelengthAngstroms)
     }
     return Batch(
-      trials: try SSBCoherentReconstruction.buffer(device, rows.flatMap { $0 }),
-      polynomials: try SSBCoherentReconstruction.buffer(device, polynomials), count: rows.count)
+      trials: try DirectCoherentReconstruction.buffer(device, rows.flatMap { $0 }),
+      polynomials: try DirectCoherentReconstruction.buffer(device, polynomials), count: rows.count)
   }
 
   /// Encodes the agreement of one batch on every `kStride`-th BF pixel: chi(k) of each row (`fifth_probe`, all
@@ -289,7 +289,7 @@ final class DirectPtychoFifthOrderAgreement {
     let values = scores.contents().assumingMemoryBound(to: Float.self)
     var result = [Double](repeating: 0, count: input.count)
     for (position, index) in order.enumerated() { result[index] = Double(values[position]) }
-    guard result.allSatisfy(\.isFinite) else { throw SSBOptimizationError.nonFiniteLoss }
+    guard result.allSatisfy(\.isFinite) else { throw DirectOptimizationError.nonFiniteLoss }
     return result
   }
 }

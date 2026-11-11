@@ -1,4 +1,4 @@
-"""Model-Based Direct Ptychography (SSB, phase and complex) for QuantEM GPU backends."""
+"""Model-Based Direct Ptychography (phase of mean, phase and complex) for QuantEM GPU backends."""
 
 from quantem.gpu.direct_ptycho.branches import RotationBranch, RotationBranches
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult

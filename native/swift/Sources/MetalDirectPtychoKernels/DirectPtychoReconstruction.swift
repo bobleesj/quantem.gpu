@@ -3,11 +3,12 @@ import Metal
 
 /// The three reconstructions of the fitted optics, as Python's `DirectPtycho.reconstruct(method=...)`.
 ///
-/// `ssb` is conventional single-sideband ptychography (`phase_of_mean`). `phase` solves the linear weak-phase
+/// `phaseOfMean` is conventional direct ptychography (`phase_of_mean`). `phase` solves the linear weak-phase
 /// model of every measured scan frequency, all supported aliases jointly, with a damped smoothness prior.
 /// `complex` solves the relative log-amplitude and the phase of the same linearized object together.
 public enum DirectPtychoReconstructionMethod: String, Codable, Sendable, CaseIterable {
-  case ssb, phase, complex
+  case phaseOfMean = "phase_of_mean"
+  case phase, complex
 }
 
 /// How bright-field pixels are weighted in the regularized normal equations.
@@ -19,7 +20,7 @@ public enum DirectPtychoDetectorWeighting: String, Codable, Sendable {
 }
 
 /// Regularization of the `phase` and `complex` direct solves (Python `phase_damping`, `amplitude_damping`,
-/// `smoothness_inv_A`, `detector_weighting`). Ignored by `ssb`.
+/// `smoothness_inv_A`, `detector_weighting`). Ignored by `phaseOfMean`.
 ///
 /// The prior of each object frequency q is `damping * (1 + (q / q0)^2)^2 * scale`, with q0 =
 /// `smoothnessInverseAngstroms` and `scale` the weighted fourth power of the aperture summed over the BF pixels;
@@ -46,7 +47,7 @@ public struct DirectPtychoRegularization: Codable, Equatable, Sendable {
 
   /// The checks of Python `direct_workflow.settings`, with its messages.
   public func validate(for method: DirectPtychoReconstructionMethod) throws {
-    guard method != .ssb else { return }
+    guard method != .phaseOfMean else { return }
     guard phaseDamping.isFinite, phaseDamping > 0 else {
       throw DirectPtychoSolveError.invalidRegularization(
         "phase_damping must be finite and positive; got \(phaseDamping).")
@@ -82,7 +83,7 @@ public enum DirectPtychoSolveError: LocalizedError, Equatable {
     case .unsupportedSampling(let factor):
       "Regularized direct reconstruction supports output sampling 1x to 4x; got \(factor)x."
     case .notImplemented(let method):
-      "The native \(method.rawValue) reconstruction is not implemented yet; use method ssb."
+      "The native \(method.rawValue) reconstruction is not implemented yet; use method direct."
     case .tooFewScanPositions:
       "Direct inversion needs at least 3 scan positions per side; select a larger region."
     case .noIncidentIntensity:
@@ -98,7 +99,7 @@ public enum DirectPtychoSolveError: LocalizedError, Equatable {
 extension MetalDirectPtychoJointModel {
   /// Reconstruct a model point with one of the three methods.
   ///
-  /// `.ssb` is today's `phase_of_mean` path (any regularization is ignored and not recorded); `.phase` and
+  /// `.phaseOfMean` is today's `phase_of_mean` path (any regularization is ignored and not recorded); `.phase` and
   /// `.complex` are the regularized direct solves. `.complex` also returns the relative amplitude
   /// |exp(eta + i phi)| = exp(eta) in `amplitude`. The result records `method` and, for the direct solves,
   /// `regularization`.
@@ -108,7 +109,7 @@ extension MetalDirectPtychoJointModel {
     regularization: DirectPtychoRegularization = .init(), isCancelled: () -> Bool = { false }
   ) throws -> MetalDirectPtychoJointPhase {
     switch method {
-    case .ssb:
+    case .phaseOfMean:
       return try reconstruct(point, upsamplingFactor: upsamplingFactor, isCancelled: isCancelled)
     case .phase, .complex:
       try regularization.validate(for: method)

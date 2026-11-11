@@ -54,7 +54,7 @@ class Calibration:
     }
 
     # the bright-field disk detector_sampling records: read here, never set by hand (give a centre or a radius to
-    # SSB or Show4DSTEM instead)
+    # Direct ptychography or Show4DSTEM instead)
     FITTED = {
         "bright_field_center_px": ("px", True),
         "bright_field_edge_radius_px": ("px", False),
@@ -92,7 +92,7 @@ class Calibration:
         semiangle: ``detector_sampling_mrad = semiangle_mrad / bright_field_edge_radius_px`` on both axes
         (``detector.bright_field_disk``). The mean pattern is computed on the encoded acquisition, with no dense
         copy. The fit records the detector sampling (source ``Fitted (bright-field disk)``), the disk centre and its
-        edge radius here; SSB, the viewers and ``io.save`` then use them instead of fitting again. A detector sampling
+        edge radius here; direct ptychography, the viewers and ``io.save`` then use them instead of fitting again. A detector sampling
         you set by hand is kept, and one line says so. Fit again after changing ``semiangle_mrad``.
 
         Returns

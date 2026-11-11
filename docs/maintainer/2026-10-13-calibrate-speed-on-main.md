@@ -1,15 +1,15 @@
 # Calibration speed-up on main: the tilt fit's Newton polish and resident sessions - 2026-10-13
 
-> **Historical:** describes the code as of 2026-10-13; `refinement="newton"` with finite-difference steps and the Nelder–Mead polish are retired; fits refine on exact derivatives. See the [current fit methods](../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-13; `refinement="newton"` with finite-difference steps and the Nelder–Mead polish are retired; fits refine on exact derivatives. See the [current fit methods](../api/direct.md).
 
 ## Question
 
-A ptychography pipeline calibrates each acquisition on its full native scan: beam centre, DPC rotation, then SSB's
+A ptychography pipeline calibrates each acquisition on its full native scan: beam centre, DPC rotation, then direct ptychography's
 joint tilt fit and phase images, once on the whole scan and again on the region it reconstructs. A branch of 11-12 Oct,
 built before the package restructure and never merged, cut that from 15.1 s to 5.9 s on a 512 x 512 x 192 x 192
 acquisition (same card, its own timing table): the Nelder-Mead polish of the tilt fit made about 1100 sequential passes
-over G, a Newton polish makes 5 or 6 batched ones; the acquisition was read from its file once and handed to SSB; the
-standard-SSB search that only feeds `tilt_fit_gain` was skipped. Does the same work, rewritten on main's names, give
+over G, a Newton polish makes 5 or 6 batched ones; the acquisition was read from its file once and handed to direct ptychography; the
+standard-direct search that only feeds `tilt_fit_gain` was skipped. Does the same work, rewritten on main's names, give
 the branch's numbers?
 
 ## What moved
@@ -19,7 +19,7 @@ the branch's numbers?
 | `fit(tilt=True, refinement="newton")`, Newton polish with bounded trust steps | `aberrations(tilt=True, refinement="newton")`, `thick_sample_fit.newton_polish` |
 | `compare_standard=False` | same keyword; `tilt_fit_gain` is None |
 | `fit(tilt=True, trials=0)` refines the previous scan's fit | `num_trials=0` from the session's `aberrations`, `sample_tilt_mrad`, `depth_spread_nm` |
-| `SSB.open(acquisition, scan_region=, mean_pattern=)` | `SSB(dataset, scan_region=, mean_pattern=)`; main's constructor already took a dataset |
+| `DirectPtycho.open(acquisition, scan_region=, mean_pattern=)` | `DirectPtycho(dataset, scan_region=, mean_pattern=)`; main's constructor already took a dataset |
 | saved fit of a resident acquisition identified by its data | same identity (shape, dtype, mean-pattern hash, scan region), `source_kind="resident"` |
 | `preview(output="native")` | same keyword |
 | `io.load.bin` | same path; integer input sums in a 64-bit integer (the branch summed CuPy counts in uint32 and Torch uint16 in float32), and `edge="partial"` applies to 2D and 3D input too |

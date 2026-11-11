@@ -1,7 +1,7 @@
 """Prepared weak-object amplitude/phase systems on Apple GPUs, as ``direct_ptycho.cuda.direct`` on CUDA.
 
 For each measured scan frequency, all supported aliases are fitted together, with the tilted, finite-depth probe
-model used by SSB fitting. The layout (dose, detector weights, damping scale, supported aliases of every non-DC
+model used by direct ptychography fitting. The layout (dose, detector weights, damping scale, supported aliases of every non-DC
 frequency of the half plane, prior) depends on the data and sampling only and is kept on the prepared MPS state. The
 normal equations depend on the optics too: Metal evaluates the transfer and accumulates the augmented Gram
 V^H W V, V = (T_1 .. T_dim, G), from the retained G(q, k), in float32 per BF pixel and in float-float across BF
@@ -31,7 +31,7 @@ _MAX_SHARE = 96
 _SOLVE_CHUNK = 2048
 
 _HEADER = (
-    "#define SSB_DEVICE inline\n#define SSB_COEFFICIENTS threadgroup const float*\n"
+    "#define DIRECT_DEVICE inline\n#define DIRECT_COEFFICIENTS threadgroup const float*\n"
     + CHI_SOURCE
     + r"""
 // CUDA's thick_probe_geometry: (alpha^2, -, -, soft aperture); on square detector pixels the edge width is the
@@ -87,7 +87,7 @@ inline float2 direct_side(float dr, float dc, float sign, float shift, float4 gk
     if (r2 >= o.outer2) return float2(0.0f);
     const float4 g = direct_geometry(dr, dc, o.wl, o.semiangle, o.ang_r, o.ang_c);
     if (g.w * gk.y == 0.0f) return float2(0.0f);
-    const float chi = ssb_chi_full(dr, dc, o.wl, o.coefficients);
+    const float chi = direct_chi_full(dr, dc, o.wl, o.coefficients);
     const float w = o.depth != 0.0f ? direct_sinc(0.5f * o.depth * (sign * o.factor * (g.x - gk.x) - shift)) : 1.0f;
     const float amplitude = g.w * gk.y * w;
     float c;
@@ -156,7 +156,7 @@ def _pixel_kernel():
         const float kr = k[2 * j], kc = k[2 * j + 1];
         const float4 g = direct_geometry(kr, kc, o.wl, o.semiangle, o.ang_r, o.ang_c);
         device float4* out = (device float4*)pixel;
-        out[2 * j] = float4(kr, kc, ssb_chi_full(kr, kc, o.wl, o.coefficients), weights[j]);
+        out[2 * j] = float4(kr, kc, direct_chi_full(kr, kc, o.wl, o.coefficients), weights[j]);
         out[2 * j + 1] = float4(g.x, g.w, 0.0f, 0.0f);
         """,
     )
@@ -533,7 +533,7 @@ def _layout(backend, factor: int, smoothness_inv_A: float, detector_weighting: s
 
 
 def _bright_field_frequencies(backend) -> np.ndarray:
-    """(k row, k column) in 1/A of every stored BF pixel after the scan rotation: the prepared SSB state's k, formed
+    """(k row, k column) in 1/A of every stored BF pixel after the scan rotation: the prepared direct ptychography state's k, formed
     in float64 and rounded once (``prepared.bright_field_frequencies``)."""
     prepared = backend._prepared
     return np.ascontiguousarray(np.stack((prepared.kx_np, prepared.ky_np), axis=1), np.float32)

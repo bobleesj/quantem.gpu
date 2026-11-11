@@ -1,4 +1,4 @@
-"""Drag windows: the Chebyshev series along one control against exact preparation and SSB preview.
+"""Drag windows: the Chebyshev series along one control against exact preparation and direct ptychography preview.
 
 At a Chebyshev node the window reproduces that node's own exact statistics, so
 the images differ only by the solver (float64 Cholesky here, eigenbasis or LU
@@ -6,7 +6,7 @@ in PreparedDirect.solve), each rounded once to a complex64 coefficient: a few
 float32 ulps of the largest pixel (tolerance 1e-6). Between nodes, the window
 adds its truncation (below 4e-7 of the largest Gram entry at N = 12, h = 3 /
 max|u|) to the difference between two float32 transfer evaluations, which is
-the 3e-7 that test_ssb_prepared_methods.py documents (tolerance 2e-6, as
+the 3e-7 that test_direct_prepared_methods.py documents (tolerance 2e-6, as
 there). log|w| of a complex64 wave near |w| = 1 is quantized at 2**-23.
 """
 
@@ -138,8 +138,8 @@ def test_prepared_windows_serve_the_first_frame_of_a_grab(ptycho):
 
 
 @pytest.mark.parametrize("control", ["C10_nm", "phi12_deg"])
-def test_ssb_window_matches_exact_preview(ptycho, control):
-    """SSB drags: single-sideband part interpolated, triple overlap exact, against the full 14-term preview.
+def test_direct_window_matches_exact_preview(ptycho, control):
+    """Direct ptychography drags: double-overlap part interpolated, triple overlap exact, against the full 14-term preview.
 
     The two classes partition the terms, so at a node only the float64 order
     of the BF sum differs (tolerance 1e-6 of the largest phase); between nodes

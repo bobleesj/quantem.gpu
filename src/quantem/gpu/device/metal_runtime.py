@@ -108,7 +108,7 @@ def _contents(buffer):
 
     Until PyObjC loads the Metal framework's metadata, ``contents()`` returns
     the bare address as an int. A Torch tensor's buffer borrowed through
-    ``tensor_buffer`` before anything imported Metal hits that (SSB on an MPS
+    ``tensor_buffer`` before anything imported Metal hits that (direct ptychography on an MPS
     tensor run on its own did), so Metal is imported before every read.
     """
     metal_module()

@@ -33,7 +33,7 @@ def twiddle_512_metal_header() -> str:
         f"uint2(0x{int(real):08x}u,0x{int(imag):08x}u)"
         for real, imag in bits
     )
-    return f"constant uint2 SSB_TWIDDLE_512[512] = {{{entries}}};"
+    return f"constant uint2 DIRECT_TWIDDLE_512[512] = {{{entries}}};"
 
 
 def small_fft_macros(n: int) -> tuple[str, str, int, bool]:

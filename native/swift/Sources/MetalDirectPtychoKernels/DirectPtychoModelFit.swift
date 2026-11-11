@@ -6,7 +6,7 @@ public enum DirectPtychoObjective: String, Codable, Sendable {
   /// The least-squares agreement of the transfer model with the measured double-overlap data, the only
   /// objective a fit runs.
   case agreement
-  /// Retired: the older native SSB objective, the variance of the per-pixel phases. Saved fits that used it still
+  /// Retired: the older native direct ptychography objective, the variance of the per-pixel phases. Saved fits that used it still
   /// decode; `DirectPtychoModelFit` refuses it.
   case phaseVariance = "phase_variance"
 }
@@ -123,7 +123,7 @@ public struct DirectPtychoFitOptions: Codable, Equatable, Sendable {
     }
     guard objective == .agreement else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "The phase-variance SSB fit is retired. Fit with the model agreement objective (the default)."
+        "The phase-variance direct ptychography fit is retired. Fit with the model agreement objective (the default)."
       )
     }
     guard Self.higherOrderLimits.contains(higherOrderLimit) else {
@@ -170,7 +170,7 @@ public struct DirectPtychoFit: Codable, Sendable {
   /// The best agreement of the standard comparison (tilt and depth spread 0), as the same fraction; nil without a
   /// comparison or for a fit saved before the band power was measured.
   public let standardAgreement: Double?
-  /// The fit's agreement over the best standard-SSB agreement on the same data (> 1: the tilt explains more). For a
+  /// The fit's agreement over the best standard-direct agreement on the same data (> 1: the tilt explains more). For a
   /// fifth-order fit, the low-order fit's gain times the fifth-order agreement over the low-order fit's (Python
   /// `tilt_fit_gain`); nil without a standard comparison (`DirectPtychoFitOptions.compareStandard`).
   public let tiltFitGain: Double?

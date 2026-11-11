@@ -1,8 +1,8 @@
-"""Full-scan SSB with a bounded batch of exact detector columns.
+"""Full-scan direct ptychography with a bounded batch of exact detector columns.
 
 Only detector columns are batched. Every forward transform spans every scan
 position; no scan tiles are reconstructed or stitched. The correction kernel
-is the same one used by the resident-spectrum SSB implementation.
+is the same one used by the resident-spectrum direct ptychography implementation.
 """
 
 import math
@@ -20,7 +20,7 @@ from quantem.gpu.direct_ptycho.cuda.brightfield import select_bright_field
 from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_wave_sum_kernel
 
 
-class StreamedSSB:
+class StreamedDirect:
     """Borrow a complete exact-count resident and retain its immutable chunks."""
 
     def __init__(self, data, *, mean_pattern, center, radius, threshold,
@@ -28,23 +28,23 @@ class StreamedSSB:
         source = data.data
         if type(source) is not StreamedCounts:
             raise NotImplementedError(
-                "Large CUDA SSB currently needs lossless integer ANS storage. "
-                "Load a uint8/uint16 acquisition with io.load before creating SSB."
+                "Large CUDA direct ptychography currently needs lossless integer ANS storage. "
+                "Load a uint8/uint16 acquisition with io.load before creating direct ptychography."
             )
         self.scan_shape = tuple(data.shape[:2])
         self.detector_shape = tuple(data.shape[2:])
         if max(self.scan_shape) > 4096 or any(side % 2 for side in self.scan_shape):
             raise ValueError(
-                f"Streamed SSB supports even scan dimensions up to 4096; got {self.scan_shape}."
+                f"Streamed direct ptychography supports even scan dimensions up to 4096; got {self.scan_shape}."
             )
         self.chunks = tuple(source.chunks)
         position = 0
         for chunk in self.chunks:
             if chunk.first != position or chunk.scans <= 0:
-                raise ValueError("SSB needs complete consecutive scan coverage. Finish loading the acquisition first.")
+                raise ValueError("Direct ptychography needs complete consecutive scan coverage. Finish loading the acquisition first.")
             position += chunk.scans
         if source.is_released or source.released_scans or position != math.prod(self.scan_shape) or source.ready_scans != position:
-            raise ValueError("SSB needs every scan position resident. Finish loading the acquisition first.")
+            raise ValueError("Direct ptychography needs every scan position resident. Finish loading the acquisition first.")
         self.device = source.device
         self.interval = source.interval
         self.decoding = source.decoding
@@ -109,7 +109,7 @@ class StreamedSSB:
         available = int(free_bytes * .8) - fixed_bytes
         if available < per_column * 4:
             raise MemoryError(
-                f"The full {output_shape} SSB output needs more free GPU memory. "
+                f"The full {output_shape} direct ptychography output needs more free GPU memory. "
                 "Close other GPU allocations or explicitly select a smaller output sampling factor."
             )
         batch_size = max(1, min(32, self.num_bright_field_pixels,

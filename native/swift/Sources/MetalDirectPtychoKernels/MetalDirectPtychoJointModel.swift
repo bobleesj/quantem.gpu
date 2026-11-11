@@ -1,7 +1,7 @@
 import Foundation
 import Metal
 
-/// The depth-averaged SSB transfer model. C10 is at the specimen midplane;
+/// The depth-averaged direct ptychography transfer model. C10 is at the specimen midplane;
 /// defocus f = -C10. Tilt components are in the scan (row, column) frame.
 public struct DirectPtychoJointParameters: Codable, Equatable, Sendable {
   public var aberrations: MetalDirectPtychoAberrations
@@ -34,13 +34,13 @@ public struct DirectPtychoJointParameters: Codable, Equatable, Sendable {
     guard packed.allSatisfy(\.isFinite), depthAngstroms >= 0
     else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "Joint SSB needs finite C10/C12, nonnegative depth and tilt in mrad."
+        "Joint direct ptychography needs finite C10/C12, nonnegative depth and tilt in mrad."
       )
     }
   }
 }
 
-/// GPU phase in radians of one of the three reconstructions (`method`): SSB (`phase_of_mean`) or the regularized
+/// GPU phase in radians of one of the three reconstructions (`method`): direct ptychography (`phase_of_mean`) or the regularized
 /// direct `phase` / `complex` solves. Upsampling unfolds the measured Fourier aliases; it is not image interpolation.
 public struct MetalDirectPtychoJointPhase: @unchecked Sendable {
   public let phase: MTLBuffer
@@ -54,23 +54,23 @@ public struct MetalDirectPtychoJointPhase: @unchecked Sendable {
   /// Exact Double point used for this phase, independently of the Float UI bridge.
   public var point: DirectPtychoModelPoint? = nil
   /// Method `.complex` only: the relative amplitude |exp(eta + i phi)| = exp(eta) of the regularized solve (float32,
-  /// rows x columns), as the CUDA result's `amplitude`. Nil for `.ssb` and `.phase`.
+  /// rows x columns), as the CUDA result's `amplitude`. Nil for `.phaseOfMean` and `.phase`.
   public var amplitude: MTLBuffer? = nil
   /// How the output factor was chosen: `.auto` (from the calibration, at most 4x) or an explicit
   /// `.factor(n)` override. Nil when the caller passed a bare `upsamplingFactor`.
   public var outputSampling: DirectPtychoOutputSampling? = nil
   /// The registered GPU kernel (name, version, source fingerprint, variant) that produced this result.
   public var kernel: MetalKernelIdentity? = nil
-  /// The reconstruction method: `.ssb` (`phase_of_mean`), or the direct `.phase` / `.complex` solves.
-  public var method: DirectPtychoReconstructionMethod = .ssb
-  /// The regularization of a `.phase` or `.complex` result; nil for `.ssb`.
+  /// The reconstruction method: `.phaseOfMean` (`phase_of_mean`), or the direct `.phase` / `.complex` solves.
+  public var method: DirectPtychoReconstructionMethod = .phaseOfMean
+  /// The regularization of a `.phase` or `.complex` result; nil for `.phaseOfMean`.
   public var regularization: DirectPtychoRegularization? = nil
   /// Set when this is a drag preview (`dragPreview`), evaluated from a drag window rather than solved at its own
   /// optics; nil for every exact result. Previews are for display while dragging, never saved or exported.
   public var preview: DirectPtychoDragPreview? = nil
 }
 
-/// Serial native Metal implementation of QuantEM's joint tilt/depth SSB model.
+/// Serial native Metal implementation of QuantEM's joint tilt/depth direct ptychography model.
 /// Search uses the original scan grid and all selected BF pixels. The band is
 /// an explicit part of the least-squares objective, in inverse Angstrom.
 public final class MetalDirectPtychoJointModel {
@@ -126,7 +126,7 @@ public final class MetalDirectPtychoJointModel {
   private let probeGeometry: MTLBuffer
   private var batchPartial: MTLBuffer?
   private var batchPower: MTLBuffer?
-  private var coherent: SSBCoherentReconstruction
+  private var coherent: DirectCoherentReconstruction
   private var fifthOrder: DirectPtychoFifthOrderAgreement?
   /// GPU execution time (command-buffer GPU start to end) of the latest `agreements` or
   /// `fifthOrderAgreements` call, for benchmarks; excludes host encoding and the host band reduction.
@@ -182,9 +182,9 @@ public final class MetalDirectPtychoJointModel {
     if preciseMath { options.preprocessorMacros = ["fast": "precise" as NSString] }
     let library = try device.makeLibrary(
       source: MetalDirectPtychoShaderSource.load([
-        "ssb_fft", "ssb_joint", "ssb_model", "ssb_separable", "ssb_fifth_order",
-        "ssb_redraw", "ssb_fifth_agreement", "ssb_fifth_order_gradient",
-        "ssb_joint_agreement", "ssb_low_order_derivatives", "ssb_direct",
+        "direct_fft", "direct_joint", "direct_model", "direct_separable", "direct_fifth_order",
+        "direct_redraw", "direct_fifth_agreement", "direct_fifth_order_gradient",
+        "direct_joint_agreement", "direct_low_order_derivatives", "direct_regularized",
       ]),
       options: options)
     self.library = library
@@ -224,7 +224,7 @@ public final class MetalDirectPtychoJointModel {
     let steps = Self.rowSteps(ks)
     neighbourBuffer = try Self.buffer(device, steps.neighbour)
     rowStep = steps.step
-    coherent = try SSBCoherentReconstruction(
+    coherent = try DirectCoherentReconstruction(
       device: device, queue: queue, library: library, geometry: geometry, kBuffer: kBuffer, k: ks)
     probeGeometry = try Self.allocate(device, activeIndices.count * 16)
     qBuffer = try Self.buffer(device, qs)
@@ -343,7 +343,7 @@ public final class MetalDirectPtychoJointModel {
     let steps = Self.rowSteps(ks)
     neighbourBuffer = try Self.buffer(device, steps.neighbour)
     rowStep = steps.step
-    coherent = try SSBCoherentReconstruction(
+    coherent = try DirectCoherentReconstruction(
       device: device, queue: queue, library: library, geometry: geometry, kBuffer: kBuffer, k: ks)
     try encodeProbeGeometry()
     scanDetectorRotationDegrees = rotation
@@ -377,7 +377,7 @@ public final class MetalDirectPtychoJointModel {
       coefficients.allSatisfy({ $0.count == 28 && $0.allSatisfy(\.isFinite) })
     else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "Supply 28 finite Cartesian coefficients per SSB candidate.")
+        "Supply 28 finite Cartesian coefficients per direct ptychography candidate.")
     }
     if isCancelled() { throw CancellationError() }
     if points.isEmpty { return [] }
@@ -426,7 +426,7 @@ public final class MetalDirectPtychoJointModel {
       packedCoefficients.allSatisfy({ $0.count == 28 && $0.allSatisfy(\.isFinite) })
     else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "Supply 28 finite Cartesian coefficients per SSB candidate.")
+        "Supply 28 finite Cartesian coefficients per direct ptychography candidate.")
     }
     if isCancelled() { throw CancellationError() }
     if points.isEmpty { return [] }
@@ -658,7 +658,7 @@ public final class MetalDirectPtychoJointModel {
           total += Double(weight[i]) * (re * re + im * im) / denominator
         }
       }
-      guard total.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
+      guard total.isFinite else { throw DirectOptimizationError.nonFiniteLoss }
       result.append(total)
     }
     return result
@@ -694,8 +694,8 @@ public final class MetalDirectPtychoJointModel {
     return pipeline
   }
 
-  /// SSB (`phase_of_mean`) with all BF pixels: the corrected waves of every bright-field pixel summed before one
-  /// phase, as Python's `SSB.reconstruct` and `SSB.preview`. Cancellation is checked between GPU batches.
+  /// Direct ptychography (`phase_of_mean`) with all BF pixels: the corrected waves of every bright-field pixel summed before one
+  /// phase, as Python's `DirectPtycho.reconstruct` and `DirectPtycho.preview`. Cancellation is checked between GPU batches.
   public func reconstruct(
     _ parameters: DirectPtychoJointParameters, upsamplingFactor: Int = 1,
     isCancelled: () -> Bool = { false }
@@ -705,7 +705,7 @@ public final class MetalDirectPtychoJointModel {
       isCancelled: isCancelled)
   }
 
-  /// SSB with Auto or an explicit output sampling, recorded in the result's `outputSampling` so a manual 8x is
+  /// Direct ptychography with Auto or an explicit output sampling, recorded in the result's `outputSampling` so a manual 8x is
   /// never mistaken for an automatic choice.
   public func reconstruct(
     _ point: DirectPtychoModelPoint, outputSampling: DirectPtychoOutputSampling,
@@ -718,7 +718,7 @@ public final class MetalDirectPtychoJointModel {
     return result
   }
 
-  /// SSB of a double-precision model point (a fit's result) with all BF pixels.
+  /// Direct ptychography of a double-precision model point (a fit's result) with all BF pixels.
   public func reconstruct(
     _ point: DirectPtychoModelPoint, upsamplingFactor: Int = 1, isCancelled: () -> Bool = { false }
   ) throws -> MetalDirectPtychoJointPhase {
@@ -727,7 +727,7 @@ public final class MetalDirectPtychoJointModel {
     let parameters = point.jointParameters
     try parameters.validate()
     guard [1, 2, 3, 4, 8].contains(upsamplingFactor) else {
-      throw MetalDirectPtychoError.invalidGeometry("Use an SSB sampling factor of 1, 2, 3, 4 or 8.")
+      throw MetalDirectPtychoError.invalidGeometry("Use a sampling factor of 1, 2, 3, 4 or 8.")
     }
     if isCancelled() { throw CancellationError() }
     let started = Date()
@@ -814,7 +814,7 @@ public final class MetalDirectPtychoJointModel {
     method: DirectPtychoReconstructionMethod,
     regularization: DirectPtychoRegularization = .init()
   ) -> DirectPtychoDragWindowState? {
-    guard method != .ssb else { return nil }
+    guard method != .phaseOfMean else { return nil }
     return directSolver?.windowState(
       along: control, at: point, factor: upsamplingFactor, complex: method == .complex,
       regularization: regularization, rotation: scanDetectorRotationDegrees)
@@ -831,7 +831,7 @@ public final class MetalDirectPtychoJointModel {
     method: DirectPtychoReconstructionMethod,
     regularization: DirectPtychoRegularization = .init()
   ) throws -> MetalDirectPtychoJointPhase? {
-    guard method != .ssb, let solver = directSolver else { return nil }
+    guard method != .phaseOfMean, let solver = directSolver else { return nil }
     try regularization.validate(for: method)
     try point.validate()
     try validatePreparation()
@@ -868,7 +868,7 @@ public final class MetalDirectPtychoJointModel {
     factor: Int,
     _ point: DirectPtychoModelPoint
   ) throws -> DirectPtychoSolver {
-    guard method != .ssb else {
+    guard method != .phaseOfMean else {
       throw MetalDirectPtychoError.invalidGeometry(
         "Drag windows serve the regularized methods phase and complex.")
     }
@@ -923,7 +923,7 @@ public final class MetalDirectPtychoJointModel {
         length: max(4, length), options: shared ? .storageModeShared : .storageModePrivate)
     else {
       throw MetalDirectPtychoError.allocation(
-        "joint SSB workspace (\(length) bytes). Close inactive datasets and retry")
+        "joint direct ptychography workspace (\(length) bytes). Close inactive datasets and retry")
     }
     return buffer
   }
@@ -934,7 +934,7 @@ public final class MetalDirectPtychoJointModel {
           bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared)
       })
     else {
-      throw MetalDirectPtychoError.allocation("joint SSB geometry")
+      throw MetalDirectPtychoError.allocation("joint direct ptychography geometry")
     }
     return result
   }
@@ -950,7 +950,7 @@ private final class BandPowerSum: @unchecked Sendable {
   private let rowMajor =
     ProcessInfo.processInfo.environment["QUANTEM_METAL_BAND_POWER_ROW_MAJOR"] != "0"
   private let perFrequency: UnsafeMutablePointer<Double>
-  private let queue = DispatchQueue(label: "quantem.ssb.band-power")
+  private let queue = DispatchQueue(label: "quantem.direct.band-power")
 
   init(evidence: MTLBuffer, bandCount: Int) {
     self.evidence = evidence

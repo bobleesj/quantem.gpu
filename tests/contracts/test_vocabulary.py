@@ -129,7 +129,7 @@ WRITERS = [
     ("direct_ptycho/persistence.py", "save_result"),
     ("direct_ptycho/stream.py", None),
     ("screening/workflow.py", None),
-    ("formats/ssb_phase.py", None),
+    ("formats/direct_phase.py", None),
 ]
 
 

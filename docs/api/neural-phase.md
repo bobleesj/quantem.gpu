@@ -37,7 +37,7 @@ phase and measured-pattern exploration.
 
 The public fitting method is `DirectPtycho.aberrations()`. Older examples used
 `find_aberrations()` or `fit_aberrations()`, which are no longer public methods.
-Saved fit files are `ssb-aberrations.npz` and `.json`. The native Swift
+Saved fit files are `direct-aberrations.npz` and `.json`. The native Swift
 entry point is `DirectPtychoModelFit.findAberrations`.
 
 ## Reuse the model

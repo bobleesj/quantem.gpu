@@ -1,7 +1,7 @@
-"""A noise-free weak-phase 4D-STEM simulation with a known probe, for the higher-order SSB hardware tests.
+"""A noise-free weak-phase 4D-STEM simulation with a known probe, for the higher-order direct ptychography hardware tests.
 
 One slice, a periodic random phase (0.05 rad rms) on a 64 x 64 scan at 0.25 A, a 64 x 64 detector: the regime where
-the SSB model is exact, so a reconstruction with the probe's own coefficients must come closest to the object and a
+the direct ptychography model is exact, so a reconstruction with the probe's own coefficients must come closest to the object and a
 fit must return them. The scan covers one period, so ``tile`` copies of it are the same specimen on a larger scan
 (CUDA reconstructs 128, 256, 512 and 1024 square scans without padding).
 """
@@ -22,7 +22,7 @@ def backend_or_skip() -> str:
     """The session backend of this machine (MPS on Apple silicon, else CUDA), or skip without one."""
     if platform.system() == "Darwin":
         if platform.machine() != "arm64":
-            pytest.skip("MPS SSB requires Apple silicon")
+            pytest.skip("MPS direct ptychography requires Apple silicon")
         pytest.importorskip("mlx.core")
         return "mps"
     cp = pytest.importorskip("cupy")

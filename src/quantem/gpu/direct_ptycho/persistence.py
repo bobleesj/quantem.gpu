@@ -1,4 +1,4 @@
-"""Saved-result storage for the public SSB workflow."""
+"""Saved-result storage for the public direct ptychography workflow."""
 
 import hashlib
 import json
@@ -19,34 +19,37 @@ from quantem.gpu.io.inspect import inspect as inspect_source
 from quantem.gpu.direct_ptycho.branches import RotationBranches
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
 
-# One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
+# One number versions everything a saved direct ptychography fit means: the layout of its record and the convention its values follow.
 # Bump it when fitted values acquire a different physical meaning or record layout: the automatic
 # detector sampling rule, the unit, sign or angle reference of an aberration, the rotation convention,
 # the bright-field selection rule, the loss definition, or the record layout. Every older fit is then fitted again.
 # A reconstruction-only policy belongs in the result signature instead. This invalidates exact image reuse
 # without declaring unchanged fitted coefficients unreadable or rescheduling a historical acquisition.
+# 8: the fit block's "schema" takes the direct-ptychography name, quantem.direct-fit; the values are those of 7.
 # 7: the record follows the shared vocabulary. The rotation is one physical angle, scan_detector_rotation_deg in
 #    [0, 360), with scan_detector_rotation_flipped; it was an angle below 180 with com_reversed. The saved result's own "schema"
 #    is a string like the fit block's.
 # 6: schema 5 covered two automatic detector samplings, 2 x semiangle / half-maximum radius and then
 #    semiangle / disk-edge radius; C10 and C12 fitted under the first reconstruct a different image under the second.
 # 5: replayable, optimizer-neutral trial records and explicit correction overrides.
-SCHEMA = 7
+SCHEMA = 8
 # What a stored fit must carry under "schema" to be read at all (computed.phase_of_mean in Live's config.json). Named like the
 # .qem scientific-metadata schema string, so a reader refuses another version instead of reinterpreting its values.
-FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
+FIT_SCHEMA = f"quantem.direct-fit/{SCHEMA}"
 # The top-level "schema" of the screening record that holds the fit block (live/screen/<dataset>/config.json). The
 # record belongs to quantem.live: this is the schema of the record its reader accepts, and it takes no other. It
 # is written here only when DirectPtycho.run_series creates the record, and required of a record that exists.
-# 3: the fit block is computed.phase_of_mean (computed.ssb before).
+# 3: the fit block is computed.phase_of_mean (it was named for the old method before).
 SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/3"
-# The same for a saved result record (ssb-aberrations.json, ssb-run.json) and its signature. It follows
+# The same for a saved result record (direct-aberrations.json, direct-run.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
+# 15: the record takes the direct-ptychography names: schema quantem.direct-result, files direct-aberrations and
+#     direct-run, and keys such as direct_tilt. scripts/rewrite_saved_records.py carries an earlier folder over once.
 # 14: the result holds no phase_estimator (reconstruction_method names the method) and no num_trials (its trial
 #     records count the trials); the aberrations signature names the search budget "trials", as the keyword does.
 #     scripts/rewrite_saved_records.py carries a version-12 or -13 folder over once.
-# 13: the files and signature operations are ssb-aberrations and ssb-run (ssb-aberrations and ssb-run
-#     before); the result field upsampling is upsample, reconstruction_method "ssb" is "phase_of_mean", and
+# 13: the files and signature operations are direct-aberrations and direct-run (find_aberrations and
+#     reconstruct before); the result field upsampling is upsample, the conventional reconstruction_method is "phase_of_mean", and
 #     phase_damping, amplitude_damping, input_phase_damping and nominal_upsampling_requirement drop their -ing.
 #     scripts/rewrite_saved_records.py carries a version-12 folder over once.
 # 12: sample_agreement is the fraction of the agreement band's power the fit explains (it was the raw agreement).
@@ -59,8 +62,8 @@ SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/3"
 #    column test, phase tail and native phases), replacing column_sign, initial_column_sign,
 #    initial_scan_detector_rotation_deg and rotation_check_phases.
 # 8: the result field refine_method is refinement, the name of the aberrations keyword it records.
-RESULT_VERSION = 14
-RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"
+RESULT_VERSION = 15
+RESULT_SCHEMA = f"quantem.direct-result/{RESULT_VERSION}"
 
 
 # Not saved in "result": arrays and branches have their own entries, and the session's paths (saved_path, source_path)
@@ -132,7 +135,7 @@ def load_result(
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         found = metadata.get("schema")
         if found != RESULT_SCHEMA:
-            print(f"SSB: {metadata_path.name} in {metadata_path.parent} is a {found!r} record; this version reads "
+            print(f"Direct ptycho: {metadata_path.name} in {metadata_path.parent} is a {found!r} record; this version reads "
                   f"{RESULT_SCHEMA!r} only, so the result is computed again and replaces it.")
             return None
         if metadata.get("signature") != signature:
@@ -179,7 +182,7 @@ def result_paths(
 ) -> tuple[Path, Path]:
     """Resolve the array and readable metadata paths of one saved result in the results directory ``save_dir``.
 
-    The result is ``ssb-<operation>.npz`` beside its readable ``ssb-<operation>.json``. A path ending in ``.npz`` or
+    The result is ``direct-<operation>.npz`` beside its readable ``direct-<operation>.json``. A path ending in ``.npz`` or
     ``.json`` names a file, not a directory, and is refused rather than read as a folder of that name.
     """
 
@@ -188,11 +191,11 @@ def result_paths(
         raise ValueError(
             f"save_dir names a results directory; got the file {destination.name!r}. Pass its folder, for example "
             f"save_dir={str(destination.with_suffix('').name)!r}: the result is written there as "
-            f"ssb-{operation}.npz and ssb-{operation}.json."
+            f"direct-{operation}.npz and direct-{operation}.json."
         )
     return (
-        destination / f"ssb-{operation}.npz",
-        destination / f"ssb-{operation}.json",
+        destination / f"direct-{operation}.npz",
+        destination / f"direct-{operation}.json",
     )
 
 
@@ -291,20 +294,20 @@ def source_identity(
     calibration_path: str | None,
     manifest_path: str | None,
 ) -> dict[str, object]:
-    """Return the complete portable identity of an SSB source, so a saved result is reused only for the same source.
+    """Return the complete portable identity of a direct ptychography source, so a saved result is reused only for the same source.
 
     The detector source is its ``acquisition_identity``; the storage actually read (exact BF columns), the
     calibration and the manifest are each their ``file_identity``. No entry holds a path, inode, device or time.
     """
     if source_path is None:
         raise ValueError(
-            "save_dir requires source_path when constructing SSB from an array. "
+            "save_dir requires source_path when constructing direct ptychography from an array. "
             "Pass the detector source path to record the array's provenance. "
             "Array inputs are saved but never reused from disk automatically."
         )
     if not Path(source_path).expanduser().exists():
         raise FileNotFoundError(
-            f"Cannot save an SSB result because source_path does not exist: "
+            f"Cannot save a direct ptychography result because source_path does not exist: "
             f"{Path(source_path).expanduser()}"
         )
     storage = None
@@ -335,7 +338,7 @@ def _optional_file_identity(path: str | Path) -> dict[str, object]:
 
 
 def software_signature() -> dict[str, object]:
-    """Identify the installed SSB implementation that produced a result."""
+    """Identify the installed direct ptychography implementation that produced a result."""
 
     digest = hashlib.sha256()
     package = Path(__file__).resolve().parent
@@ -343,7 +346,7 @@ def software_signature() -> dict[str, object]:
         if path.is_file() and path.suffix in {".metal", ".py", ".ts"}:
             digest.update(str(path.relative_to(package)).encode("utf-8"))
             digest.update(path.read_bytes())
-    return {"quantem.gpu": version("quantem.gpu"), "ssb_source_sha256": digest.hexdigest()}
+    return {"quantem.gpu": version("quantem.gpu"), "direct_source_sha256": digest.hexdigest()}
 
 
 def json_value(value: object) -> object:
@@ -365,7 +368,7 @@ def json_value(value: object) -> object:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     raise TypeError(
-        f"Cannot save SSB metadata value of type {type(value).__name__}."
+        f"Cannot save direct ptychography metadata value of type {type(value).__name__}."
     )
 
 

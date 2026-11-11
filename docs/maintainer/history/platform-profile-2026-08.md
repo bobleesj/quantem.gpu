@@ -11,7 +11,7 @@
 - **Clean follow-up stack:** local branch `mps-subsecond-pipeline` at
   `70bc3663c1c7cc495e77348c9fe7594545c66fa8`. It contains exact streamed
   screening (`5d56535`), strict MPS source validation (`1d2e3c9`),
-  deterministic CUDA SSB fitting (`fa9ab6f`), native Metal SSB (`e1da9bc`),
+  deterministic CUDA direct ptychography fitting (`fa9ab6f`), native Metal direct ptychography (`e1da9bc`),
   exact prepared QH5 binning (`e0e92b4`), optimized word-major binning
   (`ff3c7fd`), provenance-bound resident summaries (`d65911a`), and exact
   fused-accumulator widening (`70bc366`). These unpublished commits do not
@@ -440,12 +440,12 @@ small-field CPU operations after GPU CoM, not GPU-kernel claims.
 | **WebGPU** | **50.9 ms** | **5.5 ms** | **15.0 ms** | **43.4 ms** | **82.9 ms** | **0.9/0.7 ms** | **1.4 ms** | p50 of 5; integer/mean exact; per-pixel float errors not retained |
 | **CPU reference** | — | — | — | — | — | — | **177.6 ms** | Independent product traversal was 31.08 s; reference only |
 
-## SSB reconstruction and calibration
+## Direct ptychography reconstruction and calibration
 
 Historical: these rows time the phase-variance search with Nelder–Mead
 refinement, which is retired. The current model fit with exact-derivative
 refinement is timed in the
-[exact-derivative SSB fit](../../performance/ssb/reports/2026-10-25-ssb-exact-derivative-fit.md)
+[exact-derivative direct ptychography fit](../../performance/direct/reports/2026-10-25-direct-exact-derivative-fit.md)
 record (0.56–1.25 s per fit on CUDA, five 512 × 512 acquisitions).
 
 CUDA calibration uses calibration SHA-256
@@ -485,7 +485,7 @@ but uses a different real fixture and optimizer implementation, so its timing
 is not a direct CUDA ranking. The prepared MPS companion candidate is rejected
 because its stored columns do not match its declared detector-bin coordinate
 grid. WebGPU implements reconstruction but not aberration fitting.
-Levenberg–Marquardt is not implemented in any current SSB backend.
+Levenberg–Marquardt is not implemented in any current direct ptychography backend.
 
 ## Native Swift/Metal boundary
 
@@ -519,10 +519,10 @@ The earlier `334b7b5` profile remains the owner of prepared-index reopen
 **0.291/0.584 ms** warm p50/p95. Those measurements were not rerun or silently
 reassigned to `d65911a`.
 
-The later native SSB follow-up `e1da9bc` adds `MetalSSBKernels`, complete-cache
+The later native direct ptychography follow-up `e1da9bc` adds `MetalDirectKernels`, complete-cache
 and bounded-memory exact policies, and a standalone release benchmark. Its
-accepted reconstruction, loss, and fit values appear once in the SSB table
-above. The [native Metal SSB migration record](../native-metal-ssb-migration.md)
+accepted reconstruction, loss, and fit values appear once in the direct ptychography table
+above. The [native Metal direct ptychography migration record](../native-metal-direct-migration.md)
 owns API lineage, cache-policy details, and artifact fingerprints. Neither page
 represents warm library compute as application wall time or physical 8 GB
 device signoff.
@@ -535,7 +535,7 @@ device signoff.
 | CUDA atomic rows | `e68c6b56a95b6844a9eb354b1c68ca68e2f2f815395dc74ee6b4a3e6f7945272` |
 | WebGPU/CPU report | `a2f75c7a595d5fc457b5c32afd0ea8aac5dd20f5db30c496b386e30acedce7d1` |
 | Exact MPS screening adjudication | `1094cc68e2bf9952916fb12ac6489119a4f4ee4be2ece7f8b1c1a4f1ed411fa3` |
-| Raw MPS/CUDA SSB parity | `17a7ef5750444377c7d16c18bfadef39607ea3d684c91dad93681ca887d7154e` |
+| Raw MPS/CUDA direct ptychography parity | `17a7ef5750444377c7d16c18bfadef39607ea3d684c91dad93681ca887d7154e` |
 | Current MPS fresh-process load/memory audit | `a332552a98d8bc718b30f083a6e4afd4c6e7d56f10cbb1e09639cfab0042bc0d` |
 | Current MPS warm-process explicit-release audit | `07affa9decf0a8c99ac10b32db961c2c2681f5baf5f91a151ea121d93811bb50` |
 | MPS bin-2/bin-4 resident-lifecycle timing manifest | `e2b57949709c2bf70d0b987b3ca9a83950c8d80d92eaef1cfce850ab010cc7f9` |

@@ -1,6 +1,6 @@
-"""Mean-pattern padding of a scan onto the square grid the SSB Fourier transforms take.
+"""Mean-pattern padding of a scan onto the square grid the direct ptychography Fourier transforms take.
 
-SSB transforms every bright-field image over the scan, and the hand-written CUDA and Metal FFT kernels take square
+Direct ptychography transforms every bright-field image over the scan, and the hand-written CUDA and Metal FFT kernels take square
 scans of ``SCAN_SIDES`` positions. CUDA runs only those sides; Metal also runs any other square scan of at most 1024
 positions through MLX. A scan neither backend runs as measured is centred on the next supported square and the
 synthetic positions take the scan's mean diffraction pattern, which keeps the detector statistics (probe disk, dark
@@ -25,8 +25,8 @@ def padded_side(scan_shape: tuple[int, int], *, any_square: bool) -> int | None:
     rows, cols = (int(size) for size in scan_shape)
     if max(rows, cols) > SCAN_SIDES[-1]:
         raise ValueError(
-            f"SSB reconstructs scans of at most 1024 x 1024 positions; got {rows} x {cols}. Select a region with at "
-            "most 1024 positions per side: SSB never crops a scan."
+            f"Direct ptychography reconstructs scans of at most 1024 x 1024 positions; got {rows} x {cols}. Select a region with at "
+            "most 1024 positions per side: direct ptychography never crops a scan."
         )
     if rows == cols and (any_square or rows in SCAN_SIDES):
         return None
@@ -43,7 +43,7 @@ def announce_padding(scan_shape: tuple[int, int], side: int) -> None:
     fraction = 1.0 - rows * cols / (side * side)
     sides = ", ".join(str(size) for size in SCAN_SIDES)
     print(
-        f"SSB: {rows} x {cols} scan padded to {side} x {side} with its mean pattern ({fraction:.0%} of positions are "
+        f"Direct ptycho: {rows} x {cols} scan padded to {side} x {side} with its mean pattern ({fraction:.0%} of positions are "
         f"padding); crop to a supported side ({sides}) to fit measured positions only."
     )
 

@@ -1,7 +1,7 @@
 """Prepared weak-object amplitude/phase systems on the acquisition's GPU.
 
 For each measured scan frequency, all supported aliases are fitted together.
-The transfer is the same tilted, finite-depth probe model used by SSB fitting.
+The transfer is the same tilted, finite-depth probe model used by direct ptychography fitting.
 Regularization acts on the solution, never on a rendered image.
 """
 
@@ -53,8 +53,8 @@ _ENTRIES_PER_WARP = 128
 _SOURCE = (
     r"""
 #include <cupy/complex.cuh>
-#define SSB_DEVICE __device__
-#define SSB_COEFFICIENTS const float*
+#define DIRECT_DEVICE __device__
+#define DIRECT_COEFFICIENTS const float*
 """
     + CHI_SOURCE
     + _THICK_GEOMETRY_SOURCE
@@ -68,7 +68,7 @@ extern "C" __global__ void direct_pixel_terms(
     if (j >= nbf) return;
     const int k = order[j];
     const float4 g = thick_probe_geometry(kr_bf[k], kc_bf[k], wl, alpha, dr, dc);
-    pixel[2 * j] = make_float4(kr_bf[k], kc_bf[k], ssb_chi_full(kr_bf[k], kc_bf[k], wl, coefficients), weights[k]);
+    pixel[2 * j] = make_float4(kr_bf[k], kc_bf[k], direct_chi_full(kr_bf[k], kc_bf[k], wl, coefficients), weights[k]);
     pixel[2 * j + 1] = make_float4(g.x, g.w, __int_as_float(k), 0.0f);
 }
 
@@ -115,12 +115,12 @@ __global__ void __launch_bounds__(128, COMPLEX ? 3 : 5) direct_normal_equations(
             float shift = 6.283185307f * (qr[alias]*tr + qc[alias]*tc);
             complex<float> t1(0.0f, 0.0f), t2(0.0f, 0.0f);
             if (m.w * gk.y != 0.0f) {
-                float cm = ssb_chi_full(kr-qr[alias], kc-qc[alias], wl, coefficients);
+                float cm = direct_chi_full(kr-qr[alias], kc-qc[alias], wl, coefficients);
                 float w1 = thick_sinc(0.5f * depth * (-3.141592654f/wl*(m.x-gk.x)-shift));
                 t1 = m.w*gk.y*w1*complex<float>(cosf(cm-ck), -sinf(cm-ck));
             }
             if (pp.w * gk.y != 0.0f) {
-                float cp_ = ssb_chi_full(kr+qr[alias], kc+qc[alias], wl, coefficients);
+                float cp_ = direct_chi_full(kr+qr[alias], kc+qc[alias], wl, coefficients);
                 float w2 = thick_sinc(0.5f * depth * (3.141592654f/wl*(pp.x-gk.x)-shift));
                 t2 = pp.w*gk.y*w2*complex<float>(cosf(cp_-ck), sinf(cp_-ck));
             }

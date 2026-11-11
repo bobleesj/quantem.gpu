@@ -29,7 +29,7 @@ __all__ = [
 ]
 
 
-# every public name but the SSB entry points is a subpackage, loaded on first use (movie needs the movie extra)
+# every public name but the direct ptychography entry points is a subpackage, loaded on first use (movie needs the movie extra)
 _NAMESPACES = set(__all__) - {"DirectPtycho", "DirectPtychoResult", "__version__"}
 
 

@@ -17,7 +17,7 @@ from quantem.gpu.resident.queries import DetectorQueries
 class MetalRawBackend(DetectorQueries):
     """Detector queries on ``ChunkedFrames``.
 
-    ``frames`` is a ``ChunkedFrames`` or MPS SSB's exact BF-column frames, which
+    ``frames`` is a ``ChunkedFrames`` or MPS direct ptychography's exact BF-column frames, which
     provide the detector total for the mean pattern and nothing else.
     """
 

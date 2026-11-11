@@ -3,7 +3,7 @@
 This gate checks original acquisition → compressed device residency → detector
 queries → `.qem` export → reopen. It produces JSON, a small Markdown table, and
 a pytest log outside the repository. It does not launch an application or
-certify frame rate, SSB, every vendor dialect, or an entire detector generation.
+certify frame rate, direct ptychography, every vendor dialect, or an entire detector generation.
 
 ## Run on physical devices
 
@@ -85,7 +85,7 @@ The native gate currently covers uint8/uint16 NumPy export/reopening and a
 128 × 128 float32 `.qem` bit oracle. The native NumPy reader does not yet accept
 the original int32 simulations. Raw EMPAD2/G3 sensor words need matching
 calibration and separately verified decoding. Application folder discovery,
-interaction, microphone/voice controls, 120 FPS and SSB require their own tests.
+interaction, microphone/voice controls, 120 FPS and direct ptychography require their own tests.
 The native float reader does not yet cover the TCMEP gzip originals or its
 256 × 256 float detectors. A Python MPS pass does not close those native gaps.
 

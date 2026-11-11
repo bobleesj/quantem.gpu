@@ -33,7 +33,7 @@ class RotationDefocusComparison:
 
     Examples
     --------
-    >>> comparison = ssb.scan_rotations(defocus=True, report=False)  # doctest: +SKIP
+    >>> comparison = direct.scan_rotations(defocus=True, report=False)  # doctest: +SKIP
     >>> comparison.show()  # doctest: +SKIP
     """
 
@@ -211,7 +211,7 @@ class RotationDefocusComparison:
             row_start, row_stop, col_start, col_stop = self.region
             region_label = f"\nFit region: rows [{row_start}, {row_stop}), cols [{col_start}, {col_stop})"
         fig.suptitle("Four-case review · unresolved without an independent constraint\n"
-                     f"Two rotations × two C₁₀ signs · SSB{region_label}", fontsize=14)
+                     f"Two rotations × two C₁₀ signs · direct ptychography{region_label}", fontsize=14)
         plt.close(fig)
         return fig
 
@@ -265,7 +265,7 @@ def compare_rotation_defocus(
     from tqdm.auto import tqdm
 
     initial = {"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0}
-    with tqdm(total=4, desc="SSB comparison", unit="case", disable=not verbose) as progress:
+    with tqdm(total=4, desc="Direct ptycho comparison", unit="case", disable=not verbose) as progress:
         progress.set_postfix_str(f"Preparing scan region {bounds}")
         with session.select_region(
             bounds, scan_detector_rotation_deg=angles[0], aberrations=initial,

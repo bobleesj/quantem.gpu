@@ -23,11 +23,11 @@ final class DirectPtychoOptimizationParityTests: XCTestCase {
       var reference: [[Double]] = []
       for enabled in ["0", "1"] {
         setenv("QUANTEM_METAL_MASKED_BAND", enabled, 1)
-        let model = try SSBFifthOrderGradientTests.model(device)
+        let model = try DirectFifthOrderGradientTests.model(device)
         let coordinates = DirectPtychoFifthOrderCoordinates(
           wavelengthAngstroms: model.wavelengthAngstroms, semiangleRadians: model.semiangleRadians)
         let rows = (0..<7).map { i -> [Double] in
-          var z = SSBFifthOrderGradientTests.z
+          var z = DirectFifthOrderGradientTests.z
           z[0] += 0.03 * Double(i)
           z[3] -= 0.02 * Double(i)
           z[5] = i == 6 ? 0 : z[5]
@@ -86,8 +86,8 @@ final class DirectPtychoOptimizationParityTests: XCTestCase {
   /// Double normalization, including a partially cached and fully streamed source.
   func testBatchedGatherPreservesEvidenceAndNormalization() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
-    let scene = try SSBModelReconstructionTests.scene()
-    let input = try SSBCoherentReconstruction.buffer(device, scene.counts)
+    let scene = try DirectModelReconstructionTests.scene()
+    let input = try DirectCoherentReconstruction.buffer(device, scene.counts)
     let halfPlaneBytes = scene.scan * (scene.scan / 2 + 1) * 8
     try preservingEnvironment(["QUANTEM_METAL_GATHER_BATCH", "QUANTEM_METAL_BAND_POWER_ROW_MAJOR"])
     {

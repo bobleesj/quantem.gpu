@@ -232,12 +232,12 @@ class RotationBranches:
     def upsampled_phases(self, upsample: int | Literal["auto"] = "auto") -> tuple[np.ndarray, np.ndarray]:
         """Each branch's fit reconstructed at ``upsample`` (radians): the panels ``show`` draws.
 
-        The SSB session that fitted or reloaded the branches reconstructs each one at its own rotation, aberrations,
+        The direct ptychography session that fitted or reloaded the branches reconstructs each one at its own rotation, aberrations,
         sample tilt and depth spread with the G(q, k) it already holds: no search and no second G(q, k) build (a
         session that reloaded the fit builds its G(q, k) first, as its first reconstruction would). On
         the 512 x 512 gold scan at 0.5 Å (4x auto, 2048 x 2048 each) both took 0.4 s on an M5 Max, 0.35 GiB above
         the fitted session and below the fit's own peak. The result is kept for the next call. ``"auto"`` is
-        ``ssb.run(upsample="auto")``'s factor; the column test and the phase tail stay on the native
+        ``direct.run(upsample="auto")``'s factor; the column test and the phase tail stay on the native
         ``phase``.
         """
         cached = self._upsampled
@@ -246,8 +246,8 @@ class RotationBranches:
             phases = None if source is None else source(self, upsample)
             if phases is None:
                 raise ValueError(
-                    "The branch panels are reconstructed by the SSB session that fitted or reloaded these branches, and "
-                    "it is closed. Show them before ssb.close(), or reload the fit with the same save_dir; "
+                    "The branch panels are reconstructed by the direct ptychography session that fitted or reloaded these branches, and "
+                    "it is closed. Show them before direct.close(), or reload the fit with the same save_dir; "
                     "show(panels=False) draws the evidence alone.")
             factor, phases = phases
             self._upsampled, self.upsample = (upsample, tuple(phases)), int(factor)
@@ -356,8 +356,8 @@ class RotationBranches:
 
         Examples
         --------
-        >>> ssb.scan_rotations(report=False, ).show()  # doctest: +SKIP
-        >>> ssb.scan_rotations(report=False, ).show(size="large")  # doctest: +SKIP
+        >>> direct.scan_rotations(report=False, ).show()  # doctest: +SKIP
+        >>> direct.scan_rotations(report=False, ).show(size="large")  # doctest: +SKIP
         """
         import matplotlib.pyplot as plt
 
@@ -498,7 +498,7 @@ class RotationBranches:
 def compare_branches(fits, *, dark_field, scan_sampling_A, keep_first: bool) -> RotationBranches:
     """Score two fits (the session's rotation first, then plus 180 degrees) and choose the branch.
 
-    ``fits`` are SSB results whose phase is the native-sampling reconstruction. ``dark_field`` is the same scan's
+    ``fits`` are direct ptychography results whose phase is the native-sampling reconstruction. ``dark_field`` is the same scan's
     dark-field image, or None when the session has none; then, or when neither branch has decisive positive
     columns (``z >= COLUMN_Z_MIN`` and ``effect >= COLUMN_EFFECT_MIN``), the larger ``phase_skewness`` decides.
     A negative column score never certifies the other independent fit. ``keep_first`` keeps the first branch whatever the evidence says

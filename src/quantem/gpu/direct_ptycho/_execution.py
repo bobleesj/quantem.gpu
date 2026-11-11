@@ -1,4 +1,4 @@
-"""Cooperative cancellation at completed SSB GPU batch boundaries."""
+"""Cooperative cancellation at completed direct ptychography GPU batch boundaries."""
 
 from collections.abc import Callable, Iterator
 from concurrent.futures import CancelledError
@@ -7,7 +7,7 @@ from contextvars import ContextVar
 
 
 _cancel_check: ContextVar[Callable[[], bool] | None] = ContextVar(
-    "ssb_cancel_check", default=None,
+    "direct_cancel_check", default=None,
 )
 
 
@@ -15,7 +15,7 @@ def checkpoint() -> None:
     """Discard an obsolete preview without returning partial scientific data."""
     check = _cancel_check.get()
     if check is not None and check():
-        raise CancelledError("SSB preview was superseded.")
+        raise CancelledError("Direct ptychography preview was superseded.")
 
 
 def is_cancellable() -> bool:

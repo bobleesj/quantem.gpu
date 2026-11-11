@@ -131,7 +131,7 @@ total is already per process.
 Garbage collection is the cost of the call. `parallax.run` returned its blocks
 with this function once per run; it now empties its own GPU's CuPy pool and
 Torch's cache in place, the same two allocator calls as before.
-`scripts/benchmark_ssb.py --stages parallax --repeats 7` on one 256 x 256 scan
+`scripts/benchmark_direct.py --stages parallax --repeats 7` on one 256 x 256 scan
 with a 192 x 192 uint16 detector, the two revisions run alternately, twice
 each:
 

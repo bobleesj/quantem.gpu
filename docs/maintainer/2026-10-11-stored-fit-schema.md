@@ -1,11 +1,11 @@
-# Stored SSB fits carry a schema, and only the current one is read - 2026-10-11
+# Stored direct ptychography fits carry a schema, and only the current one is read - 2026-10-11
 
-> **Historical:** describes the code as of 2026-10-11; the `mean_phase` estimator is retired, and later schema versions replaced the one described. See the [current fit methods](../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-11; the `mean_phase` estimator is retired, and later schema versions replaced the one described. See the [current fit methods](../api/direct.md).
 
 ## Question
 
-A screening folder keeps each acquisition's fitted SSB values in `live/screen/<dataset>/config.json` under
-`computed.ssb`. Values stored before the package restructure reconstruct a different image with the current engine
+A screening folder keeps each acquisition's fitted direct ptychography values in `live/screen/<dataset>/config.json` in its
+fit block. Values stored before the package restructure reconstruct a different image with the current engine
 (two real scans: inverted contrast on one, a lattice peak six times weaker on the other, while a fresh fit reproduces
 the earlier pictures). Which stored fields changed meaning, and how does a reader tell a current fit from an earlier one?
 
@@ -53,12 +53,12 @@ The earlier engine's fitted values, reconstructed by this tree with automatic sa
 | `voltage_kV`, `semiangle_mrad`, `scan_sampling_A` | acquisition settings | the same | yes |
 
 So the engine's conventions did not change; the automatic detector calibration did
-([record](2026-10-05-ssb-detector-sampling.md)), and every stored fit was made without an explicit `det_sampling`.
+([record](2026-10-05-direct-detector-sampling.md)), and every stored fit was made without an explicit `det_sampling`.
 
 ## Decision
 
-`persistence.SCHEMA` is 6 and `persistence.FIT_SCHEMA = "quantem.ssb-fit/6"` is derived from it. `write_fit_metadata`
-writes `"schema": FIT_SCHEMA` into `computed.ssb`; `series.stored_fit(config)` returns a block only when it carries
+`persistence.SCHEMA` is 6 and `persistence.FIT_SCHEMA`, the fit schema string at version 6, is derived from it. `write_fit_metadata`
+writes `"schema": FIT_SCHEMA` into the fit block; `series.stored_fit(config)` returns a block only when it carries
 that string, and `saved_fit` and `acquisition_settings` read through it. A saved fit record counts only at schema 6.
 Any other stored fit is absent: nothing in it is read, a probe reference is fitted again, and `write_fit_metadata`
 replaces such a block whole. The key and the value form follow the `.qem` scientific-metadata schema string

@@ -13,17 +13,17 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from playwright.sync_api import sync_playwright
 
-from make_qem_browser_fixture import generate, generate_h5, generate_ssb, generate_ssb_higher_order
+from make_qem_browser_fixture import generate, generate_h5, generate_direct, generate_direct_higher_order
 
 
 class RangeHandler(http.server.SimpleHTTPRequestHandler):
-    """Serve the same bounded byte ranges that an exported SSB folder uses."""
+    """Serve the same bounded byte ranges that an exported direct ptychography folder uses."""
 
     def send_head(self):
         self.remaining = None
         target = urlsplit(self.path)
-        if unquote(target.path).endswith("/ssb columns.qem") and parse_qs(target.query).get("admission") != ["stream-check"]:
-            self.send_error(403, "SSB fixture query token is required")
+        if unquote(target.path).endswith("/direct columns.qem") and parse_qs(target.query).get("admission") != ["stream-check"]:
+            self.send_error(403, "Direct ptychography fixture query token is required")
             return None
         value = self.headers.get("Range")
         if value is None:
@@ -78,8 +78,8 @@ def main() -> None:
         root = Path(temporary)
         generate(root / "fixtures")
         generate_h5(root / "fixtures")
-        generate_ssb(root / "fixtures")
-        generate_ssb_higher_order(root / "fixtures" / "ssb-higher-order")
+        generate_direct(root / "fixtures")
+        generate_direct_higher_order(root / "fixtures" / "direct-higher-order")
         for filename, exported in (
             ("qem-browser", "QemBrowserParity"),
             ("rans-products", "RansProductParity"),
@@ -87,10 +87,10 @@ def main() -> None:
             ("rans-integer-readback", "RansIntegerReadbackParity"),
             ("reduce-frames-parity", "ReduceFramesParity"),
             ("dense-h5-parity", "DenseH5Parity"),
-            ("ssb-bf-subset", "SsbBfSubset"),
-            ("ssb-qem", "SsbQem"),
-            ("ssb-interaction", "SsbInteraction"),
-            ("ssb-higher-order-sign", "SsbHigherOrderSign"),
+            ("direct-bf-subset", "DirectBfSubset"),
+            ("direct-qem", "DirectQem"),
+            ("direct-interaction", "DirectInteraction"),
+            ("direct-higher-order-sign", "DirectHigherOrderSign"),
         ):
             subprocess.run(
                 [str(args.esbuild), str(sources / f"{filename}.ts"), "--bundle",
@@ -119,10 +119,10 @@ def main() -> None:
                     page.add_script_tag(url="/rans-integer-readback.js")
                     page.add_script_tag(url="/reduce-frames-parity.js")
                     page.add_script_tag(url="/dense-h5-parity.js")
-                    page.add_script_tag(url="/ssb-bf-subset.js")
-                    page.add_script_tag(url="/ssb-qem.js")
-                    page.add_script_tag(url="/ssb-interaction.js")
-                    page.add_script_tag(url="/ssb-higher-order-sign.js")
+                    page.add_script_tag(url="/direct-bf-subset.js")
+                    page.add_script_tag(url="/direct-qem.js")
+                    page.add_script_tag(url="/direct-interaction.js")
+                    page.add_script_tag(url="/direct-higher-order-sign.js")
                     result = page.evaluate("""async (expected) => {
                       const adapter = await navigator.gpu.requestAdapter();
                       // SwiftShader, Chrome's CPU renderer, need not report itself as a fallback adapter
@@ -157,12 +157,12 @@ def main() -> None:
                           product_first: await DenseH5Parity.runProductFirstParity(location.origin + '/fixtures/'),
                           resident: await DenseH5Parity.runResidentParity(location.origin + '/fixtures/'),
                           virtual_image: await DenseH5Parity.runDenseVirtualImageParity(device),
-                          ssb_interaction: await SsbInteraction.runSsbInteractionParity(location.origin + "/fixtures/"),
-                          ssb_qem: await SsbQem.runSsbQemParity(location.origin + '/fixtures/'),
-                          ssb_bf_subset: await SsbBfSubset.runSsbBfSubsetParity(),
-                          ssb_build_peak: await SsbBfSubset.runSsbBuildPeak(),
-                          ssb_higher_order_sign: await SsbHigherOrderSign.runSsbHigherOrderSign(
-                            location.origin + '/fixtures/ssb-higher-order/'),
+                          direct_interaction: await DirectInteraction.runDirectInteractionParity(location.origin + "/fixtures/"),
+                          direct_qem: await DirectQem.runDirectQemParity(location.origin + '/fixtures/'),
+                          direct_bf_subset: await DirectBfSubset.runDirectBfSubsetParity(),
+                          direct_build_peak: await DirectBfSubset.runDirectBuildPeak(),
+                          direct_higher_order_sign: await DirectHigherOrderSign.runDirectHigherOrderSign(
+                            location.origin + '/fixtures/direct-higher-order/'),
                         };
                       } finally { device.destroy(); }
                     }""", args.expect_adapter)

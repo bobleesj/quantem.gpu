@@ -250,7 +250,7 @@ Device counters include other processes; staged-copy durations are host timings,
 not GPU events. Original-count verification was not repeated in this profile.
 
 Runtime source was stable throughout the run. The four core IO modules matched
-the preceding routine CUDA trials; unrelated SSB changes account for the new
+the preceding routine CUDA trials; unrelated direct ptychography changes account for the new
 whole-source fingerprint:
 `3a2311a52c3763debf8333e567ee4ddb22833179069aa64a7ba8a90bf47a07e2`.
 The private experiment's `agent-handoff` folder retains the raw events, thread

@@ -18,7 +18,7 @@
   aggregate cache budget, and live per-device resident bytes. Do not use the
   aggregate budget to admit one volume: the viewer does not silently shard a
   dataset or change its arithmetic.
-- The server must import no `quantem.live` modules. Dashboard, automated SSB,
+- The server must import no `quantem.live` modules. Dashboard, automated direct ptychography,
   trial orchestration, and reports remain separate consumers.
 - `quantem.gpu.io.load` keeps the complete native acquisition as one encoded
   resident. Crop, detector bin, and scan bin are exact views of that resident

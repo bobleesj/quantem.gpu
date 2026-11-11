@@ -3,7 +3,7 @@ import Foundation
 /// The scan-detector rotation from the centre-of-mass curl and the 180-degree branch test, ported from Python
 /// `quantem.gpu.dpc.workflow` (`center_of_mass`, `find_optimal_rotation`) and `quantem.gpu.direct_ptycho.branches`.
 ///
-/// The curl fixes the rotation modulo 180 degrees. SSB fits both branches independently; on the right branch
+/// The curl fixes the rotation modulo 180 degrees. Direct ptychography fits both branches independently; on the right branch
 /// the phase at the atomic columns, located on the incoherent dark-field image, is positive. When that test
 /// is not decisive the branch with the larger mean-centred phase skewness is kept.
 public enum DirectPtychoRotationBranches {

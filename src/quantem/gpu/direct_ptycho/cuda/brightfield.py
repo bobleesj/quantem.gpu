@@ -1,6 +1,6 @@
-"""The bright-field pixels the CUDA SSB engine reads: their selection and their spectra.
+"""The bright-field pixels the CUDA direct ptychography engine reads: their selection and their spectra.
 
-SSB uses only detector pixels inside the bright-field disk. ``select_bright_field`` picks them on the device from the
+Direct ptychography uses only detector pixels inside the bright-field disk. ``select_bright_field`` picks them on the device from the
 mean diffraction pattern, and ``bright_field_spectra`` turns each selected pixel's scan image into its spectrum G(q, k)
 (stored as the Hermitian half-plane).
 """
@@ -162,5 +162,5 @@ _scan_images = cp.ElementwiseKernel(
         images[k * scans + i] = thrust::complex<float>((float)counts[i * detector_pixels + pixels[k]], 0.0f);
     }
     """,
-    "ssb_bright_field_scan_images",
+    "direct_bright_field_scan_images",
 )

@@ -1,7 +1,7 @@
 # Backend layout and parity contract
 
 `quantem.gpu` is organized by scientific domain first and accelerator second.
-This is deliberate: IO, detector reductions, DPC, display, and SSB each expose
+This is deliberate: IO, detector reductions, DPC, display, and direct ptychography each expose
 one scientific contract, while CUDA, Python MPS, native Swift/Metal, and WebGPU
 provide implementations of that contract. A backend must not invent a second
 public workflow or result type.
@@ -77,7 +77,7 @@ operation is supported by every backend:
 ~~~text
 src/quantem/gpu/                  # layers import downward only:
                                   # device < formats < resident < io < detector, geometry
-                                  # < dpc, parallax < screening < ssb < remote < cli
+                                  # < dpc, parallax < screening < direct < remote < cli
   device/                         # device detection, CUDA and Metal runtime plumbing
   formats/                        # files on disk, GPU-free: hdf5/, qem/, emd, empad, ...
   resident/                       # acquisitions held on the GPU and their exact reductions
@@ -100,8 +100,8 @@ src/quantem/gpu/                  # layers import downward only:
     colormaps.json                # colormap control points for every backend
     goldens/parity.json           # shared display goldens
     metal/display.metal           # native Metal display shader
-  ssb/
-    __init__.py                   # one SSB workflow and result contract
+  direct/
+    __init__.py                   # one direct ptychography workflow and result contract
     contract.py, cuda/, mps/, webgpu/
   geometry/frames.py
   parallax/cuda/
@@ -227,14 +227,14 @@ hardware or real-data gate.
    are reported separately.
 
 Floating-point operations use a frozen, operation-specific metric. CoM, DPC,
-FFT, and SSB must report maximum and high-percentile error as applicable; a
+FFT, and direct ptychography must report maximum and high-percentile error as applicable; a
 tolerance may not be widened to make a new backend pass. Goldens are generated
 only by an explicit recapture command and never by the backend being adjudicated.
 
 ## Migration gate
 
 Move one domain at a time in this order: contract/fixtures, IO, detector/DPC,
-display, then SSB. For each move:
+display, then direct ptychography. For each move:
 
 1. freeze the old output bundles;
 2. move the module and update every caller in the same coordinated change:

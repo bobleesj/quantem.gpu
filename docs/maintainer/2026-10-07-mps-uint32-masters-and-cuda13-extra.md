@@ -108,13 +108,13 @@ looks there (13 libraries found; 0 before).
 
 With the same test-only packages as the CUDA 12 gate environment, both CUDA 13
 venvs pass `pytest -m ""` on GPU 0 (1037 passed, 246 skipped, the same skips as
-the CUDA 12 environment) and run `qem_portable.ipynb` and `ssb_gold_native.ipynb`
+the CUDA 12 environment) and run `qem_portable.ipynb` and `direct_gold_native.ipynb`
 without errors.
 
 ### Found on the way
 
-optuna 5.0.0, which a fresh install now resolves, changes the SSB aberration
-search: `tests/hardware/cuda/test_ssb_units.py::test_fitted_c10_is_nm[100.0]`
+optuna 5.0.0, which a fresh install now resolves, changes the direct ptychography aberration
+search: `tests/hardware/cuda/test_direct_units.py::test_fitted_c10_is_nm[100.0]`
 fits C10 = -9.715 nm against -10 nm (2 % tolerance) with optuna 5.0.0 on both
 CUDA 12 and CUDA 13 CuPy, and passes with optuna 4.9.0 on both. Not changed here;
 the `[cuda]` and `[mps]` extras later pinned `optuna<5`.

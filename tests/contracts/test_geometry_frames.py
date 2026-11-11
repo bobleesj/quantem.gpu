@@ -27,7 +27,7 @@ def test_tilt_round_trip_and_the_centre_of_mass_convention(rotation_deg, flipped
         propagator, scan_detector_rotation_deg=rotation_deg, scan_detector_rotation_flipped=flipped)
     np.testing.assert_allclose(back, sample, rtol=0, atol=1e-12)
     assert math.hypot(*propagator) == pytest.approx(math.hypot(*sample), rel=1e-12)
-    # dpc.run / SSB: scan = R(theta) . D . detector, D swapping the detector axes when flipped
+    # dpc.run / direct ptychography: scan = R(theta) . D . detector, D swapping the detector axes when flipped
     source = np.array(propagator[::-1] if flipped else propagator, dtype=np.float64)
     aligned = _rotate_vector(source[:1], source[1:], math.radians(rotation_deg))
     np.testing.assert_allclose([aligned[0][0], aligned[1][0]], sample, rtol=0, atol=1e-5)

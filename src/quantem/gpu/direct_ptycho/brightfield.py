@@ -1,4 +1,4 @@
-"""The bright-field disk SSB reads: its typed pixel selection, its edge radius, and the crop decoded from an encoded acquisition.
+"""The bright-field disk direct ptychography reads: its typed pixel selection, its edge radius, and the crop decoded from an encoded acquisition.
 
 The disk edge also calibrates the detector. The disk is the image of the probe-forming aperture, so its radius in
 detector pixels corresponds to the convergence semiangle, and the detector sampling in mrad per pixel is
@@ -23,7 +23,7 @@ class BrightFieldSelection:
 
     Coordinates and centers always follow the public ``(row, col)`` convention.
     The coordinate arrays are copied, normalized to ``int32``, and made
-    read-only so every SSB stage consumes the same immutable evidence.
+    read-only so every direct ptychography stage consumes the same immutable evidence.
     """
 
     rows: np.ndarray
@@ -111,11 +111,11 @@ def crop_bright_field(
     on the mean pattern of the whole scan, which ``mean_pattern`` hands over when the caller has computed it already
     (``detector.mean(loaded)``), so it is not computed a second time.
 
-    SSB reads nothing outside the bright-field disk, but decoding the whole 4D cube (19 GB for 512^2 x 192^2 uint16) is
+    Direct ptychography reads nothing outside the bright-field disk, but decoding the whole 4D cube (19 GB for 512^2 x 192^2 uint16) is
     what the GPU loader forbids. The disk is found on the full-detector mean pattern with the backend's own rule
     (pixels above ``threshold`` x max, within the radius around the centroid of pixels above mean + std, or within
     ``bright_field_radius_px`` around the weighted centroid), so the crop plus the pinned centre selects exactly the pixels a
-    full-detector session would (tests/hardware/cuda/test_ssb_open_encoded.py). This is the equal-area rule of
+    full-detector session would (tests/hardware/cuda/test_direct_open_encoded.py). This is the equal-area rule of
     ``detector.bright_field_disk`` evaluated in float64; the float32 rule would move the centre in its last bits and
     with it the pixels the session reads.
     """
@@ -128,7 +128,7 @@ def crop_bright_field(
 
         original = loaded.read(scan_region=scan_region, detector_region=(row0, row1, col0, col1), output="native")
         try:
-            # SSB prepares float32 FFT input on both backends. Retain native
+            # Direct ptychography prepares float32 FFT input on both backends. Retain native
             # float64 storage and perform this calculation conversion on GPU.
             counts = float32_view(original)
         finally:

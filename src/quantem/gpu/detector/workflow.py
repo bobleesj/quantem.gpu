@@ -204,7 +204,7 @@ def _equal_area_disk(data) -> tuple[tuple[float, float], float]:
 
     ``bright_field_disk``'s centre and ``bright_field_radius_px``: the unweighted centroid of the pixels above
     ``mean + std`` (population standard deviation) and ``sqrt(area / pi)``. Evaluated in float32, as the virtual
-    detectors and the MPS SSB selection always have, so their images and pixel sets stay bit for bit; float64 can
+    detectors and the MPS direct ptychography selection always have, so their images and pixel sets stay bit for bit; float64 can
     round the threshold, and with it a boundary pixel, the other way. ``data`` is a mean pattern or an acquisition.
     """
     pattern = np.asarray(mean(data) if np.ndim(data) > 2 else data, dtype=np.float32)
@@ -230,7 +230,7 @@ def disk_edge_radius(mean_pattern: np.ndarray) -> float:
     mean + std (the disk of ``detector.bright_field_disk``), and the radius is that of a disk with the area of the pixels
     above half of it, which resolves the edge below one pixel. On abTEM 4D-STEM with a known detector sampling this is
     within 0.4 % of the truth; on a 300 kV, 30 mrad Arina acquisition it gives 0.552 mrad per pixel, the measured
-    calibration of that camera length (docs/maintainer/2026-10-05-ssb-detector-sampling.md).
+    calibration of that camera length (docs/maintainer/2026-10-05-direct-detector-sampling.md).
 
     Parameters
     ----------
@@ -289,7 +289,7 @@ class BrightFieldDisk:
         Disk centre in detector pixels, (row, col): the centroid of the pixels above mean + std.
     bright_field_radius_px : float
         Radius in detector pixels of the disk with the area of the pixels above mean + std, ``sqrt(area / pi)``: the
-        bright-field selection radius virtual detectors and SSB use by default.
+        bright-field selection radius virtual detectors and direct ptychography use by default.
     bright_field_edge_radius_px : float
         Radius in detector pixels at which the disk falls to half its plateau (:func:`disk_edge_radius`).
     detector_sampling_mrad : tuple[float, float] or None
@@ -383,11 +383,11 @@ class BrightFieldDisk:
 def bright_field_disk(data, semiangle_mrad: float | None = None) -> BrightFieldDisk:
     """The bright-field disk of a mean pattern: its centre, its radii and the detector sampling they imply.
 
-    The one rule every tool uses for the disk (SSB, virtual detectors, viewer detector presets,
+    The one rule every tool uses for the disk (direct ptychography, virtual detectors, viewer detector presets,
     ``data.calibration.detector_sampling``). The centre is the centroid of the pixels above mean + std, the
     selection radius ``sqrt(area / pi)`` of those pixels, the edge radius the half-plateau radius of
     :func:`disk_edge_radius`, and with a semiangle the detector sampling is ``semiangle_mrad / edge radius`` on both
-    axes. Computed in float64, as SSB selects its bright-field pixels.
+    axes. Computed in float64, as direct ptychography selects its bright-field pixels.
 
     Parameters
     ----------
@@ -437,7 +437,7 @@ def detector_sampling_mrad(mean_pattern: np.ndarray, semiangle_mrad: float) -> t
 
     The bright-field disk is the image of the probe-forming aperture, so its edge sits at the convergence semiangle:
     ``semiangle_mrad / disk_edge_radius(mean_pattern)`` mrad per pixel on both axes (:func:`bright_field_disk`).
-    This is the rule SSB, parallax and screening apply when no detector sampling is recorded or given; call it rather
+    This is the rule direct ptychography, parallax and screening apply when no detector sampling is recorded or given; call it rather
     than another radius rule, which can differ by several percent.
 
     Parameters

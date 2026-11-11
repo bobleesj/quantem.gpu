@@ -1,4 +1,4 @@
-"""The complex SSB object on Metal: corrected spectra summed over bright-field pixels, then one inverse FFT.
+"""The complex direct ptychography object on Metal: corrected spectra summed over bright-field pixels, then one inverse FFT.
 
 The inverse FFT is linear, so the mean over bright-field pixels of the per-pixel object equals the inverse FFT of the
 mean corrected spectrum; summing in Fourier space avoids one inverse FFT per pixel.
@@ -10,7 +10,7 @@ from functools import lru_cache
 import numpy as np
 
 from quantem.gpu.direct_ptycho.mps.hardware import default_object_redraw_threadgroup, require_mlx
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, pk_from_prepared
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirect, pk_from_prepared
 
 
 @lru_cache(maxsize=16)
@@ -182,7 +182,7 @@ def _object_fourier_sum_dynamic_kernel(
     """
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_object_fourier_sum_dyn_fast_sincos_b{int(chunk_bf)}_n{int(num_bright_field_pixels)}_"
+            f"direct_object_fourier_sum_dyn_fast_sincos_b{int(chunk_bf)}_n{int(num_bright_field_pixels)}_"
             f"logical{int(logical_num_bf)}_"
             f"sparse{int(bool(sparse_storage))}_"
             f"{int(ny)}_{int(nx)}_g{int(gqk_cols)}"
@@ -197,7 +197,7 @@ def _object_fourier_sum_dynamic_kernel(
 
 
 def object_fourier_sum_dynamic(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     C10: float,
     C12: float,
@@ -272,7 +272,7 @@ def object_fourier_sum_dynamic(
 
 
 def _object_redraw_storage_topology(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
 ) -> tuple[int, bool]:
     """Use compact active rows directly when preparation already packed them."""
     stored_num_bf = int(prepared.g_qk.shape[0])

@@ -199,7 +199,7 @@ def _phase_cols_small_reduced_kernel(
     """
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_phase_cols{n}_{name_suffix}_n{int(num_bright_field_pixels)}_"
+            f"direct_phase_cols{n}_{name_suffix}_n{int(num_bright_field_pixels)}_"
             f"k{int(k_bf)}_c{int(cols_per_group)}_b{int(batch)}_"
             f"f1{int(register_first_stage)}"
         ),

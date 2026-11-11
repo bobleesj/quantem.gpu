@@ -88,7 +88,7 @@ def test_every_calibration_table_uses_one_label_set():
     assert overview.loc["Scan-detector rotation", "Metadata"] == labels.NOT_RECORDED
 
 
-def test_ssb_calibration_dict_holds_the_table_rows():
+def test_direct_calibration_dict_holds_the_table_rows():
     """DirectPtycho.calibration() is the DataFrame and calibration(to_dict=True) the same rows as a plain dict."""
     import inspect
     from types import SimpleNamespace

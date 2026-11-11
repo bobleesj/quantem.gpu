@@ -40,7 +40,7 @@ saturated counts, corrupt streams, HDF5 loading and release.
 
 The broader CUDA acquisition gate passed 150 tests. Its 23 external-collection
 tests remain blocked without their data roots, so this is not complete release
-qualification. One stale test expected the old SSB guidance text; it was updated
+qualification. One stale test expected the old direct ptychography guidance text; it was updated
 to match DirectPtycho without changing any numerical assertion.
 
 Alternative scratch layouts, different block sizes, parallel compaction and an

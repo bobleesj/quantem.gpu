@@ -15,8 +15,8 @@ def test_webgpu_sources_are_shipped_and_readable() -> None:
         assert source_text(name).strip()
 
 
-def test_webgpu_ssb_builds_its_pipelines_asynchronously() -> None:
-    """Native 512/1024 SSB shaders are large: a synchronous pipeline build can freeze
+def test_webgpu_direct_builds_its_pipelines_asynchronously() -> None:
+    """Native 512/1024 direct ptychography shaders are large: a synchronous pipeline build can freeze
     Chromium's renderer for minutes on a cold Metal shader cache."""
 
     source = source_text("direct_ptycho/webgpu/backend.ts")

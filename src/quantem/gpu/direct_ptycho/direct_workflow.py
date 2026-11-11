@@ -152,9 +152,9 @@ def drag(session, control, coefs, tilt, depth, factor, policy):
     the full scan. Regularized methods are served from a `DragWindow` along
     that control (``direct_ptycho.cuda.direct`` or ``direct_ptycho.mps.direct``), from the prepared
     system when the optics are those already prepared (a strength drag), and
-    otherwise exactly by `solve`. SSB on CUDA
+    otherwise exactly by `solve`. Direct ptychography on CUDA
     (``policy`` from ``settings("phase_of_mean", ...)``) on a fine grid is served from
-    a `WaveWindow`: the single-sideband terms interpolated, the triple-overlap
+    a `WaveWindow`: the double-overlap terms interpolated, the triple-overlap
     terms exact. A
     window is valid while every other input is unchanged and the value lies
     inside it; otherwise a new one is centred on this value. `advance` builds
@@ -204,7 +204,7 @@ def advance(session) -> bool:
 
 
 def _windowed(session, factor, policy) -> bool:
-    """Whether drags of this method can use a window: a resident region, and for SSB CUDA's fine-grid coherent sum."""
+    """Whether drags of this method can use a window: a resident region, and for direct ptychography CUDA's fine-grid coherent sum."""
     if session._streamed is not None:
         return False
     if policy.get("method", "phase_of_mean") == "phase_of_mean":

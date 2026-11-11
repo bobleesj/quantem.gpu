@@ -571,7 +571,7 @@ def _validate_scientific(scientific: dict) -> None:
 
 SAMPLE_GEOMETRIES = ("cross-section", "plan-view")
 SAMPLE_ROLES = ("film", "substrate", "support", "particle")
-THICKNESS_METHODS = ("diffraction_ridge", "pacbed_fit", "ssb_depth", "ptychography_multislice", "cross_section", "nominal")
+THICKNESS_METHODS = ("diffraction_ridge", "pacbed_fit", "direct_depth", "ptychography_multislice", "cross_section", "nominal")
 
 
 def validate_sample(sample: dict) -> None:

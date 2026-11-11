@@ -3,7 +3,7 @@
 from functools import lru_cache
 
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB, pk_batch_from_prepared
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirect, pk_batch_from_prepared
 
 
 @lru_cache(maxsize=16)
@@ -98,7 +98,7 @@ def _corrected_kernel(batch: int, chunk: int, ny: int, nx: int, gqk_cols: int):
     """
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_corrected_fast_sincos_n{int(batch)}_b{int(chunk)}_"
+            f"direct_corrected_fast_sincos_n{int(batch)}_b{int(chunk)}_"
             f"{int(ny)}_{int(nx)}_g{int(gqk_cols)}"
         ),
         input_names=[
@@ -128,7 +128,7 @@ def _corrected_kernel(batch: int, chunk: int, ny: int, nx: int, gqk_cols: int):
 
 
 def corrected_from_cached_geometry(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     start: int,
     stop: int,
@@ -306,7 +306,7 @@ def _corrected_dynamic_kernel(batch: int, chunk: int, ny: int, nx: int, gqk_cols
     """
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_corrected_dyn_pk_fast_sincos_n{int(batch)}_b{int(chunk)}_"
+            f"direct_corrected_dyn_pk_fast_sincos_n{int(batch)}_b{int(chunk)}_"
             f"{int(ny)}_{int(nx)}_g{int(gqk_cols)}"
         ),
         input_names=[
@@ -329,7 +329,7 @@ def _corrected_dynamic_kernel(batch: int, chunk: int, ny: int, nx: int, gqk_cols
 
 
 def corrected_from_dynamic_geometry(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     start: int,
     stop: int,

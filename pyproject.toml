@@ -57,7 +57,7 @@ stream = [
 # [ctk] brings the CUDA libraries CuPy compiles and links against, so no system toolkit is needed.
 # CuPy for CUDA 13 shares the CUDA 13 libraries of PyPI torch 2.11+ (driver >= 580); [ctk] starts at 14.0.
 # The torch floor keeps pip from backtracking to a CUDA 12 torch to fit the newest cuda-toolkit.
-# optuna and scipy drive the SSB aberration fits, which run on CUDA and Metal only.
+# optuna and scipy drive the direct ptychography aberration fits, which run on CUDA and Metal only.
 # optuna is pinned: the broad search's batched sampler reproduces Optuna 4.9.0's TPE from its internals.
 # [cuda] skips CuPy on Windows on ARM64, which has no CUDA.
 cuda = [
@@ -153,7 +153,7 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Plain `pytest` is the interactive tier (about a minute). `pytest -m ""` adds the
-# slow SSB fits and long hardware checks; releases and CI run that. Timing checks against a
+# slow direct ptychography fits and long hardware checks; releases and CI run that. Timing checks against a
 # committed per-chip baseline run only when selected: `pytest -m benchmark tests/benchmarks`.
 addopts = "-m 'not slow and not benchmark'"
 markers = [

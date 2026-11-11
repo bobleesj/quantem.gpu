@@ -1,8 +1,8 @@
 """Aberration fits on MPS: the model agreement, tilt=True and tilt=False.
 
-Both maximize the least-squares agreement of the SSB model with G(q, k) (the fused Metal kernel) with the
+Both maximize the least-squares agreement of the direct ptychography model with G(q, k) (the fused Metal kernel) with the
 device-resident search of ``direct_ptycho._resident_search`` and the trust-region Newton on the exact derivatives: the standard
-fit (``optimize``) holds the sample tilt and depth spread at 0, where the model is ordinary SSB exactly, and the joint
+fit (``optimize``) holds the sample tilt and depth spread at 0, where the model is ordinary direct ptychography exactly, and the joint
 fit (``fit_sample``) fits them. The phase variance at the fit is ``DirectPtychoResult.loss``, a diagnostic.
 """
 
@@ -18,7 +18,7 @@ from quantem.gpu.direct_ptycho.mps.hardware import (
     require_mlx,
 )
 from quantem.gpu.direct_ptycho.mps.kernels.object_sum import object_fourier_sum_dynamic
-from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsSSB
+from quantem.gpu.direct_ptycho.mps.prepared import PreparedMpsDirect
 from quantem.gpu.direct_ptycho.mps.reconstruct import reconstruct_prepared
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
@@ -54,7 +54,7 @@ def newton_supported(search_ranges: dict | None, refine_lock: list[str] | None) 
 
 
 def optimize(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     selection: BrightFieldSelection,
     *,
     voltage_kV: float,
@@ -71,7 +71,7 @@ def optimize(
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     compute_loss: bool = True,
 ) -> tuple[DirectPtychoResult, np.ndarray | None]:
-    """Standard SSB fit of C10/C12/phi12 on Apple GPU, then the complex object and the phase at the fit.
+    """Standard direct ptychography fit of C10/C12/phi12 on Apple GPU, then the complex object and the phase at the fit.
 
     ``trials`` trials of the resident search maximize the agreement with the sample tilt and depth spread at 0,
     within ``search_ranges`` (engine keys; a value holds that coefficient in every trial); ``refine`` ("newton",
@@ -157,7 +157,7 @@ def optimize(
 # =========================================================================
 
 def fit_sample(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     **options,

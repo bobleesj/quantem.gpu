@@ -2,7 +2,7 @@
 
 GPU-accelerated 4D-STEM analysis for scientists using Python. Load measurements,
 select diffraction patterns, make detector images, and reconstruct phase with
-single-sideband ptychography (SSB).
+direct ptychography.
 
 > **Active development.** These examples use the current source checkout.
 > APIs may change; follow the [installation guide](install.md) and record
@@ -13,7 +13,7 @@ single-sideband ptychography (SSB).
 | Start here | What you will do |
 |---|---|
 | [Install](install.md) | Set up Apple Silicon MPS or NVIDIA CUDA |
-| [From acquisition to images](python-workflow.md) | One Gold acquisition: I/O → DPC → SSB |
+| [From acquisition to images](python-workflow.md) | One Gold acquisition: I/O → DPC → direct ptychography |
 | {ref}`Advanced Gold tutorial <gold-advanced>` | Inspect aberrations and the model probe; compare 1× and 4× |
 | [Save and share your data](api/qem-python.md) | Preserve measurements, calibration, and processing history in QEM |
 | [Python API reference](api/index.md) | Check parameters, units, return values, and backend limitations |
@@ -41,13 +41,13 @@ with your file; the acquisition is not bundled. Keep `data` open while working,
 then call `data.close()`. The [README](https://github.com/bobleesj/quantem.gpu#load-diffraction-patterns)
 contains the same short workflow and additional static image examples.
 
-## SSB in quantem.gpu
+## Direct ptychography in quantem.gpu
 
-quantem fits SSB aberrations with a physical model of the measurement, not an
+quantem fits direct ptychography aberrations with a physical model of the measurement, not an
 image-quality score: for each trial set of aberrations, sample tilt and depth
 spread it predicts the bright-field data the detector should have recorded and
 keeps the parameters whose prediction agrees best (least squares). This
-model-based, tilt-corrected fit is the default everywhere, and it is where SSB
+model-based, tilt-corrected fit is the default everywhere, and it is where direct ptychography
 in quantem is heading.
 
 | Call | Method | Use it for |
@@ -58,7 +58,7 @@ in quantem is heading.
 Both refine on exact derivatives of the model agreement. The earlier
 phase-variance search (`objective="phase_variance"`), which scored how well the
 bright-field pixels' phase images agree instead of predicting the data, is
-retired. Backend support and evidence: {ref}`SSB fit methods <ssb-fit-methods>`.
+retired. Backend support and evidence: {ref}`Direct ptychography fit methods <direct-fit-methods>`.
 
 ## What stays consistent
 

@@ -1,4 +1,4 @@
-"""The prepared MPS SSB state: bright-field selection, the G_qk spectra stack and its probe geometry.
+"""The prepared MPS direct ptychography state: bright-field selection, the G_qk spectra stack and its probe geometry.
 
 ``prepare_selection`` reads the selected detector columns once, transforms them to G(q, k) (Hermitian half-plane) and
 caches the rotation-dependent probe geometry; every reconstruction, loss and fit then works from that state.
@@ -26,8 +26,8 @@ from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
 
 @dataclass
-class PreparedMpsSSB:
-    """Device-resident BF FFT stack and geometry for repeated SSB loss calls."""
+class PreparedMpsDirect:
+    """Device-resident BF FFT stack and geometry for repeated direct ptychography loss calls."""
 
     mx: object
     g_qk: object
@@ -94,11 +94,11 @@ def prepare_selection(
     chunk_bf: int,
     compact_inactive: bool = False,
     dc_value_override: complex | None = None,
-) -> PreparedMpsSSB:
-    """Precompute BF-column FFTs and static geometry for MPS SSB fitting."""
+) -> PreparedMpsDirect:
+    """Precompute BF-column FFTs and static geometry for MPS direct ptychography fitting."""
     if scan_shape[0] != scan_shape[1]:
         raise ValueError(
-            "MPS SSB requires a square scan grid; "
+            "MPS direct ptychography requires a square scan grid; "
             f"got {scan_shape[0]}x{scan_shape[1]}."
         )
     mx = require_mlx()
@@ -140,7 +140,7 @@ def prepare_selection(
         bf_storage_indices_np = np.flatnonzero(active_mask_np).astype(np.int32)
         if bf_storage_indices_np.size == 0:
             raise ValueError(
-                "Automatic MPS SSB probe aperture contains no active BF pixels. "
+                "Automatic MPS direct ptychography probe aperture contains no active BF pixels. "
                 "Check the BF center, detector sampling, and semiangle."
             )
 
@@ -192,7 +192,7 @@ def prepare_selection(
 
     dc_mask_np = np.zeros(scan_shape, dtype=bool)
     dc_mask_np[0, 0] = True
-    return PreparedMpsSSB(
+    return PreparedMpsDirect(
         mx=mx,
         g_qk=g_qk,
         qx=qx,
@@ -366,7 +366,7 @@ def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_
 
 
 def retarget_prepared_rotation(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     selection: BrightFieldSelection,
     scan_detector_rotation_deg: float,
@@ -520,7 +520,7 @@ def resolve_bf_selection(
 
 
 def pk_from_prepared(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     C10: float,
     C12: float,
@@ -543,7 +543,7 @@ def pk_from_prepared(
 
 
 def pk_batch_from_prepared(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     start: int,
     stop: int,
@@ -573,7 +573,7 @@ def pk_batch_from_prepared(
 
 
 def bf_storage_chunks(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     logical_chunk_bf: int,
 ):
     """Yield packed storage slices without moving logical reduction boundaries."""
@@ -592,7 +592,7 @@ def bf_storage_chunks(
             yield storage_start, storage_stop
 
 
-# The cached k, q - k and q + k probe geometry of a PreparedMpsSSB, in the order _pair_geometry computes it.
+# The cached k, q - k and q + k probe geometry of a PreparedMpsDirect, in the order _pair_geometry computes it.
 _PAIR_GEOMETRY_FIELDS = (
     "alpha_k2", "cos2_k", "sin2_k", "aperture_k",
     "alpha_m2", "cos2_m", "sin2_m", "ap_m",

@@ -1,4 +1,4 @@
-"""The SSB fit's model agreement in plain PyTorch: the ground truth for the exact-derivative kernels and searches.
+"""The direct ptychography fit's model agreement in plain PyTorch: the ground truth for the exact-derivative kernels and searches.
 
 For band frequencies q (0.2 < |q| < 0.9 1/A on the stored half plane, weight w_q = 2, or 1 on the self-mirrored
 columns) and bright-field pixels k:
@@ -165,10 +165,10 @@ class TorchAgreement:
                    wavelength=wavelength, semiangle_rad=semiangle_rad, detector_sampling_rad=tuple(dth), chunk=chunk)
 
     @classmethod
-    def from_session(cls, ssb, *, band_inv_A=(0.2, 0.9), dtype=torch.float64, device="cpu", chunk=64):
+    def from_session(cls, direct, *, band_inv_A=(0.2, 0.9), dtype=torch.float64, device="cpu", chunk=64):
         """The CUDA or MPS session's own float32 G, k, band and calibration (at its current rotation)."""
-        backend = ssb._backend()
-        if ssb.backend == "cuda":
+        backend = direct._backend()
+        if direct.backend == "cuda":
             engine = backend._get_accelerator()
             cache = engine._cache
             _, _, flat, qx, qy, weight = engine.thick._prepare_fit_band(tuple(band_inv_A))
@@ -178,10 +178,10 @@ class TorchAgreement:
             qx, qy, weight = host(qx.ravel()), host(qy.ravel()), host(weight)
             wavelength, semiangle = float(engine.wavelength), float(cache["semiangle_rad"])
             sampling = (float(cache["ang_y_rad"]), float(cache["ang_x_rad"]))
-        elif ssb.backend == "mps":
+        elif direct.backend == "mps":
             from quantem.gpu.direct_ptycho.mps.thick_sample import _band
 
-            backend.cache_rotation(math.radians(ssb.scan_detector_rotation_deg))
+            backend.cache_rotation(math.radians(direct.scan_detector_rotation_deg))
             p = backend._prepared
             flat, qx, qy, weight = _band(p, tuple(float(v) for v in band_inv_A))
             g = np.asarray(p.g_qk).reshape(int(p.g_qk.shape[0]), -1)[:, np.asarray(flat).astype(np.int64)]
@@ -189,7 +189,7 @@ class TorchAgreement:
             wavelength, semiangle = float(p.wavelength), float(p.semiangle_rad)
             sampling = (float(p.ang_y_rad), float(p.ang_x_rad))
         else:
-            raise ValueError(f"from_session reads CUDA or MPS sessions, not {ssb.backend!r}.")
+            raise ValueError(f"from_session reads CUDA or MPS sessions, not {direct.backend!r}.")
         # the kernels' float32 values, exactly, in the reference dtype
         return cls.from_arrays(g, kx, ky, qx, qy, weight, dtype=dtype, device=device, wavelength=wavelength,
                                semiangle_rad=semiangle, detector_sampling_rad=sampling, chunk=chunk)

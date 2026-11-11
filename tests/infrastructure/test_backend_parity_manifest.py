@@ -20,7 +20,7 @@ EXPECTED_CAPABILITIES = {
     "screening.prepared-products",
     "dpc.com-rotation-idpc",
     "display.transform-histogram-color-fft",
-    "ssb.object-phase-loss",
+    "direct.object-phase-loss",
 }
 ALLOWED_LEVELS = {
     "reference",

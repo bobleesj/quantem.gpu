@@ -1,4 +1,4 @@
-"""MPS/Metal SSB FFT configuration for specialized 512x512 kernels."""
+"""MPS/Metal direct ptychography FFT configuration for specialized 512x512 kernels."""
 
 from quantem.gpu.direct_ptycho.mps.kernels.common import MPSFFTConfig
 

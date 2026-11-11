@@ -1,15 +1,15 @@
 """Aberration fits on CUDA: the standard fit (tilt=False) and the joint fit (tilt=True).
 
-Both maximize the least-squares agreement of the SSB model with G(q, k) (``ThickSample``'s fused
+Both maximize the least-squares agreement of the direct ptychography model with G(q, k) (``ThickSample``'s fused
 ``thick_fit_batch_kernel``), searched with the device-resident TPE of ``direct_ptycho._resident_search`` and polished with the
 trust-region Newton on the exact derivatives, the same code as on MPS; the standard fit holds the sample tilt and depth
-spread at 0, where the model is ordinary SSB exactly.
+spread at 0, where the model is ordinary direct ptychography exactly.
 """
 
 import math
 
 
-from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
+from quantem.gpu.direct_ptycho.cuda.engine import DirectEngine
 from quantem.gpu.direct_ptycho.mps.optimizer import standard_bounds
 
 # where a zero-trial refinement starts when the session has no aberrations (as on MPS)
@@ -17,7 +17,7 @@ _DEFAULT_START = {"C10": 0.0, "C12": 50.0, "phi12": 0.0}
 
 
 def fit_standard(
-    accel: SSBEngine,
+    accel: DirectEngine,
     *,
     aberrations: dict | None,
     search_ranges: dict | None,
@@ -69,7 +69,7 @@ def fit_standard(
 # =========================================================================
 
 def fit_sample(
-    accel: SSBEngine,
+    accel: DirectEngine,
     *,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     **options,

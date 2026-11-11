@@ -1,4 +1,4 @@
-"""Display geometry shared by static detector and SSB views."""
+"""Display geometry shared by static detector and direct ptychography views."""
 
 import math
 import numbers

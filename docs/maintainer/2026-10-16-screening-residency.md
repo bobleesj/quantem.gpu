@@ -1,22 +1,22 @@
-# Reusing acquisition storage for screening and SSB
+# Reusing acquisition storage for screening and direct ptychography
 
-Screening and SSB can borrow the same `io.load` result. The caller owns its
+Screening and direct ptychography can borrow the same `io.load` result. The caller owns its
 lifetime and closes it after both workflows finish.
 
 ```python
-from quantem.gpu import io, screening, SSB
+from quantem.gpu import io, screening, direct ptychography
 
 with io.load(path) as data:
     preview = screening.prepare(data)
-    with SSB(data, source_path=str(path), **calibration) as ssb:
-        result = ssb.aberrations(tilt=True)
+    with DirectPtycho(data, source_path=str(path), **calibration) as direct:
+        result = direct.aberrations(tilt=True)
 ```
 
 Screening excludes the stored flagged detector pixels from exact count sums,
-CoM and the mean diffraction pattern. SSB retains the loader's median
+CoM and the mean diffraction pattern. Direct ptychography retains the loader's median
 replacement. Sharing storage does not change these separate policies.
 Borrowed screening bypasses the file-product cache and never closes the source.
-SSB records the source dtype, logical size and hot-pixel correction. Sessions
+Direct ptychography records the source dtype, logical size and hot-pixel correction. Sessions
 with a source path use their file signature; they do not calculate unused
 resident checksums. Sessions without a source path retain resident identity.
 

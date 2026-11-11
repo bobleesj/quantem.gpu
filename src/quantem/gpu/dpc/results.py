@@ -35,7 +35,7 @@ class DPCResult:
     def report(self):
         """Return the rotation and axis choice as a labeled parameter table.
 
-        The curl-based estimate has a 180-degree ambiguity. SSB's optional
+        The curl-based estimate has a 180-degree ambiguity. Direct ptychography's optional
         phase-polarity check can choose between those two branches. Detector
         angular sampling is a separate microscope calibration.
 

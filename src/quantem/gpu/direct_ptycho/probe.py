@@ -1,4 +1,4 @@
-"""Calculate the SSB optical model on a calibrated GPU Fourier grid."""
+"""Calculate the direct ptychography optical model on a calibrated GPU Fourier grid."""
 
 import math
 

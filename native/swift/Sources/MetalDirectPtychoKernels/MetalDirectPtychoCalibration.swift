@@ -1,11 +1,11 @@
 import Foundation
 
-/// Physical input to native SSB. Angles are milliradians; scan steps are Å.
+/// Physical input to native direct ptychography. Angles are milliradians; scan steps are Å.
 /// Detector sampling is explicit so an assumed aperture cannot silently replace
 /// a recorded reciprocal-space calibration.
 ///
 /// Its JSON form is the `calibration` block of the portable phase record
-/// (`quantem.ssb-phase/2`), the keys the Python reader checks: `voltage_kV`,
+/// (`quantem.direct-phase/3`), the keys the Python reader checks: `voltage_kV`,
 /// `semiangle_mrad`, `scan_sampling_A`, `detector_sampling_mrad` and
 /// `bright_field_center_px` as `[row, col]`, `bright_field_radius_px` and
 /// `excluded_detector_pixels` when set.
@@ -164,7 +164,7 @@ public struct MetalDirectPtychoCalibration: Codable, Equatable, Sendable {
   {
     guard [128, 256, 512].contains(scanRows), scanColumns == scanRows else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "Native Metal SSB requires a square 128, 256, or 512 scan. Keep the original sampling; do not bin or crop to fit."
+        "Native Metal direct ptychography requires a square 128, 256, or 512 scan. Keep the original sampling; do not bin or crop to fit."
       )
     }
     let positive = [

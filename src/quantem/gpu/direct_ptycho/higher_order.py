@@ -39,11 +39,11 @@ def pack_coefficients(magnitudes_A: np.ndarray, angles_rad: np.ndarray) -> np.nd
                      scaled * np.sin(m * angles.astype(np.float64))), axis=1).astype(np.float32)
 
 
-# SSB_DEVICE and SSB_COEFFICIENTS specify the backend's function/address space.
+# DIRECT_DEVICE and DIRECT_COEFFICIENTS specify the backend's function/address space.
 # Re[(alpha_row + i alpha_col)^m] and Im[...] provide the angular terms;
 # (alpha_row^2 + alpha_col^2)^((n+1-m)/2) supplies the remaining radial power.
 CHI_SOURCE = r"""
-SSB_DEVICE float ssb_chi_full(float row, float col, float wl, SSB_COEFFICIENTS coefficients) {
+DIRECT_DEVICE float direct_chi_full(float row, float col, float wl, DIRECT_COEFFICIENTS coefficients) {
     float x = row * wl, y = col * wl;
     float r2 = x * x + y * y;
     float radial[4] = {1.0f, r2, r2 * r2, r2 * r2 * r2};

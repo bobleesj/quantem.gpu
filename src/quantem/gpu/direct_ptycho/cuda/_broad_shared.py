@@ -15,10 +15,10 @@ anchor = "geometry_k[offset] = tf_geometry(kx[k], ky[k], wl, semiangle, ang_y, a
 source = source.replace(
     anchor,
     anchor
-    + "\n            for (int b = 0; b < B; ++b) chi_k[b * 256 + offset] = ssb_chi_full(kx[k], ky[k], wl, coefficients + b * 28);",
+    + "\n            for (int b = 0; b < B; ++b) chi_k[b * 256 + offset] = direct_chi_full(kx[k], ky[k], wl, coefficients + b * 28);",
 )
 source = source.replace(
-    "ssb_chi_full(kxv,kyv,wl,coefficients+b*28)", "chi_k[b * 256 + k - k0]"
+    "direct_chi_full(kxv,kyv,wl,coefficients+b*28)", "chi_k[b * 256 + k - k0]"
 )
 kernel = cp.RawKernel(
     source + "\n// Independent module for cache allocation experiment.\n",

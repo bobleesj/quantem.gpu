@@ -1,4 +1,4 @@
-"""Measured, conditional objective slices around a joint SSB solution."""
+"""Measured, conditional objective slices around a joint direct ptychography solution."""
 
 import time
 from collections.abc import Callable
@@ -62,7 +62,7 @@ def measure_slices(
             "fitted_point": [float(point[column_axis] / column_unit), float(point[row_axis] / row_unit)],
         }
     return {
-        "schema": "quantem.ssb-parameter-slices/1",
+        "schema": "quantem.direct-parameter-slices/2",
         "objective": "least_squares_model_agreement",
         "normalization": "agreement_at_fitted_point",
         "band_inv_A": list(band_inv_A),
@@ -92,7 +92,7 @@ def plot_parameters(
     evidence = result.parameter_slices
     if not evidence:
         raise ValueError(
-            "No measured parameter slices are saved. Run ssb.measure_parameters(result) while the session is open."
+            "No measured parameter slices are saved. Run direct.measure_parameters(result) while the session is open."
         )
     descriptions = (
         ("focus_depth", "Focus and depth", "C₁₀ at mid-depth (nm)", "Depth spread (nm)"),

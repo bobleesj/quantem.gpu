@@ -34,7 +34,7 @@ of modularity; callers in quantem.widget and quantem.live are updated rather tha
 
 Imports go downward only: `device` < `formats` (GPU-free files) < `resident` (data held on the GPU
 and its exact reductions) < `io` (load, save, discover, inspect, read) < `detector`, `geometry` <
-`dpc`, `parallax` < `screening` < `ssb` < `remote` < `cli`; `optics`, `display`, `movie` need only
+`dpc`, `parallax` < `screening` < `direct` < `remote` < `cli`; `optics`, `display`, `movie` need only
 `device`. Backend code sits in `cuda/`, `mps/`, `webgpu/` under the package that owns the science;
 kernel and shader files sit beside the Python that compiles them. `swift/` and `vulkan/` moved to
 `native/` (out of the wheel); `android/` and the Direct3D projects were deleted.
@@ -49,8 +49,8 @@ kernel and shader files sit beside the Python that compiles them. `swift/` and `
 - the 66-acquisition prepared series and the source112 archive (Python, CUDA, TypeScript);
 - dense, cropped, sparse, random, sharded and u8/u4 GPU load routes and their options;
 - the MPS dense loader, lazy multi-dataset series and `MultiChunkedFrames`;
-- the remote SSB and MAPED services (no client called them; every compute route failed on real
-  data); the browse service, `/api/ssb/saved-results` and `serve` stay for Live4DSTEM;
+- the remote direct ptychography and MAPED services (no client called them; every compute route failed on real
+  data); the browse service, `/api/direct/saved-results` and `serve` stay for Live4DSTEM;
 - compatibility shims, aliases, dead optics functions, environment switches, `SourceIntegrity`.
 
 ## Fixed
@@ -63,7 +63,7 @@ kernel and shader files sit beside the Python that compiles them. `swift/` and `
 | `screening.prepare(backend="mps")` (quantem.live) | NotImplementedError on every cache miss | works; integer products equal CUDA |
 | `dpc.center_of_mass` on MPS | NotImplementedError | exact, byte-equal to CUDA |
 | `detector.prepare([...])` on MPS | ImportError cupy | works |
-| `SSB(loaded.data)` then `close()` | released the caller's acquisition | refused at construction; borrowed data never released |
+| `DirectPtycho(loaded.data)` then `close()` | released the caller's acquisition | refused at construction; borrowed data never released |
 | `parallax.run` / `geometry.rotate_scan` on `io.load` output | TypeError | work, bit-identical to the dense path |
 | MPS virtual-image results | aliased a reused buffer | owned by the caller |
 | Metal buffers per query (100 rounds, 100 images) | +85 MB | flat |
@@ -72,7 +72,7 @@ kernel and shader files sit beside the Python that compiles them. `swift/` and `
 
 ## Numbers
 
-Every surviving path was compared before and after: frozen tests, SSB fingerprints (72 CUDA, 57 MPS
+Every surviving path was compared before and after: frozen tests, direct ptychography fingerprints (72 CUDA, 57 MPS
 products at 128-512 scans), detector products (400, CUDA, NumPy, Torch, MPS), screening and browse
 products on real acquisitions (bytes), encoded load checksums on real data, MAPED frozen shifts and
 merge sums (19 tests). MAPED seven-tilt `run()` peak with row release: 11.3-11.5 GiB (unchanged).
@@ -95,10 +95,10 @@ its numbers on purpose and has a test that failed before.
 
 | What | Before | After |
 |---|---|---|
-| SSB automatic `det_sampling` (no `det_sampling` given) | `2 * semiangle / R` with three radius rules: 1.0909 (CUDA), 1.1287 (MPS array), 2.3077 (MPS dataset) mrad per pixel on an Arina acquisition calibrated at 0.554 | `semiangle / R` with one half-plateau disk radius on CUDA and MPS: 0.5524; abTEM known answer 0.546875, new 0.5486 (+0.32 %) |
-| CUDA SSB result loss before a fit | batched estimate, 0.0566 against exact 0.1405 (256 scan) | always the exact objective |
-| MPS SSB fit | re-prepared its own evidence from the source | uses the session's prepared state |
-| MPS SSB export of a NumPy session | `AttributeError` | exports; read-back reconstructs within 6e-10 rad |
+| Direct ptychography automatic `det_sampling` (no `det_sampling` given) | `2 * semiangle / R` with three radius rules: 1.0909 (CUDA), 1.1287 (MPS array), 2.3077 (MPS dataset) mrad per pixel on an Arina acquisition calibrated at 0.554 | `semiangle / R` with one half-plateau disk radius on CUDA and MPS: 0.5524; abTEM known answer 0.546875, new 0.5486 (+0.32 %) |
+| CUDA direct ptychography result loss before a fit | batched estimate, 0.0566 against exact 0.1405 (256 scan) | always the exact objective |
+| MPS direct ptychography fit | re-prepared its own evidence from the source | uses the session's prepared state |
+| MPS direct ptychography export of a NumPy session | `AttributeError` | exports; read-back reconstructs within 6e-10 rad |
 | CUDA float virtual images of saturated frames | uint32 accumulator wrapped (65534.0 for a sum of 4,295,032,830) | exact uint64 sum, then float32 (4.295033e9) |
 | Metal detector sums | int32 atomics | uint64 accumulation |
 | CUDA weighted sums and centre of mass | 32 lanes of weight times count in int32 (detectors wider than 1024 could overflow) | exact weight digits, as MPS |
@@ -115,11 +115,11 @@ its numbers on purpose and has a test that failed before.
 | Five MPS tests failing since 3a8abad6 | stale expectations, a missing `pandas` on the test Mac, a temp-path assumption | pass |
 | Docs naming removed features, `.ans` containers, compatibility shims | present | removed or rewritten; the `.ans` container leaves no trace outside dated records |
 
-**Correction.** Every SSB reconstruction made with automatic detector sampling before this fix
+**Correction.** Every direct ptychography reconstruction made with automatic detector sampling before this fix
 used about twice the physical sampling: on the Arina acquisition only 2,460 of the 8,878 selected
 bright-field pixels kept a nonzero aperture weight, and the fitted defocus moved from 1.71 nm to
 4.16 nm once corrected. Re-run such fits, or pass the calibrated `det_sampling` explicitly. Details:
-`docs/maintainer/2026-10-05-ssb-detector-sampling.md`.
+`docs/maintainer/2026-10-05-direct-detector-sampling.md`.
 
 ## Standards and anonymization pass
 

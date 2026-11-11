@@ -59,8 +59,8 @@ Display options must not change scientific data or reconstruction quality.
 For performance work, timing claims and release qualification, use the
 repository's [gpu-benchmark skill](.agents/skills/gpu-benchmark/SKILL.md).
 Keep reusable runners and reviewed summaries here, with raw evidence in the
-private archive. Prefer the installed `quantem-gpu benchmark-ssb` command for
-full-field and regional joint SSB fits.
+private archive. Prefer the installed `quantem-gpu benchmark-direct` command for
+full-field and regional joint direct ptychography fits.
 
 ## Tests
 

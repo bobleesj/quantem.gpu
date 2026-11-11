@@ -1,4 +1,4 @@
-"""Shared CUDA device functions and base class for SSB FFT kernels.
+"""Shared CUDA device functions and base class for direct ptychography FFT kernels.
 
 The CUDA device functions (complex arithmetic, geometry, gamma multiplication)
 are identical across all scan sizes. The Python base class provides the shared
@@ -85,7 +85,7 @@ __device__ __forceinline__ float4 compute_geometry(
     // denom = sqrt((cos_phi * ang_y)^2 + (sin_phi * ang_x)^2)
     //       = (1/r) * sqrt((dx * ang_y)^2 + (dy * ang_x)^2)
     //
-    // Most SSB live-control points are strictly inside the soft aperture.
+    // Most direct ptychography live-control points are strictly inside the soft aperture.
     // Since denom <= max(ang_y, ang_x), alpha <= semiangle - 0.5*max_ang
     // proves edge >= 1 and therefore aperture == 1 exactly.  Taking this
     // branch skips the second sqrt/div path while falling back to the complete
@@ -254,7 +254,7 @@ __device__ __forceinline__ float2 gamma_mul_pk_cartesian_onthefly(
     );
 }
 
-__device__ __forceinline__ float atan2f_ssb_poly(float y, float x) {
+__device__ __forceinline__ float atan2f_direct_poly(float y, float x) {
     float ax = fabsf(x);
     float ay = fabsf(y);
     float hi = fmaxf(ax, ay);

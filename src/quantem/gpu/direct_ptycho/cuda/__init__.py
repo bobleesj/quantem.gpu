@@ -1,5 +1,5 @@
-"""CUDA implementation of the private SSB compute protocol."""
+"""CUDA implementation of the private direct ptychography compute protocol."""
 
-from quantem.gpu.direct_ptycho.cuda.backend import CudaSSBBackend
+from quantem.gpu.direct_ptycho.cuda.backend import CudaDirectBackend
 
-__all__ = ["CudaSSBBackend"]
+__all__ = ["CudaDirectBackend"]

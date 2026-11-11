@@ -34,7 +34,7 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
     """A cache miss builds every product from exact sums of io.load's counts, flagged pixels median-filled.
 
     Screening counted flagged pixels as zero; it now holds them as every load path does (cache /8), so its
-    rotation is SSB's. The reference fills them with the CPU reference of the GPU fill.
+    rotation is direct ptychography's. The reference fills them with the CPU reference of the GPU fill.
     """
     from quantem.gpu.resident.hot_pixels import fill_flagged, median_plan
 
@@ -93,7 +93,7 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
     with io.load(master, device=backend, hot_pixel_correction="median", verbose=False) as loaded:
         borrowed = screening.prepare(loaded)
         assert borrowed.cache_path is None and not borrowed.from_cache
-        # Screening leaves the median-corrected source alive for SSB.
+        # Screening leaves the median-corrected source alive for direct ptychography.
         frame = loaded[0, 0]
         assert tuple(frame.shape) == (24, 28)
         assert int(frame[11, 14]) > 0

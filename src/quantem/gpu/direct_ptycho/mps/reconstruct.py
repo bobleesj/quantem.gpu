@@ -33,7 +33,7 @@ from quantem.gpu.direct_ptycho.mps.kernels.row_ifft import (
     row_ifft_small_from_dynamic_geometry,
 )
 from quantem.gpu.direct_ptycho.mps.prepared import (
-    PreparedMpsSSB,
+    PreparedMpsDirect,
     bf_storage_chunks,
     ifft2_chunked,
 )
@@ -64,7 +64,7 @@ def fit_loss_tiles():
 
 
 def reconstruct_prepared(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     C10: float,
     C12: float,
@@ -75,10 +75,10 @@ def reconstruct_prepared(
     return_phase: bool = True,
     thick=None,
 ) -> tuple[np.ndarray | None, float | None, np.ndarray | None]:
-    """Run SSB correction from a prepared BF FFT stack.
+    """Run direct ptychography correction from a prepared BF FFT stack.
 
     ``thick`` = (thickness, tilt_row_rad, tilt_col_rad) applies the thick-sample depth weights inside the fused
-    128/256/512/1024 row kernel (``thick_sample.reconstruct_thick``); None is standard SSB.
+    128/256/512/1024 row kernel (``thick_sample.reconstruct_thick``); None is standard direct ptychography.
     """
     mx = prepared.mx
     if thick is not None and (
@@ -89,7 +89,7 @@ def reconstruct_prepared(
         mx.zeros(prepared.scan_shape, dtype=mx.complex64)
         if compute_object else None
     )
-    # CUDA's fixed SSB output is the mean of per-BF phase images, not the
+    # CUDA's fixed direct ptychography output is the mean of per-BF phase images, not the
     # phase of the averaged complex object wave. Keep that contract for reference agreement.
     phase_sum = mx.zeros(prepared.scan_shape, dtype=mx.float32)
     uses_scalar_512_loss = prepared.scan_shape == (512, 512)

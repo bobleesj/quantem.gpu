@@ -1,4 +1,4 @@
-"""Deterministic fixed-size CUDA SSB kernel registry."""
+"""Deterministic fixed-size CUDA direct ptychography kernel registry."""
 
 from functools import cache
 

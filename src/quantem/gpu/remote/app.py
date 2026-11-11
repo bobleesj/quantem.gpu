@@ -3,7 +3,7 @@
 The service owns no browser UI and no reconstruction orchestration. It exposes
 the smallest versioned contract a native client needs: catalog discovery,
 acquisition readiness, exact virtual-detector products, custom detector masks,
-selected diffraction patterns and saved SSB phases. Raw detector data stays on
+selected diffraction patterns and saved direct ptychography phases. Raw detector data stays on
 the compute host.
 """
 
@@ -25,7 +25,7 @@ from quantem.gpu.remote.browse import (
     PROTOCOL_VERSION,
     BrowseService,
 )
-from quantem.gpu.remote.saved_ssb import SavedSSBResults
+from quantem.gpu.remote.saved_direct import SavedDirectResults
 
 
 def create_app(
@@ -36,7 +36,7 @@ def create_app(
 ) -> FastAPI:
     """Create the loopback remote-viewer application.
 
-    The app serves the catalog, exact detector products and saved SSB phases
+    The app serves the catalog, exact detector products and saved direct ptychography phases
     for one data folder. Bind it to 127.0.0.1 and reach it through an SSH
     tunnel; it has no authentication of its own.
 
@@ -63,7 +63,7 @@ def create_app(
     >>> uvicorn.run(app, host="127.0.0.1", port=8765)
     """
     browse = BrowseService(data_folder, devices=devices)
-    saved_ssb = SavedSSBResults(Path(data_folder))
+    saved_direct = SavedDirectResults(Path(data_folder))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -87,13 +87,13 @@ def create_app(
         result["implementation_revision"] = implementation_revision
         return result
 
-    @app.get("/api/ssb/saved-results")
-    async def ssb_saved_results(session: str, file: str) -> dict:
+    @app.get("/api/direct/saved-results")
+    async def direct_saved_results(session: str, file: str) -> dict:
         try:
             master = await asyncio.to_thread(browse.catalog.resolve_master, session, file)
-            return await asyncio.to_thread(saved_ssb.read, master)
+            return await asyncio.to_thread(saved_direct.read, master)
         except (ValueError, OSError, KeyError) as exc:
-            raise HTTPException(409, "Could not verify saved SSB results: " + str(exc)) from exc
+            raise HTTPException(409, "Could not verify saved direct ptychography results: " + str(exc)) from exc
 
     @app.get("/api/browse/sessions")
     async def sessions(refresh: bool = False) -> dict[str, object]:

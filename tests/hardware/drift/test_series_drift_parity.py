@@ -1,5 +1,5 @@
 """quantem.gpu.drift reproduces myptycho's translation drift exactly on real data: MoS2 bilayer frames 151-191
-streamed through SSB, against myptycho's outputs on the same phases (time/tests/drift_baseline.py). Skipped where that
+streamed through direct ptychography, against myptycho's outputs on the same phases (time/tests/drift_baseline.py). Skipped where that
 frozen baseline folder is absent (every host but the one that holds it) and marked slow, so run it with -m slow: it is the only parity
 check where consistent rejects pairs (10 of 114), the synthetic series keeping all of its pairs."""
 

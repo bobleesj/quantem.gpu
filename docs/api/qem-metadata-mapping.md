@@ -80,7 +80,7 @@ contract, but runtime/source-reader qualification remains separate.
 | NumPy | Native little-endian C-order 4D uint8/uint16, retained NumPy header | Microscope metadata that was not supplied; signed/float/Fortran-order export through this count codec |
 | Derived/scaled results | Regional scaled `uint16` codes with their complete precision report (`scaled-uint16-column-rans-v1`, see [QEM codecs](qem-codecs.md)) | Scaled codes read as detector counts; arbitrary 3D/5D or reconstruction export as QEM |
 
-SSB result images/calibration remain separate JSON/NumPy result artifacts; they
+Direct ptychography result images/calibration remain separate JSON/NumPy result artifacts; they
 are not silently embedded as an acquisition's recorded microscope calibration.
 
 ## Original documents and reviewed edits

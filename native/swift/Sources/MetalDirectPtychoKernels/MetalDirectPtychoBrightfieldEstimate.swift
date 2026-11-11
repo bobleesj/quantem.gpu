@@ -3,7 +3,7 @@ import Metal
 
 /// Geometry measured from the complete detector sum, without an angular assumption.
 /// The selection uses mean + standard deviation; the aperture edge uses half the
-/// median intensity inside that selection, matching the Python SSB convention.
+/// median intensity inside that selection, matching the Python direct ptychography convention.
 public struct MetalDirectPtychoBrightfieldEstimate: Sendable {
   public let centerRow: Double
   public let centerColumn: Double
@@ -32,7 +32,7 @@ public struct MetalDirectPtychoBrightfieldEstimate: Sendable {
   }
 
   /// Measure on Metal. The input is the exact small detector reduction, not a
-  /// decoded scan cube. Excluded pixels contribute zero, as in SSB preparation.
+  /// decoded scan cube. Excluded pixels contribute zero, as in direct ptychography preparation.
   /// Empty, flat and clipped disks fail rather than inventing a calibration.
   public static func measure(
     device: MTLDevice, detectorSum: [UInt64], rows: Int, columns: Int,
@@ -47,7 +47,7 @@ public struct MetalDirectPtychoBrightfieldEstimate: Sendable {
     }
     // Through the shader loader, which reads a packaged app's copy of the bundle: `Bundle.module` alone looks only
     // beside the app and in the build folder, and stops the process when neither exists.
-    let source = try MetalDirectPtychoShaderSource.load(["ssb_calibration"])
+    let source = try MetalDirectPtychoShaderSource.load(["direct_calibration"])
     let options = MTLCompileOptions()
     options.fastMathEnabled = false
     let library = try device.makeLibrary(source: source, options: options)
@@ -57,9 +57,9 @@ public struct MetalDirectPtychoBrightfieldEstimate: Sendable {
       }
       return try device.makeComputePipelineState(function: function)
     }
-    let seed = try pipeline("ssb_disk_seed")
-    let sort = try pipeline("ssb_disk_sort")
-    let measure = try pipeline("ssb_disk_measure")
+    let seed = try pipeline("direct_disk_seed")
+    let sort = try pipeline("direct_disk_sort")
+    let measure = try pipeline("direct_disk_measure")
     var count = 1
     while count < detectorSum.count { count *= 2 }
     var input = detectorSum

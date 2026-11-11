@@ -1,4 +1,4 @@
-"""Strict backend contract for single-sideband ptychography."""
+"""Strict backend contract for direct ptychography."""
 
 import pathlib
 from contextlib import AbstractContextManager
@@ -25,7 +25,7 @@ def check_refinement(refinement) -> str | None:
 
 @dataclass(frozen=True)
 class BackendPrecision:
-    """Numeric storage required from every SSB backend."""
+    """Numeric storage required from every direct ptychography backend."""
 
     real_dtype: Literal["float32"] = "float32"
     complex_dtype: Literal["complex64"] = "complex64"
@@ -72,7 +72,7 @@ class DirectPtychoProtocol(Protocol):
     same semantic contract in ``webgpu/protocol.ts`` because its execution is
     asynchronous and browser-resident. Unsupported work must fail explicitly;
     no implementation may fall back to CPU or change the BF evidence.
-    ``preview_upsampled`` is every SSB image: the phase of the bright-field mean
+    ``preview_upsampled`` is every direct ptychography image: the phase of the bright-field mean
     wave at the output factor, with the phase-variance loss on the native grid.
     """
 

@@ -134,7 +134,7 @@ def release_cached_memory(verbose: bool = False) -> float:
         before = torch.mps.driver_allocated_memory()
         gc.collect()  # after the reading: a collected Metal resident hands its buffers straight back to the driver
         torch.mps.empty_cache()
-        # the Metal encode and SSB paths compute with MLX, which keeps its own cache; never imported, it holds nothing
+        # the Metal encode and direct ptychography paths compute with MLX, which keeps its own cache; never imported, it holds nothing
         mlx_core = sys.modules.get("mlx.core")
         if mlx_core is not None:
             mlx_core.clear_cache()

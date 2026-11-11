@@ -1,4 +1,4 @@
-"""MPS/Metal SSB FFT configuration for 1024x1024 scans."""
+"""MPS/Metal direct ptychography FFT configuration for 1024x1024 scans."""
 
 from quantem.gpu.direct_ptycho.mps.kernels.common import MPSFFTConfig
 

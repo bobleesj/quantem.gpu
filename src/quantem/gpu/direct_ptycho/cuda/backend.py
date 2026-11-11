@@ -1,4 +1,4 @@
-"""Private CUDA compute implementation for the public SSB workflow."""
+"""Private CUDA compute implementation for the public direct ptychography workflow."""
 
 import math
 import time
@@ -12,18 +12,18 @@ from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.detector import disk_edge_radius
 from quantem.gpu.direct_ptycho.contract import ExportState, BackendPrecision
 from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra, select_bright_field
-from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
+from quantem.gpu.direct_ptycho.cuda.engine import DirectEngine
 from quantem.gpu.direct_ptycho.cuda.optimizer import fit_sample, fit_standard
 from quantem.gpu.direct_ptycho.padding import pad_scan, padded_side
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult
 
 
-class CudaSSBBackend:
-    """The CUDA implementation of the SSB backend protocol behind :class:`quantem.gpu.SSB`.
+class CudaDirectBackend:
+    """The CUDA implementation of the direct ptychography backend protocol behind :class:`quantem.gpu.direct`.
 
     Each bright-field pixel sees the sample through a slightly different probe tilt; correcting every pixel's image
     for the probe aberrations and averaging recovers the object phase at the scan resolution. This class prepares the
-    bright-field spectra ``G_qk`` on the device and runs fits and reconstructions through ``SSBEngine``. Units are the
+    bright-field spectra ``G_qk`` on the device and runs fits and reconstructions through ``DirectEngine``. Units are the
     engine's (C10, C12 in Angstrom); ``DirectPtycho`` owns the public units, validation and result types.
 
     Parameters
@@ -76,7 +76,7 @@ class CudaSSBBackend:
     ):
         scan_detector_rotation_rad = math.radians(scan_detector_rotation_deg)
 
-        # quantem.gpu SSB is GPU-only. Ensure the input is a CuPy array but
+        # quantem.gpu direct ptychography is GPU-only. Ensure the input is a CuPy array but
         # keep the native dtype. Casting the raw 4D block to float32 would
         # double memory (e.g. 19 GB uint16 -> 38 GB float32 copy on a
         # 512x512x192x192 scan). Reductions promote internally via uint64
@@ -157,7 +157,7 @@ class CudaSSBBackend:
         q_col_1d = cp.fft.fftfreq(scan_gpts[1], scan_sampling[1]).astype(cp.float32)
         self.q_row, self.q_col = cp.meshgrid(q_row_1d, q_col_1d, indexing='ij')
         self._best_loss: float = float('inf')
-        self._accelerator: SSBEngine | None = None
+        self._accelerator: DirectEngine | None = None
         self._elapsed_optimize: float = 0.0
         self._elapsed_refine: float = 0.0
         self._refine_method: str | None = None
@@ -166,7 +166,7 @@ class CudaSSBBackend:
 
     def free(self) -> None:
         """
-        Release all GPU VRAM held by this SSB engine.
+        Release all GPU VRAM held by this direct ptychography engine.
 
         Frees:
         - G_qk (the FFT of virtual BF stack - the largest allocation, ~7 GB)
@@ -177,7 +177,7 @@ class CudaSSBBackend:
         engine is no longer usable. Previously returned ``DirectPtychoResult``
         objects remain valid (they hold independent copies of the phase).
 
-        Call this when the SSB pipeline is done and you need VRAM for
+        Call this when the direct ptychography pipeline is done and you need VRAM for
         the next stage (e.g., iterative ptychography).
         """
         if self._accelerator is not None:
@@ -192,10 +192,10 @@ class CudaSSBBackend:
             self._accelerator = None
         cp.get_default_memory_pool().free_all_blocks()
 
-    def _get_accelerator(self) -> SSBEngine:
+    def _get_accelerator(self) -> DirectEngine:
         """Get or create CuPy accelerator."""
         if self._accelerator is None:
-            self._accelerator = SSBEngine(
+            self._accelerator = DirectEngine(
                 G_qk=self.G_qk,
                 bf_inds_row=self.bf_inds_row,
                 bf_inds_col=self.bf_inds_col,
@@ -261,7 +261,7 @@ class CudaSSBBackend:
         return path, engine.bf_source_write_seconds
 
     def result(self, *, compute_loss: bool = True) -> DirectPtychoResult:
-        """The SSB phase at the current aberrations (``fit()``'s final reconstruction), with the phase-variance loss.
+        """The direct ptychography phase at the current aberrations (``fit()``'s final reconstruction), with the phase-variance loss.
 
         The phase is the native-grid phase of the bright-field mean wave, as ``preview_upsampled`` computes it at
         factor 1, held as a unit-amplitude wave; ``compute_loss=False`` skips the loss.
@@ -317,7 +317,7 @@ class CudaSSBBackend:
     ) -> DirectPtychoResult:
         """Standard fit (tilt=False) of C10, C12 and phi12, then the complex object and the phase-variance loss there.
 
-        Maximizes the least-squares agreement of the SSB model with G(q, k) at sample tilt and depth spread 0
+        Maximizes the least-squares agreement of the direct ptychography model with G(q, k) at sample tilt and depth spread 0
         (``optimizer.fit_standard``, the resident search shared with MPS; ``refinement`` "newton", the trust-region
         Newton on the exact derivatives, or "bfgs", the exact-gradient quasi-Newton, for a locked or bounded fit). ``search_ranges`` (engine
         keys) bounds the search, a value holding that coefficient in every trial; ``refine_lock`` holds coefficients
@@ -373,7 +373,7 @@ class CudaSSBBackend:
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
-        """SSB phase (of the bright-field mean wave) at the output factor, with the diagnostic loss on the native grid.
+        """Direct ptychography phase (of the bright-field mean wave) at the output factor, with the diagnostic loss on the native grid.
 
         The loss is the phase variance over bright-field pixels: the engine's fused two-term pass for a thin sample,
         else ``ThickSample.phase_variance``.
@@ -418,7 +418,7 @@ class CudaSSBBackend:
     def phase_variance(self, aberrations: dict[str, float]) -> tuple[cp.ndarray, float]:
         """The phase-variance objective at C10/C12 optics on the native grid: (mean BF phase, loss).
 
-        The fits' own evaluator (``SSBEngine.reconstruct_with_loss``), so the loss matches the one a fit reports.
+        The fits' own evaluator (``DirectEngine.reconstruct_with_loss``), so the loss matches the one a fit reports.
         """
         return self._get_accelerator().reconstruct_with_loss(aberrations["C10"], aberrations["C12"], aberrations["phi12"])
 
@@ -454,13 +454,13 @@ class CudaSSBBackend:
     def _out_of_memory(self, stage: str) -> MemoryError:
         """The error that replaces a device out-of-memory failure during ``stage``.
 
-        It names the two numbers that decide whether SSB fits on the device, the bright-field pixel count (a smaller
+        It names the two numbers that decide whether direct ptychography fits on the device, the bright-field pixel count (a smaller
         ``bright_field_radius_px`` reduces it) and the free device memory (stale arrays in the session hold it).
         """
         num_bright_field_pixels = len(self.bf_inds_row)
         free_gb = cp.cuda.runtime.memGetInfo()[0] / 1e9
         return MemoryError(
-            f"Out of GPU VRAM during SSB {stage} "
+            f"Out of GPU VRAM during direct ptychography {stage} "
             f"({num_bright_field_pixels} BF pixels, {free_gb:.1f} GB free).\n"
             f"Try: DirectPtycho(..., bright_field_radius_px=<smaller>) to reduce BF pixel count, "
             f"or restart the kernel to free stale GPU memory."

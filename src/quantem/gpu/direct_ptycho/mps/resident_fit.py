@@ -161,7 +161,7 @@ def _angle_sum_kernel():
     from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
     return require_mlx().fast.metal_kernel(
-        name="ssb_thick_fit_angle_sums",
+        name="direct_thick_fit_angle_sums",
         input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky", "trial", "scalars", "probe_geometry",
                      "neighbour", "step_k", "batch_count"],
         output_names=["numer_real", "numer_imag", "denom"],
@@ -203,7 +203,7 @@ def _probe_geometry_kernel():
     from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 
     return require_mlx().fast.metal_kernel(
-        name="ssb_joint_probe_geometry",
+        name="direct_joint_probe_geometry",
         input_names=["kx", "ky", "scalars"],
         output_names=["geometry"],
         header=_THICK_FIT_BATCH_HEADER,
@@ -324,7 +324,7 @@ def evaluate(prepared, trial, band_inv_A=(0.2, 0.9)):
         sums = band_sums(prepared, rows, flat, band_qx, band_qy, scalars)
         constants = f"\n#define BATCH {batch}\n#define BAND {n_band}\n"
         partial = device.run(
-            "ssb_joint_reduce_band",
+            "direct_joint_reduce_band",
             {"sums": sums, "weight": weight},
             [(batch, 256, 3)],
             REDUCE,
@@ -332,7 +332,7 @@ def evaluate(prepared, trial, band_inv_A=(0.2, 0.9)):
             constants=constants,
         )[0]
         score = device.run(
-            "ssb_joint_reduce_score",
+            "direct_joint_reduce_score",
             {"partial": partial},
             [(batch, 3)],
             "if(index>=BATCH)return;Real total(0);for(int i=0;i<256;i++)total=total+load_real(partial,int(index)*256+i);store_real(out0,int(index),total);",

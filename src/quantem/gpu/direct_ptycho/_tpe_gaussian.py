@@ -1,4 +1,4 @@
-"""Reuse Optuna 4.9 Gaussian terms without changing adaptive SSB trials.
+"""Reuse Optuna 4.9 Gaussian terms without changing adaptive direct ptychography trials.
 
 The inverse CDF keeps Optuna's equations, iteration order and tolerance. Only
 its scalar central log-CDF loop is compiled, without fast math. Extreme tails

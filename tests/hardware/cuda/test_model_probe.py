@@ -34,12 +34,12 @@ def test_probe_phase_matches_reconstruction_polynomial(term):
     angles = np.zeros(14, np.float32)
     magnitudes[term], angles[term] = magnitude_A, azimuth
     coefficients = cp.asarray(pack_coefficients(magnitudes, angles))
-    source = ("#define SSB_DEVICE __device__\n#define SSB_COEFFICIENTS const float*\n"
+    source = ("#define DIRECT_DEVICE __device__\n#define DIRECT_COEFFICIENTS const float*\n"
               + CHI_SOURCE + r"""
     extern "C" __global__ void phase(const float* r, const float* c, float wl,
                                      const float* coefficients, float* out, int size) {
         int i = blockIdx.x * blockDim.x + threadIdx.x;
-        if (i < size) out[i] = ssb_chi_full(r[i], c[i], wl, coefficients);
+        if (i < size) out[i] = direct_chi_full(r[i], c[i], wl, coefficients);
     }
     """)
     kernel = cp.RawKernel(source, "phase")
@@ -55,7 +55,7 @@ def test_probe_phase_matches_reconstruction_polynomial(term):
 
 def test_live_probe_follows_optics_but_not_damping():
     import json
-    from .test_ssb_thick_sample import _synthetic_session
+    from .test_direct_thick_sample import _synthetic_session
 
     session, _ = _synthetic_session()
     viewer = session.show("regularization", show_probe=True, compute_loss=False)

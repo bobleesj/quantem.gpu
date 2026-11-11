@@ -26,7 +26,7 @@ func directDrag(
   record["sample_tilt_mrad"] = set["sample_tilt_mrad"]
   record["depth_spread_nm"] = set["depth_spread_nm"]
   let point = try modelPoint(record)
-  let auto = try calibration.ssbUpsamplingFactor()
+  let auto = try calibration.directAutoUpsample()
   let engine = try MetalDirectPtychoEngine(device: device, geometry: geometry)
   try engine.prepare(brightfield: counts, countType: countType)
   let model = try engine.jointModel(scanDetectorRotationDegrees: rotationEstimate)

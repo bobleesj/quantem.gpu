@@ -1,6 +1,6 @@
 # From acquisition to images
 
-**Load Gold → inspect mean diffraction, BF, ADF and DPC → reconstruct SSB phase.**
+**Load Gold → inspect mean diffraction, BF, ADF and DPC → reconstruct direct ptychography phase.**
 Everything needed for a first reconstruction is on this page, using one
 acquisition throughout. No QEM conversion is required first.
 
@@ -98,7 +98,7 @@ show_2d(
 dpc_result.scan_detector_rotation_mod180_deg, dpc_result.scan_detector_rotation_flipped  # degrees, modulo 180; detector-axis swap flag
 ```
 
-![Gold bright-field, annular dark-field and integrated DPC images before SSB](_static/gold-workflow-bf-adf-dpc.png)
+![Gold bright-field, annular dark-field and integrated DPC images before direct ptychography](_static/gold-workflow-bf-adf-dpc.png)
 
 All three panels show the same 512 × 512 scan. BF integrates the central disk;
 ADF is annular dark field, integrating the surrounding ring. The detector
@@ -108,13 +108,13 @@ Each panel uses independent contrast: square-root for BF/ADF and linear for DPC.
 
 DPC estimates the scan–detector rotation, known only modulo 180 degrees. This
 Gold acquisition reports `scan_detector_rotation_flipped=False`, so pass the angle and the
-flag directly to SSB; `aberrations(check_rotation=True)` settles the
-180-degree branch. SSB raises if `scan_detector_rotation_flipped` is True. For other data,
+flag directly to direct ptychography; `aberrations(check_rotation=True)` settles the
+180-degree branch. Direct ptychography raises if `scan_detector_rotation_flipped` is True. For other data,
 check that value first: a detector-axis swap must be resolved before reusing
-the angle. SSB does not run DPC automatically.
+the angle. Direct ptychography does not run DPC automatically.
 
 (reconstruct-phase)=
-## Reconstruct SSB phase
+## Reconstruct direct ptychography phase
 
 Reuse the same acquisition and the DPC rotation above.
 
@@ -131,12 +131,12 @@ ptycho = DirectPtycho(
 aberrations = ptycho.aberrations()
 result = ptycho.run(aberrations, upsample=1)
 show_2d(
-    result.phase, title="Gold SSB phase (rad)", cmap="inferno", cbar=True,
+    result.phase, title="Gold direct ptychography phase (rad)", cmap="inferno", cbar=True,
     scalebar={"sampling": result.object_sampling_A[1], "units": "Å"},
 )
 ```
 
-SSB finds the bright-field disk automatically. `aberrations()` is the
+Direct ptychography finds the bright-field disk automatically. `aberrations()` is the
 default model-based, tilt-corrected fit: on the native grid it fits defocus and
 twofold astigmatism together with the sample tilt and a depth spread, keeping
 the parameters whose predicted bright-field data agree best with the
@@ -149,9 +149,9 @@ search. Voltage, sampling, and convergence angle stay fixed.
 | `aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
 
 Both refine on exact derivatives of the model agreement
-({ref}`SSB fit methods <ssb-fit-methods>`).
+({ref}`Direct ptychography fit methods <direct-fit-methods>`).
 
-![Gold native SSB phase](_static/gold-ssb-native.png)
+![Gold native direct ptychography phase](_static/gold-direct-native.png)
 
 This is the 512 × 512 native reconstruction: 0.5 Å per output pixel and a
 25.6 nm square field using the supplied calibration. Experimental Gold has no
@@ -174,7 +174,7 @@ Keep the session open for the {ref}`advanced tutorial <gold-advanced>`:
 
 | Inspect or save | Example |
 |---|---|
-| Fitted coefficients and search candidates | {ref}`Read the aberration search <gold-ssb-reconstruction>` |
+| Fitted coefficients and search candidates | {ref}`Read the aberration search <gold-direct-reconstruction>` |
 | Phase beside the model probe | {ref}`Build the probe image <gold-model-probe>` |
 | Native versus 4× phase | {ref}`Compare the same field and particle <gold-upsample>` |
 | Measurements and calibration in one file | [Save as QEM](api/qem-python.md) |
@@ -189,7 +189,7 @@ data.close()
 
 ## Review rotation and defocus together
 
-For a calibrated SSB session, compare the two 180-degree rotation candidates
+For a calibrated direct ptychography session, compare the two 180-degree rotation candidates
 with negative and positive C10 search intervals:
 
 ```python
@@ -216,7 +216,7 @@ with the convention `f = -C10`. Depth spread is a fitted model parameter.
 
 `ptycho.show("focus")` uses the existing Show2D gallery. Pass `layout="stack"`
 to scroll through defocus in Show3D, or `interactive=False` for static core
-views. See the [SSB view options](api/ssb.md) for focus spacing, depth values,
+views. See the [direct ptychography view options](api/direct.md) for focus spacing, depth values,
 region selection and panel sizes.
 
 Detector calibration plots use the same display vocabulary:
@@ -226,7 +226,7 @@ detector_fit = data.calibration.detector_sampling()
 detector_fit.show(size="medium", cmap="inferno", save="detector-fit.png")
 ```
 
-The fit view has one panel. Detector and SSB galleries additionally accept
+The fit view has one panel. Detector and direct ptychography galleries additionally accept
 `rows` or `columns`. For example,
 `ptycho.show("focus", mode="static", columns=2, cmap="inferno", save="focus.png")`
 exports the focus comparison without changing its reconstructed pixels.

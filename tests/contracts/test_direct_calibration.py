@@ -48,7 +48,7 @@ def test_direct_calibration_survives_saved_result_roundtrip(tmp_path, method):
     assert original["reconstruction_diagnostics"] == result.reconstruction_diagnostics
     assert original["upsample"] == 2
     assert original["upsample_mode"] == "explicit"
-    assert original["loss"] is None  # Prediction error is not the SSB fit objective.
+    assert original["loss"] is None  # Prediction error is not the direct ptychography fit objective.
 
     paths = (tmp_path / "result.npz", tmp_path / "result.json")
     signature = {"source": source_identity(**result._calibration_source)}

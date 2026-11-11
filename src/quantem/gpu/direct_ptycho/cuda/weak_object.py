@@ -3,7 +3,7 @@
 For T = exp(eta + i phi) ~ 1 + eta + i phi, the non-DC scan
 spectrum is G = (t1 + t2) eta_Q + i (t1 - t2) phi_Q, where
 t1 = P(k-Q) P*(k), t2 = P(k) P*(k+Q). Both channels are real in
-space. The uniform-depth weights and probe polynomial are shared with SSB.
+space. The uniform-depth weights and probe polynomial are shared with direct ptychography.
 This is a linear model, not multislice inversion or quantitative absorption.
 """
 
@@ -16,7 +16,7 @@ from quantem.gpu.direct_ptycho.cuda.kernels.engine import _THICK_GEOMETRY_SOURCE
 from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE, pack_coefficients
 
 if TYPE_CHECKING:
-    from quantem.gpu.direct_ptycho.cuda.engine import SSBEngine
+    from quantem.gpu.direct_ptycho.cuda.engine import DirectEngine
 
 
 _transfer = cp.ElementwiseKernel(
@@ -28,9 +28,9 @@ _transfer = cp.ElementwiseKernel(
     float4 k = thick_probe_geometry(kr, kc, wl, alpha, dr, dc);
     float4 m = thick_probe_geometry(kr-qr, kc-qc, wl, alpha, dr, dc);
     float4 p = thick_probe_geometry(kr+qr, kc+qc, wl, alpha, dr, dc);
-    float ck = ssb_chi_full(kr, kc, wl, &coefficients[0]);
-    float cm = ssb_chi_full(kr-qr, kc-qc, wl, &coefficients[0]);
-    float cp_ = ssb_chi_full(kr+qr, kc+qc, wl, &coefficients[0]);
+    float ck = direct_chi_full(kr, kc, wl, &coefficients[0]);
+    float cm = direct_chi_full(kr-qr, kc-qc, wl, &coefficients[0]);
+    float cp_ = direct_chi_full(kr+qr, kc+qc, wl, &coefficients[0]);
     float shift = 6.283185307f * (qr*tr + qc*tc);
     float w1 = thick_sinc(0.5f * depth * (-3.141592654f/wl*(m.x-k.x)-shift));
     float w2 = thick_sinc(0.5f * depth * (3.141592654f/wl*(p.x-k.x)-shift));
@@ -39,16 +39,16 @@ _transfer = cp.ElementwiseKernel(
     ha = t1+t2;
     hp = complex<float>(0, 1)*(t1-t2);
     """,
-    "ssb_weak_object_transfer",
+    "direct_weak_object_transfer",
     preamble=(
-        "#define SSB_DEVICE __device__\n"
-        "#define SSB_COEFFICIENTS const float*\n" + CHI_SOURCE + _THICK_GEOMETRY_SOURCE
+        "#define DIRECT_DEVICE __device__\n"
+        "#define DIRECT_COEFFICIENTS const float*\n" + CHI_SOURCE + _THICK_GEOMETRY_SOURCE
     ),
 )
 
 
 def transfer(
-    engine: "SSBEngine",
+    engine: "DirectEngine",
     rows: cp.ndarray,
     cols: cp.ndarray,
     magnitudes_A: np.ndarray,
@@ -69,7 +69,7 @@ def transfer(
 
 
 def transfer_frequencies(
-    engine: "SSBEngine",
+    engine: "DirectEngine",
     qr: cp.ndarray,
     qc: cp.ndarray,
     magnitudes_A: np.ndarray,

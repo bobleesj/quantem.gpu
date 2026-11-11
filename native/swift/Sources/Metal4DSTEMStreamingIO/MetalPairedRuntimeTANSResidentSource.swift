@@ -1425,7 +1425,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   /// order; duplicates are allowed. `output` is caller-owned, on the same Metal
   /// device, and stores `[pixels.count, shape[0], shape[1]]` in row-major order.
   /// All original counts are retained, including detector pixels excluded from
-  /// virtual detectors. Apply `detectorValidityMask` when choosing SSB evidence.
+  /// virtual detectors. Apply `detectorValidityMask` when choosing direct ptychography evidence.
   /// The call waits for decoding and validates it before returning; it neither
   /// expands the whole resident nor changes its representation.
   /// Example: `try source.readDetectorColumns(pixels: [100, 101], into: output)`.

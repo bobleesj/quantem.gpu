@@ -47,7 +47,7 @@ relativistic electron wavelength in Å for an accelerating voltage in kV, and
 `interaction_parameter(voltage_kV)`, the relativistic interaction parameter
 σ = 2π m e λ / h² in rad/(V·Å) (6.526 × 10⁻⁴ at 300 kV) computed with that
 same wavelength: a projected potential of V_p V·Å shifts the phase by σ V_p.
-`quantem.gpu.optics.ssb_upsample_factor` chooses the SSB output grid
+`quantem.gpu.optics.direct_auto_upsample` chooses the direct ptychography output grid
 from voltage (kV), convergence semi-angle (mrad), and scan step (Å, a
 `(row, col)` pair).
 
@@ -70,7 +70,7 @@ print(products.metadata["timing"])
 returns `ScreeningResult`. Its public controls are `backend`, `scan_shape`, an
 optional fixed `scan_detector_rotation_deg` with `scan_detector_rotation_flipped`, the cache policy (`cache`, `cache_dir`,
 `refresh`). A fitted rotation is the exact minimum of the centre-of-mass curl,
-the estimate `dpc.run` and `SSB` make too. A cache miss loads the
+the estimate `dpc.run` and `DirectPtycho` make too. A cache miss loads the
 acquisition once into encoded CUDA or MPS storage; a cache hit needs no GPU. A
 cache reopen is not a raw HDF5 load. The raw source remains the scientific
 evidence source, and metadata retains the source fingerprint, parameters, and
@@ -110,7 +110,7 @@ pixel, `(row, col)` or one number for both axes) and the detector calibration,
 returned as `ParallaxResult.aberrations` (`C10_nm`
 and `C12_nm` in nm, `phi12_deg` in degrees, scan frame) and
 `ParallaxResult.scan_detector_rotation_deg` (degrees, in [0, 360)), in the
-units and convention `SSB` takes.
+units and convention `DirectPtycho` takes.
 Parallax runs on CUDA only; an acquisition on an Apple GPU (MPS)
 raises `NotImplementedError`. Persist center, BF radius,
 scan sampling, the semiangle or detector sampling, upsample factor,
@@ -118,10 +118,10 @@ aberration-fit choice, and package revision with the result.
 
 ## Scan-detector frames
 
-SSB states the sample tilt along the scan axes (`sample_tilt_mrad`); a
+Direct ptychography states the sample tilt along the scan axes (`sample_tilt_mrad`); a
 ptychographic object and its propagator live along the detector axes
 (`propagator_tilt_mrad`). `quantem.gpu.geometry` converts between them with the
-convention SSB, DPC and screening apply to the centre of mass,
+convention direct ptychography, DPC and screening apply to the centre of mass,
 `scan = R(θ) · D · detector`, where `R(θ)` is the scan-detector rotation and `D`
 swaps the detector's row and column axes when `scan_detector_rotation_flipped`
 is true:

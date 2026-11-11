@@ -1,6 +1,6 @@
 # LZ4 read bounds, the bounded chunk walk and the rc15 to rc16 timing comparison - 2026-10-11
 
-> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/ssb.md).
+> **Historical:** describes the code as of 2026-10-11; the fit it times (200 trials and Nelder–Mead) is retired. See the [current fit methods](../api/direct.md).
 
 ## Question
 
@@ -23,7 +23,7 @@
   the two changes below); "final" `3b2e754`.
 - Data: one Arina acquisition, 512 x 512 scan, 192 x 192 detector, uint16
   (27 files, private evidence archive).
-- Scripts: `tests/benchmarks/data_paths.py`, `scripts/benchmark_ssb.py`
+- Scripts: `tests/benchmarks/data_paths.py`, `scripts/benchmark_direct.py`
   (`--voltage-kV 300 --semiangle-mrad 30 --scan-sampling-A 0.264`), and
   throwaway alternation drivers around them.
 
@@ -89,9 +89,9 @@ rc15 against the final tree, processes alternating, best time of the rounds.
 
 | Path | rc15 | final | Outputs |
 |---|---|---|---|
-| SSB session (bright-field crop and Fourier preparation), s | 0.641 | 0.632 | same |
-| SSB reconstruct, s | 0.037 | 0.033 | same |
-| SSB reconstruct with loss, s | 0.085 | 0.095 | same |
+| Direct ptychography session (bright-field crop and Fourier preparation), s | 0.641 | 0.632 | same |
+| Direct ptychography reconstruct, s | 0.037 | 0.033 | same |
+| Direct ptychography reconstruct with loss, s | 0.085 | 0.095 | same |
 | `aberrations`, 200 trials and Nelder-Mead, s | 14.36 | 12.79 | same |
 | `aberrations(tilt=True)`, s | 8.72 | 8.31 | rc15 differs between repeats; final repeats bit for bit |
 | `dpc.run`, s | 0.237 | 0.252 | same |

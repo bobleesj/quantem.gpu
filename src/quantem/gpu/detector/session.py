@@ -405,7 +405,7 @@ def resolve_backend(data, *, immutable: bool = False):
         return CountDetectorCompute(data)
     if _is_loaded_instance(data, "cupy", "ndarray"):
         return CudaKernelCompute(data, immutable=immutable)
-    # MPS SSB's exact BF-column frames expose ``chunks`` too; ssb sits above
+    # MPS direct ptychography's exact BF-column frames expose ``chunks`` too; direct sits above
     # detector, so that type cannot be named here.
     if isinstance(data, ChunkedFrames) or hasattr(data, "chunks"):
         return MetalRawBackend(data)

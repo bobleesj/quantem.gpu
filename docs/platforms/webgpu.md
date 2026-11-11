@@ -11,7 +11,7 @@ maps WebGPU to Metal internally.
 | Local HDF5 read/decode | `src/quantem/gpu/io/hdf5/webgpu` |
 | BF/DF/ADF and moments | `src/quantem/gpu/detector/webgpu` |
 | DPC/iDPC | `src/quantem/gpu/dpc/webgpu` |
-| SSB | `src/quantem/gpu/direct_ptycho/webgpu` |
+| Direct ptychography | `src/quantem/gpu/direct_ptycho/webgpu` |
 
 quantem.gpu ships no WebGPU display kernels (statistics, FFT, color); the
 browser client owns display and receives exact counts as `Uint32ImageView` from
@@ -44,8 +44,8 @@ through `RansResidentSet.loadQemFile` / `loadQemFiles` (`detector/webgpu/qem-sou
 [Count representations](../api/representations.md) for limits and ownership.
 
 WebGPU implements local-file load/decode, detector products, CoM/DPC/iDPC,
-and SSB reconstruction, phase and loss; the browser client owns display. It does not currently
-implement the Python `screening.prepare` cache or SSB aberration fitting.
+and direct ptychography reconstruction, phase and loss; the browser client owns display. It does not currently
+implement the Python `screening.prepare` cache or direct ptychography aberration fitting.
 Aberration fitting (`aberrations`) runs on CUDA, MPS or native Metal;
 the browser never substitutes a smaller objective. Levenberg–Marquardt is not an implemented refinement
 mode in any current backend.

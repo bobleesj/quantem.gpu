@@ -65,7 +65,7 @@ def test_tensor_buffer_reads_before_any_metal_import():
     """A Torch tensor's Metal buffer reads as an array in a fresh process that never imported Metal.
 
     PyObjC returns ``contents()`` as a bare int until the Metal metadata loads, so
-    SSB on an MPS tensor failed when its test file ran on its own.
+    Direct ptychography on an MPS tensor failed when its test file ran on its own.
     """
     import subprocess
     import sys

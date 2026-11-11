@@ -17,7 +17,7 @@ are different; neither caller may silently select the other's kernel.
 The native encoded source and corrected resident view previously compiled the
 Python `hot_median` kernel while binding its older buffer interface. The kernel
 now expects neighbor offsets and indices, so those bindings were invalid. This
-caused the frozen count test to fail before the SSB integration as well as after
+caused the frozen count test to fail before the direct ptychography integration as well as after
 it. Rebinding alone would also change eight of the 595 frozen count values by
 one, because of rounding.
 

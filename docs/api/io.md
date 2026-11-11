@@ -20,7 +20,7 @@ Use `io.report(path)` for a metadata table before loading, or `io.report(data)`
 for an already-loaded acquisition. Reporting does not decode detector values.
 
 Leave the loaded dataset as the last expression in a notebook cell to show
-its calibration table before starting SSB, ptychography, or another algorithm:
+its calibration table before starting direct ptychography, ptychography, or another algorithm:
 
 ```python
 data = io.load("acquisition.qem")
@@ -104,7 +104,7 @@ folder = Path(root) / "denoise/simulated_au_nanobeam_pg_dose1"
 Keep `data` open while analyzing it or using a viewer, then call `data.close()`.
 A pixel the stored detector mask flags holds no measurement, and its value
 would bias every sum over the detector. The default `hot_pixel_correction="none"`
-keeps the stored values and leaves those pixels out of detector products and SSB.
+keeps the stored values and leaves those pixels out of detector products and direct ptychography.
 `hot_pixel_correction="median"` replaces each by the median of the valid pixels
 of its 3 × 3 window (or of the smallest larger window that holds one, inside a
 flagged cluster), rounded half to even, and the load line says how many. This master flags no pixels, so both settings return the
@@ -369,7 +369,7 @@ Use `device="cuda"` for an NVIDIA device. Gzip HDF5 uses bounded host reads
 followed by GPU ANS encoding; this is not GPU gzip decompression. Float64 input
 retains all original IEEE bits in typed ANS on both CUDA and MPS. Torch MPS
 cannot represent float64 tensors: use `loaded.read(output="native")` for an
-owned Metal array, and call its `release()` after use. Display and SSB products
+owned Metal array, and call its `release()` after use. Display and direct ptychography products
 use float32 arithmetic on Metal; that conversion leaves stored values intact.
 Reconstruction objects, probes and result TIFFs are not diffraction acquisitions.
 These Python paths do not certify the native Swift reader, which still limits
@@ -795,7 +795,7 @@ words are not detector measurements. See [QEM interoperability](qem-interoperabi
 for independent validation and the [metadata mapping](qem-metadata-mapping.md) for
 which source fields are normalized or merely retained.
 
-Portable SSB export also accepts a `.qem` acquisition as its source. Its source
+Portable direct ptychography export also accepts a `.qem` acquisition as its source. Its source
 identity hashes the validated QEM bytes and is distinct from the original HDF5
 identity. Re-encoding the acquisition changes that identity; the exported phase
 values are unchanged. Keep the conversion record when relating the QEM working
@@ -805,5 +805,5 @@ The loaded acquisition's metadata table also separates **QEM file size** on
 disk, **ANS resident size** (or **Resident size** for other representations),
 and **Uncompressed size** from shape and dtype. All three use decimal GB
 (1 GB = 1,000,000,000 bytes). Resident storage includes the encoded representation
-and its indexes, not temporary SSB workspaces or total device memory. Inspecting
+and its indexes, not temporary direct ptychography workspaces or total device memory. Inspecting
 these sizes does not decode the acquisition.

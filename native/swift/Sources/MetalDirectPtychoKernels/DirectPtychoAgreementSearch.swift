@@ -1,6 +1,6 @@
 import Foundation
 
-/// The model-based SSB fit: Python's resident multivariate TPE search (`quantem.gpu.direct_ptycho._resident_search`),
+/// The model-based direct ptychography fit: Python's resident multivariate TPE search (`quantem.gpu.direct_ptycho._resident_search`),
 /// ported line by line to host double precision, the arithmetic of its CUDA build, then a trust-region Newton on
 /// the exact gradient and Hessian of the same objective (Python `direct_ptycho._exact_newton`). The objective is the
 /// least-squares agreement of the transfer model with the measured double-overlap data
@@ -205,7 +205,7 @@ public enum DirectPtychoAgreementSearch {
       }
       let values = try evaluate(points.map(space.decode))
       guard values.count == points.count, values.allSatisfy(\.isFinite) else {
-        throw SSBOptimizationError.nonFiniteLoss
+        throw DirectOptimizationError.nonFiniteLoss
       }
       history += points
       scores += values
@@ -537,7 +537,7 @@ public enum DirectPtychoAgreementSearch {
       let pruning = prune && iteration == 1 && active.count > 1
       let values = try staged.values(active.map { state[$0].center }, !pruning)
       guard values.count == active.count, values.allSatisfy(\.isFinite) else {
-        throw SSBOptimizationError.nonFiniteLoss
+        throw DirectOptimizationError.nonFiniteLoss
       }
       var exact = [Derivatives?](repeating: nil, count: active.count)
       func fetch(_ positions: [Int]) throws {
@@ -549,7 +549,7 @@ public enum DirectPtychoAgreementSearch {
               && at.hessian.count == 6
               && at.hessian.allSatisfy { $0.count == 6 && $0.allSatisfy(\.isFinite) }
           })
-        else { throw SSBOptimizationError.nonFiniteLoss }
+        else { throw DirectOptimizationError.nonFiniteLoss }
         for (position, at) in zip(positions, results) { exact[position] = at }
       }
       // A rejected step reuses the kept center's derivatives.
@@ -861,7 +861,7 @@ public enum DirectPtychoAgreementSearch {
       // Report the fitted point on the search's own objective.
       let values = try evaluate([point])
       guard values.count == 1, values[0].isFinite else {
-        throw SSBOptimizationError.nonFiniteLoss
+        throw DirectOptimizationError.nonFiniteLoss
       }
       agreement = values[0]
       newtonStarts = fitted.starts.filter(\.hasPrevious).map {
@@ -874,7 +874,7 @@ public enum DirectPtychoAgreementSearch {
     }
     guard agreement.isFinite, agreement > 0 else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "The SSB model fit found no positive finite agreement. Check the scan sampling and the signal in the fitting band."
+        "The direct ptychography model fit found no positive finite agreement. Check the scan sampling and the signal in the fitting band."
       )
     }
     point[1] = abs(point[1])

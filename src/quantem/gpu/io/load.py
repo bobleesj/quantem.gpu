@@ -107,7 +107,7 @@ def load(
     A flagged pixel's stored value (dead, hot, or a marker such as 65535) is not
     a measurement and biases anything summed over the detector. The default
     ``hot_pixel_correction="none"`` keeps every stored value, markers included,
-    so a load never changes data: detector products and SSB exclude the flagged
+    so a load never changes data: detector products and direct ptychography exclude the flagged
     pixels without changing storage. ``"median"`` replaces each one by the median
     of the valid pixels of its 3 x 3 window (the smallest larger window when a
     flagged cluster hides all of them), rounded half to even, on the GPU, changing

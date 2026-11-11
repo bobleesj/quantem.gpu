@@ -388,28 +388,28 @@
       }
     },
     {
-      "id": "ssb.object-phase-loss",
+      "id": "direct.object-phase-loss",
       "parity": "Same BF selection, aberrations, precision, objective, optimizer settings, and frozen phase/loss metric.",
       "coverage": {
         "cpu-reference": {
           "level": "reference-fixture",
-          "gates": ["tests/parity/fixtures/ssb_reference_512_mps.json", "tests/contracts/test_ssb_backend_contract.py"]
+          "gates": ["tests/parity/fixtures/direct_reference_512_mps.json", "tests/contracts/test_direct_backend_contract.py"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/hardware/cuda/test_ssb_cuda_128.py", "tests/hardware/mps/test_ssb_mps_cuda_reference.py"]
+          "gates": ["tests/hardware/cuda/test_direct_cuda_128.py", "tests/hardware/mps/test_direct_mps_cuda_reference.py"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/hardware/mps/test_ssb_mps_cuda_reference.py", "tests/contracts/test_ssb_mps_close.py"]
+          "gates": ["tests/hardware/mps/test_direct_mps_cuda_reference.py", "tests/contracts/test_direct_mps_close.py"]
         },
         "swift-metal": {
           "level": "partial-hardware",
-          "gates": ["native/swift/Tests/MetalDirectPtychoKernelsTests/SSBRedrawReconstructionTests.swift", "native/swift/Tests/MetalDirectPtychoKernelsTests/SSBModelReconstructionTests.swift", "native/swift/Tests/MetalDirectPtychoKernelsTests/MetalSSBKernelsTests.swift", "docs/maintainer/native-joint-ssb.md"]
+          "gates": ["native/swift/Tests/MetalDirectPtychoKernelsTests/DirectRedrawReconstructionTests.swift", "native/swift/Tests/MetalDirectPtychoKernelsTests/DirectModelReconstructionTests.swift", "native/swift/Tests/MetalDirectPtychoKernelsTests/MetalDirectKernelsTests.swift", "docs/maintainer/native-joint-direct.md"]
         },
         "webgpu": {
           "level": "partial-hardware",
-          "gates": ["tests/infrastructure/test_webgpu_sources.py", "tests/contracts/test_ssb_backend_contract.py", "docs/maintainer/ssb-performance.md"]
+          "gates": ["tests/infrastructure/test_webgpu_sources.py", "tests/contracts/test_direct_backend_contract.py", "docs/maintainer/direct-performance.md"]
         }
       }
     }

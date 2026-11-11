@@ -262,7 +262,7 @@ def test_float64_display_rounds_without_changing_storage(tmp_path, backend):
 
 
 @pytest.mark.parametrize("kind", ["uint32", "uint64", "int32", "float64"])
-def test_fixed_ssb_survives_typed_save_reopen(tmp_path, backend, kind):
+def test_fixed_direct_survives_typed_save_reopen(tmp_path, backend, kind):
     from quantem.gpu import DirectPtycho
 
     rows, cols = np.indices((16, 16))

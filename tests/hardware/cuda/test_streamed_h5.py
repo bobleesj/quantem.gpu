@@ -401,9 +401,9 @@ def test_decode_right_after_freeing_batches_with_queued_reads_keeps_their_counts
     wait for kernels the caller had queued, so joining decoded batches, freeing them and decoding the next batch
     returned wrong frames in the joined array (hundreds of frames, in 10 of 12 attempts on a busy GPU).
     """
-    master = os.environ.get("QUANTEM_SSB_ARINA_MASTER", "")
+    master = os.environ.get("QUANTEM_DIRECT_ARINA_MASTER", "")
     if not master:
-        pytest.skip("set QUANTEM_SSB_ARINA_MASTER to a real Arina master file")
+        pytest.skip("set QUANTEM_DIRECT_ARINA_MASTER to a real Arina master file")
     import cupy as cp
 
     from quantem.gpu.formats.hdf5.reads import FrameReader

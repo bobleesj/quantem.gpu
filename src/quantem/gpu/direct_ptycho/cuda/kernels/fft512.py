@@ -1,4 +1,4 @@
-"""Custom fixed-size CUDA FFT kernels for SSB (512x512).
+"""Custom fixed-size CUDA FFT kernels for direct ptychography (512x512).
 
 512 = 4^4 × 2: uses 4 radix-4 stages (m=4,16,64,256) plus a final
 radix-2 stage. 128 threads per row, each handling 4 elements.
@@ -778,14 +778,14 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
 
         // Phase extract + accumulate per-position.
         if (valid) {
-            float p0 = atan2f_ssb_poly(r0.y, r0.x);
-            float p1 = atan2f_ssb_poly(r1.y, r1.x);
-            float p2 = atan2f_ssb_poly(r2.y, r2.x);
-            float p3 = atan2f_ssb_poly(r3.y, r3.x);
-            float p4 = atan2f_ssb_poly(r4.y, r4.x);
-            float p5 = atan2f_ssb_poly(r5.y, r5.x);
-            float p6 = atan2f_ssb_poly(r6.y, r6.x);
-            float p7 = atan2f_ssb_poly(r7.y, r7.x);
+            float p0 = atan2f_direct_poly(r0.y, r0.x);
+            float p1 = atan2f_direct_poly(r1.y, r1.x);
+            float p2 = atan2f_direct_poly(r2.y, r2.x);
+            float p3 = atan2f_direct_poly(r3.y, r3.x);
+            float p4 = atan2f_direct_poly(r4.y, r4.x);
+            float p5 = atan2f_direct_poly(r5.y, r5.x);
+            float p6 = atan2f_direct_poly(r6.y, r6.x);
+            float p7 = atan2f_direct_poly(r7.y, r7.x);
             sum0 += p0; sum1 += p1; sum2 += p2; sum3 += p3;
             sum4 += p4; sum5 += p5; sum6 += p6; sum7 += p7;
             sumsq0 += p0*p0; sumsq1 += p1*p1; sumsq2 += p2*p2; sumsq3 += p3*p3;
@@ -875,7 +875,7 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
 
 
 class CustomFFT512(CustomFFTBase):
-    """Custom 512x512 IFFT kernels for SSB."""
+    """Custom 512x512 IFFT kernels for direct ptychography."""
 
     def __init__(self) -> None:
         super().__init__(

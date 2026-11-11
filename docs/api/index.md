@@ -1,7 +1,7 @@
 # Python API reference
 
 Use this section to check parameters, units, return values, and supported
-options. For a first session, follow [I/O, DPC and SSB on one page](../python-workflow.md).
+options. For a first session, follow [I/O, DPC and direct ptychography on one page](../python-workflow.md).
 The examples use one public Python API on supported MPS and CUDA paths.
 
 | Task | Entry point | Returns | Details |
@@ -10,7 +10,7 @@ The examples use one public Python API on supported MPS and CUDA paths.
 | Save or report acquisition metadata | `io.save`, `io.report` | Saved acquisition or metadata table | [Save and share](qem-python.md) |
 | Mean diffraction, BF, ADF, DF | `detector.mean`, `bf`, `adf`, `df` | Reduced NumPy images | [Detectors](images_dpc.md) |
 | CoM and integrated DPC | `dpc.run` | `DPCResult` | [DPC](images_dpc.md) |
-| Find aberrations; reconstruct phase | `DirectPtycho.aberrations`, `DirectPtycho.run` | `DirectPtychoResult` | [SSB](ssb.md) |
+| Find aberrations; reconstruct phase | `DirectPtycho.aberrations`, `DirectPtycho.run` | `DirectPtychoResult` | [direct ptychography](direct.md) |
 | Measure and correct drift across a series | `drift.drift`, `Drift.show`, `Drift.corrected` | `Drift`; aligned frames and their mean | [Drift](drift.md) |
 | Render a movie | `movie` | Encoded artifact | [Movies](movie.md) |
 
@@ -26,7 +26,7 @@ limitations before interpreting a result.
 | `io` | Discovery, loading, indexing, inspection, saving | [I/O](io.md) |
 | `detector`, `dpc` | Detector geometry, images, and phase gradients | [Detectors and DPC](images_dpc.md) |
 | `device` | Detect or explicitly select an accelerator | [Device APIs](core.md) |
-| `optics` | Relativistic electron wavelength, interaction parameter, SSB output sampling | [Optics APIs](core.md) |
+| `optics` | Relativistic electron wavelength, interaction parameter, direct ptychography output sampling | [Optics APIs](core.md) |
 | `parallax` | Parallax reconstruction | [Parallax](core.md) |
 | `geometry` | Scan-plane rotation of an acquisition; scan/detector tilt frames and rotations modulo 180° | [Scan rotation](core.md) |
 | `screening` | Reuse derived products for application integration | [Screening](core.md) |

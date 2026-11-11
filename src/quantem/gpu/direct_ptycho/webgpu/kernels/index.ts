@@ -4,7 +4,7 @@ import { FFT256 } from "./fft256";
 import { FFT512 } from "./fft512";
 import { FFT1024 } from "./fft1024";
 
-export type SupportedSsbSize = WebGPUFFTConfig["size"];
+export type SupportedDirectSize = WebGPUFFTConfig["size"];
 
 const WEBGPU_FFT_CONFIGS: ReadonlyMap<number, WebGPUFFTConfig> = new Map([
   [FFT128.size, FFT128],
@@ -13,7 +13,7 @@ const WEBGPU_FFT_CONFIGS: ReadonlyMap<number, WebGPUFFTConfig> = new Map([
   [FFT1024.size, FFT1024],
 ]);
 
-export const SUPPORTED_SSB_SIZES = [128, 256, 512, 1024] as const;
+export const SUPPORTED_DIRECT_SIZES = [128, 256, 512, 1024] as const;
 
 export function getWebGPUFFTConfig(size: number): WebGPUFFTConfig | null {
   return WEBGPU_FFT_CONFIGS.get(size) ?? null;

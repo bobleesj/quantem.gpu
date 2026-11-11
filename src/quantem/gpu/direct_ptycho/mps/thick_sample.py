@@ -1,8 +1,8 @@
-"""Thick-sample SSB (sample tilt + thickness) on MPS: MLX reference path.
+"""Thick-sample direct ptychography (sample tilt + thickness) on MPS: MLX reference path.
 
-Same model as the CUDA ``thick_correct_kernel`` / ``thick_fit_kernel`` in ``cuda/kernels/engine.py`` (read that comment for the physics). Standard SSB
+Same model as the CUDA ``thick_correct_kernel`` / ``thick_fit_kernel`` in ``cuda/kernels/engine.py`` (read that comment for the physics). Standard direct ptychography
 treats the sample as one plane at the probe defocus. For a crystal of thickness t tilted by theta (straight columns), the
-slice at depth z (from mid-depth) sees the defocus C10 + z and sits shifted by z theta. Averaging the two SSB terms over depth
+slice at depth z (from mid-depth) sees the defocus C10 + z and sits shifted by z theta. Averaging the two direct ptychography terms over depth
 gives each its own real weight (sinc of the depth-phase rate times t / 2):
 
     t1 = P(q - k) conj(P(k)),   rate1 = -factor (alpha_m^2 - alpha_k^2) - 2 pi q . theta
@@ -30,7 +30,7 @@ from quantem.gpu.direct_ptycho._execution import checkpoint
 from quantem.gpu.direct_ptycho.mps.hardware import require_mlx
 from quantem.gpu.direct_ptycho.mps.kernels.phase_sums import phase_sums_from_complex
 from quantem.gpu.direct_ptycho.mps.prepared import (
-    PreparedMpsSSB,
+    PreparedMpsDirect,
     compute_geometry,
     expand_hermitian_mx,
     ifft2_chunked,
@@ -56,7 +56,7 @@ _K_CHUNK = 256      # bright-field pixels summed per thread; the partial sums ov
 
 
 def reconstruct_thick(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     C10: float,
     C12: float,
@@ -83,7 +83,7 @@ def reconstruct_thick(
 
 
 def reconstruct_thick_reference(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     C10: float,
     C12: float,
@@ -127,7 +127,7 @@ def reconstruct_thick_reference(
 
 
 def thick_fit(
-    prepared: PreparedMpsSSB,
+    prepared: PreparedMpsDirect,
     *,
     C10: float,
     C12: float,
@@ -136,7 +136,7 @@ def thick_fit(
     thickness: float,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
 ) -> float:
-    """Least-squares fit of the thick-sample SSB model to G over a spatial-frequency band (larger = better).
+    """Least-squares fit of the thick-sample direct ptychography model to G over a spatial-frequency band (larger = better).
 
     Per q the best object Psi(q) in G(q, k) = Psi(q) gamma(q, k) explains |sum_k G conj(gamma)|^2 / sum_k |gamma|^2 of the
     data (gamma unnormalised); this sums that over ``band_inv_A[0] < |q| < band_inv_A[1]``. It is the objective that
@@ -164,7 +164,7 @@ def thick_fit(
     return float((power / den[keep]).sum())
 
 
-def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
+def thick_fit_batch(prepared: PreparedMpsDirect, params, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
     """``thick_fit`` for many parameter sets at once with the fused Metal kernel (fast path used by the fit search).
 
     ``params``: (B, 6) rows of (C10, C12, phi12, tilt_row_mrad, tilt_col_mrad, thickness), engine units. Same value as
@@ -245,7 +245,7 @@ def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, f
     return out
 
 
-def _chunk_bf(prepared: PreparedMpsSSB) -> int:
+def _chunk_bf(prepared: PreparedMpsDirect) -> int:
     """BF pixels per chunk so a chunk's complex temporaries stay near ``_CHUNK_BYTES``."""
     ny, nx = prepared.scan_shape
     return max(1, _CHUNK_BYTES // (int(ny) * int(nx) * 8 * _LIVE_PLANES))
@@ -270,7 +270,7 @@ def _compiled_terms():
         chi_k = factor * alpha_k2 * (c12 * (cos2_k * cos2phi12 + sin2_k * sin2phi12) + c10)
         chi_m = factor * alpha_m2 * (c12 * (cos2_m * cos2phi12 + sin2_m * sin2phi12) + c10)
         chi_p = factor * alpha_p2 * (c12 * (cos2_p * cos2phi12 + sin2_p * sin2phi12) + c10)
-        # depth weights; thickness 0 gives x = 0 and w = 1 exactly (the standard SSB correction)
+        # depth weights; thickness 0 gives x = 0 and w = 1 exactly (the standard direct ptychography correction)
         shift = 2.0 * math.pi * (qx * theta_row + qy * theta_col)
         x1 = 0.5 * thickness * (-factor * (alpha_m2 - alpha_k2) - shift)
         x2 = 0.5 * thickness * (factor * (alpha_p2 - alpha_k2) - shift)
@@ -294,7 +294,7 @@ def _compiled_terms():
     return mx.compile(terms)
 
 
-def _params(prepared: PreparedMpsSSB, C10, C12, phi12, sample_tilt_mrad, thickness):
+def _params(prepared: PreparedMpsDirect, C10, C12, phi12, sample_tilt_mrad, thickness):
     """Pack every scalar of the thick-sample model into one float32 array, in the order ``_compiled_terms`` reads.
 
     One array argument keeps the compiled graph from being traced again for each new parameter value.
@@ -310,7 +310,7 @@ def _params(prepared: PreparedMpsSSB, C10, C12, phi12, sample_tilt_mrad, thickne
     )
 
 
-def _chunk_terms(prepared: PreparedMpsSSB, start: int, stop: int, params):
+def _chunk_terms(prepared: PreparedMpsDirect, start: int, stop: int, params):
     """Full-plane G for storage BF pixels [start, stop) and the model terms for them."""
     mx = prepared.mx
     _, nx = prepared.scan_shape
@@ -325,7 +325,7 @@ def _chunk_terms(prepared: PreparedMpsSSB, start: int, stop: int, params):
 _THICK_FIT_BATCH_HEADER = """
 inline float4 tf_geometry(float dx, float dy, float wl, float semiangle, float ang_y, float ang_x) {
     float r2 = dx * dx + dy * dy;
-#ifdef SSB_PRECISE_GEOMETRY
+#ifdef DIRECT_PRECISE_GEOMETRY
     float r = metal::precise::sqrt(r2);
 #else
     float r = metal::sqrt(r2);
@@ -335,7 +335,7 @@ inline float4 tf_geometry(float dx, float dy, float wl, float semiangle, float a
     float cos2 = (dx * dx - dy * dy) * inv_r2;
     float sin2 = 2.0f * dx * dy * inv_r2;
     float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
-#ifdef SSB_PRECISE_GEOMETRY
+#ifdef DIRECT_PRECISE_GEOMETRY
     // Match compute_geometry's squared angular components on the fine grid.
     float denom = metal::precise::sqrt((dx * ang_y) * (dx * ang_y) + (dy * ang_x) * (dy * ang_x)) * inv_r;
 #else
@@ -353,7 +353,7 @@ def _trial_probe_kernel():
     """Keep the original float32 geometry and chi(k) expression per trial."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_thick_trial_probe",
+        name="direct_thick_trial_probe",
         input_names=["kx", "ky", "scalars", "trial"],
         output_names=["probe_geometry", "probe_chi"],
         header=_THICK_FIT_BATCH_HEADER,
@@ -403,7 +403,7 @@ _THICK_FIT_BATCH_SOURCE = """
             // A zero aperture contributes exactly zero. Retain precise range
             // reduction for each active side, including soft aperture edges.
             float b1 = 0.0f, b2 = 0.0f, c1 = 0.0f, cp = 0.0f, s1 = 0.0f, sp = 0.0f;
-            // Depth spread 0 is standard SSB: both depth weights are exactly 1 (tf_sinc(0) = 1), so the sinc and
+            // Depth spread 0 is standard direct ptychography: both depth weights are exactly 1 (tf_sinc(0) = 1), so the sinc and
             // the tilt shift, which only enters the sinc, are skipped.
             bool thick = t != 0.0f;
             if (a1 != 0.0f) {
@@ -451,7 +451,7 @@ def _thick_fit_batch_kernel():
     """
     mx = require_mlx()
     return mx.fast.metal_kernel(
-        name="ssb_thick_fit_batch",
+        name="direct_thick_fit_batch",
         input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky",
                      "trial", "scalars", "probe_geometry", "probe_chi"],
         output_names=["numer_real", "numer_imag", "denom"],
@@ -460,7 +460,7 @@ def _thick_fit_batch_kernel():
     )
 
 
-def band_power(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> float:
+def band_power(prepared: PreparedMpsDirect, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> float:
     """G's power over the fit band, sum_q w_q sum_k |G(q, k)|^2 (per-q sums of BF chunks, added in float64).
 
     It bounds the agreement (Cauchy-Schwarz at each q), so agreement / band power is the fraction of the band's
@@ -480,7 +480,7 @@ def band_power(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float] = (0.2,
     return prepared.band_power[1]
 
 
-def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
+def _band(prepared: PreparedMpsDirect, band_inv_A: tuple[float, float]):
     """Band q on the stored half-plane: flat index into a G plane, (qx, qy) and the mirror weight; cached on ``prepared``.
 
     The term at -q equals the term at q (gamma(k, -q) = -conj gamma(k, q) for any probe phase with the first term at
@@ -520,7 +520,7 @@ def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
     return band
 
 
-def _band_mask(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]) -> np.ndarray:
+def _band_mask(prepared: PreparedMpsDirect, band_inv_A: tuple[float, float]) -> np.ndarray:
     q_row = np.asarray(prepared.q_row, dtype=np.float32)[:, None]
     q_col = np.asarray(prepared.q_col, dtype=np.float32)[None, :]
     q = np.hypot(q_row, q_col)

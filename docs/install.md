@@ -9,8 +9,8 @@ Python 3.11 or newer is required. Record `git rev-parse HEAD` with your results;
 the version field alone does not identify a development checkout.
 
 Start with Python, then install the backend for your computer. The same public
-API provides loading, virtual detectors, and SSB; supported options differ by
-backend. Use the current source for ANS loading and the latest SSB features:
+API provides loading, virtual detectors, and direct ptychography; supported options differ by
+backend. Use the current source for ANS loading and the latest direct ptychography features:
 
 ```bash
 git clone https://github.com/bobleesj/quantem.gpu.git
@@ -46,7 +46,7 @@ python -m pip install -e ".[cpu]"
 ```
 
 `[cpu]` adds nothing to the base install. Without a GPU, `io.load` and the
-detector, SSB and DPC calls raise: there is no CPU path for scientific data.
+detector, direct ptychography and DPC calls raise: there is no CPU path for scientific data.
 Tested on Linux and Windows.
 
 An Intel Mac is not supported by quantem.gpu: PyTorch publishes no wheel newer
@@ -57,11 +57,11 @@ platform marker, so a wrong pick installs no GPU package. When a GPU is present
 but its runtime is missing, quantem.gpu prints one line with the install command
 for that GPU.
 
-The Mac SSB backend uses MLX and Metal. The NumPy-like indexing interface,
+The Mac direct ptychography backend uses MLX and Metal. The NumPy-like indexing interface,
 such as `data[10, 12]`, returns PyTorch tensors, so quantem.gpu installs
 PyTorch 2.3 or newer. To use a particular CUDA build of PyTorch, install it
 before quantem.gpu. The static plotting examples, `result.show()` and
-`ssb.show("trials")` need the `plot` extra, which installs Matplotlib,
+`direct.show("trials")` need the `plot` extra, which installs Matplotlib,
 IPython and QuantEM:
 
 ```bash

@@ -1451,7 +1451,7 @@ inline bool prt_packed_finished(thread PRTPackedReader &r) {
     return !prt_entropy_mode(r.mode) || prt_fast_finished(r.entropy);
 }
 
-// Exact bounded SSB input: decode each selected detector stream once per packet.
+// Exact bounded direct ptychography input: decode each selected detector stream once per packet.
 // Indices are stream ranks; output planes retain requested order and duplicates.
 kernel void paired_runtime_tans_detector_columns(
     device const uchar *payload [[buffer(0)]], device const uint *offsets [[buffer(1)]],
