@@ -12,7 +12,7 @@ import numpy as np
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult
-from quantem.gpu.direct_ptycho.units import validate_aberrations
+from quantem.gpu.direct_ptycho.units import override_aberrations
 
 # drag-window tiles kept per control: a drag back and forth across one tile edge needs two
 TILES = 3
@@ -351,7 +351,7 @@ def run(
             session.sample_tilt_mrad,
             session.depth_spread_nm,
         )
-    coefs = validate_aberrations({**coefs, **(aberrations or {})}, higher_order=True)
+    coefs = override_aberrations(coefs, aberrations, from_fit=correction is not None)
     options = dict(
         policy,
         aberrations=coefs,

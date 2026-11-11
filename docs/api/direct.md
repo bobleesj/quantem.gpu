@@ -581,7 +581,15 @@ adjusted = ptycho.run(aberrations, aberrations={"C10_nm": 12.5})  # nm
 ```
 
 Overrides preserve unspecified coefficients, tilt, depth spread and rotation.
-They leave the supplied result unchanged. Replay uses each trial's original
+They leave the supplied result unchanged. Without a supplied result the
+unspecified coefficients are the session's `known_aberrations`, which its latest
+fit, `run()` or assignment set. A higher order applied by an earlier
+`run(aberrations=...)` therefore stays applied when a later override names only
+`C10_nm`, `C12_nm` and `phi12_deg`; one printed line names the higher orders
+that stay. To reconstruct without them, assign the complete mapping
+(`ptycho.known_aberrations = {...}`) and call `run()`, or name each as `0.0`.
+Sample tilt and depth spread are not keys of this mapping: they come from the
+supplied fit or from `ptycho.sample_tilt_mrad` and `ptycho.depth_spread_nm`. Replay uses each trial's original
 rotation branch: after a branch comparison the trials of both searches are kept,
 `search` 0 at the first angle and 1 at the angle plus 180 degrees. Saved search
 results retain this history.

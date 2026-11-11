@@ -50,7 +50,8 @@ def validate_aberrations(aberrations: dict[str, float] | None, *, higher_order: 
 
     ``higher_order=True`` also keeps the keys of ``HIGHER_ORDER`` (``C21_nm``, ``phi21_deg``, ...), which only the
     fixed-parameter reconstruction applies. A key outside the accepted set raises: a coefficient that is silently dropped, or read in another
-    unit, reconstructs a different image with no error.
+    unit, reconstructs a different image with no error. The message names the accepted keys, and for a sample tilt
+    or depth spread key (they are not aberration coefficients) where those are given instead.
     """
     if aberrations is None:
         return dict.fromkeys(PRIMARY, 0.0)
@@ -63,11 +64,44 @@ def validate_aberrations(aberrations: dict[str, float] | None, *, higher_order: 
             details.append(f"missing {sorted(missing)}")
         if extra:
             details.append(f"unknown {sorted(extra)}")
-        raise ValueError(
-            "Direct ptychography aberrations must contain exactly C10_nm, C12_nm, and phi12_deg "
-            f"(nm, nm, degrees); {', '.join(details)}."
-        )
+        names = "C10_nm, C12_nm and phi12_deg (nm, nm, degrees)"
+        if higher_order:
+            names += (", and by name the higher orders " + ", ".join(f"{name}_nm" for name in HIGHER_ORDER_SLOTS)
+                      + " (nm) with their phi.._deg (degrees; the round C30 and C50 have none)")
+        message = f"Direct ptychography aberrations take {names}; {', '.join(details)}."
+        if any("tilt" in str(name) or "depth" in str(name) for name in extra):
+            message += (" Sample tilt and depth spread are not aberration coefficients: pass the fit that measured "
+                        "them, run(fit), or set ptycho.sample_tilt_mrad = (row, col) and ptycho.depth_spread_nm "
+                        "on the session before run(); preview() takes them as keywords.")
+        raise ValueError(message)
     return {name: float(aberrations[name]) for name in accepted if name in aberrations}
+
+
+def override_aberrations(held: dict[str, float], overrides: dict[str, float] | None, *, from_fit: bool) -> dict[str, float]:
+    """The coefficients ``run(aberrations=overrides)`` applies: ``held`` with every named coefficient replaced.
+
+    ``held`` is the fit passed to ``run`` (``from_fit``) or the session's ``known_aberrations``, which its latest
+    fit, ``run()`` or assignment set. A coefficient the override does not name stays as held, so
+    ``run(fit, aberrations={"C10_nm": 12.5})`` changes the defocus of a fit and nothing else. The same rule keeps the
+    higher orders of an earlier ``run(aberrations=fifth_order)`` when a later override names only C10_nm, C12_nm and
+    phi12_deg: both calls then reconstruct one image. One line names the non-zero higher orders an override leaves
+    applied and says how to reconstruct without them.
+    """
+    merged = validate_aberrations({**held, **(overrides or {})}, higher_order=True)
+    if overrides:
+        kept = [f"{name}_nm" for name in HIGHER_ORDER_SLOTS
+                if f"{name}_nm" not in overrides and merged.get(f"{name}_nm", 0.0) != 0.0]
+        if kept:
+            terms, stay, each, them = ("term", "stays", "it", "it") if len(kept) == 1 else ("terms", "stay", "each", "them")
+            if from_fit:
+                holder, without = "of the fit passed to run()", f"Name {each} as 0.0 in aberrations="
+            else:
+                holder = "the session holds from its latest fit, run() or assignment"
+                without = ("Assign the complete mapping to ptycho.known_aberrations and call run() without "
+                           f"aberrations=, or name {each} as 0.0,")
+            print(f"Direct ptycho: aberrations= names {', '.join(overrides)}; {len(kept)} higher-order {terms} {holder} "
+                  f"{stay} applied ({', '.join(kept)}). {without} to reconstruct without {them}.")
+    return merged
 
 
 def aberrations_to_engine(aberrations: dict[str, float]) -> dict[str, float]:

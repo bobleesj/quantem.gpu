@@ -590,6 +590,17 @@ the first run after this change computes them again, as after any code change; t
 
 ### Fixed
 
+- `DirectPtycho.run(aberrations=...)` says which higher orders it leaves applied. An override replaces the
+  coefficients it names and keeps the others as the fit or the session holds them, and the session holds what its
+  latest `run()` applied. After `run(aberrations=fifth_order)` a mapping of `C10_nm`, `C12_nm` and `phi12_deg` alone
+  therefore reconstructed the fifth-order image again with no message (two such calls on one session: difference 0.0;
+  from two new sessions: 0.36 of the image standard deviation on a weak-phase simulation). The images are unchanged;
+  one printed line now names the higher orders that stay and says how to reconstruct without them (assign
+  `ptycho.known_aberrations`, or name each as `0.0`). `method="all"` prints it once. An unknown key in an aberration
+  mapping lists the accepted names, higher orders included (the message read "exactly C10_nm, C12_nm, and
+  phi12_deg"), and a sample tilt or depth spread key says where those are given: the fit passed to `run(fit)`, or
+  `ptycho.sample_tilt_mrad` and `ptycho.depth_spread_nm`.
+
 - Python MPS SSB: the bright-field frequencies k are formed in float64 and rounded once to float32
   (`ssb.mps.prepared.bright_field_frequencies`, used at preparation and on a rotation change, and by the direct
   methods). They were formed from a float32-rounded disk centre, which shifts every k by the same amount. Fits move by

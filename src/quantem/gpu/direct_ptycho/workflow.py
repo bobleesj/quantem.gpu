@@ -64,6 +64,7 @@ from quantem.gpu.direct_ptycho.units import (
     aberrations_from_engine,
     aberrations_to_engine,
     higher_order_arrays,
+    override_aberrations,
     refine_lock_to_engine,
     result_from_engine,
     sampling_pair,
@@ -627,8 +628,9 @@ class DirectPtycho:
     def known_aberrations(self) -> dict[str, float]:
         """The session's aberrations: ``C10_nm`` / ``C12_nm`` in nm, ``phi12_deg`` in degrees (higher orders by name).
 
-        They are known once given to ``DirectPtycho(aberrations=...)``, fitted by ``aberrations()``, or assigned here, and
-        ``run()`` then applies them instead of fitting. Assign a whole mapping to state a known or restored
+        They are known once given to ``DirectPtycho(aberrations=...)``, fitted by ``aberrations()``, applied by
+        ``run(aberrations=...)``, or assigned here, and ``run()`` then applies them instead of fitting. Assign a
+        whole mapping to state a known or restored
         calibration (``direct.aberrations = {"C10_nm": 15.8, "C12_nm": 4.3, "phi12_deg": 17.4}``); assign None to forget
         them, so the next ``run()`` fits again. ``aberrations()`` starts its refinement from known
         aberrations.
@@ -2642,8 +2644,15 @@ class DirectPtycho:
             Result of ``aberrations()``. Carries aberrations, specimen tilt,
             depth spread, and scan-detector rotation. None uses session values.
         aberrations
-            Partial coefficient overrides: ``C10_nm``/``C12_nm`` in nm, ``phi12_deg`` in degrees.
-            Unspecified coefficients and sample geometry are preserved.
+            Coefficient overrides by name: ``C10_nm``/``C12_nm`` in nm, ``phi12_deg`` in degrees, and the
+            higher orders (``C21_nm`` with ``phi21_deg`` to ``C56_nm`` with ``phi56_deg``). Every named
+            coefficient is applied. A coefficient not named stays as ``parameters`` holds it, or without
+            ``parameters`` as the session does (``known_aberrations``: its latest fit, ``run()`` or
+            assignment); sample tilt and depth spread stay too. After ``run(aberrations=fifth_order)`` a
+            mapping of C10_nm, C12_nm and phi12_deg therefore still reconstructs with the higher orders, and
+            one line names them. Assign ``known_aberrations`` to replace every coefficient at once. Sample
+            tilt and depth spread are not keys of this mapping: they come from ``parameters`` or the
+            session's ``sample_tilt_mrad`` and ``depth_spread_nm``.
         trial_ids
             Trial IDs from ``parameters.trials.index``. Reconstruct these
             attempts using their original rotation and sample geometry;
@@ -2713,7 +2722,7 @@ class DirectPtycho:
             coefs = dict(self.known_aberrations)
             tilt = self.sample_tilt_mrad
             depth = self.depth_spread_nm
-        coefs = validate_aberrations({**coefs, **(aberrations or {})}, higher_order=True)
+        coefs = override_aberrations(coefs, aberrations, from_fit=correction is not None)
         settings = {
             "aberrations": coefs, "compute_loss": bool(compute_loss), "upsample": upsample,
             "sample_tilt_mrad": tilt, "depth_spread_nm": depth,
@@ -2932,7 +2941,12 @@ class DirectPtycho:
             weighting with a 5%-of-median intensity floor; it is not an exact
             Poisson likelihood. Applies only to regularized methods.
         aberrations, trial_ids, upsample
-            Same controls as conventional reconstruction. Trial replay applies
+            Same controls as conventional reconstruction. ``aberrations``
+            replaces the coefficients it names, higher orders included, and
+            keeps every other one as the fit or the session holds it; one
+            line names higher orders that stay applied. Sample tilt and depth
+            come from ``parameters`` or the session's ``sample_tilt_mrad``
+            and ``depth_spread_nm``, not from this mapping. Trial replay applies
             only to direct ptychography. ``"auto"`` sampling covers the modeled aperture
             support up to 4× (one line names a larger factor the scan sampling
             supports); it does not establish resolution.
@@ -2987,6 +3001,11 @@ class DirectPtycho:
                                      smoothness_inv_A, detector_weighting)
             if parameters is None and aberrations is None and not self._aberrations_explicit:
                 parameters = self.aberrations(compute_loss=False, verbose=verbose)
+            if aberrations is not None and (parameters is None or isinstance(parameters, DirectPtychoResult)):
+                # merged once for the three methods, so the line about higher orders that stay applied prints once
+                aberrations = override_aberrations(
+                    self.known_aberrations if parameters is None else parameters.aberrations, aberrations,
+                    from_fit=parameters is not None)
             return {
                 name: self.run(
                     parameters, method=name, aberrations=aberrations,
