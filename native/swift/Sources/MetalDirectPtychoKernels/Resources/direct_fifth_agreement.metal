@@ -64,7 +64,7 @@ kernel void fifth_agreement_rows(device const float2* g [[buffer(0)]], device co
     device const float* weight [[buffer(10)]],
     threadgroup float4* coeff [[threadgroup(0)]], threadgroup float* polys [[threadgroup(1)]],
     uint3 group [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]],
-    uint3 size [[threads_per_threadgroup]]) {
+    uint3 size [[threads_per_threadgroup]] INDEXED_BAND_ARGUMENT) {
     const uint B = FIFTH_B, S = FIFTH_S, W = size.x;
     uint4 tile = tiles[group.x];
     uint chunk = group.y, base = p.first + group.z * B;
@@ -133,7 +133,7 @@ kernel void fifth_agreement_rows(device const float2* g [[buffer(0)]], device co
             // v0.1's fifth_agreement (fp contraction stays within an expression).
             float alpha2m = am * am;
             float alpha2p = ap * ap;
-            float2 value = g[(size_t)kk * p.bandCount + qi];
+            float2 value = BAND_READ(g, kk, qi, p.bandCount);
             float gre = value.x, gim = value.y;
             threadgroup const float4* own = coeff + (slot * S + pix) * B * 4u;
             float chi_k[4], b1[4], c1[4], s1[4], b2[4], cp[4], sp[4];

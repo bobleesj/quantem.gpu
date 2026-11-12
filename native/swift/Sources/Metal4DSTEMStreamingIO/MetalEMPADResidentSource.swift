@@ -24,6 +24,7 @@ public final class MetalEMPADResidentSource {
   public private(set) var isReleased = false
   let device: MTLDevice
   let ans: MetalFloatANS
+  private var columnPipeline: MTLComputePipelineState?
   private let diffractionPipeline: MTLComputePipelineState
   private let detectorPipeline: MTLComputePipelineState
   private let serialDetector: Bool
@@ -32,7 +33,10 @@ public final class MetalEMPADResidentSource {
   private let serialCenterOfMass: Bool
   private let meanPipeline: MTLComputePipelineState
   private let incrementalPipeline: MTLComputePipelineState?
-  private let memoryBudgetBytes: UInt64
+  let memoryBudgetBytes: UInt64
+  public internal(set) var scanValidity: EMPADScanValidity
+  var invalidScanMask: MTLBuffer?
+  var interpolationPipeline: MTLComputePipelineState?
   private var detectorAccumulation: MTLBuffer?
   private var priorDetectorMask: [UInt8]?
   private var priorDetectorCommand: MTLCommandBuffer?
@@ -55,6 +59,7 @@ public final class MetalEMPADResidentSource {
     incremental: MTLComputePipelineState?, memoryBudgetBytes: UInt64, reusedSourceHash: Bool,
     background: MetalEMPADBackground?
   ) {
+    self.scanValidity = EMPADScanValidity(scanRows: source.scanRows, scanColumns: source.scanColumns, invalidFrames: [])
     self.source = source
     self.device = device
     self.ans = ans
@@ -88,7 +93,7 @@ public final class MetalEMPADResidentSource {
     sourceIdentitySHA256 = identity.finalize().map { String(format: "%02x", $0) }.joined()
     residentBytes =
       chunks.reduce(0) { $0 + UInt64($1.payload.length + $1.offsets.length + $1.models.length) }
-      + UInt64(ans.table.length) + UInt64(background?.values.length ?? 0)
+      + UInt64(ans.table.length) + UInt64(background?.values.length ?? 0) + UInt64(source.frameCount * 4)
   }
 
   /// Read every original detector pixel and finish ANS encoding before returning.
@@ -258,7 +263,7 @@ public final class MetalEMPADResidentSource {
         "EMPAD_ANS total=\(CFAbsoluteTimeGetCurrent() - started) read=\(readSeconds) hash=\(hashSeconds) encode=\(encodeSeconds) chunks=\(chunks.count)\n",
         stderr)
     }
-    return MetalEMPADResidentSource(
+    let resident = MetalEMPADResidentSource(
       source: source, device: device, ans: ans,
       diffraction: diffraction, detector: detector, chunks: chunks,
       logicalSHA256: logicalHash,
@@ -266,6 +271,8 @@ public final class MetalEMPADResidentSource {
       detectorThreads: detectorThreads, serialCenterOfMass: serialCenterOfMass,
       incremental: incremental, memoryBudgetBytes: memoryBudgetBytes,
       reusedSourceHash: cachedHash != nil, background: background)
+    try resident.detectInvalidScans(shouldCancel: shouldCancel)
+    return resident
   }
 
   /// Encode a complete selected float32 DP without reading it back to the CPU.
@@ -354,6 +361,62 @@ public final class MetalEMPADResidentSource {
     }
   }
 
+  /// Read selected detector pixels as contiguous float32 scan columns.
+  /// Order and duplicates follow `pixels`. Signed values and an active dark
+  /// correction are preserved. Only a bounded decoded chunk is materialized.
+  /// Optional larger scan dimensions zero-pad at bottom/right for FFT preparation.
+  public func encodeDetectorColumns(
+    pixels: [Int], into output: MTLBuffer, command: MTLCommandBuffer,
+    scanRows: Int? = nil, scanColumns: Int? = nil, interpolateMissing: Bool = false
+  ) throws {
+    let rows = scanRows ?? source.scanRows, columns = scanColumns ?? source.scanColumns
+    guard !isReleased, !pixels.isEmpty, pixels.count <= 32,
+      rows >= source.scanRows, columns >= source.scanColumns, rows <= 4096, columns <= 4096,
+      pixels.allSatisfy({ (0..<source.detectorPixelCount).contains($0) }),
+      output.length >= pixels.count * rows * columns * 4,
+      output.device.registryID == device.registryID,
+      command.commandQueue.device.registryID == device.registryID
+    else { throw Self.failure("EMPAD columns need 1–32 valid pixels and a same-device float32 scan output.") }
+    if columnPipeline == nil {
+      let library = try Metal4DSTEMKernels.makeEMPADLibrary(device: device)
+      let constants = MTLFunctionConstantValues()
+      var decoded = true, count = UInt32(source.detectorPixelCount), width = UInt32(source.detectorShape.column)
+      constants.setConstantValue(&decoded, type: .bool, index: 0)
+      constants.setConstantValue(&decoded, type: .bool, index: 1)
+      constants.setConstantValue(&count, type: .uint, index: 20)
+      constants.setConstantValue(&width, type: .uint, index: 21)
+      columnPipeline = try device.makeComputePipelineState(function:
+        library.makeFunction(name: "empad_detector_columns", constantValues: constants))
+    }
+    guard let pipeline = columnPipeline, let clear = command.makeBlitCommandEncoder() else {
+      throw Self.failure("EMPAD column encoder unavailable.")
+    }
+    clear.fill(buffer: output, range: 0..<(pixels.count * rows * columns * 4), value: 0)
+    clear.endEncoding()
+    let workspace = try ans.workspace(
+      frames: chunks.map(\.frameCount).max() ?? 0, budget: memoryBudgetBytes, command: command)
+    var selected = pixels.map(UInt32.init)
+    for chunk in chunks {
+      try ans.encode(chunk, into: workspace, command: command)
+      guard let encoder = command.makeComputeCommandEncoder() else {
+        throw Self.failure("EMPAD column encoder unavailable.")
+      }
+      encoder.setComputePipelineState(pipeline)
+      bindBackground(encoder, fallback: output)
+      encoder.setBuffer(workspace.words, offset: 0, index: 0)
+      encoder.setBuffer(workspace.descriptors, offset: 0, index: 1)
+      encoder.setBuffer(output, offset: 0, index: 2)
+      encoder.setBytes(&selected, length: selected.count * 4, index: 3)
+      var shape = SIMD4<UInt32>(UInt32(chunk.firstFrame), UInt32(chunk.frameCount), UInt32(source.scanColumns), UInt32(columns))
+      var dimensions = SIMD2<UInt32>(UInt32(rows * columns), UInt32(pixels.count))
+      encoder.setBytes(&shape, length: MemoryLayout.size(ofValue: shape), index: 4)
+      encoder.setBytes(&dimensions, length: MemoryLayout.size(ofValue: dimensions), index: 5)
+      Self.dispatch(encoder, pipeline: pipeline, count: chunk.frameCount * pixels.count)
+      encoder.endEncoding()
+    }
+    if interpolateMissing { try interpolateScanColumns(output, count: pixels.count, rows: rows, columns: columns, command: command) }
+  }
+
   /// Encode full-detector intensity-weighted `(row, column)` coordinates.
   /// Signed measurements participate unchanged. Zero total or non-finite input
   /// produces NaN coordinates, not an invented detector center.
@@ -394,6 +457,23 @@ public final class MetalEMPADResidentSource {
     }
   }
 
+  /// Number of original finite patterns contributing to a mean DP.
+  public func validScanCount(rows: Range<Int>? = nil, columns: Range<Int>? = nil,
+    shape: MetalScanRegionShape = .rectangle) -> Int {
+    let selectedRows = rows ?? 0..<source.scanRows, selectedColumns = columns ?? 0..<source.scanColumns
+    let missingInRegion = scanValidity.invalidFrames.filter { frame in
+      let r = frame / source.scanColumns, c = frame % source.scanColumns
+      guard selectedRows.contains(r), selectedColumns.contains(c) else { return false }
+      if shape == .circle {
+        let d = selectedRows.count, dr = 2 * (r - selectedRows.lowerBound) + 1 - d
+        let dc = 2 * (c - selectedColumns.lowerBound) + 1 - d
+        return dr * dr + dc * dc <= d * d
+      }
+      return true
+    }.count
+    return shape.sampleCount(rowCount: selectedRows.count, columnCount: selectedColumns.count) - missingInRegion
+  }
+
   /// Encode the arithmetic mean of every scan position, with compensated sums.
   /// Output is a native-detector float32 DP. Temporary compensation is only one DP,
   /// retained by the command until completion; no dense 4D array is allocated.
@@ -424,7 +504,7 @@ public final class MetalEMPADResidentSource {
       throw Self.failure(
         "EMPAD mean DP needs a resident and a same-device native-detector float32 output.")
     }
-    if rows != nil || columns != nil,
+    if (rows != nil || columns != nil), scanValidity.invalidFrames.isEmpty,
       ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_MEAN_CONTROL"] != "1"
     {
       try ans.encodeMean(
@@ -433,6 +513,8 @@ public final class MetalEMPADResidentSource {
         accumulator: accumulator, background: background?.values, command: command)
       return
     }
+    let validCount = validScanCount(rows: selectedRows, columns: selectedColumns, shape: shape)
+    guard validCount > 0 else { throw Self.failure("This region has no valid diffraction patterns. Choose another region.") }
     let workspace = try ans.workspace(
       frames: chunks.map(\.frameCount).max() ?? 0, budget: memoryBudgetBytes, command: command)
     for chunk in chunks {
@@ -444,6 +526,7 @@ public final class MetalEMPADResidentSource {
       bindBackground(encoder, fallback: output)
       encoder.setBuffer(accumulator, offset: 0, index: 2)
       encoder.setBuffer(output, offset: 0, index: 3)
+      encoder.setBuffer(invalidScanMask, offset: 0, index: 10)
       var region = SIMD4<UInt32>(
         UInt32(selectedRows.lowerBound), UInt32(selectedRows.upperBound),
         UInt32(selectedColumns.lowerBound), UInt32(selectedColumns.upperBound))
@@ -454,7 +537,7 @@ public final class MetalEMPADResidentSource {
       encoder.setBytes(&regionShape, length: 4, index: 7)
       var dimensions = SIMD3<UInt32>(
         UInt32(chunk.firstFrame), UInt32(chunk.frameCount),
-        UInt32(shape.sampleCount(rowCount: selectedRows.count, columnCount: selectedColumns.count)))
+        UInt32(validCount))
       encoder.setBuffer(workspace.words, offset: 0, index: 0)
       encoder.setBuffer(workspace.descriptors, offset: 0, index: 1)
       encoder.setBytes(&dimensions, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 4)
@@ -469,6 +552,7 @@ public final class MetalEMPADResidentSource {
     chunks.removeAll()
     ans.releaseScratch()
     background = nil
+    invalidScanMask = nil
     detectorAccumulation = nil
     priorDetectorMask = nil
     priorDetectorCommand = nil

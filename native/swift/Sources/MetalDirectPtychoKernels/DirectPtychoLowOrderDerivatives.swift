@@ -29,6 +29,7 @@ final class DirectPtychoLowOrderDerivatives {
     let chunks: Int
     let band, k, q, weights, probeGeometry, neighbour: MTLBuffer
     let rowStep: SIMD2<Float>
+    var indexedBand: DirectPtychoIndexedBand? = nil
   }
 
   /// BF pixels per pass-2 chunk; the pass-2 partials hold `fields` floats per (chunk, band frequency).
@@ -52,6 +53,12 @@ final class DirectPtychoLowOrderDerivatives {
   private var staged: (rows: [[Double]], trial: MTLBuffer, inputs: Inputs)?
   /// Every row's derivatives when the latest `values` call was fused.
   private var fusedResults: [Result]?
+
+  /// Values and derivatives belong to one rotation and frequency mask.
+  func invalidateRetained() {
+    staged = nil
+    fusedResults = nil
+  }
 
   init(device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary) throws {
     self.device = device
@@ -141,6 +148,7 @@ final class DirectPtychoLowOrderDerivatives {
       try inputs.grid.withUnsafeBytes { grid in
         try inputs.extra.withUnsafeBytes { extra in
           let first = try Self.encoder(commands, valueSums)
+          inputs.indexedBand?.bind(first)
           for (index, buffer) in [inputs.band, inputs.k, inputs.q, partialAB, partialSS]
             .enumerated()
           {
@@ -215,6 +223,7 @@ final class DirectPtychoLowOrderDerivatives {
       try inputs.grid.withUnsafeBytes { grid in
         try inputs.extra.withUnsafeBytes { extra in
           let second = try Self.encoder(commands, gradientSums)
+          inputs.indexedBand?.bind(second)
           for (index, buffer) in [inputs.band, inputs.k, inputs.q, partial].enumerated() {
             second.setBuffer(buffer, offset: 0, index: index)
           }
@@ -306,6 +315,7 @@ final class DirectPtychoLowOrderDerivatives {
       try inputs.grid.withUnsafeBytes { grid in
         try inputs.extra.withUnsafeBytes { extra in
           let first = try Self.encoder(commands, fusedSums)
+          inputs.indexedBand?.bind(first)
           for (index, buffer) in [inputs.band, inputs.k, inputs.q, partial].enumerated() {
             first.setBuffer(buffer, offset: 0, index: index)
           }

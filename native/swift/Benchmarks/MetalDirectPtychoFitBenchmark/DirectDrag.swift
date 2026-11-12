@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Metal
 @_spi(DirectPtychoBenchmark) import MetalDirectPtychoKernels
@@ -104,6 +105,7 @@ func directDrag(
         var rms: [Double] = []
         var maxima: [Double] = []
         var amplitudeRMS: [Double] = []
+        var checkedDigests: [[String: String]] = []
         for step in 0..<steps {
           // values across 90 % of the window, not on the nodes
           let fraction = -0.9 + 1.8 * (Double(step) + 0.37) / Double(steps)
@@ -118,6 +120,18 @@ func directDrag(
           if step % max(1, steps / 4) == 0 {
             let exact = try model.reconstruct(moved, upsamplingFactor: factor, method: method)
             let count = exact.rows * exact.columns
+            func digest(_ buffer: MTLBuffer) -> String {
+              let data = Data(
+                bytesNoCopy: buffer.contents(), count: count * MemoryLayout<Float>.size,
+                deallocator: .none)
+              return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            }
+            var digests = [
+              "preview_phase": digest(preview.phase), "exact_phase": digest(exact.phase),
+            ]
+            if let amplitude = preview.amplitude { digests["preview_amplitude"] = digest(amplitude) }
+            if let amplitude = exact.amplitude { digests["exact_amplitude"] = digest(amplitude) }
+            checkedDigests.append(digests)
             let a = Array(
               UnsafeBufferPointer(
                 start: preview.phase.contents().assumingMemoryBound(to: Float.self), count: count))
@@ -149,6 +163,7 @@ func directDrag(
           "median_frame_ms": median(frames), "max_frame_ms": frames.max() ?? .nan,
           "median_evaluate_ms": median(stages), "max_rms_over_std": rms.max() ?? .nan,
           "max_abs_rad": maxima.max() ?? .nan, "max_amplitude_rel_rms": amplitudeRMS.max() ?? .nan,
+          "checked_image_sha256": checkedDigests,
         ]
         log(
           String(

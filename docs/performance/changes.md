@@ -7,6 +7,16 @@ The [saving record](io/reports/2026-11-07-hdf5-save.md) separates conversion,
 durable storage, exact-count validation and contention. No compression kernel,
 precision or durability check was removed.
 
+## 2026-11-06: native workflow and complete count evidence
+
+The [native Direct Ptycho study](direct/reports/2026-11-06-native-direct-workflow.md)
+retains smaller temporary Fourier workspaces and fixes stale derivative values
+after rotation or band-mask changes. Large irregular scans preserve the
+existing Fourier tolerance with a separately versioned preparation kernel.
+The full-size native acceptance now compares every decoded count against the
+original acquisition; sampled diffraction checks are no longer described as
+complete verification. No general end-to-end speedup or release is claimed.
+
 ## 2026-10-25: joint ANS detector launches and validation
 
 Residual queries group up to sixteen scan blocks per CUDA block; stored counts

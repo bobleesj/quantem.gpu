@@ -27,13 +27,15 @@ final class DirectPtychoFifthOrderAgreement {
   /// The band tiles of `fifth_agreement_rows`, shared with the gradient pass.
   let tiles: MTLBuffer
   let tileCount: Int
+  let indexedBand: DirectPtychoIndexedBand?
   private var workspaces: [String: MTLBuffer] = [:]
   /// GPU time of the latest `evaluate` command buffer.
   private(set) var lastGPUSeconds = 0.0
 
   /// `q` holds the band frequencies (row, column) in band order, each band row contiguous, as
   /// `MetalDirectPtychoJointModel` builds them.
-  init(device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary, q: [SIMD2<Float>]) throws {
+  init(device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary, q: [SIMD2<Float>], indexedBand: DirectPtychoIndexedBand? = nil) throws {
+    self.indexedBand = indexedBand
     self.device = device
     self.queue = queue
     self.library = library
@@ -229,6 +231,7 @@ final class DirectPtychoFifthOrderAgreement {
     where perThread > 0 && groups > 0 {
       rowsGrid.first = UInt32(offset)
       try encode(commands, try rowsPipeline(perThread)) { encoder in
+        indexedBand?.bind(encoder)
         for (index, buffer) in [band, k, q, partial].enumerated() {
           encoder.setBuffer(buffer, offset: 0, index: index)
         }

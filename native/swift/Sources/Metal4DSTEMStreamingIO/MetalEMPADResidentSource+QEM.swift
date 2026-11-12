@@ -47,7 +47,7 @@ extension MetalEMPADResidentSource {
       }
       table.append(entry)
     }
-    var retainedMetadata = source.microscopeMetadata
+    var retainedMetadata = source.microscopeMetadata.merging(scanValidity.metadata, uniquingKeysWith: { _, new in new })
     retainedMetadata.removeValue(forKey: NativeMetadataDocument.metadataKey)
     retainedMetadata.removeValue(forKey: NativeQEMMetadataUnits.metadataKey)
     var description: [String: Any] = [
@@ -233,7 +233,7 @@ extension MetalEMPADResidentSource {
       background = MetalEMPADBackground(source: source, values: buffer, identity: identity)
     }
     try source.validateUnchanged()
-    return try MetalEMPADResidentSource(
+    let resident = try MetalEMPADResidentSource(
       source: source, device: device, ans: ans,
       diffraction: pipeline("empad_diffraction"), detector: pipeline("empad_virtual_image"),
       chunks: chunks,
@@ -242,6 +242,8 @@ extension MetalEMPADResidentSource {
       serialDetector: false, detectorThreads: 128, serialCenterOfMass: false,
       incremental: pipeline("empad_virtual_image_changes"), memoryBudgetBytes: memoryBudgetBytes,
       reusedSourceHash: false, background: background)
+    try resident.detectInvalidScans(shouldCancel: shouldCancel)
+    return resident
   }
 
   private static func qemError(_ message: String) -> Native4DSTEMIOError { .invalidData(message) }

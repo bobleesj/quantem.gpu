@@ -78,7 +78,7 @@ public final class MetalDirectPtychoJointModel {
   typealias VisitSpectra = (Int, @escaping SpectrumVisitor) throws -> Void
 
   private struct Grid {
-    var n, outputN, count, bfOffset, totalBF, bandCount, sourceHalf, chunks: UInt32
+    var n, columns, count, bfOffset, totalBF, bandCount, sourceHalf, chunks: UInt32
     var wl, semiangle, angularRow, angularColumn, dqRow, dqColumn, dcReal, dcImag, factor: Float
   }
   private let device: MTLDevice
@@ -103,6 +103,9 @@ public final class MetalDirectPtychoJointModel {
   public private(set) var bandPowerSeconds = 0.0
   private var grid: Grid
   private let qBuffer, indexBuffer, weights, bandG: MTLBuffer
+  private let indexedBand: DirectPtychoIndexedBand?
+  /// Bytes in the gathered fitting buffer, excluding the engine-owned Fourier cache.
+  var gatheredEvidenceBytes: Int { bandG.length }
   private var kBuffer: MTLBuffer
   private let activeIndices: [Int]
   private let library: MTLLibrary
@@ -154,6 +157,7 @@ public final class MetalDirectPtychoJointModel {
 
   init(
     device: MTLDevice, geometry: MetalDirectPtychoGeometry, activeIndices: [Int], rotation: Double,
+    spectrumStorage: DirectPtychoSpectrumStorage? = nil,
     band: ClosedRange<Float>, provenance: MetalDirectPtychoProvenance,
     visit: @escaping VisitSpectra, visitInactive: @escaping VisitSpectra,
     validatePreparation: @escaping () throws -> Void, isCancelled: () -> Bool
@@ -180,6 +184,13 @@ public final class MetalDirectPtychoJointModel {
     // with fast intrinsics even when fast-math optimization is disabled.
     // Keep the qualified physical-device path unchanged.
     if preciseMath { options.preprocessorMacros = ["fast": "precise" as NSString] }
+    if let spectrumStorage {
+      var macros = options.preprocessorMacros ?? [:]
+      macros["INDEXED_BAND"] = 1 as NSNumber
+      macros["INDEXED_CAPACITY"] = spectrumStorage.chunkCapacity as NSNumber
+      macros["INDEXED_PLANE"] = spectrumStorage.planeStride as NSNumber
+      options.preprocessorMacros = macros
+    }
     let library = try device.makeLibrary(
       source: MetalDirectPtychoShaderSource.load([
         "direct_fft", "direct_joint", "direct_model", "direct_separable", "direct_fifth_order",
@@ -198,18 +209,19 @@ public final class MetalDirectPtychoJointModel {
     reduceBatch = try pipeline("joint_power_batch")
     makeProbeGeometry = try pipeline("joint_probe_geometry")
     let n = geometry.qxByRow.count
+    let columns = geometry.qyByColumn.count
     var indices: [SIMD2<UInt32>] = []
     var qs: [SIMD2<Float>] = []
     var ws: [Float] = []
     for r in 0..<n {
-      for c in 0...(n / 2) {
+      for c in 0...(columns / 2) {
         let q = SIMD2(geometry.qxByRow[r], geometry.qyByColumn[c])
         // NumPy's float32 hypot, as the MPS band.
         let radius = hypotf(q.x, q.y)
         if radius > band.lowerBound && radius < band.upperBound {
           indices.append(SIMD2(UInt32(r), UInt32(c)))
           qs.append(q)
-          ws.append(c == 0 || c == n / 2 ? 1 : 2)
+          ws.append(c == 0 || (columns % 2 == 0 && c == columns / 2) ? 1 : 2)
         }
       }
     }
@@ -231,10 +243,16 @@ public final class MetalDirectPtychoJointModel {
     indexBuffer = try Self.buffer(device, indices)
     weights = try Self.buffer(device, ws)
     // Shared: the host sums its power as it is gathered (`bandPower`).
-    bandG = try Self.allocate(device, activeIndices.count * bandCount * 8, shared: true)
+    indexedBand = try spectrumStorage.map {
+      try DirectPtychoIndexedBand(device: device, source: $0,
+        indices: indices.map { $0.x * UInt32(columns / 2 + 1) + $0.y })
+    }
+    bandG = try Self.allocate(device,
+      (indexedBand == nil ? activeIndices.count : min(128, activeIndices.count)) * bandCount * 8,
+      shared: true)
     let chunks = (activeIndices.count + 255) / 256
     grid = Grid(
-      n: UInt32(n), outputN: UInt32(n), count: 0, bfOffset: 0,
+      n: UInt32(n), columns: UInt32(columns), count: 0, bfOffset: 0,
       totalBF: UInt32(activeIndices.count), bandCount: UInt32(bandCount), sourceHalf: 1,
       chunks: UInt32(chunks),
       wl: geometry.wavelengthAngstroms, semiangle: geometry.semiangleRadians,
@@ -248,12 +266,13 @@ public final class MetalDirectPtychoJointModel {
     try withoutActuallyEscaping(isCancelled) { cancelled in
       let requestedBatch =
         Int(ProcessInfo.processInfo.environment["QUANTEM_METAL_GATHER_BATCH"] ?? "128") ?? 128
-      let gatherBatch = [8, 32, 64, 128, 256, 512].contains(requestedBatch) ? requestedBatch : 128
+      let gatherBatch = indexedBand != nil ? 128 : ([8, 32, 64, 128, 256, 512].contains(requestedBatch) ? requestedBatch : 128)
       try visit(gatherBatch) { [self] source, offset, half, bfOffset, count in
         if cancelled() { throw CancellationError() }
         var p = grid
         p.sourceHalf = half ? 1 : 0
-        p.bfOffset = UInt32(bfOffset)
+        if indexedBand != nil { power.wait() }
+        p.bfOffset = indexedBand == nil ? UInt32(bfOffset) : 0
         p.count = UInt32(count)
         let commands = try command()
         let encoder = try self.encoder(commands, gather)
@@ -263,7 +282,7 @@ public final class MetalDirectPtychoJointModel {
         encoder.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
         dispatch(encoder, width: bandCount, height: count)
         try finish(commands)
-        power.add(rows: bfOffset, count: count)
+        power.add(rows: indexedBand == nil ? bfOffset : 0, count: count)
       }
     }
     let started = Date()
@@ -338,6 +357,8 @@ public final class MetalDirectPtychoJointModel {
       throw MetalDirectPtychoError.invalidGeometry("Choose a finite rotation.")
     }
     if rotation == scanDetectorRotationDegrees { return }
+    fifthOrderGradient?.invalidateRetained()
+    lowOrder?.invalidateRetained()
     let ks = Self.rotated(geometry: geometry, activeIndices: activeIndices, rotation: rotation)
     kBuffer = try Self.buffer(device, ks)
     let steps = Self.rowSteps(ks)
@@ -399,7 +420,7 @@ public final class MetalDirectPtychoJointModel {
         UnsafeBufferPointer(
           start: qBuffer.contents().assumingMemoryBound(to: SIMD2<Float>.self), count: bandCount))
       fifthOrder = try DirectPtychoFifthOrderAgreement(
-        device: device, queue: queue, library: library, q: q)
+        device: device, queue: queue, library: library, q: q, indexedBand: indexedBand)
     }
     return zip(points, coefficients).map { point, packed in
       [
@@ -513,7 +534,7 @@ public final class MetalDirectPtychoJointModel {
       grid: withUnsafeBytes(of: &p) { Array($0) }, extra: withUnsafeBytes(of: &extra) { Array($0) },
       bandCount: bandCount, count: activeIndices.count, chunks: Int(grid.chunks), band: bandG,
       k: kBuffer, q: qBuffer, weights: weights, probeGeometry: probeGeometry,
-      neighbour: neighbourBuffer, rowStep: rowStep)
+      neighbour: neighbourBuffer, rowStep: rowStep, indexedBand: indexedBand)
     return (lowOrder!, inputs)
   }
 
@@ -551,12 +572,28 @@ public final class MetalDirectPtychoJointModel {
         UnsafeBufferPointer(start: shared.contents().assumingMemoryBound(to: T.self), count: count))
     }
     let count = activeIndices.count
+    func readEvidence() throws -> [SIMD2<Float>] {
+      guard indexedBand != nil else { return try read(bandG, count: count * bandCount, as: SIMD2<Float>.self) }
+      var result: [SIMD2<Float>] = []
+      result.reserveCapacity(count * bandCount)
+      try visit(128) { [self] source, offset, half, _, batch in
+        var p = grid; p.sourceHalf = half ? 1 : 0; p.bfOffset = 0; p.count = UInt32(batch)
+        let commands = try command(); let compute = try encoder(commands, gather)
+        compute.setBuffer(source, offset: offset, index: 0)
+        compute.setBuffer(bandG, offset: 0, index: 1)
+        compute.setBuffer(indexBuffer, offset: 0, index: 2)
+        compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
+        dispatch(compute, width: bandCount, height: batch); try finish(commands)
+        result.append(contentsOf: UnsafeBufferPointer(start: bandG.contents().assumingMemoryBound(to: SIMD2<Float>.self), count: batch * bandCount))
+      }
+      return result
+    }
     return (
       k: try read(kBuffer, count: count, as: SIMD2<Float>.self),
       q: try read(qBuffer, count: bandCount, as: SIMD2<Float>.self),
       weights: try read(weights, count: bandCount, as: Float.self),
       probe: try read(probeGeometry, count: count, as: SIMD4<Float>.self),
-      evidence: try read(bandG, count: count * bandCount, as: SIMD2<Float>.self),
+      evidence: try readEvidence(),
       constants: [
         "wavelength_A": Double(geometry.wavelengthAngstroms),
         "semiangle_rad": Double(geometry.semiangleRadians),
@@ -585,8 +622,14 @@ public final class MetalDirectPtychoJointModel {
     }
     let target = weights.contents().assumingMemoryBound(to: Float.self)
     let original = Array(UnsafeBufferPointer(start: target, count: bandCount))
+    fifthOrderGradient?.invalidateRetained()
+    lowOrder?.invalidateRetained()
     for i in 0..<bandCount where !mask[i] { target[i] = 0 }
-    defer { for i in 0..<bandCount { target[i] = original[i] } }
+    defer {
+      for i in 0..<bandCount { target[i] = original[i] }
+      fifthOrderGradient?.invalidateRetained()
+      lowOrder?.invalidateRetained()
+    }
     return try body()
   }
 
@@ -618,6 +661,7 @@ public final class MetalDirectPtychoJointModel {
         var step = rowStep
         var extra = angleSumExtra(first: offset)
         let compute = try encoder(commands, try angleSumPipeline(perThread))
+        indexedBand?.bind(compute)
         for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
           compute.setBuffer(buffer, offset: 0, index: index)
         }
@@ -734,7 +778,7 @@ public final class MetalDirectPtychoJointModel {
     let (phase, n) = try coherent.reconstruct(
       point, factor: upsamplingFactor, visit: visit, isCancelled: isCancelled)
     return MetalDirectPtychoJointPhase(
-      phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
+      phase: phase, rows: n, columns: geometry.qyByColumn.count * upsamplingFactor, upsamplingFactor: upsamplingFactor,
       wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
       scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
       point: point, kernel: mathIdentity(coherent.lastKernel))
@@ -765,7 +809,7 @@ public final class MetalDirectPtychoJointModel {
       point, factor: upsamplingFactor, complex: complex, regularization: regularization,
       rotation: scanDetectorRotationDegrees, k: kBuffer, visit: visit, isCancelled: isCancelled)
     var result = MetalDirectPtychoJointPhase(
-      phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
+      phase: phase, rows: n, columns: geometry.qyByColumn.count * upsamplingFactor, upsamplingFactor: upsamplingFactor,
       wallSeconds: Date().timeIntervalSince(started), parameters: point.jointParameters,
       scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
       point: point, amplitude: amplitude,
@@ -842,7 +886,7 @@ public final class MetalDirectPtychoJointModel {
         regularization: regularization, rotation: scanDetectorRotationDegrees)
     else { return nil }
     var result = MetalDirectPtychoJointPhase(
-      phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
+      phase: phase, rows: n, columns: geometry.qyByColumn.count * upsamplingFactor, upsamplingFactor: upsamplingFactor,
       wallSeconds: Date().timeIntervalSince(started), parameters: point.jointParameters,
       scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
       point: point, amplitude: method == .complex ? amplitude : nil,

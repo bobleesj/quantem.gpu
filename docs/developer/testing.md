@@ -7,12 +7,15 @@ Run the smallest gate that can disprove the change first, then widen coverage.
 ```bash
 python -m pip install -e ".[dev,movie]"
 npm ci
-PYTHONPATH=src python -m pytest -q          # interactive tier, about a minute on one GPU
-PYTHONPATH=src python -m pytest -q -m ""    # everything, including the slow direct ptychography fits (about 12 minutes)
+PYTHONPATH=src python -m pytest -q          # default tier; excludes slow-marked tests
+PYTHONPATH=src python -m pytest -q -m ""    # everything, including slow fits and hardware checks
 ```
 
 Plain `pytest` skips tests marked `slow` (direct ptychography fits and long hardware checks,
-each several seconds or more). Mark a new test `@pytest.mark.slow` when it
+each several seconds or more). On macOS, a cold run also compiles release-mode
+Swift/Metal integration helpers in disposable build directories, so the
+default tier is not a one-minute complete native gate. Record build time and
+test execution separately. Mark a new test `@pytest.mark.slow` when it
 takes more than about 3 s. CI and every release run the full set.
 
 `npm ci` installs the pinned JavaScript development tools from
@@ -20,6 +23,12 @@ takes more than about 3 s. CI and every release run the full set.
 `node_modules/`. The WebGPU contract tests bundle the TypeScript sources with
 them and run the bundles in Node.js 22 or newer; they are skipped only when
 Node.js is not installed.
+
+Interactive display contracts also require the Widget revision pinned in
+[the CI workflow](../../.github/workflows/test.yml). Build that checkout against
+this backend before installing it into an isolated test environment. An older
+global Widget installation can import successfully while exposing incompatible
+display arguments. The native macOS application does not depend on Widget.
 
 Portable CI proves imports, public contracts, CPU references, source packaging,
 and tests that do not require a physical accelerator. Backend skips are

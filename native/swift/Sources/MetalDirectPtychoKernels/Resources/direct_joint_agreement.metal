@@ -49,7 +49,7 @@ kernel void joint_agreement_angle_sums(device const float2* g [[buffer(0)]], dev
     constant JointGrid& p [[buffer(4)]], device const float* trial [[buffer(5)]],
     constant uint& TOTAL [[buffer(6)]], device const float4* probe_geometry [[buffer(7)]],
     device const float* neighbour [[buffer(8)]], constant float2& step_k [[buffer(9)]],
-    constant JointAgreementExtra& extra [[buffer(10)]], uint3 tid [[thread_position_in_grid]]) {
+    constant JointAgreementExtra& extra [[buffer(10)]], uint3 tid [[thread_position_in_grid]] INDEXED_BAND_ARGUMENT) {
     const uint B = JOINT_B;
     constexpr uint ANCHOR = 8;
     uint qi = tid.x, chunk = tid.y, base = extra.first + tid.z * B;
@@ -117,7 +117,7 @@ kernel void joint_agreement_angle_sums(device const float2* g [[buffer(0)]], dev
         JOINT_UNIFORM_IF(ring_p) ep = joint_agreement_edge(px, py, rp, wl, semi, ang_y, ang_x);
         float a1 = em * gk.w, a2 = ep * gk.w;
         if (a1 == 0.0f && a2 == 0.0f) continue;
-        float2 value = g[(size_t)kk * p.bandCount + qi];
+        float2 value = BAND_READ(g, kk, qi, p.bandCount);
         float gre = value.x, gim = value.y;
         for (uint b = 0; b < B; ++b) {
             float cu = eu[b].x, su = eu[b].y;

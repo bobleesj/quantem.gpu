@@ -161,6 +161,7 @@ parts:
         - file: performance/direct/reports/index
           title: Direct ptychography reports
           sections:
+          - file: performance/direct/reports/2026-11-06-native-direct-workflow
           - file: performance/direct/reports/2026-11-05-direct-ptycho-preparation
           - file: performance/direct/reports/2026-11-05-mps-full-scan
           - file: performance/direct/reports/2026-11-01-broad-density-batching

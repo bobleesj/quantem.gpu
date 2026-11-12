@@ -1,13 +1,15 @@
 import Foundation
 import Metal
+import MetalPerformanceShadersGraph
 
-/// Unsigned source counts are read at their native width before float32 direct ptychography arithmetic.
+/// Unsigned counts or signed float32 measurements read without source quantization.
 public enum MetalDirectPtychoCountType: Int, Codable, Sendable {
   case uint8 = 1
   case uint16 = 2
   case uint32 = 4
+  case float32 = 5
 
-  public var byteWidth: Int { rawValue }
+  public var byteWidth: Int { self == .float32 ? 4 : rawValue }
 }
 
 /// Aberrations used by the native direct-ptychography reconstruction.
@@ -116,6 +118,8 @@ public struct MetalDirectPtychoProvenance: Codable, Equatable, Sendable {
   public let scanBin: Int
   public let scanCrop: String
   public let brightfieldSelection: String
+  /// Exact-grid preparation kernel, when the large irregular-grid path is used.
+  public var fourierKernel: MetalKernelIdentity? = nil
 }
 
 /// A native Metal direct ptychography reconstruction saved by an earlier version (`MetalDirectSavedRun`).
@@ -183,6 +187,10 @@ public enum MetalDirectPtychoError: LocalizedError {
 /// retired.
 public final class MetalDirectPtychoEngine {
   private let size: Int
+  private let columns: Int
+  private let nativeSquareFFT: Bool
+  private var accurateRectangularFFT: MetalDirectPtychoBluesteinFFT?
+  private var forwardPlans: [Int: (MPSGraph, MPSGraphTensor, MPSGraphTensor)] = [:]
   private let plane: Int
   private let halfPlane: Int
   private static let batchCapacity = 32
@@ -219,12 +227,12 @@ public final class MetalDirectPtychoEngine {
   private let transposePipeline: MTLComputePipelineState
   private let halfExtractPipeline: MTLComputePipelineState
   private let transposeHalfPipeline: MTLComputePipelineState
-  private let fusedHalf = ProcessInfo.processInfo.environment["QUANTEM_METAL_FUSED_HALF"] != "0"
+  private var fusedHalf: Bool { nativeSquareFFT && ProcessInfo.processInfo.environment["QUANTEM_METAL_FUSED_HALF"] != "0" }
 
   private var rawBuffer: MTLBuffer
   private var sourceCountType: MetalDirectPtychoCountType = .uint8
-  private let fftA: MTLBuffer
-  private let fftB: MTLBuffer
+  private var fftA: MTLBuffer
+  private var fftB: MTLBuffer
   private let twiddleBuffer: MTLBuffer
 
   private var encodeBrightfield: (([Int], MTLBuffer, MTLCommandBuffer) throws -> Void)?
@@ -248,10 +256,13 @@ public final class MetalDirectPtychoEngine {
   ) throws {
     try Self.validate(geometry)
     let size = geometry.qxByRow.count
-    let plane = size * size
+    let columns = geometry.qyByColumn.count
+    let plane = size * columns
+    self.columns = columns
+    self.nativeSquareFFT = size == columns && [128, 256, 512].contains(size)
     self.size = size
     self.plane = plane
-    self.halfPlane = size * (size / 2 + 1)
+    self.halfPlane = size * (columns / 2 + 1)
     if let cacheBudgetBytes, cacheBudgetBytes < 0 {
       throw MetalDirectPtychoError.invalidGeometry(
         "cacheBudgetBytes must be nonnegative"
@@ -264,6 +275,10 @@ public final class MetalDirectPtychoEngine {
       throw MetalDirectPtychoError.commandQueue
     }
     self.queue = queue
+    if MetalDirectPtychoBluesteinFFT.isRequired(rows: size, columns: columns) {
+      accurateRectangularFFT = try MetalDirectPtychoBluesteinFFT(
+        device: device, queue: queue, rows: size, columns: columns)
+    }
 
     let activeIndices = Self.activeIndices(geometry)
     guard !activeIndices.isEmpty else {
@@ -296,7 +311,7 @@ public final class MetalDirectPtychoEngine {
     halfExtractPipeline = try Self.makePipeline(
       device: device,
       library: library,
-      name: "extract_hermitian_half"
+      name: "extract_rectangular_hermitian_half"
     )
 
     transposeHalfPipeline = try Self.makePipeline(
@@ -390,16 +405,11 @@ public final class MetalDirectPtychoEngine {
     preparationGeneration &+= 1
     prepared = false
     self.encodeBrightfield = encodeBrightfield
-    let stagingBytes = Self.batchCapacity * plane * countType.byteWidth
-    if rawBuffer.length != stagingBytes {
-      rawBuffer = try Self.allocate(
-        device: device, length: stagingBytes, options: .storageModePrivate,
-        purpose: "source count batch")
-    }
+    try resizeStaging(batch: Self.batchCapacity, countType: countType)
     sourceCountType = countType
-    if fusedCounts && size == 512 {
+    if fusedCounts && nativeSquareFFT && size == 512 {
       let constants = MTLFunctionConstantValues()
-      var width = UInt32(countType.byteWidth)
+      var width = UInt32(countType.rawValue)
       constants.setConstantValue(&width, type: .uint, index: 43)
       let function = try fftLibrary.makeFunction(
         name: "fft_rows_radix8", constantValues: constants)
@@ -461,19 +471,14 @@ public final class MetalDirectPtychoEngine {
       by: Self.batchCapacity
     ) {
       let batch = min(Self.batchCapacity, cachedCount - offset)
-      guard let commands = queue.makeCommandBuffer() else {
-        throw MetalDirectPtychoError.commandQueue
-      }
+      let commands = try fftCommand()
       try encodeBrightfield(
         Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: batch, transposeOutput: !fusedHalf)
 
       let cacheIndex = offset / cacheChunkCapacity
       let cacheOffset = offset - cacheIndex * cacheChunkCapacity
-      var extract = HalfExtractParams(
-        sourceN: UInt32(size),
-        batch: UInt32(batch)
-      )
+      var extract = SIMD4<UInt32>(UInt32(size), UInt32(columns), UInt32(batch), 0)
       guard let encoder = commands.makeComputeCommandEncoder() else {
         throw MetalDirectPtychoError.commandQueue
       }
@@ -493,7 +498,7 @@ public final class MetalDirectPtychoEngine {
           MTLSize(width: (size + 31) / 32, height: (size / 2 + 32) / 32, depth: batch),
           threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1))
       } else {
-        encoder.setBytes(&extract, length: MemoryLayout<HalfExtractParams>.stride, index: 2)
+        encoder.setBytes(&extract, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 2)
         encoder.dispatchThreads(
           MTLSize(width: batch * halfPlane, height: 1, depth: 1),
           threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
@@ -503,7 +508,32 @@ public final class MetalDirectPtychoEngine {
       progress(offset + batch, cachedCount)
     }
     cachedBrightfieldCount = cachedCount
+    if ProcessInfo.processInfo.environment["QUANTEM_METAL_TRIM_FFT_WORKSPACE"] != "0" {
+      // Subsequent uncached and inactive evidence is streamed in batches of at most eight.
+      // The preparation commands have completed; no live FFT can reference the old buffers.
+      try resizeStaging(batch: 8, countType: countType)
+    }
     prepared = true
+  }
+
+  /// Temporary Fourier workspace, separate from the exact retained spectra.
+  var preparationWorkspaceBytes: Int { rawBuffer.length + fftA.length + fftB.length }
+
+  private func resizeStaging(batch: Int, countType: MetalDirectPtychoCountType) throws {
+    let rawBytes = batch * plane * countType.byteWidth
+    let complexBytes = batch * plane * MemoryLayout<SIMD2<Float>>.stride
+    if rawBuffer.length != rawBytes {
+      rawBuffer = try Self.allocate(device: device, length: rawBytes,
+        options: .storageModePrivate, purpose: "source count batch")
+    }
+    if fftA.length != complexBytes {
+      fftA = try Self.allocate(device: device, length: complexBytes,
+        options: .storageModePrivate, purpose: "FFT workspace A")
+    }
+    if fftB.length != complexBytes {
+      fftB = try Self.allocate(device: device, length: complexBytes,
+        options: .storageModePrivate, purpose: "FFT workspace B")
+    }
   }
 
   /// Build the joint tilt/depth model from this session's exact prepared spectra.
@@ -518,6 +548,11 @@ public final class MetalDirectPtychoEngine {
     return try MetalDirectPtychoJointModel(
       device: device, geometry: geometry,
       activeIndices: activeBrightfieldIndices, rotation: scanDetectorRotationDegrees,
+      spectrumStorage: cachedBrightfieldCount == activeBrightfieldIndices.count
+        && device.argumentBuffersSupport == .tier2
+        && ProcessInfo.processInfo.environment["QUANTEM_METAL_INDEXED_BAND"] == "1"
+        ? DirectPtychoSpectrumStorage(buffers: cacheBuffers, chunkCapacity: cacheChunkCapacity,
+            planeStride: halfPlane) : nil,
       band: bandInverseAngstroms, provenance: currentProvenance(),
       visit: { [self] batchSize, body in try visitSpectra(batchSize: batchSize, body) },
       visitInactive: { [self] batchSize, body in
@@ -549,9 +584,7 @@ public final class MetalDirectPtychoEngine {
     }
     for offset in stride(from: cachedBrightfieldCount, to: activeBrightfieldIndices.count, by: 8) {
       let count = min(8, activeBrightfieldIndices.count - offset)
-      guard let commands = queue.makeCommandBuffer() else {
-        throw MetalDirectPtychoError.commandQueue
-      }
+      let commands = try fftCommand()
       try encodeBrightfield(
         Array(activeBrightfieldIndices[offset..<(offset + count)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: count)
@@ -573,9 +606,7 @@ public final class MetalDirectPtychoEngine {
       from: 0, to: inactiveBrightfieldIndices.count, by: min(8, max(1, batchSize)))
     {
       let count = min(8, max(1, batchSize), inactiveBrightfieldIndices.count - offset)
-      guard let commands = queue.makeCommandBuffer() else {
-        throw MetalDirectPtychoError.commandQueue
-      }
+      let commands = try fftCommand()
       try encodeBrightfield(
         Array(inactiveBrightfieldIndices[offset..<(offset + count)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: count)
@@ -587,11 +618,11 @@ public final class MetalDirectPtychoEngine {
   /// Convert a saved complex object (`MetalDirectSavedRun.reconstruction`) to its scalar phase, in
   /// radians, on Metal. The engine's geometry must have the saved run's scan size.
   public func phase(of result: MetalDirectPtychoResult) throws -> MTLBuffer {
-    guard result.provenance.scanRows == size, result.provenance.scanColumns == size,
+    guard result.provenance.scanRows == size, result.provenance.scanColumns == columns,
       result.object.length >= plane * MemoryLayout<SIMD2<Float>>.stride
     else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "This result is \(result.provenance.scanRows) by \(result.provenance.scanColumns), but the engine is \(size) by \(size). Restore it with matching scan geometry before converting phase."
+        "This result is \(result.provenance.scanRows) by \(result.provenance.scanColumns), but the engine is \(size) by \(columns). Restore it with matching scan geometry before converting phase."
       )
     }
     if objectPhasePipeline == nil {
@@ -622,7 +653,7 @@ public final class MetalDirectPtychoEngine {
     let executed = activeBrightfieldIndices.count
     return MetalDirectPtychoProvenance(
       scanRows: size,
-      scanColumns: size,
+      scanColumns: columns,
       sourceDType: String(describing: sourceCountType),
       computeDType: "float32/complex64",
       logicalBrightfieldCount: logical,
@@ -635,8 +666,40 @@ public final class MetalDirectPtychoEngine {
       cacheBytes: cacheBuffers.reduce(0) { $0 + $1.length },
       scanBin: 1,
       scanCrop: "none",
-      brightfieldSelection: "exact-zero-aperture-pruning"
+      brightfieldSelection: "exact-zero-aperture-pruning",
+      fourierKernel: accurateRectangularFFT?.kernel
     )
+  }
+
+  /// MPSGraph transforms the exact native grid; no scan padding changes the model.
+  private func fftCommand() throws -> MTLCommandBuffer {
+    guard let command = queue.makeCommandBuffer() else { throw MetalDirectPtychoError.commandQueue }
+    return nativeSquareFFT || accurateRectangularFFT != nil
+      ? command : MPSCommandBuffer(commandBuffer: command)
+  }
+
+  private func encodeRectangularFFT(_ commands: MPSCommandBuffer, batch: Int) {
+    let shape = [NSNumber(value: batch), NSNumber(value: size), NSNumber(value: columns)]
+    if forwardPlans[batch] == nil {
+      let graph = MPSGraph()
+      graph.options = .none
+      let input = graph.placeholder(shape: shape, dataType: .complexFloat32, name: "scan")
+      let descriptor = MPSGraphFFTDescriptor()
+      descriptor.scalingMode = .none
+      let output = graph.fastFourierTransform(input, axes: [1, 2], descriptor: descriptor, name: "fft2")
+      forwardPlans[batch] = (graph, input, output)
+    }
+    let (graph, input, output) = forwardPlans[batch]!
+    let execution = MPSGraphExecutionDescriptor()
+    execution.waitUntilCompleted = false
+    graph.encode(to: commands,
+      feeds: [input: MPSGraphTensorData(fftA, shape: shape, dataType: .complexFloat32)],
+      targetOperations: nil,
+      resultsDictionary: [output: MPSGraphTensorData(fftB, shape: shape, dataType: .complexFloat32)],
+      executionDescriptor: execution)
+    let blit = commands.makeBlitCommandEncoder()!
+    blit.copy(from: fftB, sourceOffset: 0, to: fftA, destinationOffset: 0, size: batch * plane * 8)
+    blit.endEncoding()
   }
 
   private func encodeForwardFFT(
@@ -659,13 +722,21 @@ public final class MetalDirectPtychoEngine {
     convert.setBuffer(rawBuffer, offset: 0, index: 0)
     convert.setBuffer(fftA, offset: 0, index: 1)
     convert.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 2)
-    var byteWidth = UInt32(sourceCountType.byteWidth)
+    var byteWidth = UInt32(sourceCountType.rawValue)
     convert.setBytes(&byteWidth, length: MemoryLayout<UInt32>.stride, index: 3)
     convert.dispatchThreads(
       MTLSize(width: Int(count), height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
     )
     convert.endEncoding()
+    if let accurateRectangularFFT {
+      accurateRectangularFFT.encode(command: commands, input: fftA, temporary: fftB, batch: batch)
+      return
+    }
+    if !nativeSquareFFT {
+      encodeRectangularFFT(commands as! MPSCommandBuffer, batch: batch)
+      return
+    }
     encodeFFT(
       commands,
       input: fftA,
@@ -800,11 +871,11 @@ public final class MetalDirectPtychoEngine {
         "all bright-field arrays must have \(count) values"
       )
     }
-    guard [128, 256, 512].contains(geometry.qxByRow.count),
-      geometry.qyByColumn.count == geometry.qxByRow.count
+    guard (3...512).contains(geometry.qxByRow.count),
+      (3...512).contains(geometry.qyByColumn.count)
     else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "Native Metal direct ptychography supports square 128, 256, or 512 scans; supply matching reciprocal-space coordinates without cropping or binning."
+        "Native Direct Ptycho supports 3–512 scan positions on each axis, including rectangular scans; retain the original sampling."
       )
     }
     let allArrays =

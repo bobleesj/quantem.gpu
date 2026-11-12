@@ -43,6 +43,7 @@ public enum DirectPtychoRotationBranches {
     var curlPower = 0.0
     var divergencePower = 0.0
     var crossPower = 0.0
+    var validStencils = 0
     for r in 1..<(rows - 1) {
       for c in 1..<(columns - 1) {
         let i = r * columns + c
@@ -52,12 +53,15 @@ public enum DirectPtychoRotationBranches {
         let divergence = Double(
           Float(0.5) * (row[i + columns] - row[i - columns]) + Float(0.5)
             * (column[i + 1] - column[i - 1]))
+        guard curl.isFinite, divergence.isFinite else { continue }
+        validStencils += 1
         curlPower += curl * curl
         divergencePower += divergence * divergence
         crossPower += curl * divergence
       }
     }
-    let count = Double((rows - 2) * (columns - 2))
+    guard validStencils > 0 else { return .nan }
+    let count = Double(validStencils)
     curlPower /= count
     divergencePower /= count
     crossPower /= count

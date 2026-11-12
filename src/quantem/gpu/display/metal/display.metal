@@ -8,7 +8,7 @@ struct MetalDisplayParameters {
     uint high;
     uint scaleMode;
     uint lutCount;
-    uint _padding0;
+    uint interpolationMode;
     uint _padding1;
 };
 
@@ -19,7 +19,7 @@ struct MetalFloatDisplayParameters {
     float high;
     uint scaleMode;
     uint lutCount;
-    uint _padding0;
+    uint interpolationMode;
     uint _padding1;
 };
 
@@ -112,23 +112,47 @@ vertex MetalDisplayVertex metal_display_vertex(uint vertexID [[vertex_id]]) {
     return output;
 }
 
+inline float4 metal_display_color(uint value, constant MetalDisplayParameters &p,
+    device const float4 *lut) {
+    float normalized = metal_normalize_u32(value, p);
+    return lut[min(p.lutCount - 1u, uint(normalized * float(p.lutCount - 1u)))];
+}
+
+inline float4 metal_display_color(float value, constant MetalFloatDisplayParameters &p,
+    device const float4 *lut) {
+    if (!isfinite(value)) return float4(143.0f / 255.0f, 63.0f / 255.0f, 143.0f / 255.0f, 1.0f);
+    float normalized = metal_normalize_f32(value, p);
+    return lut[min(p.lutCount - 1u, uint(normalized * float(p.lutCount - 1u)))];
+}
+
+// Bilinear display sampling uses pixel centers, not corners. Clamp at image
+// edges, including single-row/column images. No intermediate image allocation.
+template <typename T, typename P>
+inline float4 metal_display_sample(float2 uv, device const T *values,
+    constant P &p, device const float4 *lut) {
+    uint col = min(p.cols - 1u, uint(uv.x * float(p.cols)));
+    uint row = min(p.rows - 1u, uint(uv.y * float(p.rows)));
+    if (p.interpolationMode == 0u) return metal_display_color(values[row * p.cols + col], p, lut);
+    float2 position = clamp(uv * float2(p.cols, p.rows) - 0.5f,
+        float2(0.0f), float2(p.cols - 1u, p.rows - 1u));
+    uint2 low = uint2(floor(position));
+    uint2 high = min(low + 1u, uint2(p.cols - 1u, p.rows - 1u));
+    float2 weight = position - float2(low);
+    float4 a = metal_display_color(values[low.y * p.cols + low.x], p, lut);
+    float4 b = metal_display_color(values[low.y * p.cols + high.x], p, lut);
+    float4 c = metal_display_color(values[high.y * p.cols + low.x], p, lut);
+    float4 d = metal_display_color(values[high.y * p.cols + high.x], p, lut);
+    return mix(mix(a, b, weight.x), mix(c, d, weight.x), weight.y);
+}
+
 fragment float4 metal_display_fragment(
     MetalDisplayVertex input [[stage_in]],
     device const uint *values [[buffer(0)]],
     constant MetalDisplayParameters &parameters [[buffer(1)]],
     device const float4 *lut [[buffer(2)]]
 ) {
-    if (parameters.rows == 0u || parameters.cols == 0u || parameters.lutCount == 0u) {
-        return float4(0.0f);
-    }
-    uint col = min(parameters.cols - 1u, uint(input.uv.x * float(parameters.cols)));
-    uint row = min(parameters.rows - 1u, uint(input.uv.y * float(parameters.rows)));
-    float normalized = metal_normalize_u32(values[row * parameters.cols + col], parameters);
-    uint lutIndex = min(
-        parameters.lutCount - 1u,
-        uint(normalized * float(parameters.lutCount - 1u))
-    );
-    return lut[lutIndex];
+    if (parameters.rows == 0u || parameters.cols == 0u || parameters.lutCount == 0u) return float4(0.0f);
+    return metal_display_sample(input.uv, values, parameters, lut);
 }
 
 fragment float4 metal_display_fragment_f32(
@@ -137,21 +161,13 @@ fragment float4 metal_display_fragment_f32(
     constant MetalFloatDisplayParameters &parameters [[buffer(1)]],
     device const float4 *lut [[buffer(2)]]
 ) {
-    if (parameters.rows == 0u || parameters.cols == 0u || parameters.lutCount == 0u) {
-        return float4(0.0f);
-    }
+    if (parameters.rows == 0u || parameters.cols == 0u || parameters.lutCount == 0u) return float4(0.0f);
+    // Invalid source pixels retain their visible warning even when Smooth is on.
     uint col = min(parameters.cols - 1u, uint(input.uv.x * float(parameters.cols)));
     uint row = min(parameters.rows - 1u, uint(input.uv.y * float(parameters.rows)));
-    float value = values[row * parameters.cols + col];
-    if (!isfinite(value)) {
-        return float4(143.0f / 255.0f, 63.0f / 255.0f, 143.0f / 255.0f, 1.0f);
-    }
-    float normalized = metal_normalize_f32(value, parameters);
-    uint lutIndex = min(
-        parameters.lutCount - 1u,
-        uint(normalized * float(parameters.lutCount - 1u))
-    );
-    return lut[lutIndex];
+    if (!isfinite(values[row * parameters.cols + col]))
+        return metal_display_color(values[row * parameters.cols + col], parameters, lut);
+    return metal_display_sample(input.uv, values, parameters, lut);
 }
 
 kernel void metal_range_u32(

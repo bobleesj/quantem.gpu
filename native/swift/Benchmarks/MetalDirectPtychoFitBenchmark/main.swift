@@ -385,6 +385,7 @@ func export(options: Options, device: MTLDevice) throws {
   case .uint8: try Data(wide.map { UInt8($0) }.withUnsafeBytes { Data($0) }).write(to: countsURL)
   case .uint16: try Data(wide.map { UInt16($0) }.withUnsafeBytes { Data($0) }).write(to: countsURL)
   case .uint32: try wide.withUnsafeBytes { Data($0) }.write(to: countsURL)
+  case .float32: throw NSError(domain: "DirectPtychoBenchmark", code: 1, userInfo: [NSLocalizedDescriptionKey: "Integer acquisition export cannot select float32 storage."])
   }
   try dark.map(Float.init).withUnsafeBytes { Data($0) }.write(
     to: options.cache.appendingPathComponent("dark_field.f32"))

@@ -11,7 +11,7 @@ final class DirectKernelRegistryTests: XCTestCase {
     DirectPtychoKernelRegistry.redraw, DirectPtychoKernelRegistry.perTerm,
     DirectPtychoKernelRegistry.fifthAgreement, DirectPtychoKernelRegistry.jointAgreement,
     DirectPtychoKernelRegistry.lowOrderDerivatives, DirectPtychoKernelRegistry.fifthGradient,
-    DirectPtychoKernelRegistry.direct,
+    DirectPtychoKernelRegistry.direct, DirectPtychoKernelRegistry.rectangularFourier,
   ]
 
   func testShippedSourceMatchesRegisteredVersion() throws {

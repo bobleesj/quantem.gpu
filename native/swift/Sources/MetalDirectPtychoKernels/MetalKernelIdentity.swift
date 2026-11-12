@@ -49,13 +49,12 @@ enum DirectPtychoKernelRegistry {
   static let redraw = Entry(
     name: "direct-redraw", version: "0.3", files: ["direct_redraw"],
     registeredSourceSHA256: "fc370d789c0c92428e79c20bda7c53d678b515de7a1b1cdc28b109d5e03fff35")
-  /// The earlier per-term / separable coherent kernels: explicit 8x only, and the 1x-4x parity reference in tests.
+  /// Exact per-term coherent kernels for rectangular/non-power-of-two scans, explicit 8x, and square parity tests.
   /// v0.2 is v0.1 without the retired `complex_wave` amplitude kernel (`model_wave_amplitude`); v0.3 is v0.2 without
   /// the deleted objective kernel `fifth_agreement` in `direct_fifth_order`. The reconstruction kernels are unchanged.
   static let perTerm = Entry(
-    name: "direct-per-term", version: "0.3",
-    files: ["direct_model", "direct_fifth_order", "direct_separable"],
-    registeredSourceSHA256: "4d9f450efa180a20437d648b444fac4a4c6263ee2d78d8201dc6b42a92e9b93f")
+    name: "direct-per-term", version: "0.4", files: ["direct_model", "direct_fifth_order", "direct_separable"],
+    registeredSourceSHA256: "e7bca117007463d1bc5e147c20c5cff1df159652fae9afdc0167c10ce90f5c47")
   /// The fifth-order agreement objective of the fit (`fifth_agreement_rows` with the `fifth_probe`, `fifth_power`
   /// and `fifth_score` passes) on all BF pixels or every n-th: the only production objective kernel there, also the
   /// value pass of `fifthGradient`. v0.3 added the BF stride to v0.2 (same per-pair terms); v0.4 is v0.3 with v0.1,
@@ -63,18 +62,16 @@ enum DirectPtychoKernelRegistry {
   /// v0.5 skips per-pixel arithmetic at zero-weight band frequencies while retaining
   /// every output slot and barrier. Objective and gradient results remain exact.
   static let fifthAgreement = Entry(
-    name: "direct-fifth-agreement", version: "0.5",
-    files: ["direct_fifth_order", "direct_fifth_agreement"],
-    registeredSourceSHA256: "8ebd884e75879a1daebb735a09396941d4f2bfdf2547b2d2993b2eaff5cec64f")
+    name: "direct-fifth-agreement", version: "0.7", files: ["direct_joint", "direct_fifth_order", "direct_fifth_agreement"],
+    registeredSourceSHA256: "4e2e603fa91f79094ebb3056f9a074b0ababfd2f18def26627d503a40e8d9d07")
   /// The low-order agreement objective with angle-sum phases (`joint_agreement_angle_sums`), used by the primary
   /// fit's search trials, the only low-order agreement kernel. v0.3 is v0.2 with the retired `mean_phase` kernels
   /// removed from `direct_joint`; v0.4 is v0.3 with v0.1 (`joint_objective_angle_sums`) and the per-term agreement
   /// (`joint_objective_batch`, `joint_trial_probe`) deleted from `direct_joint` (2026-10-25). The agreement kernels are
   /// unchanged.
   static let jointAgreement = Entry(
-    name: "direct-joint-agreement", version: "0.4",
-    files: ["direct_joint", "direct_joint_agreement"],
-    registeredSourceSHA256: "3bb7e0fa64beb0787c1796ccd7e632f47d5ee6949cbaca6debbffd952dbbce1b")
+    name: "direct-joint-agreement", version: "0.6", files: ["direct_joint", "direct_joint_agreement"],
+    registeredSourceSHA256: "8485c9608d24549b9c248eac0af634df2d3a69cb7cd1d0241bd5359f6999926a")
 
   /// The primary fit's exact low-order value, gradient and Hessian (trust-region Newton), `DirectPtychoLowOrderDerivatives`:
   /// the value pass, the derivative pass and the fused pass of `direct_low_order_derivatives` (with the aperture and
@@ -82,9 +79,9 @@ enum DirectPtychoKernelRegistry {
   /// `direct_joint`; v0.4 is v0.3 with the deleted agreement kernels removed from `direct_joint` (2026-10-25). The
   /// derivative kernels are unchanged. v0.1 (`direct_low_order`) was deleted on 2026-10-25.
   static let lowOrderDerivatives = Entry(
-    name: "direct-low-order-derivatives", version: "0.4",
+    name: "direct-low-order-derivatives", version: "0.6",
     files: ["direct_joint", "direct_joint_agreement", "direct_low_order_derivatives"],
-    registeredSourceSHA256: "68bdced4bc2dfeb8263fcc9cd0b3463aed019493c641906b931518396981e561")
+    registeredSourceSHA256: "635cd3039ad535a8ebd676d977dc02ef059e571164b65f41a2ba3aa91e4d5d8d")
 
   /// The exact fifth-order agreement gradient on all BF pixels or every n-th (`fifth_gradient_scale`,
   /// `fifth_gradient_rows`) after the `fifthAgreement` value pass (fitting, not reconstruction). v0.1
@@ -92,9 +89,9 @@ enum DirectPtychoKernelRegistry {
   /// `fifth_agreement` deleted from `direct_fifth_order` (2026-10-25), the kernels unchanged.
   /// v0.4 uses the zero-weight-aware v0.5 value pass; its gradient kernels are unchanged.
   static let fifthGradient = Entry(
-    name: "direct-fifth-gradient", version: "0.4",
-    files: ["direct_fifth_order", "direct_fifth_agreement", "direct_fifth_order_gradient"],
-    registeredSourceSHA256: "484134db7776e01314f4084d5f6540c8d74db129f5dd97394182bd2fa61e1cb0")
+    name: "direct-fifth-gradient", version: "0.6",
+    files: ["direct_joint", "direct_fifth_order", "direct_fifth_agreement", "direct_fifth_order_gradient"],
+    registeredSourceSHA256: "f281771fa0c7bae5108af12a9d569fccfce45c8f937192cf1b9a8b3acf7768a9")
 
   /// The regularized direct reconstructions (`phase`, `complex`): the k-only pixel terms, the normal equations of every
   /// scan frequency with its supported aliases (float32 per BF pixel, float-float across batches;
@@ -105,9 +102,14 @@ enum DirectPtychoKernelRegistry {
   /// (`direct_normal_equations` alone, no drag windows), v0.2 and v0.3 (v0.2 with the deleted agreement kernels
   /// removed from the shared `direct_joint` and `direct_fifth_order`; both take A(k) from the general aperture formula).
   static let direct = Entry(
-    name: "direct-regularized", version: "0.4",
-    files: ["direct_joint", "direct_fifth_order", "direct_regularized"],
-    registeredSourceSHA256: "199b8f9f28415fe84bc930de50f8a63d9a78c26747c304b90e2e33ddad2b1720")
+    name: "direct-regularized", version: "0.6", files: ["direct_joint", "direct_fifth_order", "direct_regularized"],
+    registeredSourceSHA256: "17db9653d63f0ecefaa7ac5deb6de7566951de1b76ad3027defbd2df2b99701b")
+
+  /// Exact-grid forward preparation for a non-power-of-two scan axis above 256.
+  /// Mean-centered Bluestein avoids DC leakage and uses rounded Double twiddle tables.
+  static let rectangularFourier = Entry(
+    name: "direct-ptycho-rectangular-fft", version: "0.1", files: ["direct_bluestein"],
+    registeredSourceSHA256: "2ba21eee889fa0db10f35374128440c40fed3191fc1143611077726bddfc5d0c")
 
   /// SHA-256 of an entry's shipped source files, concatenated in order.
   static func sourceSHA256(_ entry: Entry) throws -> String {

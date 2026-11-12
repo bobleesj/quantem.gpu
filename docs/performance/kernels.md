@@ -5,6 +5,80 @@ One row per kernel version. A result records the kernel that produced it
 fingerprint over both), so any saved phase, export, or benchmark line can be
 traced to a row here.
 
+## Large irregular-grid preparation candidate (2026-11-06)
+
+`direct-ptycho-rectangular-fft` v0.1 · source `2ba21eee889f` · active.
+For a non-power-of-two scan axis above 256, a GPU Bluestein transform replaces
+MPSGraph forward preparation. The exact native scan is retained: convolution
+padding is internal threadgroup storage, not an expanded scientific grid.
+Per-line DC is separated and restored to prevent background leakage into weak
+frequencies. Only bounded data-independent chirp/twiddle constants use CPU
+Double arithmetic; transforms, reductions and convolution kernels run on Metal.
+The existing two global FFT workspaces are reused, with at most 40 KiB of tables.
+The native 128/256/512 square and qualified smaller-grid paths are unchanged.
+
+Independent complex impulse and positive/negative background checks preserve
+the 2e-6 nonzero-frequency error bound. A separate 1,020-case sweep over square
+sizes 3–512 at backgrounds 0 and 100 had maximum nonzero-frequency error 5.80e-7.
+The original MPSGraph sweep exceeded 2e-6 at 15 large irregular sizes. These are
+accuracy checks, not a whole-workflow speed or release claim. Private evidence:
+`direct-ptycho-eight-hour-20261106`. Results and saved runs record this preparation
+kernel separately from the reconstruction kernel.
+
+## Resident evidence view candidate (2026-11-06)
+
+These local candidate versions add an opt-in, exact indexed view of fully resident
+Fourier evidence. Partial caches retain the gathered layout. The selected band,
+BF pixels, arithmetic order and precision are unchanged. The fifth-order source
+digests now also include the shared indexing header. The direct reconstruction
+version changes only because that shared header is in its source bundle.
+
+`QUANTEM_METAL_INDEXED_BAND=1` enables the experiment; the default remains off.
+Three full-size 512×512×192×192 acquisitions matched the original fit parameters,
+branch checks and all three reconstructed image hashes in native app comparisons.
+Fitting peak physical footprint fell by approximately 2.9–5.1 GiB. Native latency
+was mixed, including a small regression on one acquisition, so this is not a
+claimed speed improvement or a release qualification. Private evidence:
+`direct-ptycho-eight-hour-20261106`. Earlier registry rows remain historical.
+
+| Kernel | Status | Source digest |
+|---|---|---|
+| `direct-fifth-agreement` v0.7 | active | `4e2e603fa91f` |
+| `direct-joint-agreement` v0.6 | active | `8485c9608d24` |
+| `direct-low-order-derivatives` v0.6 | active | `635cd3039ad5` |
+| `direct-fifth-gradient` v0.6 | active | `f281771fa0c7` |
+| `direct-regularized` v0.6 | active | `17db9653d63f` |
+
+## Exact rectangular scans (2026-11-05)
+
+Native scans retain independent row and column dimensions (3–512 each), including odd sizes.
+The 128/256/512 square forward-transform and redraw paths remain unchanged. Other shapes
+use exact-size MPSGraph Fourier transforms and the general coherent kernel; no physical
+scan padding, crop, binning, reduced BF support or trial reduction is used. Phase/Complex
+inversion retains the existing regularization and CPU float64 linear solve.
+
+The shared geometry headers changed, so each affected source bundle has a new version.
+The objective/derivative arithmetic itself is unchanged; gathering now has independent
+column strides and odd-column half-plane weights. Previous versions below are historical.
+
+| Kernel | Version | Source digest | Change |
+|---|---|---|---|
+| `direct-per-term` v0.4 | active; replaces v0.3 | `e7bca1170074` | Rectangular geometry in shared source |
+| `direct-fifth-agreement` v0.6 | active; replaces v0.5 | `ecb2c21559b3` | Rectangular geometry in shared source |
+| `direct-joint-agreement` v0.5 | active; replaces v0.4 | `b8112514955a` | Rectangular geometry in shared source |
+| `direct-low-order-derivatives` v0.5 | active; replaces v0.4 | `b476fe261ba2` | Rectangular geometry in shared source |
+| `direct-fifth-gradient` v0.5 | active; replaces v0.4 | `ebbb3bb4be59` | Rectangular geometry in shared source |
+| `direct-regularized` v0.5 | active; replaces v0.4 | `311d45ef6caf` | Rectangular geometry in shared source |
+
+Validation: nine analytic Fourier shapes from 7×11 through 512×192, full-cache and
+streamed evidence; three rectangular shapes through all three reconstruction methods at
+1× and 2×; bounded independent double-precision DFT/pivoted-solver checks for fifth-order
+Phase and Complex at mixed odd/even dimensions (maximum absolute tolerance 2e-6).
+A real published 90×68 float32 scan completed the native Phase/fifth-order/Complex/reopen
+journey, and two full 512×512×192×192 acquisitions completed batch fitting and saved-prior
+restoration on the same local candidate. These are correctness checks, not a release or
+all-shape performance guarantee. Raw evidence stays in the private archive.
+
 ## Rules
 
 - **One production kernel per job.** When a faster version is validated, it

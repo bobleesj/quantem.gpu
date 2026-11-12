@@ -332,6 +332,7 @@ kernel void empad_mean_diffraction(device const uint* packed [[buffer(0)]],
                                    constant uint4& region [[buffer(5)]],
                                    constant uint& scanColumns [[buffer(6)]],
                                    constant uint& regionShape [[buffer(7)]],
+                                   device const uint* invalidScan [[buffer(10)]],
                                    uint pixel [[thread_position_in_grid]]) {
     float2 previous = dimensions.x == 0 ? float2(0) : accumulator[pixel];
     float sum = previous.x, correction = previous.y;
@@ -339,6 +340,7 @@ kernel void empad_mean_diffraction(device const uint* packed [[buffer(0)]],
         uint first = max(row * scanColumns + region.z, dimensions.x);
         uint stop = min(row * scanColumns + region.w, dimensions.x + dimensions.y);
         for (uint frame = first; frame < stop; ++frame) {
+            if (invalidScan[frame]) continue;
             if (regionShape == 1u) {
                 long diameter = long(region.y - region.x);
                 long dr = 2 * (long(row) - long(region.x)) + 1 - diameter;
@@ -352,4 +354,43 @@ kernel void empad_mean_diffraction(device const uint* packed [[buffer(0)]],
     }
     accumulator[pixel] = float2(sum, correction);
     output[pixel] = sum;
+}
+
+// Transpose bounded decoded windows into ordered detector columns for Direct Ptycho.
+kernel void empad_detector_columns(device const uint* packed [[buffer(0)]],
+    device const uint4* descriptors [[buffer(1)]], device float* output [[buffer(2)]],
+    constant uint* pixels [[buffer(3)]], constant uint4& shape [[buffer(4)]],
+    constant uint2& dimensions [[buffer(5)]], device const float* background [[buffer(8)]],
+    constant uint& corrected [[buffer(9)]], uint index [[thread_position_in_grid]]) {
+    if (index >= shape.y * dimensions.y) return;
+    uint slot = index / shape.y, local = index % shape.y, frame = shape.x + local;
+    uint position = (frame / shape.z) * shape.w + frame % shape.z;
+    output[slot * dimensions.x + position] = empad_value(packed, descriptors,
+        local * empad_pixels + pixels[slot], background, corrected);
+}
+
+// One validity flag per original scan position, retaining all original IEEE bits.
+kernel void empad_scan_validity(device const uint* words [[buffer(0)]],
+    device const uint4* descriptors [[buffer(1)]], device uint* invalid [[buffer(2)]],
+    constant uint& offset [[buffer(3)]], uint frame [[threadgroup_position_in_grid]],
+    ushort local [[thread_index_in_threadgroup]], ushort lane [[thread_index_in_simdgroup]],
+    ushort group [[simdgroup_index_in_threadgroup]]) {
+    threadgroup uint groups[4];
+    bool bad = false;
+    for (uint p = local; p < empad_pixels; p += 128)
+        bad |= !isfinite(as_type<float>(empad_word(words, descriptors, frame * empad_pixels + p)));
+    bad = simd_any(bad);
+    if (lane == 0) groups[group] = bad;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (local == 0) invalid[offset + frame] = groups[0] | groups[1] | groups[2] | groups[3];
+}
+
+kernel void empad_interpolate_scan_columns(device float* columns [[buffer(0)]],
+    device const uint* missing [[buffer(1)]], constant uint4& shape [[buffer(2)]],
+    uint tid [[thread_position_in_grid]]) {
+    if (tid >= shape.z * shape.w) return;
+    uint i = missing[tid % shape.z] + (tid / shape.z) * shape.x;
+    // Scale before summing to avoid overflow of a representable mean.
+    columns[i] = ((columns[i - shape.y] * 0.25f + columns[i + shape.y] * 0.25f)
+        + columns[i - 1] * 0.25f) + columns[i + 1] * 0.25f;
 }

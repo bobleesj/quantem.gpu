@@ -28,7 +28,7 @@ kernel void counts_to_complex(
         uint value = byte_width == 1u ? uint(input[index])
             : byte_width == 2u ? uint(((device const ushort *)input)[index])
             : ((device const uint *)input)[index];
-        output[index] = float2(float(value), 0.0f);
+        output[index] = float2(byte_width == 5u ? ((device const float *)input)[index] : float(value), 0.0f);
     }
 }
 
@@ -123,7 +123,7 @@ kernel void fft_rows_radix8(
             const uint value = FFT_SOURCE_BYTES == 1u ? uint(((device const uchar *)input)[source])
                 : FFT_SOURCE_BYTES == 2u ? uint(((device const ushort *)input)[source])
                 : ((device const uint *)input)[source];
-            scratch[index] = float2(float(value), 0.0f);
+            scratch[index] = float2(FFT_SOURCE_BYTES == 5u ? ((device const float *)input)[source] : float(value), 0.0f);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
@@ -268,4 +268,14 @@ kernel void transpose_hermitian_half32(
                 tile[tid.x][tid.y + offset];
         }
     }
+}
+
+// Row-major R x C spectra; retain floor(C/2)+1 columns for either parity.
+kernel void extract_rectangular_hermitian_half(
+    device const float2* input [[buffer(0)]], device float2* output [[buffer(1)]],
+    constant uint4& shape [[buffer(2)]], uint i [[thread_position_in_grid]]) {
+    uint halfColumns = shape.y / 2 + 1, plane = shape.x * halfColumns;
+    if (i >= shape.z * plane) return;
+    uint batch = i / plane, pixel = i % plane;
+    output[i] = input[batch * shape.x * shape.y + (pixel / halfColumns) * shape.y + pixel % halfColumns];
 }

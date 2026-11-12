@@ -45,6 +45,29 @@ public struct MetalDirectPtychoBrightfieldEstimate: Sendable {
       throw MetalDirectPtychoError.invalidGeometry(
         "Detector sums and exclusions must match the full detector shape.")
     }
+    var input = detectorSum
+    for index in excluded { input[index] = 0 }
+    return try measure(device: device, input: input.withUnsafeBytes { Data($0) },
+      pixels: input.count, rows: rows, columns: columns, floating: false)
+  }
+
+  /// Measure a signed float32 mean DP without quantizing source measurements.
+  public static func measure(device: MTLDevice, detectorMean: [Float], rows: Int, columns: Int,
+    excluded: Set<Int> = []) throws -> Self {
+    guard rows > 1, columns > 1, rows <= 4096, columns <= 4096,
+      detectorMean.count == rows * columns, detectorMean.allSatisfy(\.isFinite),
+      excluded.allSatisfy({ detectorMean.indices.contains($0) }),
+      let magnitude = detectorMean.map({ abs($0) }).max(), magnitude > 0 else {
+      throw MetalDirectPtychoError.invalidGeometry("Float detector mean must be finite, nonzero and match its shape.")
+    }
+    var input = detectorMean.map { $0 / magnitude }
+    for index in excluded { input[index] = 0 }
+    return try measure(device: device, input: input.withUnsafeBytes { Data($0) },
+      pixels: input.count, rows: rows, columns: columns, floating: true)
+  }
+
+  private static func measure(device: MTLDevice, input: Data, pixels: Int,
+    rows: Int, columns: Int, floating: Bool) throws -> Self {
     // Through the shader loader, which reads a packaged app's copy of the bundle: `Bundle.module` alone looks only
     // beside the app and in the build folder, and stops the process when neither exists.
     let source = try MetalDirectPtychoShaderSource.load(["direct_calibration"])
@@ -57,14 +80,12 @@ public struct MetalDirectPtychoBrightfieldEstimate: Sendable {
       }
       return try device.makeComputePipelineState(function: function)
     }
-    let seed = try pipeline("direct_disk_seed")
-    let sort = try pipeline("direct_disk_sort")
-    let measure = try pipeline("direct_disk_measure")
+    let seed = try pipeline(floating ? "direct_float_disk_seed" : "direct_disk_seed")
+    let sort = try pipeline(floating ? "direct_float_disk_sort" : "direct_disk_sort")
+    let measure = try pipeline(floating ? "direct_float_disk_measure" : "direct_disk_measure")
     var count = 1
-    while count < detectorSum.count { count *= 2 }
-    var input = detectorSum
-    for index in excluded { input[index] = 0 }
-    guard let raw = device.makeBuffer(bytes: input, length: input.count * 8),
+    while count < pixels { count *= 2 }
+    guard let raw = input.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count) }),
       let ordered = device.makeBuffer(length: count * 8, options: .storageModePrivate),
       let result = device.makeBuffer(length: 5 * 8, options: .storageModeShared),
       let queue = device.makeCommandQueue(), let command = queue.makeCommandBuffer(),

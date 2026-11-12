@@ -19,7 +19,8 @@ final class DirectModelReconstructionTests: XCTestCase {
   /// `scan` is 128 (the default) or another supported size; the pattern is the same function of position.
   /// `radius` is the BF selection radius in detector pixels; the aperture's support ends at 4.5 pixels, so a
   /// larger radius selects BF pixels without transfer.
-  static func scene(scan: Int = 128, radius: Double = 3.6) throws -> Scene {
+  static func scene(scan: Int = 128, radius: Double = 3.6, columns: Int? = nil) throws -> Scene {
+    let columns = columns ?? scan
     let calibration = MetalDirectPtychoCalibration(
       voltageKV: 300, semiangleMrad: 30, scanSamplingRowAngstroms: 0.4,
       scanSamplingColumnAngstroms: 0.4,
@@ -33,23 +34,23 @@ final class DirectModelReconstructionTests: XCTestCase {
     for pixel in 0..<(detector * detector) {
       let dr = Double(pixel / detector) - 5.4
       let dc = Double(pixel % detector) - 5.7
-      var plane = [UInt16](repeating: 0, count: scan * scan)
+      var plane = [UInt16](repeating: 0, count: scan * columns)
       for r in 0..<scan {
-        for c in 0..<scan {
+        for c in 0..<columns {
           let x = 2 * Double.pi * Double(r) / 6.4
           let y = 2 * Double.pi * Double(c) / 5.12
           let value =
             400 + 40 * cos(x + 0.3 * dr) * cos(y - 0.2 * dc) + 25 * sin(x + y + 0.1 * dr * dc)
             + Double((r * 31 + c * 17 + pixel * 7) % 13)
-          plane[r * scan + c] = UInt16(value.rounded())
-          sums[pixel] += UInt64(plane[r * scan + c])
+          plane[r * columns + c] = UInt16(value.rounded())
+          sums[pixel] += UInt64(plane[r * columns + c])
         }
       }
       planes.append(plane)
     }
     let setup = try calibration.geometry(
       detectorRows: detector, detectorColumns: detector, detectorSum: sums, scanRows: scan,
-      scanColumns: scan)
+      scanColumns: columns)
     return Scene(
       calibration: calibration, scan: scan, counts: setup.pixels.flatMap { planes[$0] },
       pixels: setup.pixels,
@@ -66,7 +67,9 @@ final class DirectModelReconstructionTests: XCTestCase {
   {
     let g = s.geometry
     let n = s.scan
+    let nc = s.geometry.qyByColumn.count
     let m = n * factor
+    let mc = nc * factor
     let wavelength = Double(g.wavelengthAngstroms)
     let semiangle = Double(g.semiangleRadians)
     let (ay, ax) = (Double(g.angularSamplingYRadians), Double(g.angularSamplingXRadians))
@@ -81,38 +84,41 @@ final class DirectModelReconstructionTests: XCTestCase {
     let forward = (0..<n).map {
       (cos(-2 * Double.pi * Double($0) / Double(n)), sin(-2 * Double.pi * Double($0) / Double(n)))
     }
+    let forwardColumns = (0..<nc).map {
+      (cos(-2 * Double.pi * Double($0) / Double(nc)), sin(-2 * Double.pi * Double($0) / Double(nc)))
+    }
     func dft(_ values: [Double]) -> [(Double, Double)] {
-      var rows = [(Double, Double)](repeating: (0, 0), count: n * n)
+      var rows = [(Double, Double)](repeating: (0, 0), count: n * nc)
       for r in 0..<n {
-        for v in 0..<n {
+        for v in 0..<nc {
           var re = 0.0
           var im = 0.0
-          for c in 0..<n {
-            let (wr, wi) = forward[(v * c) % n]
-            re += values[r * n + c] * wr
-            im += values[r * n + c] * wi
+          for c in 0..<nc {
+            let (wr, wi) = forwardColumns[(v * c) % nc]
+            re += values[r * nc + c] * wr
+            im += values[r * nc + c] * wi
           }
-          rows[r * n + v] = (re, im)
+          rows[r * nc + v] = (re, im)
         }
       }
       var out = rows
       for u in 0..<n {
-        for v in 0..<n {
+        for v in 0..<nc {
           var re = 0.0
           var im = 0.0
           for r in 0..<n {
             let (wr, wi) = forward[(u * r) % n]
-            let (a, b) = rows[r * n + v]
+            let (a, b) = rows[r * nc + v]
             re += a * wr - b * wi
             im += a * wi + b * wr
           }
-          out[u * n + v] = (re, im)
+          out[u * nc + v] = (re, im)
         }
       }
       return out
     }
     let spectra = s.pixels.indices.map { index in
-      dft(s.counts[(index * n * n)..<((index + 1) * n * n)].map(Double.init))
+      dft(s.counts[(index * n * nc)..<((index + 1) * n * nc)].map(Double.init))
     }
     func probe(_ x: Double, _ y: Double) -> (chi: Double, aperture: Double, alpha2: Double) {
       let r2 = x * x + y * y
@@ -131,12 +137,12 @@ final class DirectModelReconstructionTests: XCTestCase {
     func sinc(_ x: Double) -> Double { abs(x) < 1e-12 ? 1 : sin(x) / x }
     let dq = (Double(g.qxByRow[1]), Double(g.qyByColumn[1]))
     let dc = Double(g.dcValue.x)
-    var total = [(Double, Double)](repeating: (0, 0), count: m * m)
+    var total = [(Double, Double)](repeating: (0, 0), count: m * mc)
     for row in 0..<m {
-      for col in 0..<m {
-        if row % n == 0 && col % n == 0 { continue }
-        let fr = row < m / 2 ? row : row - m
-        let fc = col < m / 2 ? col : col - m
+      for col in 0..<mc {
+        if row % n == 0 && col % nc == 0 { continue }
+        let fr = row < (m + 1) / 2 ? row : row - m
+        let fc = col < (mc + 1) / 2 ? col : col - mc
         let q = (Double(fr) * dq.0, Double(fc) * dq.1)
         let shift =
           2 * Double.pi
@@ -157,11 +163,11 @@ final class DirectModelReconstructionTests: XCTestCase {
           let gr = a * cos(pm.chi - pk.chi) - b * cos(pp.chi - pk.chi)
           let gi = -a * sin(pm.chi - pk.chi) - b * sin(pp.chi - pk.chi)
           let magnitude = max(sqrt(gr * gr + gi * gi), 1e-8)
-          let (vr, vi) = spectra[index][((fr % n + n) % n) * n + (fc % n + n) % n]
+          let (vr, vi) = spectra[index][((fr % n + n) % n) * nc + (fc % nc + nc) % nc]
           re += (vr * gr + vi * gi) / magnitude
           im += (vi * gr - vr * gi) / magnitude
         }
-        total[row * m + col] = (re, im)
+        total[row * mc + col] = (re, im)
       }
     }
     total[0] = (Double(g.logicalBrightfieldCount) * dc, 0)
@@ -169,35 +175,62 @@ final class DirectModelReconstructionTests: XCTestCase {
     let inverse = (0..<m).map {
       (cos(2 * Double.pi * Double($0) / Double(m)), sin(2 * Double.pi * Double($0) / Double(m)))
     }
+    let inverseColumns = (0..<mc).map {
+      (cos(2 * Double.pi * Double($0) / Double(mc)), sin(2 * Double.pi * Double($0) / Double(mc)))
+    }
     var rows = total
     for r in 0..<m {
-      for c in 0..<m {
+      for c in 0..<mc {
         var re = 0.0
         var im = 0.0
-        for v in 0..<m {
-          let (wr, wi) = inverse[(v * c) % m]
-          let (a, b) = total[r * m + v]
+        for v in 0..<mc {
+          let (wr, wi) = inverseColumns[(v * c) % mc]
+          let (a, b) = total[r * mc + v]
           re += a * wr - b * wi
           im += a * wi + b * wr
         }
-        rows[r * m + c] = (re, im)
+        rows[r * mc + c] = (re, im)
       }
     }
-    var phase = [Double](repeating: 0, count: m * m)
-    for c in 0..<m {
+    var phase = [Double](repeating: 0, count: m * mc)
+    for c in 0..<mc {
       for r in 0..<m {
         var re = 0.0
         var im = 0.0
         for u in 0..<m {
           let (wr, wi) = inverse[(u * r) % m]
-          let (a, b) = rows[u * m + c]
+          let (a, b) = rows[u * mc + c]
           re += a * wr - b * wi
           im += a * wi + b * wr
         }
-        phase[r * m + c] = atan2(im, re)
+        phase[r * mc + c] = atan2(im, re)
       }
     }
     return phase
+  }
+
+  func testRectangularCoherentPhaseMatchesDoublePrecisionDefinition() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    for (rows, columns) in [(7, 9), (8, 11), (11, 8)] {
+      let scene = try Self.scene(scan: rows, columns: columns)
+      let input = try XCTUnwrap(scene.counts.withUnsafeBytes {
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
+      let engine = try MetalDirectPtychoEngine(device: device, geometry: scene.geometry)
+      try engine.prepare(brightfield: input, countType: .uint16)
+      let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
+      let point = DirectPtychoModelPoint(c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4,
+        sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140)
+      for factor in [1, 2, 3] {
+        let expected = Self.referencePhase(scene, point: point, rotation: 17.25, factor: factor)
+        let actual = try model.reconstruct(point, upsamplingFactor: factor)
+        XCTAssertEqual(actual.rows, rows * factor)
+        XCTAssertEqual(actual.columns, columns * factor)
+        let values = actual.phase.contents().assumingMemoryBound(to: Float.self)
+        let maximum = expected.indices.map { abs(Double(values[$0]) - expected[$0]) }.max()!
+        XCTAssertLessThan(maximum, 2e-4, "\(rows)x\(columns), \(factor)x")
+      }
+    }
   }
 
   func testCoherentPhaseMatchesDoublePrecisionDefinition() throws {

@@ -112,6 +112,7 @@ final class DirectCoherentReconstruction {
   struct Grid {
     var sourceN, outputN, gCols, count, bfOffset, sourceHalf, rows, cols: UInt32
     var chunk, groups, groupOffset, depth: UInt32
+    var sourceColumns, outputColumns: UInt32
   }
   /// BF pixels per culling group; it divides every cache chunk and streamed batch offset.
   static let chunk = 8
@@ -254,12 +255,14 @@ final class DirectCoherentReconstruction {
 
   /// Output frequencies, retained support rows and columns, and whether the half spectrum suffices
   /// (`_coherent_support`, `_coherent_columns`).
+  private var genericGrid: Bool { geometry.qxByRow.count != geometry.qyByColumn.count || ![128, 256, 512].contains(geometry.qxByRow.count) }
+
   private func plan(factor: Int, higher: Bool) throws -> Plan {
     let key = higher ? -factor : factor
     if let plan = plans[key] { return plan }
     let source = geometry.qxByRow.count
     let n = source * factor
-    func frequencies(_ step: Float) -> [Float] {
+    func frequencies(_ step: Float, _ n: Int) -> [Float] {
       (0..<n).map { (index: Int) -> Float in
         let integer: Int = index < (n - 1) / 2 + 1 ? index : index - n
         let normalized: Double = Double(integer) * (1.0 / Double(n))
@@ -277,13 +280,14 @@ final class DirectCoherentReconstruction {
     let rowSupport = Double(kHost.map { abs($0.x) }.max() ?? 0) + radius
     let colSupport = Double(kHost.map { abs($0.y) }.max() ?? 0) + radius
     let half =
-      !higher && factor > 1 && Double(n / 2) * Double(abs(rowStep)) > rowSupport
+      !genericGrid && !higher && factor > 1 && Double(n / 2) * Double(abs(rowStep)) > rowSupport
       && Double(n / 2) * Double(abs(colStep)) > colSupport
-    let columns = half ? n / 2 + 1 : n
+    let outputColumns = geometry.qyByColumn.count * factor
+    let columns = half ? outputColumns / 2 + 1 : outputColumns
     func limit(_ value: Double, _ step: Float) -> Double {
       (value / Double(abs(step))).rounded(.up) + 1
     }
-    func support(_ value: Double, _ step: Float, _ count: Int) -> [UInt32] {
+    func support(_ value: Double, _ step: Float, _ count: Int, _ n: Int) -> [UInt32] {
       let limit = limit(value, step)
       let indices: [Int] = (0..<count).filter { (index: Int) -> Bool in
         let integer: Int = index < (n - 1) / 2 + 1 ? index : index - n
@@ -291,11 +295,11 @@ final class DirectCoherentReconstruction {
       }
       return indices.map { UInt32($0) }
     }
-    let rows = support(rowSupport, rowStep, n)
-    let cols = support(colSupport, colStep, columns)
+    let rows = support(rowSupport, rowStep, n, n)
+    let cols = support(colSupport, colStep, columns, outputColumns)
     let plan = Plan(
-      qRow: try Self.buffer(device, frequencies(rowStep)),
-      qCol: try Self.buffer(device, frequencies(colStep)),
+      qRow: try Self.buffer(device, frequencies(rowStep, n)),
+      qCol: try Self.buffer(device, frequencies(colStep, outputColumns)),
       rowIndices: try Self.buffer(device, rows), colIndices: try Self.buffer(device, cols),
       rows: rows.count, cols: cols.count, half: half,
       rowLimit: Int(limit(rowSupport, rowStep)), colLimit: Int(limit(colSupport, colStep)))
@@ -311,13 +315,13 @@ final class DirectCoherentReconstruction {
   ) throws -> (phase: MTLBuffer, rows: Int) {
     // 1x-4x: the interactive redraw kernel, the only production path. 8x (an explicit manual override above the
     // automatic 4x cap) is the one case on the earlier separable / per-term kernels.
-    if factor <= 4 && !referenceKernels {
+    if factor <= 4 && !referenceKernels && !genericGrid {
       return try reconstructRedraw(point, factor: factor, visit: visit, isCancelled: isCancelled)
     }
     precondition(
-      factor == 8 || referenceKernels, "1x-4x reconstruction uses the redraw kernel only")
+      factor == 8 || referenceKernels || genericGrid, "1x-4x reconstruction uses the redraw kernel only")
     let higher = point.hasHigherOrder
-    let useSeparable = self.useSeparable && !higher
+    let useSeparable = self.useSeparable && !higher && !genericGrid
     lastKernel = MetalKernelIdentity(
       name: DirectPtychoKernelRegistry.perTerm.name,
       version: DirectPtychoKernelRegistry.perTerm.version,
@@ -329,14 +333,16 @@ final class DirectCoherentReconstruction {
     let selectedCoherent = higher ? higherCoherentPipeline : coherentPipeline
     let source = geometry.qxByRow.count
     let n = source * factor
+    let sourceColumns = geometry.qyByColumn.count
+    let outputColumns = sourceColumns * factor
     var params = Self.parameters(geometry, point)
-    let total = try workspace("total", n * n * 8)
+    let total = try workspace("total", n * outputColumns * 8)
     let commands = try command()
     if !useSeparable {
       guard let blit = commands.makeBlitCommandEncoder() else {
         throw MetalDirectPtychoError.commandQueue
       }
-      blit.fill(buffer: total, range: 0..<(n * n * 8), value: 0)
+      blit.fill(buffer: total, range: 0..<(n * outputColumns * 8), value: 0)
       blit.endEncoding()
     }
     var count = UInt32(kHost.count)
@@ -363,7 +369,7 @@ final class DirectCoherentReconstruction {
       guard let blit = first.makeBlitCommandEncoder() else {
         throw MetalDirectPtychoError.commandQueue
       }
-      blit.fill(buffer: total, range: 0..<(n * n * 8), value: 0)
+      blit.fill(buffer: total, range: 0..<(n * outputColumns * 8), value: 0)
       blit.endEncoding()
       let probeAgain = try encoder(first, selectedProbe)
       probeAgain.setBuffer(kBuffer, offset: 0, index: 0)
@@ -379,11 +385,12 @@ final class DirectCoherentReconstruction {
         let commands = try pending ?? command()
         var grid = Grid(
           sourceN: UInt32(source), outputN: UInt32(n),
-          gCols: UInt32(half ? source / 2 + 1 : source),
+          gCols: UInt32(half ? sourceColumns / 2 + 1 : sourceColumns),
           count: UInt32(batch), bfOffset: UInt32(bfOffset), sourceHalf: half ? 1 : 0,
           rows: UInt32(plan.rows), cols: UInt32(plan.cols), chunk: UInt32(Self.chunk),
           groups: UInt32((batch + Self.chunk - 1) / Self.chunk),
-          groupOffset: UInt32(bfOffset / Self.chunk), depth: point.depthSpreadAngstroms != 0 ? 1 : 0
+          groupOffset: UInt32(bfOffset / Self.chunk), depth: point.depthSpreadAngstroms != 0 ? 1 : 0,
+          sourceColumns: UInt32(sourceColumns), outputColumns: UInt32(outputColumns)
         )
         let compute = try encoder(commands, selectedCoherent)
         compute.setBuffer(spectra, offset: offset, index: 0)
@@ -541,6 +548,7 @@ final class DirectCoherentReconstruction {
   ) throws
     -> (phase: MTLBuffer, rows: Int)
   {
+    let columns = geometry.qyByColumn.count * (n / geometry.qxByRow.count)
     if half {
       var size = UInt32(n)
       let mirror = try encoder(final, mirrorPipeline)
@@ -559,8 +567,8 @@ final class DirectCoherentReconstruction {
     originEncoder.setBuffer(total, offset: 0, index: 0)
     originEncoder.setBytes(&origin, length: 8, index: 1)
     dispatch(originEncoder, width: 1)
-    let wave = try workspace("wave", n * n * 8)
-    let shape: [NSNumber] = [NSNumber(value: n), NSNumber(value: n)]
+    let wave = try workspace("wave", n * columns * 8)
+    let shape: [NSNumber] = [NSNumber(value: n), NSNumber(value: columns)]
     if fft[n] == nil {
       let graph = MPSGraph()
       graph.options = .none
@@ -584,13 +592,13 @@ final class DirectCoherentReconstruction {
         output: MPSGraphTensorData(wave, shape: shape, dataType: .complexFloat32)
       ],
       executionDescriptor: execution)
-    let phase = try Self.allocate(device, n * n * 4, shared: true)
-    var planeCount = UInt32(n * n)
+    let phase = try Self.allocate(device, n * columns * 4, shared: true)
+    var planeCount = UInt32(n * columns)
     let phaseEncoder = try encoder(scheduled, phasePipeline)
     phaseEncoder.setBuffer(wave, offset: 0, index: 0)
     phaseEncoder.setBuffer(phase, offset: 0, index: 1)
     phaseEncoder.setBytes(&planeCount, length: 4, index: 2)
-    dispatch(phaseEncoder, width: n * n)
+    dispatch(phaseEncoder, width: n * columns)
     try finish(scheduled)
     return (phase, n)
   }

@@ -473,7 +473,7 @@ public enum DirectPtychoModelFit {
     let rotations = [rotationDegrees, DirectPtychoRotationBranches.opposite(rotationDegrees)]
     var fits: [DirectPtychoFit] = []
     var phases: [[Float]] = []
-    var size = 0
+    var rows = 0, columns = 0
     var branchOptions = options
     branchOptions.compareStandard = false
     for (index, rotation) in rotations.enumerated() {
@@ -498,7 +498,7 @@ public enum DirectPtychoModelFit {
       let phase = try model.reconstruct(fitted.point, upsamplingFactor: 1, isCancelled: isCancelled)
       var branchFit = fitted
       branchFit.timings["native_phase_s"] = Date().timeIntervalSince(started)
-      size = phase.rows
+      rows = phase.rows; columns = phase.columns
       phases.append(
         Array(
           UnsafeBufferPointer(
@@ -507,7 +507,7 @@ public enum DirectPtychoModelFit {
       fits.append(branchFit)
     }
     let decision = DirectPtychoRotationBranches.compare(
-      phases: phases, rotations: rotations, rows: size, columns: size, darkField: darkField,
+      phases: phases, rotations: rotations, rows: rows, columns: columns, darkField: darkField,
       scanSampling: scanSampling, keepFirst: keepFirst)
     try model.retarget(scanDetectorRotationDegrees: rotations[decision.kept])
     if options.tilt && options.compareStandard,

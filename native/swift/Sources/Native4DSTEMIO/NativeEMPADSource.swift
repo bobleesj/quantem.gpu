@@ -128,6 +128,13 @@ public struct NativeEMPADSource: Sendable {
         documentName: description["supplier_background_document"] as? String,
         container: url)
     }
+    // Validity provenance is not a calibration field; preserve it alongside the
+    // normalized scientific metadata. Resident loading independently rechecks the words.
+    if let retained = description["microscope_metadata"] as? [String: String] {
+      for key in ["scanValidity", "invalidScanPositions", "invalidScanCount"] {
+        metadata[key] = retained[key]
+      }
+    }
     metadata["qem_storage"] = file.codec
     metadata[NativeQEMCalibration.metadataKey] = String(
       decoding: try NativeQEMCalibration.encoded(
@@ -249,11 +256,20 @@ public struct NativeEMPADSource: Sendable {
         "EMPAD XML is missing: \(source.lastPathComponent). Restore its metadata file.")
     }
     let namedShape = shapeFromFilename(raw)
-    if let metadataShape, let namedShape,
-      metadataShape.row != namedShape.row || metadataShape.col != namedShape.col
+    var selectedSearchMode = false
+    if let recorded = metadataShape, let namedShape,
+      recorded.row != namedShape.row || recorded.col != namedShape.col
     {
-      throw EMPADError(
-        "EMPAD XML and RAW filename disagree about scan shape. Correct the acquisition metadata.")
+      // Software can retain both search and acquire settings. Accept the search
+      // grid only when it explicitly matches the RAW name; the exact record
+      // length is independently verified below. Do not apply acquire-mode FOV.
+      guard let search = metadata?.searchShape,
+        search.row == namedShape.row, search.col == namedShape.col else {
+        throw EMPADError(
+          "EMPAD XML and RAW filename disagree about scan shape. Correct the acquisition metadata.")
+      }
+      metadataShape = search
+      selectedSearchMode = true
     }
     let documentedShape = metadataShape ?? namedShape
     if let scanShape, let documentedShape,
@@ -293,7 +309,7 @@ public struct NativeEMPADSource: Sendable {
     return NativeEMPADSource(
       rawURL: raw, metadataURL: metadataURL,
       scanRows: shape.row, scanColumns: shape.col,
-      scanCalibration: metadata?.scanCalibration(rows: shape.row, columns: shape.col),
+      scanCalibration: selectedSearchMode ? nil : metadata?.scanCalibration(rows: shape.row, columns: shape.col),
       diffractionSamplingInverseNanometers: metadata?.diffractionSampling,
       acquisitionDate: metadata?.acquisitionDate,
       formatIdentifier: metadata?.isGeneration2 == true
@@ -646,6 +662,12 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     guard let value = Double(fields[key] ?? ""), value.isFinite, value > 0 else { return nil }
     return value
   }
+  var searchShape: (row: Int, col: Int)? {
+    guard !isGeneration2, fields["pix_x"] == nil, fields["pix_y"] == nil, let row = Int(fields["search/scan_resolution_y"] ?? ""),
+      let col = Int(fields["search/scan_resolution_x"] ?? ""), row > 0, col > 0 else { return nil }
+    return (row, col)
+  }
+
   var shape: (row: Int, col: Int)? {
     if isGeneration2 { return Self.pair(fields["scan/shape"]) }
     if let row = Int(fields["pix_y"] ?? ""), let col = Int(fields["pix_x"] ?? "") {
@@ -767,6 +789,7 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     guard
       [
         "pix_x", "pix_y", "type", "acquire/scan_resolution_x", "acquire/scan_resolution_y",
+        "search/scan_resolution_x", "search/scan_resolution_y",
         "exposure_time", "scan/type", "scan/shape", "scan/exposure_time", "sensor/type",
         "sensor/shape",
         "rawfile/filename", "rawfile/datatype",

@@ -1,8 +1,22 @@
 #include <metal_stdlib>
 using namespace metal;
+#ifdef INDEXED_BAND
+struct IndexedBandSpectra {
+    array<device const float2*, 12> chunks [[id(0)]];
+    device const uint* indices [[id(12)]];
+    uint capacity [[id(13)]];
+    uint plane [[id(14)]];
+};
+#define INDEXED_BAND_ARGUMENT , constant IndexedBandSpectra& evidence [[buffer(30)]]
+#define BAND_READ(g, k, q, count) evidence.chunks[(k) / INDEXED_CAPACITY][(size_t)((k) % INDEXED_CAPACITY) * INDEXED_PLANE + evidence.indices[q]]
+#else
+#define INDEXED_BAND_ARGUMENT
+#define BAND_READ(g, k, q, count) g[(size_t)(k) * (count) + (q)]
+#endif
+
 // Scalars are explicitly packed; k and q use (row, column), inverse Angstrom.
 struct JointGrid {
-    uint n, outputN, count, bfOffset, totalBF, bandCount, sourceHalf, chunks;
+    uint n, columns, count, bfOffset, totalBF, bandCount, sourceHalf, chunks;
     float wl, semiangle, angularRow, angularColumn, dqRow, dqColumn, dcReal, dcImag, factor;
 };
 // The float32 geometry of Python MPS `tf_geometry` (thick_sample.py), expression for expression.
@@ -23,9 +37,9 @@ inline float4 joint_geometry(float2 k, constant JointGrid& p) {
 }
 inline float joint_sinc(float x) { return (metal::abs(x) < 1e-6f) ? 1.0f : metal::precise::sin(x) / x; }
 inline float2 joint_read(device const float2* g,uint row,uint col,uint k,constant JointGrid& p) {
-    if (!p.sourceHalf) return g[(size_t)k*p.n*p.n+row*p.n+col];
-    if (col<=p.n/2) return g[(size_t)k*p.n*(p.n/2+1)+row*(p.n/2+1)+col];
-    float2 v=g[(size_t)k*p.n*(p.n/2+1)+((p.n-row)%p.n)*(p.n/2+1)+p.n-col];
+    if (!p.sourceHalf) return g[(size_t)k*p.n*p.columns+row*p.columns+col];
+    if (col<=p.columns/2) return g[(size_t)k*p.n*(p.columns/2+1)+row*(p.columns/2+1)+col];
+    float2 v=g[(size_t)k*p.n*(p.columns/2+1)+((p.n-row)%p.n)*(p.columns/2+1)+p.columns-col];
     return float2(v.x,-v.y);
 }
 kernel void joint_gather(device const float2* g [[buffer(0)]], device float2* band [[buffer(1)]],

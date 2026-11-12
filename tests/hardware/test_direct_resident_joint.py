@@ -240,10 +240,15 @@ def test_resident_region_matches_reopened_counts_and_keeps_parent(
                 assert selected.source_path == str(source)
                 assert selected.bright_field_center_px == parent.bright_field_center_px
                 if device.backend == "mps":
-                    assert (
-                        selected._data.untyped_storage().data_ptr()
-                        == resident.untyped_storage().data_ptr()
-                    )
+                    from quantem.gpu.direct_ptycho.mps.frames import EncodedBrightFieldCrop
+
+                    assert isinstance(resident, EncodedBrightFieldCrop)
+                    assert isinstance(selected._data, EncodedBrightFieldCrop)
+                    assert selected._data.source is resident.source
+                    assert selected._data.source.data is resident.source.data
+                    assert selected._data.scan_region == bounds
+                    assert selected._data.detector_region == resident.detector_region
+                    assert selected._data.flipped == resident.flipped
                 else:
                     assert selected._data.base is not None
                 actual, _ = selected.preview(

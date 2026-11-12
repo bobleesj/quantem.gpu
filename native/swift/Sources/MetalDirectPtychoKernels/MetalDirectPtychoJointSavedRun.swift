@@ -17,6 +17,8 @@ public struct MetalDirectPtychoJointSavedRun: Codable, Sendable {
   public let outputSampling: DirectPtychoOutputSampling?
   /// The kernel that produced the phase; absent in older files.
   public let kernel: MetalKernelIdentity?
+  /// Kernel that prepared the Fourier evidence, when explicitly recorded.
+  public let fourierKernel: MetalKernelIdentity?
   public let calibration: MetalDirectPtychoCalibration
   public let parameters: DirectPtychoJointParameters
   /// Exact reconstruction point. Absent in older files that stored only the Float UI parameters.
@@ -49,6 +51,7 @@ public struct MetalDirectPtychoJointSavedRun: Codable, Sendable {
     upsamplingFactor = result.upsamplingFactor
     outputSampling = result.outputSampling
     kernel = result.kernel
+    fourierKernel = result.provenance.fourierKernel
     self.calibration = calibration
     parameters = result.parameters
     point = result.point

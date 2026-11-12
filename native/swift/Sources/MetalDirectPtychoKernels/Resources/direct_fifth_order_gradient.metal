@@ -75,7 +75,7 @@ kernel void fifth_gradient_rows(device const float2* g [[buffer(0)]], device con
     threadgroup float* shared [[threadgroup(2)]],
     uint3 group [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]],
     uint simd_lane [[thread_index_in_simdgroup]], uint simd_group [[simdgroup_index_in_threadgroup]],
-    uint3 size [[threads_per_threadgroup]]) {
+    uint3 size [[threads_per_threadgroup]] INDEXED_BAND_ARGUMENT) {
     const uint S = FIFTH_S, W = size.x;
     uint4 tile = tiles[group.x];
     uint span = group.y, b = group.z;
@@ -157,7 +157,7 @@ kernel void fifth_gradient_rows(device const float2* g [[buffer(0)]], device con
             if (!open_m && !open_p) continue;
             float alpha2m = am * am;
             float alpha2p = ap * ap;
-            float2 value = g[(size_t)kk * p.bandCount + qi];
+            float2 value = BAND_READ(g, kk, qi, p.bandCount);
             float gre = value.x, gim = value.y;
             float chi_k = chi[(size_t)kk * p.batch + b];
             threadgroup const float4* own = coeff + (slot * S + pix) * 4u;

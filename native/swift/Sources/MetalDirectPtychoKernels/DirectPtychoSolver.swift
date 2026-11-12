@@ -126,6 +126,7 @@ final class DirectPtychoSolver {
   /// The spectra of the logical BF pixels outside the aperture's support, ascending (inverse-mean weights).
   private let visitInactive: MetalDirectPtychoJointModel.VisitSpectra
   let n: Int
+  let columns: Int
   private let pixelPipeline, dcPipeline, wavePipeline: MTLComputePipelineState
   private var pipelines: [Kernel: MTLComputePipelineState] = [:]
   var layout: Layout?
@@ -151,6 +152,7 @@ final class DirectPtychoSolver {
     self.geometry = geometry
     self.activeIndices = activeIndices
     n = geometry.qxByRow.count
+    columns = geometry.qyByColumn.count
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
       guard let function = library.makeFunction(name: name) else {
         throw MetalDirectPtychoError.missingFunction(name)
@@ -298,25 +300,27 @@ final class DirectPtychoSolver {
     let cutoff2 = Float(cutoff * cutoff)
     let dqRow = geometry.qxByRow[1]
     let dqColumn = geometry.qyByColumn[1]
-    let half = n / 2 + 1
+    let half = columns / 2 + 1
     let smoothness2 = Float(key.smoothness * key.smoothness)
     // Signed output frequency of every output row and column, as the CUDA layout: int -> float32, times the step.
-    func signed(_ index: Int) -> Int { index <= (outputN - 1) / 2 ? index : index - outputN }
-    let qRow = (0..<outputN).map { Float(signed($0)) * dqRow }
-    let qColumn = (0..<outputN).map { Float(signed($0)) * dqColumn }
+    func signed(_ index: Int, _ count: Int) -> Int { index <= (count - 1) / 2 ? index : index - count }
+    let qRow = (0..<outputN).map { Float(signed($0, outputN)) * dqRow }
+    let outputColumns = factor * columns
+    let qColumn = (0..<outputColumns).map { Float(signed($0, outputColumns)) * dqColumn }
     // Kept source frequencies (row-major) and the supported aliases of each, as a bit pattern over factor^2.
     var kept: [(row: Int, column: Int, pattern: Int)] = []
     kept.reserveCapacity(n * half)
     for r in 0..<n {
       for c in 0..<half {
         var keep = c > 0 || (r > 0 && r <= (n - 1) / 2)
-        if n % 2 == 0 { keep = keep && r != n / 2 && c != n / 2 }
+        if n % 2 == 0 { keep = keep && r != n / 2 }
+        if columns % 2 == 0 { keep = keep && c != columns / 2 }
         guard keep else { continue }
         var pattern = 0
         for ar in 0..<factor {
           let qr = qRow[r + ar * n]
           for ac in 0..<factor {
-            let qc = qColumn[c + ac * n]
+            let qc = qColumn[c + ac * columns]
             if qr * qr + qc * qc < cutoff2 { pattern |= 1 << (ar * factor + ac) }
           }
         }
@@ -351,10 +355,10 @@ final class DirectPtychoSolver {
         frequency.append(SIMD2(UInt32(r), UInt32(c)))
         for alias in 0..<(factor * factor) where pattern & (1 << alias) != 0 {
           let outputRow = r + (alias / factor) * n
-          let outputColumn = c + (alias % factor) * n
+          let outputColumn = c + (alias % factor) * columns
           let value = SIMD2(qRow[outputRow], qColumn[outputColumn])
           q.append(value)
-          positions.append(Int32(outputRow * outputN + outputColumn))
+          positions.append(Int32(outputRow * outputColumns + outputColumn))
           if key.smoothness == 0 {
             prior.append(1)
           } else {
@@ -373,7 +377,7 @@ final class DirectPtychoSolver {
     let logical = geometry.logicalBrightfieldCount
     let total = Double(geometry.dcValue.x) * Double(logical)
     let aperture2 = geometry.brightfieldAperture.map { $0 * $0 }
-    let dose = total / (Double(n * n) * aperture2.reduce(0.0) { $0 + Double($1) })
+    let dose = total / (Double(n * columns) * aperture2.reduce(0.0) { $0 + Double($1) })
     guard dose.isFinite, dose > 0 else { throw DirectPtychoSolveError.noIncidentIntensity }
     var logicalWeights = [Float](repeating: 1, count: logical)
     if key.weighting == .inverseMean {
@@ -406,7 +410,7 @@ final class DirectPtychoSolver {
           if cancelled() { throw CancellationError() }
           let commands = try pending ?? command()
           var p = SIMD3<UInt32>(
-            UInt32(count), UInt32(half ? n * (n / 2 + 1) : n * n), UInt32(bfOffset))
+            UInt32(count), UInt32(half ? n * (columns / 2 + 1) : n * columns), UInt32(bfOffset))
           let encoder = try self.encoder(commands, dcPipeline)
           encoder.setBuffer(source, offset: offset, index: 0)
           encoder.setBuffer(dc, offset: 0, index: 1)
@@ -429,7 +433,7 @@ final class DirectPtychoSolver {
     let inactiveValues = inactiveDC.contents().assumingMemoryBound(to: Float.self)
     for (position, index) in activeIndices.enumerated() { values[index] = activeValues[position] }
     for (position, index) in inactive.enumerated() { values[index] = inactiveValues[position] }
-    let positions = Float(n * n)
+    let positions = Float(n * columns)
     let mean = values.map { max($0 / positions, 0) }
     let sorted = mean.sorted()
     let middle = sorted.count / 2
@@ -494,8 +498,8 @@ final class DirectPtychoSolver {
         var p = grid
         p.count = UInt32(count)
         p.bfOffset = UInt32(bfOffset)
-        p.planeStride = UInt32(half ? n * (n / 2 + 1) : n * n)
-        p.gCols = UInt32(half ? n / 2 + 1 : n)
+        p.planeStride = UInt32(half ? n * (columns / 2 + 1) : n * columns)
+        p.gCols = UInt32(half ? columns / 2 + 1 : columns)
         guard let compute = commands.makeComputeCommandEncoder() else {
           throw MetalDirectPtychoError.commandQueue
         }
@@ -587,14 +591,14 @@ final class DirectPtychoSolver {
   ) throws -> (phase: MTLBuffer, amplitude: MTLBuffer?, n: Int) {
     var started = Date()
     let outputN = layout.outputN
-    let spectrum = try Self.allocate(device, outputN * outputN * 8, shared: true)
+    let spectrum = try Self.allocate(device, outputN * (layout.key.factor * columns) * 8, shared: true)
     memset(spectrum.contents(), 0, spectrum.length)
     try solve(
       system, layout: layout, complex: complex, regularization: regularization,
       spectrum: spectrum.contents().assumingMemoryBound(to: SIMD2<Float>.self))
     timing.solveSeconds = Date().timeIntervalSince(started)
     started = Date()
-    let result = try wave(spectrum: spectrum, n: outputN, amplitude: complex)
+    let result = try wave(spectrum: spectrum, n: outputN, columns: layout.key.factor * columns, amplitude: complex)
     timing.waveSeconds = Date().timeIntervalSince(started)
     return (result.phase, result.amplitude, outputN)
   }
@@ -606,6 +610,7 @@ final class DirectPtychoSolver {
     spectrum: UnsafeMutablePointer<SIMD2<Float>>
   ) throws {
     let outputN = layout.outputN
+    let outputColumns = layout.key.factor * columns
     let gain = Float(layout.key.factor * layout.key.factor)
     let phaseStrength = regularization.phaseDamping * layout.scale
     let amplitudeStrength = regularization.amplitudeDamping * layout.scale
@@ -713,9 +718,9 @@ final class DirectPtychoSolver {
             // Coefficients round to complex64, then scale by factor^2, as the CUDA scatter.
             for a in 0..<count {
               let p = Int(group.positions[f * count + a])
-              let row = p / outputN
-              let column = p % outputN
-              let mirror = ((outputN - row) % outputN) * outputN + (outputN - column) % outputN
+              let row = p / outputColumns
+              let column = p % outputColumns
+              let mirror = ((outputN - row) % outputN) * outputColumns + (outputColumns - column) % outputColumns
               let phi = SIMD2<Float>(Float(yr[dim - count + a]), Float(yi[dim - count + a])) * gain
               let eta = complex ? SIMD2<Float>(Float(yr[a]), Float(yi[a])) * gain : .zero
               guard phi.x.isFinite, phi.y.isFinite, eta.x.isFinite, eta.y.isFinite else {
@@ -743,11 +748,11 @@ final class DirectPtychoSolver {
   }
 
   /// Inverse FFT of the packed spectrum, then the phase and (complex) amplitude of exp(eta + i phi).
-  func wave(spectrum: MTLBuffer, n: Int, amplitude: Bool) throws -> (
+  func wave(spectrum: MTLBuffer, n: Int, columns: Int, amplitude: Bool) throws -> (
     phase: MTLBuffer, amplitude: MTLBuffer?
   ) {
-    let field = try Self.allocate(device, n * n * 8)
-    let shape: [NSNumber] = [NSNumber(value: n), NSNumber(value: n)]
+    let field = try Self.allocate(device, n * columns * 8)
+    let shape: [NSNumber] = [NSNumber(value: n), NSNumber(value: columns)]
     if fft[n] == nil {
       let graph = MPSGraph()
       graph.options = .none
@@ -772,18 +777,18 @@ final class DirectPtychoSolver {
         output: MPSGraphTensorData(field, shape: shape, dataType: .complexFloat32)
       ],
       executionDescriptor: execution)
-    let phase = try Self.allocate(device, n * n * 4, shared: true)
-    let magnitude = amplitude ? try Self.allocate(device, n * n * 4, shared: true) : nil
+    let phase = try Self.allocate(device, n * columns * 4, shared: true)
+    let magnitude = amplitude ? try Self.allocate(device, n * columns * 4, shared: true) : nil
     let invalid = try Self.allocate(device, 4, shared: true)
     invalid.contents().storeBytes(of: UInt32(0), as: UInt32.self)
-    var p = SIMD2<UInt32>(UInt32(n * n), amplitude ? 1 : 0)
+    var p = SIMD2<UInt32>(UInt32(n * columns), amplitude ? 1 : 0)
     let encoder = try self.encoder(scheduled, wavePipeline)
     encoder.setBuffer(field, offset: 0, index: 0)
     encoder.setBuffer(phase, offset: 0, index: 1)
     encoder.setBuffer(magnitude ?? phase, offset: 0, index: 2)
     encoder.setBuffer(invalid, offset: 0, index: 3)
     encoder.setBytes(&p, length: 8, index: 4)
-    dispatch(encoder, width: n * n)
+    dispatch(encoder, width: n * columns)
     try finish(scheduled)
     if invalid.contents().load(as: UInt32.self) != 0 { throw DirectPtychoSolveError.diverged }
     return (phase, magnitude)

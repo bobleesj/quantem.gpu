@@ -10,6 +10,7 @@ using namespace metal;
 struct ModelGrid {
     uint sourceN, outputN, gCols, count, bfOffset, sourceHalf, rows, cols;
     uint chunk, groups, groupOffset, depth;
+    uint sourceColumns, outputColumns;
 };
 
 inline float4 model_geometry(float dx, float dy, float wl, float semiangle, float ang_y, float ang_x) {
@@ -102,18 +103,18 @@ kernel void model_coherent(device const float2* g [[buffer(0)]], device const fl
     constant ModelGrid& p [[buffer(10)]], uint2 tid [[thread_position_in_grid]]) {
     if (tid.x >= p.cols || tid.y >= p.rows) return;
     uint row = row_indices[tid.y], col = col_indices[tid.x];
-    if (row % p.sourceN == 0u && col % p.sourceN == 0u) return;
-    size_t out = (size_t)row * p.outputN + col;
+    if (row % p.sourceN == 0u && col % p.sourceColumns == 0u) return;
+    size_t out = (size_t)row * p.outputColumns + col;
     float2 result = total[out];
     float qr = q_row[row], qc = q_col[col];
     float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
     float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
     radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
-    uint source_row = row % p.sourceN, source_col = col % p.sourceN;
-    bool mirror = p.sourceHalf != 0u && source_col > p.sourceN / 2u;
+    uint source_row = row % p.sourceN, source_col = col % p.sourceColumns;
+    bool mirror = p.sourceHalf != 0u && source_col > p.sourceColumns / 2u;
     if (mirror) {
         source_row = source_row == 0u ? 0u : p.sourceN - source_row;
-        source_col = p.sourceN - source_col;
+        source_col = p.sourceColumns - source_col;
     }
     size_t plane = (size_t)p.sourceN * p.gCols;
     size_t offset = (size_t)source_row * p.gCols + source_col;

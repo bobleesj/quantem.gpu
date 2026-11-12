@@ -469,6 +469,11 @@ extension DirectPtychoModelFit {
       return (value.agreement, value.agreement64)
     }
     let initial = try values(start)
+    // Retain the best full-data scalar pair while searching. Re-evaluating the
+    // returned point would repeat the identical GPU objective solely to obtain
+    // these two already computed numbers. This cache is local to this one
+    // fixed model/band/rotation search; it never retains projections or pixels.
+    var bestValues = (coordinates: start, agreement: initial.agreement, agreement64: initial.agreement64)
     // Bit-identical to the production objective `fifthOrderAgreements` (`direct-fifth-agreement`).
     let normalization = initial.agreement
     guard normalization.isFinite, normalization > 0 else {
@@ -503,6 +508,14 @@ extension DirectPtychoModelFit {
           values = try model.fifthOrderRetainedGradients(
             points, packedCoefficients: packed, kStride: stride, isCancelled: isCancelled)
         }
+        // Match the search's strictly increasing, normalized full-data record.
+        // Subsampled steering values and gradient-only requests do not compete.
+        if request == .value(bfStride: 1) || request == .valueAndGradient(bfStride: 1) {
+          for (row, value) in zip(rows, values)
+          where value.agreement64 / normalization > bestValues.agreement64 / normalization {
+            bestValues = (row, value.agreement, value.agreement64)
+          }
+        }
         return values.map {
           (
             value: $0.agreement64 / normalization,
@@ -513,7 +526,10 @@ extension DirectPtychoModelFit {
       }, start: start, startValue: initial.agreement64 / normalization, bounds: bounds,
       settings: settings,
       progress: progress, log: log, isCancelled: isCancelled)
-    let final = try values(result.coordinates)
+    if isCancelled() { throw CancellationError() }
+    let final = try bestValues.coordinates == result.coordinates
+      ? (agreement: bestValues.agreement, agreement64: bestValues.agreement64)
+      : values(result.coordinates)
     return (
       coordinates.point(result.coordinates), final.agreement, final.agreement64, normalization,
       result

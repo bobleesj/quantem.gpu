@@ -15,6 +15,12 @@ public enum MetalDisplayScale: UInt32, CaseIterable, Sendable {
   }
 }
 
+/// Display-only sampling between image pixel centers. Source arrays are never changed.
+public enum MetalDisplayInterpolation: UInt32, Sendable {
+  case nearest = 0
+  case linear = 1
+}
+
 /// Colormaps bundled with the native Metal display package.
 public enum MetalColormap: String, CaseIterable, Sendable {
   case gray
@@ -52,7 +58,13 @@ public struct MetalDisplayParameters: Sendable {
   public var high: UInt32
   @usableFromInline var scaleMode: UInt32
   public var lutCount: UInt32
-  @usableFromInline var padding0: UInt32 = 0
+  @usableFromInline var interpolationMode: UInt32 = 0
+
+  /// Interpolate displayed colors only; histogram and numerical values stay unchanged.
+  public var interpolation: MetalDisplayInterpolation {
+    get { MetalDisplayInterpolation(rawValue: interpolationMode) ?? .nearest }
+    set { interpolationMode = newValue.rawValue }
+  }
   @usableFromInline var padding1: UInt32 = 0
 
   /// Display normalization encoded in the Metal parameter buffer.
@@ -90,7 +102,13 @@ public struct MetalFloatDisplayParameters: Sendable {
   public var high: Float
   @usableFromInline var scaleMode: UInt32
   public var lutCount: UInt32
-  @usableFromInline var padding0: UInt32 = 0
+  @usableFromInline var interpolationMode: UInt32 = 0
+
+  /// Interpolate displayed colors only; histogram and numerical values stay unchanged.
+  public var interpolation: MetalDisplayInterpolation {
+    get { MetalDisplayInterpolation(rawValue: interpolationMode) ?? .nearest }
+    set { interpolationMode = newValue.rawValue }
+  }
   @usableFromInline var padding1: UInt32 = 0
 
   public var scale: MetalDisplayScale {

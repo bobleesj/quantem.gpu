@@ -9,6 +9,14 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
+## Native Direct Ptycho workflow, 2026-11-06
+
+The [complete-workflow study](direct/reports/2026-11-06-native-direct-workflow.md)
+separates loading, checked fifth-order presentation and Phase reconstruction.
+It records retained memory and correctness changes, rejected speed experiments,
+full original-count verification and native interaction limits. A universal
+few-second workflow remains unproven.
+
 ## CUDA streaming index, 2026-11-07
 
 The [streaming index record](io/reports/2026-11-07-stream-index.md) measures

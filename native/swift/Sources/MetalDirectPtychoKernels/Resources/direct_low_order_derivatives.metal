@@ -93,7 +93,7 @@ kernel void low_order_value_sums(device const float2* g [[buffer(0)]], device co
     device const float* trial [[buffer(6)]], constant uint& TOTAL [[buffer(7)]],
     device const float4* probe_geometry [[buffer(8)]], device const float* neighbour [[buffer(9)]],
     constant float2& step_k [[buffer(10)]], constant JointAgreementExtra& extra [[buffer(11)]],
-    uint3 tid [[thread_position_in_grid]]) {
+    uint3 tid [[thread_position_in_grid]] INDEXED_BAND_ARGUMENT) {
     uint qi = tid.x, chunk = tid.y, candidate = tid.z;
     if (qi >= p.bandCount || chunk >= p.chunks || candidate >= TOTAL) return;
     LowOrderV2Setup s = low_order_v2_setup(q[qi].x, q[qi].y, trial + candidate * 6, p, step_k);
@@ -120,7 +120,7 @@ kernel void low_order_value_sums(device const float2* g [[buffer(0)]], device co
         float2 e = low_order_v2_aperture(s.qx, s.qy, kxv, kyv, p, extra);
         float a1 = e.x * gk.w, a2 = e.y * gk.w;
         if (a1 == 0.0f && a2 == 0.0f) continue;
-        float2 value = g[(size_t)kk * p.bandCount + qi];
+        float2 value = BAND_READ(g, kk, qi, p.bandCount);
         float2 h = float2(value.x * eu.x + value.y * eu.y, value.y * eu.x - value.x * eu.y);
         float wa = a1, wb = a2;
         if (thick) {
@@ -186,7 +186,7 @@ kernel void low_order_gradient_sums(device const float2* g [[buffer(0)]],
     constant float2& step_k [[buffer(9)]], device const float4* ab [[buffer(10)]],
     constant uint& chunk_size [[buffer(11)]], constant uint& chunks [[buffer(12)]],
     constant JointAgreementExtra& extra [[buffer(13)]], device const uint* selected [[buffer(14)]],
-    uint3 tid [[thread_position_in_grid]]) {
+    uint3 tid [[thread_position_in_grid]] INDEXED_BAND_ARGUMENT) {
     uint qi = tid.x, chunk = tid.y, slot = tid.z;
     if (qi >= p.bandCount || chunk >= chunks || slot >= TOTAL) return;
     uint candidate = selected[slot];
@@ -223,7 +223,7 @@ kernel void low_order_gradient_sums(device const float2* g [[buffer(0)]],
         float2 e = low_order_v2_aperture(qx, qy, kxv, kyv, p, extra);
         float a1 = e.x * gk.w, a2 = e.y * gk.w;
         if (a1 == 0.0f && a2 == 0.0f) continue;
-        float2 value = g[(size_t)kk * p.bandCount + qi];
+        float2 value = BAND_READ(g, kk, qi, p.bandCount);
         float hx = value.x * eu.x + value.y * eu.y, hy = value.y * eu.x - value.x * eu.y;
         // Sideband weights and their x-derivatives; x = y -+ P.
         float y = s.c_q + (s.bx * kxv + s.by * kyv);
@@ -447,7 +447,7 @@ kernel void low_order_fused_sums(device const float2* g [[buffer(0)]], device co
     constant float2& step_k [[buffer(9)]], device float4* partial_ab [[buffer(10)]],
     device float2* partial_ss [[buffer(11)]], constant uint& chunk_size [[buffer(12)]],
     constant uint& chunks [[buffer(13)]], constant JointAgreementExtra& extra [[buffer(14)]],
-    uint3 tid [[thread_position_in_grid]]) {
+    uint3 tid [[thread_position_in_grid]] INDEXED_BAND_ARGUMENT) {
     uint qi = tid.x, chunk = tid.y, candidate = tid.z;
     if (qi >= p.bandCount || chunk >= chunks || candidate >= TOTAL) return;
     float f = p.factor * p.wl * p.wl;
@@ -484,7 +484,7 @@ kernel void low_order_fused_sums(device const float2* g [[buffer(0)]], device co
             float2 e = low_order_v2_aperture(qx, qy, kxv, kyv, p, extra);
             float a1 = e.x * gk.w, a2 = e.y * gk.w;
             if (a1 == 0.0f && a2 == 0.0f) continue;
-            float2 value = g[(size_t)kk * p.bandCount + qi];
+            float2 value = BAND_READ(g, kk, qi, p.bandCount);
             float2 h = float2(value.x * eu.x + value.y * eu.y, value.y * eu.x - value.x * eu.y);
             float hx = h.x, hy = h.y;
             float y = s.c_q + (s.bx * kxv + s.by * kyv);

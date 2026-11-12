@@ -127,18 +127,23 @@ public struct MetalDirectPtychoCalibration: Codable, Equatable, Sendable {
   /// This checks the same Float frequencies and strict endpoints as the model,
   /// before allocating Fourier evidence. It never changes recorded sampling.
   public func validateFittingBand(scanSize: Int, band: ClosedRange<Float> = 0.2...0.9) throws {
-    guard [128, 256, 512].contains(scanSize),
+    try validateFittingBand(scanRows: scanSize, scanColumns: scanSize, band: band)
+  }
+
+  /// Validate a rectangular native scan without changing its sampling.
+  public func validateFittingBand(scanRows: Int, scanColumns: Int, band: ClosedRange<Float> = 0.2...0.9) throws {
+    guard (3...512).contains(scanRows), (3...512).contains(scanColumns),
       scanSamplingRowAngstroms.isFinite, scanSamplingRowAngstroms > 0,
       scanSamplingColumnAngstroms.isFinite, scanSamplingColumnAngstroms > 0
     else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "Enter positive scan sampling and select a supported square scan.")
+        "Enter positive scan sampling and select a scan with 3–512 positions per axis.")
     }
-    let rowScale = Double(scanSize) * scanSamplingRowAngstroms
-    let columnScale = Double(scanSize) * scanSamplingColumnAngstroms
-    for row in 0...scanSize / 2 {
+    let rowScale = Double(scanRows) * scanSamplingRowAngstroms
+    let columnScale = Double(scanColumns) * scanSamplingColumnAngstroms
+    for row in 0...scanRows / 2 {
       let qr = Float(Double(row) / rowScale)
-      for column in 0...scanSize / 2 {
+      for column in 0...scanColumns / 2 {
         let qc = Float(Double(column) / columnScale)
         let radius = hypotf(qr, qc)
         if radius > band.lowerBound && radius < band.upperBound { return }
@@ -162,9 +167,24 @@ public struct MetalDirectPtychoCalibration: Codable, Equatable, Sendable {
   ) throws
     -> (geometry: MetalDirectPtychoGeometry, pixels: [Int])
   {
-    guard [128, 256, 512].contains(scanRows), scanColumns == scanRows else {
+    try geometry(detectorRows: detectorRows, detectorColumns: detectorColumns,
+      detectorSignalSum: detectorSum.map { Double($0) }, excludedPixels: excludedPixels,
+      scanRows: scanRows, scanColumns: scanColumns)
+  }
+
+  /// Calibrate a signed floating-point detector reduction without integer quantization.
+  public func geometry(
+    detectorRows: Int, detectorColumns: Int,
+    detectorSignalSum: [Double], excludedPixels: Set<Int> = [],
+    scanRows: Int = 512, scanColumns: Int = 512
+  ) throws -> (geometry: MetalDirectPtychoGeometry, pixels: [Int]) {
+    let detectorSum = detectorSignalSum
+    guard detectorSum.allSatisfy(\.isFinite) else {
+      throw MetalDirectPtychoError.invalidGeometry("Detector reduction contains non-finite measurements.")
+    }
+    guard (3...512).contains(scanRows), (3...512).contains(scanColumns) else {
       throw MetalDirectPtychoError.invalidGeometry(
-        "Native Metal direct ptychography requires a square 128, 256, or 512 scan. Keep the original sampling; do not bin or crop to fit."
+        "Native Direct Ptycho supports 3–512 positions per scan axis. Keep the original sampling; do not bin or crop to fit."
       )
     }
     let positive = [
@@ -234,7 +254,7 @@ public struct MetalDirectPtychoCalibration: Codable, Equatable, Sendable {
     }
     func frequencies(_ step: Double, count: Int) -> [Float] {
       (0..<count).map {
-        Float(Double($0 < count / 2 ? $0 : $0 - count) / (Double(count) * step))
+        Float(Double($0 < (count + 1) / 2 ? $0 : $0 - count) / (Double(count) * step))
       }
     }
     return (

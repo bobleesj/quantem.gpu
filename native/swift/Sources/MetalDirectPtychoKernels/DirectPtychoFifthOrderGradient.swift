@@ -71,6 +71,9 @@ final class DirectPtychoFifthOrderGradient {
   /// The last value-only evaluation, whose projections a_q and probe phases stay in the workspaces.
   private var retained: Retained?
 
+  /// A changed rotation or frequency mask invalidates the retained projections.
+  func invalidateRetained() { retained = nil }
+
   /// - Parameters:
   ///   - kStride: 1 evaluates the objective and its gradient. A larger stride evaluates the agreement restricted to
   ///     every kStride-th BF pixel and its gradient: a steering model, never the objective.
@@ -252,6 +255,7 @@ final class DirectPtychoFifthOrderGradient {
   ) throws {
     var grid = layout.gradientGrid(geometry, batch: batch.count)
     try encode(commands, gradient) { encoder in
+      objective.indexedBand?.bind(encoder)
       for (index, buffer) in [buffers.band, buffers.k, buffers.q].enumerated() {
         encoder.setBuffer(buffer, offset: 0, index: index)
       }

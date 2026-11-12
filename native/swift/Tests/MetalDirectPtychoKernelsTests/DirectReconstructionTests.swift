@@ -31,27 +31,24 @@ final class DirectReconstructionTests: XCTestCase {
 
   /// G_k(Q) of every BF pixel on the source half plane (columns 0 ... n/2), by a double-precision DFT of its counts.
   private static func spectra(_ s: Scene) -> [[Complex]] {
-    let n = s.scan
-    let half = n / 2 + 1
-    let twiddle = (0..<n).map { Complex.phase(-2 * Double.pi * Double($0) / Double(n)) }
+    let nr = s.geometry.qxByRow.count, nc = s.geometry.qyByColumn.count
+    let half = nc / 2 + 1
+    let wr = (0..<nr).map { Complex.phase(-2 * Double.pi * Double($0) / Double(nr)) }
+    let wc = (0..<nc).map { Complex.phase(-2 * Double.pi * Double($0) / Double(nc)) }
     return (0..<s.pixels.count).map { b in
-      let plane = s.counts[(b * n * n)..<((b + 1) * n * n)].map(Double.init)
-      var rows = [Complex](repeating: Complex(), count: n * half)
-      for x in 0..<n {
-        for c in 0..<half {
-          var sum = Complex()
-          for y in 0..<n { sum = sum + plane[x * n + y] * twiddle[(c * y) % n] }
-          rows[x * half + c] = sum
+      var intermediate = [Complex](repeating: Complex(), count: nr * half)
+      for row in 0..<nr { for col in 0..<half {
+        for x in 0..<nc {
+          intermediate[row * half + col] = intermediate[row * half + col]
+            + Double(s.counts[b * nr * nc + row * nc + x]) * wc[(col * x) % nc]
         }
-      }
-      var out = [Complex](repeating: Complex(), count: n * half)
-      for r in 0..<n {
-        for c in 0..<half {
-          var sum = Complex()
-          for x in 0..<n { sum = sum + rows[x * half + c] * twiddle[(r * x) % n] }
-          out[r * half + c] = sum
-        }
-      }
+      } }
+      var out = intermediate
+      for row in 0..<nr { for col in 0..<half {
+        var sum = Complex()
+        for y in 0..<nr { sum = sum + intermediate[y * half + col] * wr[(row * y) % nr] }
+        out[row * half + col] = sum
+      } }
       return out
     }
   }
@@ -65,8 +62,10 @@ final class DirectReconstructionTests: XCTestCase {
   ) throws -> (phase: [Double], amplitude: [Double]) {
     let g = s.geometry
     let n = s.scan
-    let half = n / 2 + 1
+    let nc = s.geometry.qyByColumn.count
+    let half = nc / 2 + 1
     let outputN = factor * n
+    let outputColumns = factor * nc
     let k = try model.objectiveArrays().k.map { (Double($0.x), Double($0.y)) }
     // The model's rotated frequencies are those of the BF pixels inside the aperture's support (the engine's
     // float32 rule); every selected BF pixel enters the dose, weights and damping scale.
@@ -117,10 +116,10 @@ final class DirectReconstructionTests: XCTestCase {
     // Dose, weights and damping scale over every BF pixel.
     let dc = spectra.map { $0[0].re }
     let apertures = g.brightfieldAperture.map(Double.init)
-    let dose = dc.reduce(0, +) / (Double(n * n) * apertures.map { $0 * $0 }.reduce(0, +))
+    let dose = dc.reduce(0, +) / (Double(n * nc) * apertures.map { $0 * $0 }.reduce(0, +))
     var weights = [Double](repeating: 1, count: dc.count)
     if r.detectorWeighting == .inverseMean {
-      let mean = dc.map { max($0 / Double(n * n), 0) }
+      let mean = dc.map { max($0 / Double(n * nc), 0) }
       let sorted = mean.sorted()
       let middle = sorted.count / 2
       let median =
@@ -134,27 +133,28 @@ final class DirectReconstructionTests: XCTestCase {
     let cutoff =
       (2 * (g.modelSemiangleRadians ?? semi) + angular) / (g.modelWavelengthAngstroms ?? wl)
     let cutoff2 = Float(cutoff * cutoff)
-    func signed(_ index: Int) -> Int { index <= (outputN - 1) / 2 ? index : index - outputN }
-    var eta = [Complex](repeating: Complex(), count: outputN * outputN)
+    func signed(_ index: Int, _ size: Int) -> Int { index <= (size - 1) / 2 ? index : index - size }
+    var eta = [Complex](repeating: Complex(), count: outputN * outputColumns)
     var phi = eta
     for row in 0..<n {
       for column in 0..<half {
         var keep = column > 0 || (row > 0 && row <= (n - 1) / 2)
-        if n % 2 == 0 { keep = keep && row != n / 2 && column != n / 2 }
+        if n % 2 == 0 { keep = keep && row != n / 2 }
+        if nc % 2 == 0 { keep = keep && column != nc / 2 }
         guard keep else { continue }
         var aliases: [(q: (Double, Double), index: Int, prior: Double)] = []
         for ar in 0..<factor {
           for ac in 0..<factor {
             let outputRow = row + ar * n
-            let outputColumn = column + ac * n
-            let qr = Float(signed(outputRow)) * g.qxByRow[1]
-            let qc = Float(signed(outputColumn)) * g.qyByColumn[1]
+            let outputColumn = column + ac * nc
+            let qr = Float(signed(outputRow, outputN)) * g.qxByRow[1]
+            let qc = Float(signed(outputColumn, outputColumns)) * g.qyByColumn[1]
             guard qr * qr + qc * qc < cutoff2 else { continue }
             let q2 = Double(qr) * Double(qr) + Double(qc) * Double(qc)
             let s2 = r.smoothnessInverseAngstroms * r.smoothnessInverseAngstroms
             aliases.append(
               (
-                (Double(qr), Double(qc)), outputRow * outputN + outputColumn,
+                (Double(qr), Double(qc)), outputRow * outputColumns + outputColumn,
                 r.smoothnessInverseAngstroms == 0 ? 1 : pow(1 + q2 / s2, 2)
               ))
           }
@@ -202,7 +202,7 @@ final class DirectReconstructionTests: XCTestCase {
         for (alias, entry) in aliases.enumerated() {
           let p = entry.index
           let mirror =
-            ((outputN - p / outputN) % outputN) * outputN + (outputN - p % outputN) % outputN
+            ((outputN - p / outputColumns) % outputN) * outputColumns + (outputColumns - p % outputColumns) % outputColumns
           phi[p] = gain * x[dim - count + alias]
           phi[mirror] = phi[p].conjugate
           if complex {
@@ -212,8 +212,8 @@ final class DirectReconstructionTests: XCTestCase {
         }
       }
     }
-    let etaImage = inverseDFT(eta, outputN)
-    let phiImage = inverseDFT(phi, outputN)
+    let etaImage = inverseDFT(eta, outputN, outputColumns)
+    let phiImage = inverseDFT(phi, outputN, outputColumns)
     return (
       zip(etaImage, phiImage).map { atan2(exp($0.0) * sin($0.1), exp($0.0) * cos($0.1)) },
       etaImage.map(exp)
@@ -252,26 +252,19 @@ final class DirectReconstructionTests: XCTestCase {
   }
 
   /// The real part of the normalized inverse 2D DFT (the spectra are Hermitian).
-  private static func inverseDFT(_ spectrum: [Complex], _ n: Int) -> [Double] {
-    let twiddle = (0..<n).map { Complex.phase(2 * Double.pi * Double($0) / Double(n)) }
-    var rows = [Complex](repeating: Complex(), count: n * n)
-    for u in 0..<n {
-      for y in 0..<n {
-        var sum = Complex()
-        for v in 0..<n where spectrum[u * n + v].re != 0 || spectrum[u * n + v].im != 0 {
-          sum = sum + spectrum[u * n + v] * twiddle[(v * y) % n]
-        }
-        rows[u * n + y] = sum
+  private static func inverseDFT(_ spectrum: [Complex], _ nr: Int, _ nc: Int) -> [Double] {
+    let wr = (0..<nr).map { Complex.phase(2 * Double.pi * Double($0) / Double(nr)) }
+    let wc = (0..<nc).map { Complex.phase(2 * Double.pi * Double($0) / Double(nc)) }
+    var rows = [Complex](repeating: Complex(), count: nr * nc)
+    for u in 0..<nr { for y in 0..<nc {
+      for v in 0..<nc where spectrum[u * nc + v].re != 0 || spectrum[u * nc + v].im != 0 {
+        rows[u * nc + y] = rows[u * nc + y] + spectrum[u * nc + v] * wc[(v * y) % nc]
       }
-    }
-    var out = [Double](repeating: 0, count: n * n)
-    for x in 0..<n {
-      for y in 0..<n {
-        var sum = 0.0
-        for u in 0..<n { sum += (rows[u * n + y] * twiddle[(u * x) % n]).re }
-        out[x * n + y] = sum / Double(n * n)
-      }
-    }
+    } }
+    var out = [Double](repeating: 0, count: nr * nc)
+    for x in 0..<nr { for y in 0..<nc {
+      for u in 0..<nr { out[x * nc + y] += (rows[u * nc + y] * wr[(u * x) % nr]).re / Double(nr * nc) }
+    } }
     return out
   }
 
@@ -291,6 +284,33 @@ final class DirectReconstructionTests: XCTestCase {
   private func values(_ buffer: MTLBuffer, _ count: Int) -> [Double] {
     let pointer = buffer.contents().assumingMemoryBound(to: Float.self)
     return (0..<count).map { Double(pointer[$0]) }
+  }
+
+  /// Small bounded independent DFT and pivoted-solver oracle, both axis parities.
+  func testRectangularDirectSolvesMatchDoublePrecisionDefinition() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    for (rows, columns) in [(7, 9), (8, 11), (11, 8)] {
+      let scene = try DirectModelReconstructionTests.scene(scan: rows, columns: columns)
+      let spectra = Self.spectra(scene)
+      let model = try model(scene, device: device, cache: nil)
+      let point = DirectPtychoModelPoint(c10Angstroms: 61, c12Angstroms: 14, phi12Radians: 0.7,
+        sampleTiltMrad: [2, -3], depthSpreadAngstroms: 80,
+        higherOrder: [.init(order: 5, symmetry: 0, magnitudeAngstroms: 100000, angleRadians: 0)])
+      for method: DirectPtychoReconstructionMethod in [.phase, .complex] {
+        for factor in [1, 2] {
+          let regularization = DirectPtychoRegularization()
+          let result = try model.reconstruct(point, upsamplingFactor: factor, method: method, regularization: regularization)
+          let expected = try Self.reference(scene, spectra: spectra, model: model, point: point,
+            factor: factor, complex: method == .complex, regularization: regularization)
+          let actual = values(result.phase, result.rows * result.columns)
+          let maximum = zip(actual, expected.phase).map { abs($0 - $1) }.max()!
+          XCTAssertLessThan(maximum, 2e-6, "\(rows)x\(columns) \(method) \(factor)x")
+          if let amplitude = result.amplitude {
+            XCTAssertLessThan(zip(values(amplitude, actual.count), expected.amplitude).map { abs($0 - $1) }.max()!, 2e-6)
+          }
+        }
+      }
+    }
   }
 
   func testDirectSolvesMatchDoublePrecisionDefinition() throws {
