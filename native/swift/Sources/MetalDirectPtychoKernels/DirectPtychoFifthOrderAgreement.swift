@@ -34,7 +34,10 @@ final class DirectPtychoFifthOrderAgreement {
 
   /// `q` holds the band frequencies (row, column) in band order, each band row contiguous, as
   /// `MetalDirectPtychoJointModel` builds them.
-  init(device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary, q: [SIMD2<Float>], indexedBand: DirectPtychoIndexedBand? = nil) throws {
+  init(
+    device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary, q: [SIMD2<Float>],
+    indexedBand: DirectPtychoIndexedBand? = nil
+  ) throws {
     self.indexedBand = indexedBand
     self.device = device
     self.queue = queue

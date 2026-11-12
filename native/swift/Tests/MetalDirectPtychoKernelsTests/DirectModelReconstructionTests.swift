@@ -213,13 +213,15 @@ final class DirectModelReconstructionTests: XCTestCase {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     for (rows, columns) in [(7, 9), (8, 11), (11, 8)] {
       let scene = try Self.scene(scan: rows, columns: columns)
-      let input = try XCTUnwrap(scene.counts.withUnsafeBytes {
-        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
-      })
+      let input = try XCTUnwrap(
+        scene.counts.withUnsafeBytes {
+          device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+        })
       let engine = try MetalDirectPtychoEngine(device: device, geometry: scene.geometry)
       try engine.prepare(brightfield: input, countType: .uint16)
       let model = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
-      let point = DirectPtychoModelPoint(c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4,
+      let point = DirectPtychoModelPoint(
+        c10Angstroms: -38, c12Angstroms: 9, phi12Radians: -0.4,
         sampleTiltMrad: [2.5, -4], depthSpreadAngstroms: 140)
       for factor in [1, 2, 3] {
         let expected = Self.referencePhase(scene, point: point, rotation: 17.25, factor: factor)

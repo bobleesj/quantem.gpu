@@ -33,18 +33,23 @@ final class DirectPtychoWorkspaceLifetimeTests: XCTestCase {
           device: device, geometry: setup.geometry, cacheBudgetBytes: budget)
         // Reuse both engines while changing dtype and counts. This exercises regrowth
         // for preparation and the eight-plane streaming tail after each shrink.
-        for (generation, type) in [MetalDirectPtychoCountType.uint8, .uint16, .uint32, .float32].enumerated() {
+        for (generation, type) in [MetalDirectPtychoCountType.uint8, .uint16, .uint32, .float32]
+          .enumerated()
+        {
           for i in 0..<count {
             let value = UInt32(truncatingIfNeeded: (i &* 7919) ^ (i / columns) ^ generation)
             switch type {
             case .uint8:
-              source.contents().assumingMemoryBound(to: UInt8.self)[i] = UInt8(truncatingIfNeeded: value)
+              source.contents().assumingMemoryBound(to: UInt8.self)[i] = UInt8(
+                truncatingIfNeeded: value)
             case .uint16:
-              source.contents().assumingMemoryBound(to: UInt16.self)[i] = UInt16(truncatingIfNeeded: value)
+              source.contents().assumingMemoryBound(to: UInt16.self)[i] = UInt16(
+                truncatingIfNeeded: value)
             case .uint32:
               source.contents().assumingMemoryBound(to: UInt32.self)[i] = value
             case .float32:
-              source.contents().assumingMemoryBound(to: Float.self)[i] = Float(Int(value % 257) - 128) / 16
+              source.contents().assumingMemoryBound(to: Float.self)[i] =
+                Float(Int(value % 257) - 128) / 16
             }
           }
           setenv(flag, "0", 1)
@@ -57,11 +62,15 @@ final class DirectPtychoWorkspaceLifetimeTests: XCTestCase {
           let trimmedModel = try candidate.jointModel(scanDetectorRotationDegrees: 17.25)
           let expected = try originalModel.objectiveArrays()
           let actual = try trimmedModel.objectiveArrays()
-          XCTAssertTrue(actual.evidence == expected.evidence,
-            "Changed Fourier evidence for \(rows)x\(columns), \(type), cache \(String(describing: budget))")
-          let point = DirectPtychoModelPoint(c10Angstroms: 47, c12Angstroms: 9,
+          XCTAssertTrue(
+            actual.evidence == expected.evidence,
+            "Changed Fourier evidence for \(rows)x\(columns), \(type), cache \(String(describing: budget))"
+          )
+          let point = DirectPtychoModelPoint(
+            c10Angstroms: 47, c12Angstroms: 9,
             phi12Radians: 0.3, sampleTiltMrad: [2, -3], depthSpreadAngstroms: 120)
-          XCTAssertEqual(try trimmedModel.agreements([point]), try originalModel.agreements([point]))
+          XCTAssertEqual(
+            try trimmedModel.agreements([point]), try originalModel.agreements([point]))
         }
       }
     }

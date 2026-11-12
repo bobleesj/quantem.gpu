@@ -227,7 +227,9 @@ public final class MetalDirectPtychoEngine {
   private let transposePipeline: MTLComputePipelineState
   private let halfExtractPipeline: MTLComputePipelineState
   private let transposeHalfPipeline: MTLComputePipelineState
-  private var fusedHalf: Bool { nativeSquareFFT && ProcessInfo.processInfo.environment["QUANTEM_METAL_FUSED_HALF"] != "0" }
+  private var fusedHalf: Bool {
+    nativeSquareFFT && ProcessInfo.processInfo.environment["QUANTEM_METAL_FUSED_HALF"] != "0"
+  }
 
   private var rawBuffer: MTLBuffer
   private var sourceCountType: MetalDirectPtychoCountType = .uint8
@@ -523,15 +525,18 @@ public final class MetalDirectPtychoEngine {
     let rawBytes = batch * plane * countType.byteWidth
     let complexBytes = batch * plane * MemoryLayout<SIMD2<Float>>.stride
     if rawBuffer.length != rawBytes {
-      rawBuffer = try Self.allocate(device: device, length: rawBytes,
+      rawBuffer = try Self.allocate(
+        device: device, length: rawBytes,
         options: .storageModePrivate, purpose: "source count batch")
     }
     if fftA.length != complexBytes {
-      fftA = try Self.allocate(device: device, length: complexBytes,
+      fftA = try Self.allocate(
+        device: device, length: complexBytes,
         options: .storageModePrivate, purpose: "FFT workspace A")
     }
     if fftB.length != complexBytes {
-      fftB = try Self.allocate(device: device, length: complexBytes,
+      fftB = try Self.allocate(
+        device: device, length: complexBytes,
         options: .storageModePrivate, purpose: "FFT workspace B")
     }
   }
@@ -551,8 +556,9 @@ public final class MetalDirectPtychoEngine {
       spectrumStorage: cachedBrightfieldCount == activeBrightfieldIndices.count
         && device.argumentBuffersSupport == .tier2
         && ProcessInfo.processInfo.environment["QUANTEM_METAL_INDEXED_BAND"] == "1"
-        ? DirectPtychoSpectrumStorage(buffers: cacheBuffers, chunkCapacity: cacheChunkCapacity,
-            planeStride: halfPlane) : nil,
+        ? DirectPtychoSpectrumStorage(
+          buffers: cacheBuffers, chunkCapacity: cacheChunkCapacity,
+          planeStride: halfPlane) : nil,
       band: bandInverseAngstroms, provenance: currentProvenance(),
       visit: { [self] batchSize, body in try visitSpectra(batchSize: batchSize, body) },
       visitInactive: { [self] batchSize, body in
@@ -686,16 +692,20 @@ public final class MetalDirectPtychoEngine {
       let input = graph.placeholder(shape: shape, dataType: .complexFloat32, name: "scan")
       let descriptor = MPSGraphFFTDescriptor()
       descriptor.scalingMode = .none
-      let output = graph.fastFourierTransform(input, axes: [1, 2], descriptor: descriptor, name: "fft2")
+      let output = graph.fastFourierTransform(
+        input, axes: [1, 2], descriptor: descriptor, name: "fft2")
       forwardPlans[batch] = (graph, input, output)
     }
     let (graph, input, output) = forwardPlans[batch]!
     let execution = MPSGraphExecutionDescriptor()
     execution.waitUntilCompleted = false
-    graph.encode(to: commands,
+    graph.encode(
+      to: commands,
       feeds: [input: MPSGraphTensorData(fftA, shape: shape, dataType: .complexFloat32)],
       targetOperations: nil,
-      resultsDictionary: [output: MPSGraphTensorData(fftB, shape: shape, dataType: .complexFloat32)],
+      resultsDictionary: [
+        output: MPSGraphTensorData(fftB, shape: shape, dataType: .complexFloat32)
+      ],
       executionDescriptor: execution)
     let blit = commands.makeBlitCommandEncoder()!
     blit.copy(from: fftB, sourceOffset: 0, to: fftA, destinationOffset: 0, size: batch * plane * 8)

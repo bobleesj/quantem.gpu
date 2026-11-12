@@ -76,15 +76,20 @@ final class DirectPtychoPreparationParityTests: XCTestCase {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let names = ["QUANTEM_METAL_FUSED_HALF", "QUANTEM_METAL_FUSED_COUNTS"]
     let original = names.map { ProcessInfo.processInfo.environment[$0] }
-    defer { for (name, value) in zip(names, original) {
-      if let value { setenv(name, value, 1) } else { unsetenv(name) }
-    } }
-    let calibration = MetalDirectPtychoCalibration(voltageKV: 300, semiangleMrad: 30,
+    defer {
+      for (name, value) in zip(names, original) {
+        if let value { setenv(name, value, 1) } else { unsetenv(name) }
+      }
+    }
+    let calibration = MetalDirectPtychoCalibration(
+      voltageKV: 300, semiangleMrad: 30,
       scanSamplingRowAngstroms: 0.4, scanSamplingColumnAngstroms: 0.4,
       detectorSamplingRowMrad: 7.5, detectorSamplingColumnMrad: 7.5,
-      brightfieldCenterRowPixels: 5.4, brightfieldCenterColumnPixels: 5.7, brightfieldRadiusPixels: 3.6)
+      brightfieldCenterRowPixels: 5.4, brightfieldCenterColumnPixels: 5.7,
+      brightfieldRadiusPixels: 3.6)
     for size in [128, 256, 512] {
-      let setup = try calibration.geometry(detectorRows: 12, detectorColumns: 12,
+      let setup = try calibration.geometry(
+        detectorRows: 12, detectorColumns: 12,
         detectorSignalSum: Array(repeating: 0.25, count: 144), scanRows: size, scanColumns: size)
       let count = setup.pixels.count * size * size
       let source = try XCTUnwrap(device.makeBuffer(length: count * 4, options: .storageModeShared))
@@ -103,7 +108,8 @@ final class DirectPtychoPreparationParityTests: XCTestCase {
         for index in arrays.evidence.indices {
           let q = arrays.q[index % arrays.q.count]
           let angle = 2 * Double.pi * Double(q.x) * 0.4
-          XCTAssertEqual(Double(arrays.evidence[index].x), 0.375 - 0.125 * cos(angle), accuracy: 2e-7)
+          XCTAssertEqual(
+            Double(arrays.evidence[index].x), 0.375 - 0.125 * cos(angle), accuracy: 2e-7)
           XCTAssertEqual(Double(arrays.evidence[index].y), 0.125 * sin(angle), accuracy: 2e-7)
         }
       }
@@ -112,7 +118,8 @@ final class DirectPtychoPreparationParityTests: XCTestCase {
 
   func testIntegerCalibrationRetainsIncidentDose() throws {
     let scene = try DirectModelReconstructionTests.scene()
-    let expected = Double(scene.counts.reduce(UInt64(0)) { $0 + UInt64($1) }) / Double(scene.pixels.count)
+    let expected =
+      Double(scene.counts.reduce(UInt64(0)) { $0 + UInt64($1) }) / Double(scene.pixels.count)
     XCTAssertEqual(scene.geometry.dcValue.x, Float(expected))
     XCTAssertGreaterThan(scene.geometry.dcValue.x, 0)
   }

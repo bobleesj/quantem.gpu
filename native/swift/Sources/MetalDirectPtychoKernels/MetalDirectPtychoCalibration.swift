@@ -131,7 +131,9 @@ public struct MetalDirectPtychoCalibration: Codable, Equatable, Sendable {
   }
 
   /// Validate a rectangular native scan without changing its sampling.
-  public func validateFittingBand(scanRows: Int, scanColumns: Int, band: ClosedRange<Float> = 0.2...0.9) throws {
+  public func validateFittingBand(
+    scanRows: Int, scanColumns: Int, band: ClosedRange<Float> = 0.2...0.9
+  ) throws {
     guard (3...512).contains(scanRows), (3...512).contains(scanColumns),
       scanSamplingRowAngstroms.isFinite, scanSamplingRowAngstroms > 0,
       scanSamplingColumnAngstroms.isFinite, scanSamplingColumnAngstroms > 0
@@ -167,7 +169,8 @@ public struct MetalDirectPtychoCalibration: Codable, Equatable, Sendable {
   ) throws
     -> (geometry: MetalDirectPtychoGeometry, pixels: [Int])
   {
-    try geometry(detectorRows: detectorRows, detectorColumns: detectorColumns,
+    try geometry(
+      detectorRows: detectorRows, detectorColumns: detectorColumns,
       detectorSignalSum: detectorSum.map { Double($0) }, excludedPixels: excludedPixels,
       scanRows: scanRows, scanColumns: scanColumns)
   }
@@ -180,7 +183,8 @@ public struct MetalDirectPtychoCalibration: Codable, Equatable, Sendable {
   ) throws -> (geometry: MetalDirectPtychoGeometry, pixels: [Int]) {
     let detectorSum = detectorSignalSum
     guard detectorSum.allSatisfy(\.isFinite) else {
-      throw MetalDirectPtychoError.invalidGeometry("Detector reduction contains non-finite measurements.")
+      throw MetalDirectPtychoError.invalidGeometry(
+        "Detector reduction contains non-finite measurements.")
     }
     guard (3...512).contains(scanRows), (3...512).contains(scanColumns) else {
       throw MetalDirectPtychoError.invalidGeometry(

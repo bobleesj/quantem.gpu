@@ -473,7 +473,9 @@ extension DirectPtychoModelFit {
     // returned point would repeat the identical GPU objective solely to obtain
     // these two already computed numbers. This cache is local to this one
     // fixed model/band/rotation search; it never retains projections or pixels.
-    var bestValues = (coordinates: start, agreement: initial.agreement, agreement64: initial.agreement64)
+    var bestValues = (
+      coordinates: start, agreement: initial.agreement, agreement64: initial.agreement64
+    )
     // Bit-identical to the production objective `fifthOrderAgreements` (`direct-fifth-agreement`).
     let normalization = initial.agreement
     guard normalization.isFinite, normalization > 0 else {
@@ -527,7 +529,8 @@ extension DirectPtychoModelFit {
       settings: settings,
       progress: progress, log: log, isCancelled: isCancelled)
     if isCancelled() { throw CancellationError() }
-    let final = try bestValues.coordinates == result.coordinates
+    let final =
+      try bestValues.coordinates == result.coordinates
       ? (agreement: bestValues.agreement, agreement64: bestValues.agreement64)
       : values(result.coordinates)
     return (

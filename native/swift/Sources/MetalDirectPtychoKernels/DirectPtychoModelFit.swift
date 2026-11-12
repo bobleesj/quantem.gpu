@@ -473,7 +473,8 @@ public enum DirectPtychoModelFit {
     let rotations = [rotationDegrees, DirectPtychoRotationBranches.opposite(rotationDegrees)]
     var fits: [DirectPtychoFit] = []
     var phases: [[Float]] = []
-    var rows = 0, columns = 0
+    var rows = 0
+    var columns = 0
     var branchOptions = options
     branchOptions.compareStandard = false
     for (index, rotation) in rotations.enumerated() {
@@ -498,7 +499,8 @@ public enum DirectPtychoModelFit {
       let phase = try model.reconstruct(fitted.point, upsamplingFactor: 1, isCancelled: isCancelled)
       var branchFit = fitted
       branchFit.timings["native_phase_s"] = Date().timeIntervalSince(started)
-      rows = phase.rows; columns = phase.columns
+      rows = phase.rows
+      columns = phase.columns
       phases.append(
         Array(
           UnsafeBufferPointer(

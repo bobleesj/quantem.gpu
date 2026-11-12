@@ -40,7 +40,8 @@ final class DirectPtychoIndexedBandTests: XCTestCase {
         setenv(key, "1", 1)
         let candidate = try engine.jointModel(scanDetectorRotationDegrees: 17.25)
         XCTAssertEqual(candidate.bandPower, reference.bandPower)
-        XCTAssertEqual(try candidate.objectiveArrays().evidence, try reference.objectiveArrays().evidence)
+        XCTAssertEqual(
+          try candidate.objectiveArrays().evidence, try reference.objectiveArrays().evidence)
         if budget == nil {
           XCTAssertLessThan(candidate.gatheredEvidenceBytes, reference.gatheredEvidenceBytes)
         } else {
@@ -72,16 +73,20 @@ final class DirectPtychoIndexedBandTests: XCTestCase {
               // This signed synthetic spectrum is not a weak object. Its opposite-branch
               // Complex amplitude can overflow; the indexed path must reject it identically.
               XCTAssertEqual(method, .complex)
-              XCTAssertThrowsError(try candidate.reconstruct(
-                points[0], upsamplingFactor: 2, method: method)) { error in
+              XCTAssertThrowsError(
+                try candidate.reconstruct(
+                  points[0], upsamplingFactor: 2, method: method)
+              ) { error in
                 XCTAssertEqual(error as? DirectPtychoSolveError, .diverged)
               }
               continue
             }
             let measured = try candidate.reconstruct(points[0], upsamplingFactor: 2, method: method)
             let n = rows * columns * 4
-            let a = UnsafeBufferPointer(start: expected.phase.contents().assumingMemoryBound(to: Float.self), count: n)
-            let b = UnsafeBufferPointer(start: measured.phase.contents().assumingMemoryBound(to: Float.self), count: n)
+            let a = UnsafeBufferPointer(
+              start: expected.phase.contents().assumingMemoryBound(to: Float.self), count: n)
+            let b = UnsafeBufferPointer(
+              start: measured.phase.contents().assumingMemoryBound(to: Float.self), count: n)
             XCTAssertEqual(Array(a), Array(b))
           }
         }

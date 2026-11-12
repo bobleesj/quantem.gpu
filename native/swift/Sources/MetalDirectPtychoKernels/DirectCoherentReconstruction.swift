@@ -255,7 +255,10 @@ final class DirectCoherentReconstruction {
 
   /// Output frequencies, retained support rows and columns, and whether the half spectrum suffices
   /// (`_coherent_support`, `_coherent_columns`).
-  private var genericGrid: Bool { geometry.qxByRow.count != geometry.qyByColumn.count || ![128, 256, 512].contains(geometry.qxByRow.count) }
+  private var genericGrid: Bool {
+    geometry.qxByRow.count != geometry.qyByColumn.count
+      || ![128, 256, 512].contains(geometry.qxByRow.count)
+  }
 
   private func plan(factor: Int, higher: Bool) throws -> Plan {
     let key = higher ? -factor : factor
@@ -319,7 +322,8 @@ final class DirectCoherentReconstruction {
       return try reconstructRedraw(point, factor: factor, visit: visit, isCancelled: isCancelled)
     }
     precondition(
-      factor == 8 || referenceKernels || genericGrid, "1x-4x reconstruction uses the redraw kernel only")
+      factor == 8 || referenceKernels || genericGrid,
+      "1x-4x reconstruction uses the redraw kernel only")
     let higher = point.hasHigherOrder
     let useSeparable = self.useSeparable && !higher && !genericGrid
     lastKernel = MetalKernelIdentity(
@@ -389,7 +393,8 @@ final class DirectCoherentReconstruction {
           count: UInt32(batch), bfOffset: UInt32(bfOffset), sourceHalf: half ? 1 : 0,
           rows: UInt32(plan.rows), cols: UInt32(plan.cols), chunk: UInt32(Self.chunk),
           groups: UInt32((batch + Self.chunk - 1) / Self.chunk),
-          groupOffset: UInt32(bfOffset / Self.chunk), depth: point.depthSpreadAngstroms != 0 ? 1 : 0,
+          groupOffset: UInt32(bfOffset / Self.chunk),
+          depth: point.depthSpreadAngstroms != 0 ? 1 : 0,
           sourceColumns: UInt32(sourceColumns), outputColumns: UInt32(outputColumns)
         )
         let compute = try encoder(commands, selectedCoherent)

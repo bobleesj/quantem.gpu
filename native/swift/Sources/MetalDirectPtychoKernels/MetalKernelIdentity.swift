@@ -53,7 +53,8 @@ enum DirectPtychoKernelRegistry {
   /// v0.2 is v0.1 without the retired `complex_wave` amplitude kernel (`model_wave_amplitude`); v0.3 is v0.2 without
   /// the deleted objective kernel `fifth_agreement` in `direct_fifth_order`. The reconstruction kernels are unchanged.
   static let perTerm = Entry(
-    name: "direct-per-term", version: "0.4", files: ["direct_model", "direct_fifth_order", "direct_separable"],
+    name: "direct-per-term", version: "0.4",
+    files: ["direct_model", "direct_fifth_order", "direct_separable"],
     registeredSourceSHA256: "e7bca117007463d1bc5e147c20c5cff1df159652fae9afdc0167c10ce90f5c47")
   /// The fifth-order agreement objective of the fit (`fifth_agreement_rows` with the `fifth_probe`, `fifth_power`
   /// and `fifth_score` passes) on all BF pixels or every n-th: the only production objective kernel there, also the
@@ -62,7 +63,8 @@ enum DirectPtychoKernelRegistry {
   /// v0.5 skips per-pixel arithmetic at zero-weight band frequencies while retaining
   /// every output slot and barrier. Objective and gradient results remain exact.
   static let fifthAgreement = Entry(
-    name: "direct-fifth-agreement", version: "0.7", files: ["direct_joint", "direct_fifth_order", "direct_fifth_agreement"],
+    name: "direct-fifth-agreement", version: "0.7",
+    files: ["direct_joint", "direct_fifth_order", "direct_fifth_agreement"],
     registeredSourceSHA256: "4e2e603fa91f79094ebb3056f9a074b0ababfd2f18def26627d503a40e8d9d07")
   /// The low-order agreement objective with angle-sum phases (`joint_agreement_angle_sums`), used by the primary
   /// fit's search trials, the only low-order agreement kernel. v0.3 is v0.2 with the retired `mean_phase` kernels
@@ -70,7 +72,8 @@ enum DirectPtychoKernelRegistry {
   /// (`joint_objective_batch`, `joint_trial_probe`) deleted from `direct_joint` (2026-10-25). The agreement kernels are
   /// unchanged.
   static let jointAgreement = Entry(
-    name: "direct-joint-agreement", version: "0.6", files: ["direct_joint", "direct_joint_agreement"],
+    name: "direct-joint-agreement", version: "0.6",
+    files: ["direct_joint", "direct_joint_agreement"],
     registeredSourceSHA256: "8485c9608d24549b9c248eac0af634df2d3a69cb7cd1d0241bd5359f6999926a")
 
   /// The primary fit's exact low-order value, gradient and Hessian (trust-region Newton), `DirectPtychoLowOrderDerivatives`:
@@ -90,7 +93,9 @@ enum DirectPtychoKernelRegistry {
   /// v0.4 uses the zero-weight-aware v0.5 value pass; its gradient kernels are unchanged.
   static let fifthGradient = Entry(
     name: "direct-fifth-gradient", version: "0.6",
-    files: ["direct_joint", "direct_fifth_order", "direct_fifth_agreement", "direct_fifth_order_gradient"],
+    files: [
+      "direct_joint", "direct_fifth_order", "direct_fifth_agreement", "direct_fifth_order_gradient",
+    ],
     registeredSourceSHA256: "f281771fa0c7bae5108af12a9d569fccfce45c8f937192cf1b9a8b3acf7768a9")
 
   /// The regularized direct reconstructions (`phase`, `complex`): the k-only pixel terms, the normal equations of every
@@ -102,7 +107,8 @@ enum DirectPtychoKernelRegistry {
   /// (`direct_normal_equations` alone, no drag windows), v0.2 and v0.3 (v0.2 with the deleted agreement kernels
   /// removed from the shared `direct_joint` and `direct_fifth_order`; both take A(k) from the general aperture formula).
   static let direct = Entry(
-    name: "direct-regularized", version: "0.6", files: ["direct_joint", "direct_fifth_order", "direct_regularized"],
+    name: "direct-regularized", version: "0.6",
+    files: ["direct_joint", "direct_fifth_order", "direct_regularized"],
     registeredSourceSHA256: "17db9653d63f0ecefaa7ac5deb6de7566951de1b76ad3027defbd2df2b99701b")
 
   /// Exact-grid forward preparation for a non-power-of-two scan axis above 256.

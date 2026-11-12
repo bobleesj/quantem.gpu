@@ -303,7 +303,9 @@ final class DirectPtychoSolver {
     let half = columns / 2 + 1
     let smoothness2 = Float(key.smoothness * key.smoothness)
     // Signed output frequency of every output row and column, as the CUDA layout: int -> float32, times the step.
-    func signed(_ index: Int, _ count: Int) -> Int { index <= (count - 1) / 2 ? index : index - count }
+    func signed(_ index: Int, _ count: Int) -> Int {
+      index <= (count - 1) / 2 ? index : index - count
+    }
     let qRow = (0..<outputN).map { Float(signed($0, outputN)) * dqRow }
     let outputColumns = factor * columns
     let qColumn = (0..<outputColumns).map { Float(signed($0, outputColumns)) * dqColumn }
@@ -591,14 +593,16 @@ final class DirectPtychoSolver {
   ) throws -> (phase: MTLBuffer, amplitude: MTLBuffer?, n: Int) {
     var started = Date()
     let outputN = layout.outputN
-    let spectrum = try Self.allocate(device, outputN * (layout.key.factor * columns) * 8, shared: true)
+    let spectrum = try Self.allocate(
+      device, outputN * (layout.key.factor * columns) * 8, shared: true)
     memset(spectrum.contents(), 0, spectrum.length)
     try solve(
       system, layout: layout, complex: complex, regularization: regularization,
       spectrum: spectrum.contents().assumingMemoryBound(to: SIMD2<Float>.self))
     timing.solveSeconds = Date().timeIntervalSince(started)
     started = Date()
-    let result = try wave(spectrum: spectrum, n: outputN, columns: layout.key.factor * columns, amplitude: complex)
+    let result = try wave(
+      spectrum: spectrum, n: outputN, columns: layout.key.factor * columns, amplitude: complex)
     timing.waveSeconds = Date().timeIntervalSince(started)
     return (result.phase, result.amplitude, outputN)
   }
@@ -720,7 +724,9 @@ final class DirectPtychoSolver {
               let p = Int(group.positions[f * count + a])
               let row = p / outputColumns
               let column = p % outputColumns
-              let mirror = ((outputN - row) % outputN) * outputColumns + (outputColumns - column) % outputColumns
+              let mirror =
+                ((outputN - row) % outputN) * outputColumns + (outputColumns - column)
+                % outputColumns
               let phi = SIMD2<Float>(Float(yr[dim - count + a]), Float(yi[dim - count + a])) * gain
               let eta = complex ? SIMD2<Float>(Float(yr[a]), Float(yi[a])) * gain : .zero
               guard phi.x.isFinite, phi.y.isFinite, eta.x.isFinite, eta.y.isFinite else {

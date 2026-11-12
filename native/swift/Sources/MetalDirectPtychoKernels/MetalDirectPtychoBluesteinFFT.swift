@@ -36,10 +36,12 @@ final class MetalDirectPtychoBluesteinFFT {
 
   init(device: MTLDevice, queue: MTLCommandQueue, rows: Int, columns: Int) throws {
     guard (3...512).contains(rows), (3...512).contains(columns) else {
-      throw MetalDirectPtychoError.invalidGeometry("Bluestein preparation requires scan axes between 3 and 512")
+      throw MetalDirectPtychoError.invalidGeometry(
+        "Bluestein preparation requires scan axes between 3 and 512")
     }
     let entry = DirectPtychoKernelRegistry.rectangularFourier
-    kernel = MetalKernelIdentity(name: entry.name, version: entry.version,
+    kernel = MetalKernelIdentity(
+      name: entry.name, version: entry.version,
       sourceSHA256: try DirectPtychoKernelRegistry.sourceSHA256(entry),
       variant: "rows=\(rows) columns=\(columns) dc=centered dtype=complex64")
     let options = MTLCompileOptions()
@@ -55,29 +57,41 @@ final class MetalDirectPtychoBluesteinFFT {
       var convolutionCount = 1
       while convolutionCount < 2 * count - 1 { convolutionCount *= 2 }
       guard pipeline.maxTotalThreadsPerThreadgroup >= convolutionCount / 2,
-        device.maxThreadgroupMemoryLength >= convolutionCount * 8 else {
-        throw MetalDirectPtychoError.invalidGeometry("Metal device cannot prepare this exact rectangular FFT")
+        device.maxThreadgroupMemoryLength >= convolutionCount * 8
+      else {
+        throw MetalDirectPtychoError.invalidGeometry(
+          "Metal device cannot prepare this exact rectangular FFT")
       }
-      let chirp = try Self.makeTable(device: device, values: (0..<count).map { j in
-        let angle = Double.pi * Double((j * j) % (2 * count)) / Double(count)
-        return SIMD2<Float>(Float(cos(angle)), Float(-sin(angle)))
-      })
-      let twiddle = try Self.makeTable(device: device, values: (0..<convolutionCount / 2).map { j in
-        let angle = 2 * Double.pi * Double(j) / Double(convolutionCount)
-        return SIMD2<Float>(Float(cos(angle)), Float(-sin(angle)))
-      })
-      guard let kernel = device.makeBuffer(length: convolutionCount * 8, options: .storageModePrivate) else {
+      let chirp = try Self.makeTable(
+        device: device,
+        values: (0..<count).map { j in
+          let angle = Double.pi * Double((j * j) % (2 * count)) / Double(count)
+          return SIMD2<Float>(Float(cos(angle)), Float(-sin(angle)))
+        })
+      let twiddle = try Self.makeTable(
+        device: device,
+        values: (0..<convolutionCount / 2).map { j in
+          let angle = 2 * Double.pi * Double(j) / Double(convolutionCount)
+          return SIMD2<Float>(Float(cos(angle)), Float(-sin(angle)))
+        })
+      guard
+        let kernel = device.makeBuffer(length: convolutionCount * 8, options: .storageModePrivate)
+      else {
         throw MetalDirectPtychoError.allocation("rectangular FFT convolution kernel")
       }
-      let parameters = Parameters(rows: UInt32(rows), columns: UInt32(columns), count: UInt32(count),
+      let parameters = Parameters(
+        rows: UInt32(rows), columns: UInt32(columns), count: UInt32(count),
         convolutionCount: UInt32(convolutionCount), axis: UInt32(axis), kernelOnly: 0)
       let plan = AxisPlan(chirp: chirp, twiddle: twiddle, kernel: kernel, parameters: parameters)
       plans.append(plan)
-      encodeAxis(command: command, input: kernel, output: kernel, plan: plan, batch: 1, kernelOnly: true)
+      encodeAxis(
+        command: command, input: kernel, output: kernel, plan: plan, batch: 1, kernelOnly: true)
     }
     command.commit()
     command.waitUntilCompleted()
-    if let error = command.error { throw MetalDirectPtychoError.commandExecution(error.localizedDescription) }
+    if let error = command.error {
+      throw MetalDirectPtychoError.commandExecution(error.localizedDescription)
+    }
   }
 
   /// Transform each row then column, reusing the engine's existing two workspaces.
@@ -86,7 +100,8 @@ final class MetalDirectPtychoBluesteinFFT {
     encodeAxis(command: command, input: temporary, output: input, plan: plans[1], batch: batch)
   }
 
-  private func encodeAxis(command: MTLCommandBuffer, input: MTLBuffer, output: MTLBuffer,
+  private func encodeAxis(
+    command: MTLCommandBuffer, input: MTLBuffer, output: MTLBuffer,
     plan: AxisPlan, batch: Int, kernelOnly: Bool = false
   ) {
     var parameters = plan.parameters
@@ -100,15 +115,20 @@ final class MetalDirectPtychoBluesteinFFT {
     encoder.setBytes(&parameters, length: MemoryLayout<Parameters>.stride, index: 5)
     encoder.setThreadgroupMemoryLength(Int(parameters.convolutionCount) * 8, index: 0)
     let lines = kernelOnly ? 1 : Int(parameters.axis == 1 ? parameters.rows : parameters.columns)
-    encoder.dispatchThreadgroups(MTLSize(width: lines, height: batch, depth: 1),
-      threadsPerThreadgroup: MTLSize(width: Int(parameters.convolutionCount) / 2, height: 1, depth: 1))
+    encoder.dispatchThreadgroups(
+      MTLSize(width: lines, height: batch, depth: 1),
+      threadsPerThreadgroup: MTLSize(
+        width: Int(parameters.convolutionCount) / 2, height: 1, depth: 1))
     encoder.endEncoding()
   }
 
   private static func makeTable(device: MTLDevice, values: [SIMD2<Float>]) throws -> MTLBuffer {
-    guard let buffer = values.withUnsafeBytes({ bytes in
-      device.makeBuffer(bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared)
-    }) else { throw MetalDirectPtychoError.allocation("rectangular FFT twiddle table") }
+    guard
+      let buffer = values.withUnsafeBytes({ bytes in
+        device.makeBuffer(
+          bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared)
+      })
+    else { throw MetalDirectPtychoError.allocation("rectangular FFT twiddle table") }
     return buffer
   }
 }

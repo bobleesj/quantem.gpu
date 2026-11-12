@@ -47,7 +47,8 @@ extension MetalEMPADResidentSource {
       }
       table.append(entry)
     }
-    var retainedMetadata = source.microscopeMetadata.merging(scanValidity.metadata, uniquingKeysWith: { _, new in new })
+    var retainedMetadata = source.microscopeMetadata.merging(
+      scanValidity.metadata, uniquingKeysWith: { _, new in new })
     retainedMetadata.removeValue(forKey: NativeMetadataDocument.metadataKey)
     retainedMetadata.removeValue(forKey: NativeQEMMetadataUnits.metadataKey)
     var description: [String: Any] = [

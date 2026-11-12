@@ -264,7 +264,8 @@ public struct NativeEMPADSource: Sendable {
       // grid only when it explicitly matches the RAW name; the exact record
       // length is independently verified below. Do not apply acquire-mode FOV.
       guard let search = metadata?.searchShape,
-        search.row == namedShape.row, search.col == namedShape.col else {
+        search.row == namedShape.row, search.col == namedShape.col
+      else {
         throw EMPADError(
           "EMPAD XML and RAW filename disagree about scan shape. Correct the acquisition metadata.")
       }
@@ -309,7 +310,8 @@ public struct NativeEMPADSource: Sendable {
     return NativeEMPADSource(
       rawURL: raw, metadataURL: metadataURL,
       scanRows: shape.row, scanColumns: shape.col,
-      scanCalibration: selectedSearchMode ? nil : metadata?.scanCalibration(rows: shape.row, columns: shape.col),
+      scanCalibration: selectedSearchMode
+        ? nil : metadata?.scanCalibration(rows: shape.row, columns: shape.col),
       diffractionSamplingInverseNanometers: metadata?.diffractionSampling,
       acquisitionDate: metadata?.acquisitionDate,
       formatIdentifier: metadata?.isGeneration2 == true
@@ -663,8 +665,10 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     return value
   }
   var searchShape: (row: Int, col: Int)? {
-    guard !isGeneration2, fields["pix_x"] == nil, fields["pix_y"] == nil, let row = Int(fields["search/scan_resolution_y"] ?? ""),
-      let col = Int(fields["search/scan_resolution_x"] ?? ""), row > 0, col > 0 else { return nil }
+    guard !isGeneration2, fields["pix_x"] == nil, fields["pix_y"] == nil,
+      let row = Int(fields["search/scan_resolution_y"] ?? ""),
+      let col = Int(fields["search/scan_resolution_x"] ?? ""), row > 0, col > 0
+    else { return nil }
     return (row, col)
   }
 

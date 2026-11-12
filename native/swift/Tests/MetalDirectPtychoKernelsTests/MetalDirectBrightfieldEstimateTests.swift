@@ -62,24 +62,32 @@ final class MetalDirectBrightfieldEstimateTests: XCTestCase {
   }
   func testSignedFloatDiskMatchesIndependentReference() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
-    let rows = 96, columns = 112
+    let rows = 96
+    let columns = 112
     let values: [Float] = (0..<(rows * columns)).map { i in
       let radius = hypot(Double(i / columns) - 43.25, Double(i % columns) - 61.75)
       return Float(-0.03125 + 3.75 / (1 + exp((radius - 23.4) * 2)))
     }
-    let measured = try MetalDirectPtychoBrightfieldEstimate.measure(device: device,
+    let measured = try MetalDirectPtychoBrightfieldEstimate.measure(
+      device: device,
       detectorMean: values, rows: rows, columns: columns)
-    let v = values.map(Double.init), mean = values.map(Double.init).reduce(0, +) / Double(values.count)
+    let v = values.map(Double.init)
+    let mean = values.map(Double.init).reduce(0, +) / Double(values.count)
     let variance = v.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(v.count)
     let selected = v.indices.filter { v[$0] > mean + sqrt(variance) }
     let plateau = selected.map { v[$0] }.sorted()
     let threshold = (plateau[(plateau.count - 1) / 2] + plateau[plateau.count / 2]) / 4
     XCTAssertEqual(measured.selectionCount, selected.count)
     XCTAssertEqual(measured.edgeCount, v.filter { $0 > threshold }.count)
-    XCTAssertEqual(measured.centerRow, selected.reduce(0) { $0 + Double($1 / columns) } / Double(selected.count), accuracy: 1e-12)
-    var invalid = values; invalid[10] = .nan
-    XCTAssertThrowsError(try MetalDirectPtychoBrightfieldEstimate.measure(device: device,
-      detectorMean: invalid, rows: rows, columns: columns))
+    XCTAssertEqual(
+      measured.centerRow, selected.reduce(0) { $0 + Double($1 / columns) } / Double(selected.count),
+      accuracy: 1e-12)
+    var invalid = values
+    invalid[10] = .nan
+    XCTAssertThrowsError(
+      try MetalDirectPtychoBrightfieldEstimate.measure(
+        device: device,
+        detectorMean: invalid, rows: rows, columns: columns))
   }
 
 }

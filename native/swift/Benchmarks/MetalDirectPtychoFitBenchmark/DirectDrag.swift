@@ -129,7 +129,9 @@ func directDrag(
             var digests = [
               "preview_phase": digest(preview.phase), "exact_phase": digest(exact.phase),
             ]
-            if let amplitude = preview.amplitude { digests["preview_amplitude"] = digest(amplitude) }
+            if let amplitude = preview.amplitude {
+              digests["preview_amplitude"] = digest(amplitude)
+            }
             if let amplitude = exact.amplitude { digests["exact_amplitude"] = digest(amplitude) }
             checkedDigests.append(digests)
             let a = Array(

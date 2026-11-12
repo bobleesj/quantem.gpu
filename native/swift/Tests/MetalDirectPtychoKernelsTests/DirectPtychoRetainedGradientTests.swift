@@ -12,7 +12,8 @@ final class DirectPtychoRetainedGradientTests: XCTestCase {
       wavelengthAngstroms: model.wavelengthAngstroms, semiangleRadians: model.semiangleRadians)
     let points = [coordinates.point(DirectFifthOrderGradientTests.z)]
     let packed = [coordinates.pack(DirectFifthOrderGradientTests.z)]
-    _ = try model.fifthOrderAgreementsAndGradients(points, packedCoefficients: packed, gradients: false)
+    _ = try model.fifthOrderAgreementsAndGradients(
+      points, packedCoefficients: packed, gradients: false)
     try model.retarget(scanDetectorRotationDegrees: 197.25)
     try fresh.retarget(scanDetectorRotationDegrees: 197.25)
     let measured = try model.fifthOrderRetainedGradients(points, packedCoefficients: packed)[0]
@@ -31,7 +32,8 @@ final class DirectPtychoRetainedGradientTests: XCTestCase {
     let points = [coordinates.point(DirectFifthOrderGradientTests.z)]
     let packed = [coordinates.pack(DirectFifthOrderGradientTests.z)]
     let mask = (0..<model.bandCount).map { $0 % 2 == 0 }
-    _ = try model.fifthOrderAgreementsAndGradients(points, packedCoefficients: packed, gradients: false)
+    _ = try model.fifthOrderAgreementsAndGradients(
+      points, packedCoefficients: packed, gradients: false)
     let measured = try model.withBandMask(mask) {
       try model.fifthOrderRetainedGradients(points, packedCoefficients: packed)[0]
     }
@@ -42,7 +44,8 @@ final class DirectPtychoRetainedGradientTests: XCTestCase {
     XCTAssertEqual(measured.agreement64, expected.agreement64)
     XCTAssertEqual(measured.gradient, expected.gradient)
     _ = try model.withBandMask(mask) {
-      try model.fifthOrderAgreementsAndGradients(points, packedCoefficients: packed, gradients: false)
+      try model.fifthOrderAgreementsAndGradients(
+        points, packedCoefficients: packed, gradients: false)
     }
     let restored = try model.fifthOrderRetainedGradients(points, packedCoefficients: packed)[0]
     let full = try fresh.fifthOrderAgreementsAndGradients(points, packedCoefficients: packed)[0]
