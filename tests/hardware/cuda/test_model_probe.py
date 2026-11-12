@@ -2,9 +2,10 @@
 
 import math
 
-import cupy as cp
 import numpy as np
 import pytest
+
+cp = pytest.importorskip("cupy")
 
 from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE, ORDERS, pack_coefficients
 from quantem.gpu.direct_ptycho.probe import model_probe, probe_grid

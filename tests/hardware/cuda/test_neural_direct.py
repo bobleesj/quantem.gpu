@@ -11,9 +11,10 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-import cupy as cp
 import numpy as np
 import pytest
+
+cp = pytest.importorskip("cupy")
 
 from quantem.gpu import DirectPtycho, io
 from quantem.gpu.direct_ptycho.neural_phase import NeuralPhaseModel
