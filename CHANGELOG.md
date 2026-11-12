@@ -6,6 +6,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+## rc18 - 2026-11-11
+
 ### Renamed: direct ptychography (no aliases)
 
 "We don't want to use the term SSB, use Direct Ptycho" (11 Nov 2026). Every name that said SSB says direct
@@ -589,6 +591,14 @@ the first run after this change computes them again, as after any code change; t
   360 degrees.
 
 ### Fixed
+
+- `parallax.run(aberrations=True)` fits again. Since the `fit_aberrations=` keyword became `aberrations=`, the
+  result overwrote the keyword before it was read, so the fit never ran and `result.aberrations` was None.
+- Comparison figures label the spectrum "Full-field FFT": it is computed from the whole field, and with a zoom
+  region it still read "Crop FFT".
+- A calibration placeholder ("Pending probe fit") no longer carries a unit ("Pending probe fit mrad per pixel").
+- `benchmark.run_direct` loads with `device=`, times the GPU low-order search (`search="primary"`) and counts the
+  rotation branches that ran a search.
 
 - `DirectPtycho.run(aberrations=...)` says which higher orders it leaves applied. An override replaces the
   coefficients it names and keeps the others as the fit or the session holds them, and the session holds what its
