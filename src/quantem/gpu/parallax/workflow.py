@@ -114,7 +114,7 @@ def run(
         If the acquisition is on an Apple GPU (MPS); parallax has no MPS
         implementation.
     ValueError
-        If the acquisition is not on a CUDA GPU, ``aberrations()`` is
+        If the acquisition is not on a CUDA GPU, ``aberrations=True`` is
         requested without the scan or detector calibration, or
         ``scan_sampling_A`` or ``detector_sampling_mrad`` is neither one
         number nor a ``(row, col)`` pair.
@@ -182,7 +182,7 @@ def run(
         cp.get_default_memory_pool().free_all_blocks()
         torch.cuda.empty_cache()
 
-        aberrations = scan_detector_rotation_deg = None
+        fitted = scan_detector_rotation_deg = None
         if aberrations:
             # Direct ptychography's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
             if detector_sampling_mrad is None:
@@ -193,7 +193,7 @@ def run(
             pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)
             # a step per axis: row shifts in row steps, column shifts in column steps
             angles_rad = (pixels - pixels.mean(axis=0)) * np.asarray(detector_sampling_mrad, dtype=np.float64) * 1e-3
-            aberrations, signed_rotation_deg = aberrations_from_shifts(
+            fitted, signed_rotation_deg = aberrations_from_shifts(
                 cp.asnumpy(global_shifts).astype(np.float64) * np.asarray(scan_sampling_A, dtype=np.float64), angles_rad
             )
             # The fit keeps its angle within 90 degrees of zero; a result states the physical rotation in
@@ -203,7 +203,7 @@ def run(
             image=image,
             density=density,
             shifts=[(float(row), float(col)) for row, col in cp.asnumpy(global_shifts)],
-            aberrations=aberrations,
+            aberrations=fitted,
             scan_detector_rotation_deg=scan_detector_rotation_deg,
             elapsed_s=time.perf_counter() - started,
         )

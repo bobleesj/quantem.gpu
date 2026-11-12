@@ -232,7 +232,7 @@ def test_resident_region_matches_reopened_counts_and_keeps_parent(
         "aberrations": {"C10_nm": 8.0, "C12_nm": 3.0, "phi12_deg": 20.0},
     }
     with DirectPtycho.open(str(source), **geometry) as parent:
-        reference = dict(parent.aberrations)
+        reference = dict(parent.known_aberrations)
         resident = parent._data
         for bounds in ((9, 105, 13, 111), (12, 124, 2, 114)):
             with parent.select_region(bounds) as selected:
@@ -270,9 +270,9 @@ def test_resident_region_matches_reopened_counts_and_keeps_parent(
                         compute_loss=False,
                     )
                 np.testing.assert_array_equal(actual, expected)
-                selected.aberrations = {**reference, "C10_nm": 20.0}
+                selected.known_aberrations = {**reference, "C10_nm": 20.0}
             assert parent._data is resident
-            assert parent.aberrations == reference
+            assert parent.known_aberrations == reference
 
 
 def test_loaded_metadata_and_explicit_direct_overrides_keep_counts(device, tmp_path):
@@ -307,11 +307,10 @@ def test_loaded_metadata_and_explicit_direct_overrides_keep_counts(device, tmp_p
             assert direct.source_path == data.metadata["source_path"]
             assert direct.scan_detector_rotation_deg == 17.0
             table = direct.calibration()
-            assert table.loc["Accelerating voltage", "File value"] == 200.0
-            assert table.loc["Accelerating voltage", "Value used"] == 300.0
+            assert table.loc["Accelerating voltage", "Value"] == "300.0 kV"
             assert table.loc["Accelerating voltage", "Source"] == "Explicit override"
             assert table.loc["Scan step (row, col)", "Source"] == "Recorded"
-            assert table.loc["Scan-detector rotation", "File value"] == "Not recorded"
+            assert table.loc["Scan-detector rotation", "Value"] == "17.0 deg"
             assert table.loc["Scan-detector rotation", "Source"] == "Explicit override"
             actual, _ = direct.preview(optics, compute_loss=False)
             with DirectPtycho.open(
@@ -356,24 +355,24 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
                 "bright_field_radius_px": 6.5}
     with DirectPtycho(data, **geometry) as direct:
         table = direct.calibration()
-        assert table.loc["Accelerating voltage", "File value"] == 300.0
+        assert table.loc["Accelerating voltage", "Value"] == "300.0 kV"
         assert table.loc["Accelerating voltage", "Source"] == "Overridden"
-        assert table.loc["Scan-detector rotation", "File value"] == 12.0
-        assert table.loc["Scan-detector rotation", "Value used"] == 12.0
+        assert table.loc["Scan-detector rotation", "Value"] == "12.0 deg"
         assert table.loc["Scan-detector rotation", "Source"] == "Recorded"
-        assert table.loc["Rotation flipped", "Value used"] == "no"
-        assert table.loc["Detector step (row, col)", "Value used"] == "Pending probe fit"
+        assert table.loc["Rotation flipped", "Value"] == "no"
+        assert table.loc["Detector step (row, col)", "Value"] == "Pending probe fit"
         assert direct._compute is None
         direct.preview({"C10_nm": 8., "C12_nm": 0., "phi12_deg": 0.}, compute_loss=False)
         table = direct.calibration()
         assert table.loc["Detector step (row, col)", "Source"] == "Estimated"
         # the table rounds for reading (six significant figures); the session keeps the full value
-        assert display_value(direct.detector_sampling_mrad) == table.loc["Detector step (row, col)", "Value used"]
+        estimated = f"{display_value(direct.detector_sampling_mrad)} mrad per pixel"
+        assert table.loc["Detector step (row, col)", "Value"] == estimated
         prepared = direct._compute
         direct.preview({"C10_nm": 9., "C12_nm": 0., "phi12_deg": 0.}, compute_loss=False)
         assert direct._compute is prepared
-        assert display_value(direct.detector_sampling_mrad) == table.loc["Detector step (row, col)", "Value used"]
-        assert all(value > 0 for value in table.loc["Detector step (row, col)", "Value used"])
+        assert table.loc["Detector step (row, col)", "Value"] == estimated
+        assert all(value > 0 for value in direct.detector_sampling_mrad)
         direct.set_rotation(9.0)
         assert direct.calibration().loc["Scan-detector rotation", "Source"] == "Modified in session"
     with DirectPtycho(data, voltage_kV=300.0, scan_detector_rotation_deg=0.0, **geometry) as direct:

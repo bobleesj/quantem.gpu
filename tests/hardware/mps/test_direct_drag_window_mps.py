@@ -41,7 +41,7 @@ def _optics(ptycho, aberrations):
 
 def _backend(ptycho):
     policy = direct_workflow.settings("phase", STRENGTH, None, None, None)
-    return direct_workflow._inputs(ptycho, dict(ptycho.aberrations), ptycho.sample_tilt_mrad, ptycho.depth_spread_nm,
+    return direct_workflow._inputs(ptycho, dict(ptycho.known_aberrations), ptycho.sample_tilt_mrad, ptycho.depth_spread_nm,
                                    3, policy)[0]
 
 

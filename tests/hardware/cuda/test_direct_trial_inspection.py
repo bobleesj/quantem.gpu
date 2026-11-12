@@ -174,7 +174,7 @@ def test_search_starts_from_the_current_public_coefficients():
         result = direct.aberrations(search="primary", tilt=False, trials=0, refinement=None,
                                       check_rotation=False, verbose=False)
         assert result.aberrations == wanted
-        assert direct.aberrations == wanted
+        assert direct.known_aberrations == wanted
     finally:
         direct.close()
 

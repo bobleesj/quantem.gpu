@@ -62,8 +62,9 @@ def test_live_probe_follows_optics_but_not_damping():
     try:
         initial_probe = viewer.probe._data.copy()
         initial_phase = viewer.reconstruction.phase_bytes
-        viewer.reconstruction.request_json = json.dumps(
-            dict(id=1, C10_nm=5, C12_nm=0, phi12_deg=0, committed=True))
+        # the browser sends slider requests as a "direct-preview" message, not a trait
+        request = dict(id=1, C10_nm=5, C12_nm=0, phi12_deg=0, committed=True)
+        viewer.reconstruction._on_preview_message(viewer.reconstruction, {"type": "direct-preview", "request": request}, [])
         assert not np.array_equal(initial_probe[0], viewer.probe._data[0])
         assert viewer.reconstruction.phase_bytes != initial_phase
         changed_probe = viewer.probe._data.copy()

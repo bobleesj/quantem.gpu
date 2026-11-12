@@ -103,8 +103,12 @@ def test_fit_regions_use_disjoint_supported_native_grids():
         _evaluation_region((128, 256), {"train_region": (0, 128, 0, 128), "validation_region": (0, 128, 128, 256)})
     with pytest.raises(ValueError, match="FFT padding"):
         _regions((512, 512), 32)
+    # one patch fits: train and hold out complementary electron halves of the same patch
+    assert _regions((128, 255), 128) == [(0, 128, 63, 191)] * 2
+    # smaller than one patch: the whole field is the patch, padded like the phase solve
+    assert _regions((100, 90), 128) == [(0, 100, 0, 90)] * 2
     with pytest.raises(ValueError, match="at least"):
-        _regions((128, 255), 128)
+        _regions((63, 255), 128)
 
 
 def test_held_equations_match_the_measured_fourier_residual():

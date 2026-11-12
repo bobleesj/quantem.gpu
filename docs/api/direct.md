@@ -251,7 +251,7 @@ holds `C12_nm=0`:
 It searches `phi12_deg` over its whole period, so a `phi12_deg` range or a
 nonzero held `C12_nm` alone raises and names what to pass; holding all three
 coefficients needs `check_rotation=False`. The joint fit searches depth
-spreads in `quantem.gpu.direct_ptycho.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ptycho.aberrations = {...}` to
+spreads in `quantem.gpu.direct_ptycho.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ptycho.known_aberrations = {...}` to
 state a known calibration, which `run()` then applies without fitting.
 `detector_sampling_mrad` is detector angular sampling in
 mrad per pixel, `(row, col)`. Calibrate it as its own step before direct ptychography:
@@ -948,7 +948,7 @@ Rerun the aberration search for older records; the loader does not guess their u
   `trials` must be non-negative and `refinement` is `"auto"` or `None` (a
   `search="primary"` fit's best trial, unrefined). With `tilt=True` and
   `trials=0` the session's previous joint fit is refined. Use
-  `run()`, or assign `ptycho.aberrations = {...}`, to apply known
+  `run()`, or assign `ptycho.known_aberrations = {...}`, to apply known
   parameters without a search.
 - To save results from an in-memory array, provide `source_path` for provenance.
   Direct arrays never reuse results from disk automatically: a path cannot

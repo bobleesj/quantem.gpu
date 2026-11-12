@@ -180,7 +180,7 @@ def test_higher_order_coefficients_are_independent_between_streams():
         references = [run(i) for i in range(2)]
         with ThreadPoolExecutor(max_workers=2) as pool:
             for _ in range(3):
-                for actual, expected in zip(pool.map(reconstruct, range(2)), references):
+                for actual, expected in zip(pool.map(run, range(2)), references):
                     np.testing.assert_array_equal(actual, expected)
     finally:
         for session in sessions:

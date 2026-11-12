@@ -30,7 +30,8 @@ def test_every_input_form_gives_the_same_drift(images):
     results = [SimpleNamespace(phase=image, object_sampling_A=SAMPLING_A) for image in images]
     for found in (drift(images.cpu().numpy(), sampling_A=SAMPLING_A[0]), drift(cupy.asarray(images), sampling_A=SAMPLING_A),
                   drift(list(images), sampling_A=SAMPLING_A), drift(stream), drift(results)):
-        np.testing.assert_array_equal(found.displacement_A, DRIFT_DISPLACEMENT)
+        # torch versions move the last float64 bit (7e-15 Å); every input form must still agree to 1e-12 Å
+        np.testing.assert_allclose(found.displacement_A, DRIFT_DISPLACEMENT, rtol=0, atol=1e-12)
     assert drift(stream).frames == stream.frames
     np.testing.assert_array_equal(running(stream).displacement_A, running(images, sampling_A=SAMPLING_A).displacement_A)
 

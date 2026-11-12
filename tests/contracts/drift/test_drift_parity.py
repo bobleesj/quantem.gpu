@@ -72,7 +72,8 @@ def test_register_matches_myptycho(images):
 
 def test_drift_matches_myptycho(images):
     found = drift(images, sampling_A=SAMPLING_A)
-    np.testing.assert_array_equal(found.displacement_A, DRIFT_DISPLACEMENT)
+    # bit for bit with torch 2.13; torch 2.15 moves the last float64 bit (7e-15 Å), so 1e-12 Å as below
+    np.testing.assert_allclose(found.displacement_A, DRIFT_DISPLACEMENT, rtol=0, atol=1e-12)
     # σ col and closure are rounding-level (1e-15): a LAPACK build may move them, so they are compared to 1e-12 Å
     np.testing.assert_allclose(found.sigma_A, DRIFT_SIGMA, rtol=0, atol=1e-12)
     np.testing.assert_allclose(found.closure_A, DRIFT_CLOSURE, rtol=0, atol=1e-12)

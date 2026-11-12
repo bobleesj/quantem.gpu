@@ -631,13 +631,13 @@ class DirectPtycho:
         They are known once given to ``DirectPtycho(aberrations=...)``, fitted by ``aberrations()``, applied by
         ``run(aberrations=...)``, or assigned here, and ``run()`` then applies them instead of fitting. Assign a
         whole mapping to state a known or restored
-        calibration (``direct.aberrations = {"C10_nm": 15.8, "C12_nm": 4.3, "phi12_deg": 17.4}``); assign None to forget
+        calibration (``direct.known_aberrations = {"C10_nm": 15.8, "C12_nm": 4.3, "phi12_deg": 17.4}``); assign None to forget
         them, so the next ``run()`` fits again. ``aberrations()`` starts its refinement from known
         aberrations.
 
         Examples
         --------
-        >>> ptycho.aberrations = saved["aberrations"]  # doctest: +SKIP
+        >>> ptycho.known_aberrations = saved["aberrations"]  # doctest: +SKIP
         >>> result = ptycho.run()  # applies them; no fit  # doctest: +SKIP
         """
         return self._aberrations
@@ -676,7 +676,7 @@ class DirectPtycho:
         >>> data = io.load("scan.qem")
         >>> ptycho = DirectPtycho(data, scan_detector_rotation_deg=12.3)
         >>> ptycho.calibration()
-        >>> ptycho.calibration(to_dict=True)["Scan step (row, col)"]["Value used"]  # doctest: +SKIP
+        >>> ptycho.calibration(to_dict=True)["Scan step (row, col)"]["Value"]  # doctest: +SKIP
         """
         import pandas as pd
 
@@ -710,6 +710,9 @@ class DirectPtycho:
             if isinstance(value, (list, tuple)):
                 value = tuple(value)
             unit = labels.CALIBRATION_UNITS[name] if name == "detector_sampling_mrad" else recorded["Unit"]
+            # a placeholder ("Pending probe fit", "Not recorded") is not a quantity, so it takes no unit
+            if isinstance(value, str):
+                unit = ""
             rows[label] = {"Value": f"{labels.display_value(value)} {unit}".strip(), "Source": source}
         rotation = rows[labels.CALIBRATION_LABELS["scan_detector_rotation_deg"]]
         rows[labels.CALIBRATION_LABELS["scan_detector_rotation_flipped"]] = {

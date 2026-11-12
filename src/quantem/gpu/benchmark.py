@@ -368,7 +368,7 @@ def run_direct(
     # fields are exported; the acquisition and its metadata remain untouched.
     with contextlib.redirect_stdout(text_io.StringIO()):
         data, load_s = _timed(
-            partial(io.load, source, backend=selected, verbose=False), selected
+            partial(io.load, source, device=selected, verbose=False), selected
         )
     timings: dict[str, list[float]] = {}
     records: dict[str, list[dict]] = {}
@@ -437,7 +437,8 @@ def run_direct(
                 fitted, seconds = _timed(
                     partial(
                         direct.aberrations,
-                        search="standard",
+                        # the GPU low-order joint search this benchmark times; "standard" adds a host fifth-order refinement
+                        search="primary",
                         trials=trials,
                         seed=seed,
                         compare_standard=False,
@@ -445,11 +446,9 @@ def run_direct(
                     ),
                     selected,
                 )
-                branches = (
-                    len(fitted.rotation_branches.branches)
-                    if fitted.rotation_branches
-                    else 1
-                )
+                # rotation branches that ran a trial search: a joint fit maps the second branch from the first
+                # (no trials), so counting both would demand trials that were never run
+                branches = len({trial["search"] for trial in fitted.trial_records}) or 1
                 record = _fit_record(fitted, selected, trials, branches)
                 keep("full_field_fit", seconds, fitted.phase, record)
                 output, output_s = _timed(
@@ -514,7 +513,7 @@ def run_direct(
                         local, fit_s = _timed(
                             partial(
                                 regional.aberrations,
-                                search="standard",
+                                search="primary",
                                 trials=trials,
                                 seed=seed,
                                 check_rotation=False,

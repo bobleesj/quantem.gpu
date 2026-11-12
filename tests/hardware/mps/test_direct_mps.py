@@ -55,7 +55,7 @@ def _session(data, point, radius=RADIUS):
                           bright_field_center_px=CENTER, bright_field_radius_px=radius,
                           scan_detector_rotation_deg=ROTATION_DEG)
     aberrations, tilt, depth = POINTS[point]
-    ptycho.aberrations = aberrations
+    ptycho.known_aberrations = aberrations
     ptycho.sample_tilt_mrad, ptycho.depth_spread_nm = tilt, depth
     return ptycho
 

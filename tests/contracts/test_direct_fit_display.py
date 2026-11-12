@@ -22,12 +22,13 @@ def test_preview_compares_three_final_methods_without_refitting(monkeypatch, siz
     display = Mock(return_value=Mock())
     monkeypatch.setattr(ipython, "get_ipython", lambda: SimpleNamespace(kernel=object()))
     monkeypatch.setattr(IPython.display, "display", display)
+    # three methods give three different images; an identical one would be dropped as a repeat
     wave = np.exp(1j * np.arange(256).reshape(16, 16) / 100)
     image = DirectPtychoResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2))
-    complex_image = DirectPtychoResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
+    complex_image = DirectPtychoResult(object_wave=wave ** .8, backend="cuda", object_sampling_A=(.2, .2),
                               reconstruction_method="complex",
                               reconstruction_options={"phase_damp": .03, "amplitude_damp": .03})
-    phase_image = DirectPtychoResult(object_wave=wave, backend="cuda", object_sampling_A=(.2, .2),
+    phase_image = DirectPtychoResult(object_wave=wave ** .6, backend="cuda", object_sampling_A=(.2, .2),
                             reconstruction_method="phase", reconstruction_options={"phase_damp": .03})
     direct = SimpleNamespace(run=Mock(side_effect=[image, image, complex_image, phase_image]),
                           _accept_result=Mock(), backend="cuda", _streamed=None)

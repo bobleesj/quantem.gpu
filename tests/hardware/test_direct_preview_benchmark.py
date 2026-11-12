@@ -45,9 +45,9 @@ def test_changed_defocus_benchmark_preserves_calibration(sample):
         if sample:
             direct.sample_tilt_mrad = (2.0, -3.0)
             direct.depth_spread_nm = 12.0
-        before = (dict(direct.aberrations), direct.sample_tilt_mrad, direct.depth_spread_nm)
+        before = (dict(direct.known_aberrations), direct.sample_tilt_mrad, direct.depth_spread_nm)
         reference, _ = direct.preview(
-            direct.aberrations,
+            direct.known_aberrations,
             upsample=1,
             compute_loss=False,
             sample_tilt_mrad=direct.sample_tilt_mrad or (0, 0),
@@ -56,7 +56,7 @@ def test_changed_defocus_benchmark_preserves_calibration(sample):
         if backend == "cuda":
             reference = cp.asnumpy(reference)
         report = run_direct_preview(direct, upsample=(1, 2), runs=3)
-        assert before == (direct.aberrations, direct.sample_tilt_mrad, direct.depth_spread_nm)
+        assert before == (direct.known_aberrations, direct.sample_tilt_mrad, direct.depth_spread_nm)
         assert report["bright_field_pixels"] == direct.num_bright_field_pixels
         assert report["browser_paint_measured"] is False
         for factor, result in report["measurements"].items():

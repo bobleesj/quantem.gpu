@@ -125,11 +125,11 @@ def test_native_previews_are_their_own_arrays_and_a_region_refit_starts_from_ass
     fit_tilt = DirectPtycho._fit_tilt
 
     def recorded(self, *args, **kwargs):
-        starts.append(dict(self.aberrations))
+        starts.append(dict(self.known_aberrations))
         return fit_tilt(self, *args, **kwargs)
     monkeypatch.setattr(DirectPtycho, "_fit_tilt", recorded)
     with DirectPtycho(acquisition, **SETTINGS) as direct:
-        direct.aberrations = {"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}
+        direct.known_aberrations = {"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}
         direct.sample_tilt_mrad, direct.depth_spread_nm = (1.0, -2.0), 30.0
         direct.aberrations(search="primary", tilt=True, trials=0, compare_standard=False, check_rotation=False,
                              scan_region=(0, 128, 0, 128), verbose=False)

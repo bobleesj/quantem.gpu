@@ -123,7 +123,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
         assert not np.allclose(images[0], images[1], atol=1e-6, rtol=0)
         assert direct.sample_tilt_mrad == fit.sample_tilt_mrad
         assert direct.depth_spread_nm == fit.depth_spread_nm
-        assert direct.aberrations == fit.aberrations
+        assert direct.known_aberrations == fit.aberrations
 
 
 def test_show_selected_region_preserves_full_field_joint_fit(monkeypatch):
@@ -141,7 +141,7 @@ def test_show_selected_region_preserves_full_field_joint_fit(monkeypatch):
         phase = fit.phase.copy()
         figure = direct.show("tilt", region=(16, 80, 32, 96), size="small")
         assert "Rows 16:80, columns 32:96" in figure.get_suptitle()
-        assert direct.aberrations == fit.aberrations
+        assert direct.known_aberrations == fit.aberrations
         assert direct.scan_detector_rotation_deg == fit.scan_detector_rotation_deg
         np.testing.assert_array_equal(fit.phase, phase)
         assert not fit.parameter_slices  # regional evidence was not attached to the full field
@@ -160,7 +160,7 @@ def test_show_selected_region_preserves_full_field_joint_fit(monkeypatch):
                                       upsample=factor, compute_loss=False)
             actual = captured[-1][0][0]
             np.testing.assert_array_equal(actual, expected[16 * factor:80 * factor, 32 * factor:96 * factor])
-            assert direct.aberrations == fit.aberrations
+            assert direct.known_aberrations == fit.aberrations
             assert direct.sample_tilt_mrad == fit.sample_tilt_mrad
 
 
@@ -209,7 +209,7 @@ def test_focus_grid_stack_and_static_preserve_images(monkeypatch):
         assert reflowed.columns == 3
         reflowed.close()
         assert direct._aberration_search is fit
-        assert direct.aberrations == fit.aberrations
+        assert direct.known_aberrations == fit.aberrations
         assert direct.sample_tilt_mrad == fit.sample_tilt_mrad
         assert direct.depth_spread_nm == fit.depth_spread_nm
         grid.close()

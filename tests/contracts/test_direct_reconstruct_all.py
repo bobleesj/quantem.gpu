@@ -68,13 +68,17 @@ def test_all_rejects_invalid_options_before_fitting():
 def test_named_method_comparison_displays_each_result_once():
     import matplotlib
     matplotlib.use("Agg")
-    wave = np.exp(1j * np.arange(64).reshape(8, 8) / 100)
-    images = {name: DirectPtychoResult(object_wave=wave.copy(), backend="cuda", object_sampling_A=(.5, .5),
-                             reconstruction_method=name)
-              for name in ("phase_of_mean", "phase", "complex")}
+    # each method gives its own phase; a panel identical to an earlier one is dropped
+    images = {name: DirectPtychoResult(object_wave=np.exp(1j * np.arange(64).reshape(8, 8) / (100 + index)),
+                                       backend="cuda", object_sampling_A=(.5, .5), reconstruction_method=name)
+              for index, name in enumerate(("phase_of_mean", "phase", "complex"))}
     figure = images["phase_of_mean"].show(compare=images, columns=3, size="small")
     image_axes = [axis for axis in figure.axes if axis.images]
     assert len(image_axes) == 6  # Full field and matched zoom, once per method.
     assert [axis.get_title().splitlines()[0] for axis in image_axes[:3]] == [
         "Phase of the mean", "Smoothed phase", "Phase and amplitude",
     ]
+    repeat = DirectPtychoResult(object_wave=images["phase"].object_wave.copy(), backend="cuda",
+                                object_sampling_A=(.5, .5), reconstruction_method="phase")
+    figure = images["phase_of_mean"].show(compare=[images["phase"], repeat], columns=3, size="small")
+    assert len([axis for axis in figure.axes if axis.images]) == 4

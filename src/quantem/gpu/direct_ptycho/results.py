@@ -1221,11 +1221,10 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
             log_amplitude=neural_comparison, limit_inv_A=limit,
         )
         groups.append(spectra)
-        area = "Full-field" if neural_comparison or region is None else "Crop"
         fft_units = "log10 amplitude (rad)" if neural_comparison else "magnitude (dB)"
         group_titles.append([
             "\n".join(_phase_title(result, neural=neural).splitlines()[:2])
-            + f"\n{area} FFT · shared {fft_units}" for result, neural in entries
+            + f"\nFull-field FFT · shared {fft_units}" for result, neural in entries
         ])
         group_bars.append([scalebar(frequency_sampling[1], "1/Å", spectrum.shape[0], axsize[0]) for spectrum in spectra])
         fft_limits = (tuple(np.percentile(np.concatenate([p.ravel() for p in spectra]), [1, 99.8]))
@@ -1262,7 +1261,7 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
                 auto_contrast=False, link_contrast=True, link_zoom=True, link_pan=True,
                 panel_overlays=overlays, show_panel_titles=True, show_scale_bar=True,
                 controls_collapsed=True, display_bin=1, verbose=False,
-                title=f"{area} FFT · mean removed · Hann window · shared {fft_units}"
+                title=f"Full-field FFT · mean removed · Hann window · shared {fft_units}"
                 if show_fft and group == len(groups) - 1 else "Phase comparison · shared contrast (rad)",
             ))
         return viewers[0] if len(viewers) == 1 else VBox(viewers)
@@ -1278,7 +1277,7 @@ def _phase_comparison(first, *others, axsize: tuple[float, float], cmap: str = "
     if any(result.reconstruction_options.get("scan_basis") is not None for result in results):
         heading += "\nScale bars: nominal acquisition grid; affine basis applied in the transfer model"
     if show_fft:
-        heading += f"\n{area} FFT: mean removed · Hann window · shared {fft_units}"
+        heading += f"\nFull-field FFT: mean removed · Hann window · shared {fft_units}"
     heading = "\n".join(fill(line, width=max(20, int(columns * axsize[0] * 7)))
                         for line in heading.splitlines())
     title_lines = max(label.count("\n") + 1 for labels in group_titles for label in labels)

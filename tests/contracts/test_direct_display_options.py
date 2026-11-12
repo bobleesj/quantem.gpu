@@ -163,12 +163,14 @@ def test_compare_regularization_strengths_uses_one_contrast_and_region():
         # result has its own contrast range saved.
         pair = results[0].show(compare=result, region="bottom-left", cmap="gray")
         pair_axes = [axis for axis in pair.axes if axis.images]
-        np.testing.assert_array_equal(full.images[0].get_array(), pair_axes[1].images[0].get_array())
+        # comparing the first result with itself drops the repeat, leaving its own full field first
+        shown = pair_axes[0] if result is results[0] else pair_axes[1]
+        np.testing.assert_array_equal(full.images[0].get_array(), shown.images[0].get_array())
     np.testing.assert_array_equal(baseline.object_wave, original)
 
 
-def test_crop_fft_uses_selected_region_and_preserves_relative_signal():
-    """A lattice outside the crop cannot create peaks in the crop spectrum."""
+def test_fft_uses_the_whole_field_and_preserves_relative_signal():
+    """The spectrum comes from the whole field (a crop gives blocky bins), and says so, even beside a zoom."""
     from quantem.gpu.direct_ptycho.results import _phase_spectra
 
     row, col = np.indices((128, 128))
@@ -186,10 +188,13 @@ def test_crop_fft_uses_selected_region_and_preserves_relative_signal():
     figure = result.show(compare=weaker, region="top-left", show_fft=True, columns=1, cmap="gray")
     images = [axis for axis in figure.axes if axis.images]
     assert len(images) == 6
-    assert "Crop FFT" in images[2].get_title()
-    assert "Crop FFT" in images[5].get_title()
+    assert "Full-field FFT" in images[2].get_title()
+    assert "Full-field FFT" in images[5].get_title()
+    # The whole field's lattice runs along columns; the crop's perpendicular lattice is a small part of it.
+    peak = np.unravel_index(np.argmax(images[2].images[0].get_array()[..., 0]), images[2].images[0].get_array().shape[:2])
+    assert peak in ((64, 48), (64, 80))
     # Common limits preserve the weaker signal rather than stretching each FFT.
-    assert images[2].images[0].get_array()[12, 16, 0] > images[5].images[0].get_array()[12, 16, 0]
+    assert images[2].images[0].get_array()[peak][0] > images[5].images[0].get_array()[peak][0]
     np.testing.assert_array_equal(result.object_wave, original)
 
 
@@ -201,7 +206,9 @@ def test_interactive_phase_comparison_keeps_native_crops_and_shared_fft_scale(si
     from quantem.widget import Show2D
 
     result = _saved_result()
-    widget = result.show(compare=[result, result], region="bottom-left",
+    # two different reconstructions: an identical compared result is dropped as a repeat
+    others = [replace(result, object_wave=result.object_wave ** factor) for factor in (0.8, 0.6)]
+    widget = result.show(compare=others, region="bottom-left",
                          interactive=True, show_fft=True, columns=2, size=size, cmap="gray")
     assert isinstance(widget, VBox)
     full, crop, fft = widget.children
@@ -210,12 +217,11 @@ def test_interactive_phase_comparison_keeps_native_crops_and_shared_fft_scale(si
     assert all(viewer.panel_width_px == width for viewer in widget.children)
     assert full.panel_overlays[0][0]["box"] == [11.5, -0.5, 15.5, 3.5]
     assert full.pixel_size == .5
-    assert fft.pixel_size == .5  # 1 / (4 crop pixels × .5 Å per pixel)
-    assert "Crop FFT" in fft.labels[0]
+    assert "Full-field FFT" in fft.labels[0]
     # FFT and crops use separate galleries so Show2D never pads the crops
     # to the full-field shape before inspection or Fourier analysis.
     assert full._data.shape[-2:] == (16, 16)
-    assert crop._data.shape[-2:] == fft._data.shape[-2:] == (4, 4)
+    assert crop._data.shape[-2:] == (4, 4)
     for viewer in widget.children:
         viewer.close()
     widget.close()

@@ -44,7 +44,7 @@ def test_omitted_rotation_is_estimated_like_dpc_and_labelled(capsys):
         assert direct.scan_detector_rotation_source == "estimated"
         table = direct.calibration()
         assert table.loc["Scan-detector rotation", "Source"] == "Estimated (centre-of-mass curl)"
-        assert table.loc["Rotation flipped", "Value used"] == "no"
+        assert table.loc["Rotation flipped", "Value"] == "no"
     assert "estimated from the centre-of-mass curl" in capsys.readouterr().out
 
 
@@ -71,7 +71,7 @@ def test_a_recorded_rotation_wins_over_the_estimate():
         assert direct.scan_detector_rotation_source == "metadata"
         # the launch table states the recorded flip; it read "Not recorded" before 2026-10-20
         flipped = direct.calibration().loc["Rotation flipped"]
-        assert (flipped["File value"], flipped["Value used"], flipped["Source"]) == ("yes", "yes", "Recorded")
+        assert (flipped["Value"], flipped["Source"]) == ("yes", "Recorded")
     assert data.metadata_table().loc["Rotation flipped", "Value"] == "yes"
 
 
@@ -128,18 +128,18 @@ def test_assigned_aberrations_are_known_and_reconstruct_does_not_refit(capsys):
     known = {"C10_nm": 1.5, "C12_nm": 0.4, "phi12_deg": 12.0}
     with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as direct:
         direct.aberrations = lambda **options: pytest.fail("run() refitted known aberrations")
-        direct.aberrations = known
+        direct.known_aberrations = known
         result = direct.run()
         assert result.aberrations == known
         given = DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options())
         with given:
             np.testing.assert_array_equal(result.phase, given.run().phase)
         with pytest.raises(ValueError, match="C10_nm"):
-            direct.aberrations = {"C10": 1.0}
-        assert direct.aberrations == known
+            direct.known_aberrations = {"C10": 1.0}
+        assert direct.known_aberrations == known
     assert "fitting with search='standard' first" not in capsys.readouterr().out
     with DirectPtycho(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options()) as direct:
-        direct.aberrations = None  # forget them: the next run() fits
+        direct.known_aberrations = None  # forget them: the next run() fits
         fits = []
         direct.aberrations = lambda **options: fits.append(options) or pytest.skip("fit requested, as intended")
         direct.run()
