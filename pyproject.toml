@@ -68,7 +68,9 @@ cuda = [
 ]
 mps = [
     "mlx; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    "pyobjc-framework-Metal; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # PyObjC 13 crashes the Metal HDF5 decode (segfault on the first gold acquisition load); 12.2.1 is the tested release
+    "pyobjc-core<13; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "pyobjc-framework-Metal<13; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "optuna==4.9.0",
     "scipy",
 ]

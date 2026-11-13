@@ -592,6 +592,8 @@ the first run after this change computes them again, as after any code change; t
 
 ### Fixed
 
+- `[mps]` caps PyObjC below 13: PyObjC 13.0 crashed the Metal HDF5 decode on the first load, so fresh Mac
+  installs failed before any reconstruction.
 - `parallax.run(aberrations=True)` fits again. Since the `fit_aberrations=` keyword became `aberrations=`, the
   result overwrote the keyword before it was read, so the fit never ran and `result.aberrations` was None.
 - Comparison figures label the spectrum "Full-field FFT": it is computed from the whole field, and with a zoom
