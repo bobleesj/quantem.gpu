@@ -406,15 +406,59 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
   }
 }
 
+/// The series' encoded buffers as one Metal residency set where the system has them (macOS 15,
+/// iOS 18). Earlier systems keep ordinary tracked-resource residency: the same exact results, but
+/// the system may page the encoded counts out under memory pressure.
+final class RuntimeANSResidency {
+  private let set: AnyObject?
+  let allocatedSize: UInt64
+
+  init(device: MTLDevice, buffers: [MTLBuffer], label: String) throws {
+    if #available(macOS 15.0, iOS 18.0, *) {
+      let descriptor = MTLResidencySetDescriptor()
+      descriptor.label = label
+      descriptor.initialCapacity = buffers.count
+      let residency = try device.makeResidencySet(descriptor: descriptor)
+      for buffer in buffers { residency.addAllocation(buffer) }
+      residency.commit()
+      guard residency.allocationCount == buffers.count else {
+        residency.removeAllAllocations()
+        residency.commit()
+        throw MetalRuntimeANSResidentSource.invalid(
+          "Metal residency did not retain every runtime ANS allocation")
+      }
+      residency.requestResidency()
+      set = residency
+      allocatedSize = residency.allocatedSize
+    } else {
+      set = nil
+      allocatedSize = buffers.reduce(0) { $0 + UInt64($1.allocatedSize) }
+    }
+  }
+
+  func attach(_ command: MTLCommandBuffer) {
+    if #available(macOS 15.0, iOS 18.0, *), let residency = set as? MTLResidencySet {
+      command.useResidencySet(residency)
+    }
+  }
+
+  func end() {
+    if #available(macOS 15.0, iOS 18.0, *), let residency = set as? MTLResidencySet {
+      residency.endResidency()
+      residency.removeAllAllocations()
+      residency.commit()
+    }
+  }
+}
+
 /// Explicit residency and ordered diffraction queries for compatible ANS acquisitions.
-@available(macOS 15.0, iOS 18.0, *)
 public final class MetalRuntimeANSSeries: @unchecked Sendable {
   public let sources: [MetalRuntimeANSResidentSource]
   public private(set) var isReleased = false
   public var residentBytes: UInt64 { isReleased ? 0 : residency.allocatedSize }
 
   private let queue: MTLCommandQueue
-  private let residency: MTLResidencySet
+  private let residency: RuntimeANSResidency
   private var outputs: [MTLBuffer]
   private var virtualDetectorOutputs: [MTLBuffer]
   private var detectorSelected: [MTLBuffer]
@@ -441,23 +485,12 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
     }
     self.sources = sources
     self.queue = queue
-    let descriptor = MTLResidencySetDescriptor()
-    descriptor.label = "Runtime ANS acquisition series"
     var identities = Set<ObjectIdentifier>()
     let buffers = sources.flatMap(\.stableBuffers).filter {
       identities.insert(ObjectIdentifier($0 as AnyObject)).inserted
     }
-    descriptor.initialCapacity = buffers.count
-    residency = try first.device.makeResidencySet(descriptor: descriptor)
-    for buffer in buffers { residency.addAllocation(buffer) }
-    residency.commit()
-    guard residency.allocationCount == buffers.count else {
-      residency.removeAllAllocations()
-      residency.commit()
-      throw MetalRuntimeANSResidentSource.invalid(
-        "Metal residency did not retain every runtime ANS allocation")
-    }
-    residency.requestResidency()
+    residency = try RuntimeANSResidency(
+      device: first.device, buffers: buffers, label: "Runtime ANS acquisition series")
     let bytes = first.shape[2] * first.shape[3] * 4
     outputs = try sources.indices.map { index in
       try MetalRuntimeANSResidentSource.sharedBuffer(
@@ -505,7 +538,7 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
       let command = queue.makeCommandBuffer()
     else { throw MetalRuntimeANSResidentSource.invalid("Choose an in-bounds series DP") }
     memset(failure.contents(), 0, 4)
-    command.useResidencySet(residency)
+    residency.attach(command)
     let scan = scanRow * sources[0].shape[1] + scanColumn
     try sources[priorityIndex].encodeDiffraction(
       scan: scan, output: outputs[priorityIndex], command: command)
@@ -525,7 +558,7 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
       let encoder = command.makeComputeCommandEncoder(dispatchType: .concurrent)
     else { throw MetalRuntimeANSResidentSource.invalid("Choose an in-bounds series DP") }
     let scan = scanRow * sources[0].shape[1] + scanColumn
-    command.useResidencySet(residency)
+    residency.attach(command)
     for (source, output) in zip(sources, outputs) {
       guard let failure = source.failure else {
         throw MetalRuntimeANSResidentSource.invalid("A runtime ANS source was released")
@@ -666,7 +699,7 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
         "Metal could not encode a priority detector update")
     }
     memset(failure.contents(), 0, 4)
-    command.useResidencySet(residency)
+    residency.attach(command)
     if rebaseFromZero {
       guard let blit = command.makeBlitCommandEncoder() else {
         throw MetalRuntimeANSResidentSource.invalid("Metal could not reset the priority product")
@@ -761,7 +794,7 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
       guard let commands = queue.makeCommandBuffer() else {
         throw MetalRuntimeANSResidentSource.invalid("Metal could not encode a detector update")
       }
-      commands.useResidencySet(residency)
+      residency.attach(commands)
       if prepared.contains(where: { $0.rebasesFromZero }) {
         guard let blit = commands.makeBlitCommandEncoder() else {
           throw MetalRuntimeANSResidentSource.invalid("Metal could not reset detector products")
@@ -862,7 +895,7 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
     guard let command = queue.makeCommandBuffer() else {
       throw MetalRuntimeANSResidentSource.invalid("Metal could not encode a detector update")
     }
-    command.useResidencySet(residency)
+    residency.attach(command)
     for source in sources {
       guard let failure = source.failure else {
         throw MetalRuntimeANSResidentSource.invalid("A runtime ANS source was released")
@@ -907,9 +940,7 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
 
   public func release() {
     guard !isReleased else { return }
-    residency.endResidency()
-    residency.removeAllAllocations()
-    residency.commit()
+    residency.end()
     outputs.removeAll(keepingCapacity: false)
     virtualDetectorOutputs.removeAll(keepingCapacity: false)
     detectorSelected.removeAll(keepingCapacity: false)
