@@ -12,7 +12,7 @@ from quantem.gpu import DirectPtycho
 from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.direct_ptycho.cuda.streamed import StreamedDirect
-from quantem.gpu.direct_ptycho.units import aberrations_to_engine
+from quantem.gpu.direct_ptycho.units import ENGINE_PER_NM, aberrations_to_engine, higher_order_arrays, validate_aberrations
 
 SETTINGS = {
     "backend": "cuda", "voltage_kV": 300., "semiangle_mrad": 30.,
@@ -81,6 +81,7 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
             data, mean_pattern=None, center=SETTINGS["bright_field_center_px"],
             radius=SETTINGS["bright_field_radius_px"], threshold=0., semiangle_mrad=30.,
             detector_sampling_mrad=SETTINGS["detector_sampling_mrad"], scan_detector_rotation_flipped=transposed,
+            full_scan_only=False,
         )
         values[..., 2, 3] = 0  # independent dense reference's scientific validity mask
         with DirectPtycho(values, **SETTINGS, scan_detector_rotation_flipped=transposed) as dense:
@@ -94,6 +95,109 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
             # R2C and C2C forward transforms have different float32 rounding.
             cp.testing.assert_allclose(phase, expected, atol=1e-6, rtol=1e-5)
         assert data.read(scan_region=(0, 1, 0, 1))[0, 0, 2, 3].item() == 65535
+
+
+@pytest.mark.parametrize("transposed, factor", [(False, 1), (True, 2)])
+def test_streamed_fifth_order_phase_matches_stored_spectra(transposed, factor):
+    """The batched detector columns evaluate the same 14-term chi as the dense spectrum: phases agree in float32."""
+    fifth = validate_aberrations({
+        **ABERRATIONS, "C21_nm": 40., "phi21_deg": -15., "C23_nm": 25., "phi23_deg": 30., "C30_nm": 1500.,
+        "C32_nm": 900., "phi32_deg": 27., "C34_nm": 700., "phi34_deg": -44., "C41_nm": 2e4, "phi41_deg": -50.,
+        "C43_nm": 1.5e4, "phi43_deg": 5., "C45_nm": 1e4, "phi45_deg": 35., "C50_nm": -4e5, "C52_nm": 3e5,
+        "phi52_deg": 14., "C54_nm": 2e5, "phi54_deg": 1., "C56_nm": 1e5, "phi56_deg": -10.,
+    }, higher_order=True)
+    magnitudes, angles = higher_order_arrays(fifth)
+    values = _counts((128, 128, 8, 8))
+    with _encoded(values) as data:
+        streamed = StreamedDirect(
+            data, mean_pattern=None, center=SETTINGS["bright_field_center_px"],
+            radius=SETTINGS["bright_field_radius_px"], threshold=0., semiangle_mrad=30.,
+            detector_sampling_mrad=SETTINGS["detector_sampling_mrad"], scan_detector_rotation_flipped=transposed,
+            full_scan_only=True,
+        )
+        values[..., 2, 3] = 0  # independent dense reference's scientific validity mask
+        with DirectPtycho(values, **SETTINGS, scan_detector_rotation_flipped=transposed) as dense:
+            expected, _ = dense.preview(fifth, compute_loss=False, upsample=factor, output="native")
+            options = dict(voltage_kV=300., semiangle_mrad=30., scan_sampling_A=SETTINGS["scan_sampling_A"],
+                           rotation_deg=27., upsample=factor, sample_tilt_mrad=(0., 0.), depth_spread_A=0.)
+            phase, _ = streamed.phase(aberrations_to_engine(fifth), **options,
+                higher_order_magnitudes=magnitudes * np.float32(ENGINE_PER_NM), higher_order_angles=angles)
+            low_order, _ = streamed.phase(aberrations_to_engine(ABERRATIONS), **options)
+            # the higher orders must change the image, or agreement below would not test them
+            assert float(cp.abs(phase - low_order).max()) > 1e-3
+            cp.testing.assert_allclose(phase, expected, atol=1e-6, rtol=1e-5)
+
+
+def test_fit_region_parks_the_owned_acquisition_then_restores_it(tmp_path, monkeypatch):
+    """A session on a device too small for the dense path fits a region with the encoded scan parked off the device."""
+    from quantem.gpu import io
+    from quantem.gpu.direct_ptycho import workflow
+
+    monkeypatch.setattr(workflow, "_exceeds_device", lambda data: True)
+    values = _counts((256, 256, 8, 8))
+    path = tmp_path / "scan.qem"
+    with _encoded(values) as original:
+        io.save(path, original)
+    options = dict(voltage_kV=300., semiangle_mrad=30., scan_sampling_A=SETTINGS["scan_sampling_A"], rotation_deg=27.,
+                   upsample=1, sample_tilt_mrad=(0., 0.), depth_spread_A=0.)
+    region = (64, 192, 64, 192)
+    with DirectPtycho.open(str(path), **SETTINGS) as session:
+        streamed = session._streamed
+        assert streamed.full_scan_only and session._reclaimable_bytes() == session._data.data.nbytes - (
+            session._data.data.valid.nbytes + session._data.data.detector_total_device().nbytes)
+        before, _ = streamed.phase(aberrations_to_engine(ABERRATIONS), **options)
+        with session.select_region(region) as regional:
+            expected, _ = regional.preview(ABERRATIONS, compute_loss=False, output="native")
+        with session._region_for_fit(region) as regional:
+            assert streamed.source.chunks == [] and streamed.chunks == ()
+            with pytest.raises(ValueError, match="parked"):
+                session._data.read(scan_region=(0, 1, 0, 1))
+            assert regional.scan_shape == (128, 128)
+            phase, _ = regional.preview(ABERRATIONS, compute_loss=False, output="native")
+            cp.testing.assert_array_equal(phase, expected)
+        assert streamed.source._parked is None
+        after, _ = streamed.phase(aberrations_to_engine(ABERRATIONS), **options)
+        cp.testing.assert_array_equal(after, before)
+
+
+# ---
+
+
+def test_parked_counts_return_the_same_counts_and_refuse_reads_meanwhile():
+    """An encoded acquisition parked in host memory decodes to the same counts once restored, in part or whole."""
+    values = _counts((128, 128, 8, 8))
+    frames = values.reshape(-1, 8, 8)
+    with _encoded(values) as data:
+        source = data.data
+        device_bytes = source.nbytes
+        source.park()
+        assert source.chunks == []
+        with pytest.raises(ValueError, match="parked"):
+            source.decode_scan_range_device(0, 128)
+        source.restore(4000, 6000)
+        assert [chunk.first for chunk in source.chunks] == [3554, 5331]
+        cp.testing.assert_array_equal(source.decode_scan_range_device(4000, 6000), frames[4000:6000])
+        with pytest.raises(ValueError, match="parked"):
+            source.decode_scan_range_device(3000, 4100)
+        source.park()
+        assert source.chunks == []
+        # a device with no room refuses the return and loses nothing: the next restore succeeds
+        from quantem.gpu.resident.cuda import counts
+
+        def no_room(arrays):
+            raise cp.cuda.memory.OutOfMemoryError(1, 0, 0)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(counts, "retain", no_room)
+            with pytest.raises(MemoryError, match="intact in host memory"):
+                source.restore()
+        assert source.chunks == [] and source._parked is not None
+        source.restore()
+        assert source._parked is None and source.nbytes == device_bytes
+        cp.testing.assert_array_equal(source.decode_scan_range_device(0, frames.shape[0]), frames)
+
+
+# ---
 
 
 def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):

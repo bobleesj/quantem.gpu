@@ -91,6 +91,8 @@ class StreamedSeriesCompute(DetectorQueries):
                 raise ValueError(
                     "Finish loading every native scan before preparing detector queries."
                 )
+            if source._parked is not None:
+                raise ValueError("This acquisition is parked in host memory; restore() it before detector queries.")
             self.keepalive.extend((source.valid, source.decoding))
             if source._detector_total is not None:
                 self.keepalive.append(source._detector_total)

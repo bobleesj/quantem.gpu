@@ -76,13 +76,32 @@ def retain(arrays) -> tuple:
     views = []
     for array, start in zip(arrays, [0, *accumulate(sizes)]):
         view = storage[start : start + array.nbytes].view(array.dtype).reshape(array.shape)
-        view[...] = array
+        if isinstance(array, np.ndarray):
+            view.set(array)  # a parked chunk returning from host memory (see StreamedCounts.restore)
+        else:
+            view[...] = array
         views.append(view)
     # The sources go back to the memory pool when the caller drops them, and the
     # loader's next decode can reuse that memory before these copies have run;
     # without this wait, loads under GPU contention kept another chunk's counts.
     cp.cuda.get_current_stream().synchronize()
     return tuple(views)
+
+
+def _to_host(array) -> np.ndarray:
+    """Copy one device array into page-locked host memory.
+
+    A parked acquisition is gigabytes: into ordinary host memory the copy of 2.4 GB took 4 to 38 s across runs,
+    into page-locked memory 0.11 s after 1 to 2 s locking the pages (2026-11-12).
+    """
+    import cupy as cp
+
+    if not array.size:
+        return np.empty(array.shape, array.dtype)
+    memory = cp.cuda.alloc_pinned_memory(array.nbytes)
+    host = np.frombuffer(memory, array.dtype, array.size).reshape(array.shape)
+    array.get(out=host)
+    return host
 
 
 def error_flags(errors, device: int):
@@ -129,6 +148,8 @@ class StreamedCounts:
     _detector_total = None
     # Exact spatial sums and the detector total, for detector queries; float bit lanes have no use for them.
     spatial_index = True
+    # The encoded chunks as host arrays while they are parked off the device (see park), else None.
+    _parked = None
 
     def __init__(self, shape: tuple[int, int, int, int], dtype, valid=None):
         import cupy as cp
@@ -353,6 +374,12 @@ class StreamedCounts:
                 f"Scan range ({first}, {stop}) is not resident; scans 0 to "
                 f"{self.ready_scans} of {math.prod(self.shape[:2])} are loaded."
             )
+        if self._parked is not None:
+            if not self.chunks or first < self.chunks[0].first or stop > self.chunks[-1].first + self.chunks[-1].scans:
+                raise ValueError(
+                    f"Scan range ({first}, {stop}) is parked in host memory; restore() it to the device first."
+                )
+            return
         if first < self.released_scans:
             raise ValueError(
                 f"Scans before {self.released_scans} were released; load the source again to read them."
@@ -407,8 +434,59 @@ class StreamedCounts:
         self.chunks = kept
         self.released_scans = self.chunks[0].first if self.chunks else self.ready_scans
 
+    def park(self) -> None:
+        """Move every encoded chunk to host memory and free it on the device, until ``restore``.
+
+        The bytes stay encoded and are not read on the host: they wait there while another computation needs the
+        device (a small card cannot hold a whole encoded scan and a fit's working arrays together). A second call
+        frees the chunks a partial ``restore`` returned. The device memory returns only when no other consumer
+        still holds the chunks, so park a source its session alone owns. Decoding a parked scan raises.
+        """
+        import cupy as cp
+
+        if self._parked is None:
+            with cp.cuda.Device(self.device):
+                self._parked = [
+                    Chunk(chunk.first, chunk.scans, tuple(_to_host(array) for array in chunk.arrays))
+                    for chunk in self.chunks
+                ]
+        self.chunks = []
+
+    def restore(self, first: int = 0, stop: int | None = None) -> None:
+        """Return parked chunks to the device: those holding scans ``first`` to ``stop``, or all of them.
+
+        A partial restore keeps the host copies, so another range or the whole scan can follow; restoring the
+        whole scan drops them. Each chunk gets its own exact allocation (see retain).
+        """
+        import cupy as cp
+
+        if self._parked is None:
+            return
+        complete = first <= 0 and (stop is None or stop >= self.ready_scans)
+        stop = self.ready_scans if stop is None else stop
+        self.chunks = []
+        wanted = [chunk for chunk in self._parked if chunk.first < stop and chunk.first + chunk.scans > first]
+        try:
+            with cp.cuda.Device(self.device):
+                self.chunks = [Chunk(chunk.first, chunk.scans, retain(chunk.arrays)) for chunk in wanted]
+        except (MemoryError, RuntimeError) as error:
+            # CuPy's pool raises MemoryError; an allocation outside the pool (retain) raises the runtime's own error
+            if not isinstance(error, MemoryError) and "memory" not in str(error).lower():
+                raise
+            self.chunks = []
+            raise MemoryError(
+                f"The device has no room to take back {sum(chunk.nbytes for chunk in wanted) / 1e9:.2f} GB of the "
+                "encoded acquisition. It is intact in host memory: free device memory (close other notebooks' "
+                "kernels, or restart this one), then call restore() again."
+            ) from error
+        if complete:
+            self._parked = None
+            # the page-locked host copies would otherwise wait in the pinned pool, as host memory nothing else can use
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+
     def release(self) -> None:
         """Drop this owner's references without invalidating active borrowed sessions."""
+        self._parked = None
         self.chunks.clear()
         self._detector_total = None
         self.is_released = True

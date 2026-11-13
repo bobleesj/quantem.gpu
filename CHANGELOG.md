@@ -6,6 +6,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Direct ptychography on a 4 GB CUDA device: a 512 x 512 x 192 x 192 scan is reconstructed from its encoded counts in
+  batches of 32 detector columns, with every aberration through fifth order. `DirectPtycho.open(path).aberrations()`
+  fits the central 128 x 128 scan region while the encoded scan waits in host memory, and prints the region.
+  Rehearsed with 3900 MiB free: fit 4.7 s, reconstruction 0.44 s, 3512 MiB peak (`docs/performance/direct/reports/2026-11-12-small-device-direct-ptycho.md`).
+- `StreamedCounts.park()` and `restore()` move an encoded acquisition to page-locked host memory and back.
+- `DirectPtycho.on_park`: set it on a session over your own dataset to let a fit on a small device park that dataset;
+  it is called first, so a viewer on the dataset closes its detector sessions there.
+
 ## rc18 - 2026-11-11
 
 ### Renamed: direct ptychography (no aliases)

@@ -17,29 +17,53 @@ from quantem.gpu import detector
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.direct_ptycho.cuda.brightfield import select_bright_field
-from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_wave_sum_kernel
+from quantem.gpu.direct_ptycho.cuda.kernels.engine import thick_wave_sum_full_kernel, thick_wave_sum_kernel
+from quantem.gpu.direct_ptycho.higher_order import pack_coefficients
+
+
+# Detector columns decoded and transformed together. The FFT-input kernel (sc_columns_fft) moves one tile of 32
+# columns through shared memory, so columns past the 32nd of a batch are never written: batches of 64 and 128
+# returned phases wrong by 0.02 to 0.04 rad, and NaN, on a real 512 x 512 scan (2026-11-12).
+COLUMN_BATCH = 32
+
+
+def free_device_bytes() -> int:
+    """Bytes this process can still allocate on the current device: free device memory plus the pool's idle blocks.
+
+    A limit set on the CuPy pool (``set_limit``) caps the answer, so a small card can be rehearsed on a large one.
+    """
+    pool = cp.get_default_memory_pool()
+    free_bytes = cp.cuda.runtime.memGetInfo()[0] + pool.free_bytes()
+    limit = pool.get_limit()
+    return min(free_bytes, limit - pool.used_bytes()) if limit else free_bytes
 
 
 class StreamedDirect:
-    """Borrow a complete exact-count resident and retain its immutable chunks."""
+    """Borrow a complete exact-count resident and retain its immutable chunks.
+
+    ``full_scan_only`` marks a session that cannot also hold the dense bright-field spectrum (a scan beyond 1024
+    pixels per side, or one routed here because the device is too small): its fit reads a scan region and its
+    full-scan reconstruction reports no loss.
+    """
 
     def __init__(self, data, *, mean_pattern, center, radius, threshold,
-                 semiangle_mrad, detector_sampling_mrad, scan_detector_rotation_flipped):
+                 semiangle_mrad, detector_sampling_mrad, scan_detector_rotation_flipped, full_scan_only):
         source = data.data
         if type(source) is not StreamedCounts:
             raise NotImplementedError(
                 "Large CUDA direct ptychography currently needs lossless integer ANS storage. "
                 "Load a uint8/uint16 acquisition with io.load before creating direct ptychography."
             )
+        self.full_scan_only = bool(full_scan_only)
         self.scan_shape = tuple(data.shape[:2])
         self.detector_shape = tuple(data.shape[2:])
         if max(self.scan_shape) > 4096 or any(side % 2 for side in self.scan_shape):
             raise ValueError(
                 f"Streamed direct ptychography supports even scan dimensions up to 4096; got {self.scan_shape}."
             )
-        self.chunks = tuple(source.chunks)
+        self.source = source
         position = 0
-        for chunk in self.chunks:
+        for chunk in source.chunks:
             if chunk.first != position or chunk.scans <= 0:
                 raise ValueError("Direct ptychography needs complete consecutive scan coverage. Finish loading the acquisition first.")
             position += chunk.scans
@@ -50,11 +74,7 @@ class StreamedDirect:
         self.decoding = source.decoding
         self.decode = source.kernels["columns_u16"]
         self.to_fft = source.kernels["columns_fft"]
-        self.descriptors = cp.asarray([
-            [*(array.data.ptr for array in chunk.arrays[:3]), chunk.first, chunk.scans]
-            for chunk in self.chunks
-        ], dtype=cp.uint64)
-        self.max_chunk_scans = max(chunk.scans for chunk in self.chunks)
+        self._borrow_chunks()
         self.mean_pattern = np.asarray(
             detector.mean(data) if mean_pattern is None else mean_pattern, dtype=np.float64,
         )
@@ -95,14 +115,38 @@ class StreamedDirect:
         self.num_bright_field_pixels = int(self.pixels.size)
         self.timings = {}
 
+    def _borrow_chunks(self):
+        """Keep the source's encoded chunks and the device addresses the column decoder reads them at."""
+        self.chunks = tuple(self.source.chunks)
+        self.descriptors = cp.asarray([
+            [*(array.data.ptr for array in chunk.arrays[:3]), chunk.first, chunk.scans]
+            for chunk in self.chunks
+        ], dtype=cp.uint64)
+        self.max_chunk_scans = max(chunk.scans for chunk in self.chunks)
+
+    def park(self):
+        """Move the encoded acquisition to host memory, freeing the device for a fit (see StreamedCounts.park)."""
+        self.chunks, self.descriptors = (), None
+        self.source.park()
+
+    def restore(self):
+        """Return the whole encoded acquisition to the device after ``park``."""
+        self.source.restore()
+        self._borrow_chunks()
+
     def phase(self, aberrations, *, voltage_kV, semiangle_mrad, scan_sampling_A,
-              rotation_deg, upsample, sample_tilt_mrad, depth_spread_A):
-        """Decode, transform and correct every selected count on the source GPU."""
+              rotation_deg, upsample, sample_tilt_mrad, depth_spread_A,
+              higher_order_magnitudes=None, higher_order_angles=None):
+        """Decode, transform and correct every selected count on the source GPU.
+
+        ``higher_order_magnitudes`` and ``higher_order_angles`` (14 slots, Angstrom and rad, C10 and C12 first)
+        select the kernel that evaluates chi through fifth order; without them only C10 and C12 enter.
+        """
         started = time.perf_counter()
         rows, cols = self.scan_shape
         output_shape = (rows * upsample, cols * upsample)
         output_pixels = math.prod(output_shape)
-        free_bytes = cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes()
+        free_bytes = free_device_bytes()
         # Two complex128 output planes, inverse work space and final phase.
         fixed_bytes = output_pixels * 56
         per_column = rows * (cols + 2) * 4
@@ -112,7 +156,7 @@ class StreamedDirect:
                 f"The full {output_shape} direct ptychography output needs more free GPU memory. "
                 "Close other GPU allocations or explicitly select a smaller output sampling factor."
             )
-        batch_size = max(1, min(32, self.num_bright_field_pixels,
+        batch_size = max(1, min(COLUMN_BATCH, self.num_bright_field_pixels,
                                 min(2 << 30, available // 4) // per_column))
         wavelength = wavelength_A_from_kV(voltage_kV)
         angular = self.detector_sampling_mrad[::-1] if self.transposed else self.detector_sampling_mrad
@@ -140,6 +184,10 @@ class StreamedDirect:
             *coefficients, math.pi / wavelength, depth_spread_A,
             sample_tilt_mrad[0] * 1e-3, sample_tilt_mrad[1] * 1e-3,
         ))
+        kernel = thick_wave_sum_kernel
+        if higher_order_magnitudes is not None:
+            kernel = thick_wave_sum_full_kernel
+            parameters = (*parameters, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
         buffer = cp.empty((batch_size, rows, cols + 2), cp.float32)
         counts = cp.empty(batch_size * rows * cols, cp.uint16)
         spectra = buffer.view(cp.complex64)
@@ -175,7 +223,7 @@ class StreamedDirect:
             dc[first:stop] = spectra[:count, 0, 0]
             # the kernel's arguments in its order: bounds (read only by the bounded variant, so any float array),
             # then num_bf, native rows, cols and stored cols, output rows, cols and stored cols, first BF, group size
-            thick_wave_sum_kernel(
+            kernel(
                 (math.ceil(output_pixels / 128), 1), (128,),
                 (spectra, *frequencies, k_row[first:stop], k_col[first:stop], partial, k_row,
                  *(np.int32(value) for value in (count, rows, cols, cols // 2 + 1,

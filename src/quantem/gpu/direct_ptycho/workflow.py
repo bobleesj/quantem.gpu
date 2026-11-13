@@ -8,7 +8,7 @@ import hashlib
 import math
 import time
 from collections.abc import Callable, Sequence
-from contextlib import AbstractContextManager, nullcontext, suppress
+from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from dataclasses import replace
 from functools import partial, wraps
 from pathlib import Path
@@ -349,7 +349,53 @@ def _streams_scan(data: Dataset4dstem, backend: str) -> bool:
 
     return max(data.shape[:2]) > 1024 or (
         data.shape[:2] == (1024, 1024) and type(data.data) is StreamedCounts
+    ) or _exceeds_device(data)
+
+
+def _central_fit_region(rows: int, columns: int, num_bright_field_pixels: int, verbose: bool,
+                        reclaimable_bytes: int = 0) -> tuple[int, int, int, int]:
+    """The largest central square fit region (512, 256 or 128 scan pixels a side) the free device memory holds.
+
+    A regional fit took 13 bytes a bright-field pixel and scan position beyond the encoded acquisition, measured
+    on the whole process (1.66 GiB at 128 x 128 with 9050 bright-field pixels: the decoded crop, G(q, k), the
+    fit's working planes and its solver libraries). A side is taken when that fits in 85 % of the free memory, so
+    the fit never starts on a region it cannot finish. ``reclaimable_bytes`` is memory the session frees for the
+    fit: the encoded acquisition of a session that opened its own file and reloads it afterwards.
+    """
+    from quantem.gpu.direct_ptycho.cuda.streamed import free_device_bytes
+
+    budget = (free_device_bytes() + reclaimable_bytes) * 0.85
+    for side in (512, 256, 128):
+        if side <= min(rows, columns) and side * side * num_bright_field_pixels * 13 <= budget:
+            row_start, col_start = (rows - side) // 2, (columns - side) // 2
+            scan_region = row_start, row_start + side, col_start, col_start + side
+            if verbose:
+                print(f"Direct ptycho: fitting the central {side} x {side} scan region {scan_region}, the largest the "
+                      "free device memory holds; pass scan_region=(row_start, row_stop, col_start, col_stop) to "
+                      "choose another.")
+            return scan_region
+    raise MemoryError(
+        f"A 128 x 128 fit region needs {128 * 128 * num_bright_field_pixels * 13 / 1e9:.2f} GB of free device memory; "
+        f"{budget / 1e9:.2f} GB is usable. Fit before loading other data on this device, or pass known aberrations "
+        "to run(aberrations=..., compute_loss=False)."
     )
+
+
+def _exceeds_device(data: Dataset4dstem) -> bool:
+    """Whether the device cannot hold the dense bright-field spectrum next to this encoded integer acquisition.
+
+    The dense path decodes the bright-field crop (2 bytes a count) and keeps G(q, k) (8 bytes a bright-field pixel
+    and scan position): together at least a quarter of the decoded acquisition unless the disk is under about a
+    fifth of the detector side. Below that much free memory the scan is reconstructed from the encoded counts in
+    bounded batches of detector columns instead, which needs megabytes.
+    """
+    from quantem.gpu.direct_ptycho.cuda.streamed import free_device_bytes
+    from quantem.gpu.resident.cuda.counts import StreamedCounts
+
+    if type(data.data) is not StreamedCounts or max(data.shape[:2]) > 4096 or any(side % 2 for side in data.shape[:2]):
+        return False
+    with cp.cuda.Device(data.device.index):
+        return free_device_bytes() < math.prod(data.shape) * data.dtype.itemsize // 4
 
 
 class DirectPtycho:
@@ -506,6 +552,10 @@ class DirectPtycho:
             scan_detector_rotation_flipped = False
         self._streamed = None
         self._owned_dataset = None
+        # Called before a caller's encoded dataset moves to host memory for a fit (see _region_for_fit). Whoever
+        # else reads that dataset on the device (a viewer's detector sessions) lets go of it there; None, the
+        # default, means nobody vouches for the dataset and it is never parked.
+        self.on_park = None
         # the full-detector acquisition the caller passed: series and listen open sessions on frames like it, and
         # a session on _data would see only the bright-field crop decoded below
         self._input_dataset = data if isinstance(data, Dataset4dstem) else None
@@ -523,12 +573,18 @@ class DirectPtycho:
 
                     if data.device is None or data.device.type != "cuda":
                         raise ValueError("CUDA direct ptychography needs the acquisition resident on a CUDA device.")
+                    full_scan_only = max(data.shape[:2]) > 1024 or _exceeds_device(data)
+                    if full_scan_only and max(data.shape[:2]) <= 1024:
+                        print("Direct ptycho: the device cannot hold the dense bright-field spectrum; the full scan is "
+                              "reconstructed in batches of detector columns (no loss), and aberrations() fits a scan "
+                              "region. Free device memory for the dense path.")
                     with cp.cuda.Device(data.device.index):
                         self._streamed = StreamedDirect(
                             data, mean_pattern=mean_pattern, center=bright_field_center_px,
                             radius=bright_field_radius_px, threshold=bright_field_intensity_threshold,
                             semiangle_mrad=semiangle_mrad, detector_sampling_mrad=detector_sampling_mrad,
                             scan_detector_rotation_flipped=scan_detector_rotation_flipped,
+                            full_scan_only=full_scan_only,
                         )
                     bright_field_center_px = self._streamed.center
                     bright_field_radius_px = self._streamed.radius
@@ -1439,13 +1495,59 @@ class DirectPtycho:
         result.scan_detector_rotation_flipped = self.scan_detector_rotation_flipped
         return result
 
+    def _reclaimable_bytes(self) -> int:
+        """Device bytes of the encoded acquisition, when this session may park it for a fit.
+
+        It may when it opened the file itself, or when the caller of a borrowed dataset set ``on_park``.
+        """
+        if ((self._owned_dataset is None and self.on_park is None)
+                or self._streamed is None or not self._streamed.full_scan_only):
+            return 0
+        return sum(array.nbytes for chunk in self._streamed.chunks for array in chunk.arrays)
+
+    @contextmanager
+    def _region_for_fit(self, scan_region):
+        """A fit session over ``scan_region``, with the rest of the encoded acquisition off the device meanwhile.
+
+        A small device cannot hold the whole encoded scan and the regional G(q, k) together (2.5 GB and 1.7 GB on
+        a 512 x 512 x 192 x 192 scan). So the acquisition this session opened is parked in host memory, still
+        encoded; only the chunks holding the region's scan rows return to the device while its bright-field crop is
+        decoded; the fit then has the device to itself, and the whole acquisition returns afterwards. A session on
+        a caller's dataset parks it only when the caller set ``on_park``, which runs first so that a viewer on
+        that dataset closes its detector sessions: they hold the same device memory.
+        """
+        if not self._reclaimable_bytes():
+            with self.select_region(scan_region) as regional:
+                yield regional
+            return
+        streamed = self._streamed
+        columns = streamed.scan_shape[1]
+        # the 180-degree branch test reads the scan's dark-field image, which only the whole acquisition gives
+        self._dark_field_image()
+        if self.on_park is not None:
+            self.on_park()
+        streamed.park()
+        cp.get_default_memory_pool().free_all_blocks()
+        try:
+            streamed.source.restore(scan_region[0] * columns, scan_region[1] * columns)
+            regional = self.select_region(scan_region)
+            streamed.source.park()
+            with regional:
+                yield regional
+        finally:
+            regional = None
+            # the fit's working arrays wait in both allocators' caches, where the returning acquisition cannot use them
+            cp.get_default_memory_pool().free_all_blocks()
+            torch.cuda.empty_cache()
+            streamed.restore()
+
     def _backend(self) -> DirectPtychoProtocol:
         """The session's CUDA or MPS implementation, built on first use.
 
         Building it reads the bright-field evidence and transforms it (seconds and gigabytes on a full scan), so a
         session that is only configured, saved or closed never pays for it.
         """
-        if self._streamed is not None and max(self._streamed.scan_shape) > 1024:
+        if self._streamed is not None and self._streamed.full_scan_only:
             raise NotImplementedError(
                 "This large resident uses streamed full-scan reconstruction. "
                 "Fit with aberrations(scan_region=(row_start, row_stop, col_start, col_stop)), "
@@ -2068,6 +2170,12 @@ class DirectPtycho:
                     )
             return fits
         if search in ("standard", "broad"):
+            # a session built without __init__ (a stored result's, a test's) has no encoded acquisition
+            streamed = getattr(self, "_streamed", None)
+            if scan_region is None and streamed is not None and streamed.full_scan_only and max(streamed.scan_shape) <= 1024:
+                # the fifth-order stage reads the dense spectrum, which only a regional session of this scan holds
+                scan_region = _central_fit_region(*streamed.scan_shape, streamed.num_bright_field_pixels, verbose,
+                                                  reclaimable_bytes=self._reclaimable_bytes())
             if scan_region is not None:
                 if len(scan_region) != 4 or any(type(value) is not int for value in scan_region):
                     raise ValueError("Use scan_region=(row_start, row_stop, col_start, col_stop), in integer scan pixels.")
@@ -2092,7 +2200,9 @@ class DirectPtycho:
                         on_initial_fit(marked)
                     preview.update(marked, final=False)
 
-                with self.select_region(scan_region) as regional:
+                # only a session on an encoded acquisition has anything to park while its region is fitted
+                with (self._region_for_fit(scan_region) if streamed is not None
+                      else self.select_region(scan_region)) as regional:
                     result = regional.aberrations(
                         search=search, tilt=tilt,
                         trials=trials, refinement=refinement,
@@ -2369,8 +2479,10 @@ class DirectPtycho:
                 print("Saved direct ptychography settings changed; running fit end to end")
         if self._streamed is not None and scan_region is None:
             rows, columns = self._streamed.scan_shape
-            if rows == columns == 1024:
+            if rows == columns == 1024 and not self._streamed.full_scan_only:
                 scan_region = (0, rows, 0, columns)
+            elif max(rows, columns) <= 1024:
+                scan_region = _central_fit_region(rows, columns, self._streamed.num_bright_field_pixels, verbose)
             else:
                 raise ValueError(
                     "Fit a small region of the large acquisition with "
@@ -3239,10 +3351,10 @@ class DirectPtycho:
             higher_order_magnitudes = higher_order_angles = None
         scope = nullcontext() if context is None else context
         if self._streamed is not None:
-            bounded = not compute_loss and higher_order_magnitudes is None and context is None
-            if not bounded and max(self._streamed.scan_shape) > 1024:
+            bounded = not compute_loss and context is None
+            if not bounded and self._streamed.full_scan_only:
                 raise NotImplementedError(
-                    "Streamed full-scan direct ptychography supports C10/C12 with compute_loss=False. "
+                    "Streamed full-scan direct ptychography supports compute_loss=False. "
                     "The regional fit retains its own diagnostic loss; it is not a full-scan loss."
                 )
             if bounded:
@@ -3251,6 +3363,10 @@ class DirectPtycho:
                     scan_sampling_A=self.scan_sampling_A, rotation_deg=self.scan_detector_rotation_deg,
                     upsample=upsample, sample_tilt_mrad=sample_tilt_mrad,
                     depth_spread_A=float(depth_spread_nm) * ENGINE_PER_NM,
+                    # all 14 magnitudes are nm; the kernel takes Angstrom
+                    higher_order_magnitudes=None if higher_order_magnitudes is None
+                    else higher_order_magnitudes * np.float32(ENGINE_PER_NM),
+                    higher_order_angles=higher_order_angles,
                 )
         backend = self._backend()
         # all 14 magnitudes (C10, C12 in slots 0-1, then C21..C56) are nm; the engines take Angstrom
