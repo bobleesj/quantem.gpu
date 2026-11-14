@@ -300,11 +300,12 @@ def _region(value, shape, name):
 def _check_allocation(shape, dtype, device):
     """Refuse a region whose dense tensor would not fit the GPU's free memory.
 
-    The decoder needs scratch beside the output, so 256 MiB stays in reserve;
-    without the check a large region fails midway with an allocator error.
+    The decoder needs scratch beside the output, so a reserve stays free: eight times the output plus 16 MiB, at
+    most 256 MiB. Without the check a large region fails midway with an allocator error. A flat 256 MiB refused
+    one diffraction pattern (36 KB) on a 4 GB card that had 190 MiB free beside a resident scan and a fit.
     """
     requested = math.prod(shape) * np.dtype(dtype).itemsize
-    reserve = 256 * 1024**2
+    reserve = min(256 * 1024**2, 8 * requested + 16 * 1024**2)
     if device.type == "cuda":
         free, _ = torch.cuda.mem_get_info(device)
         if requested + reserve > free:

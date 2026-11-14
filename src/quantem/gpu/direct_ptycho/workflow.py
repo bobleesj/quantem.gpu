@@ -360,8 +360,10 @@ WHOLE_SCAN_FIT_BAND_INV_A = (0.2, 0.9)
 # trial batches and their launch partials, a shared fifth-order round's sums (up to 64 candidates), gradient terms.
 # The peak in use over a whole fit, measured with the band held whole (the most launch partials): 206 MiB at 23,448
 # frequencies, 379 MiB at 46,673, 676 MiB at 79,441 (2026-11-13). A flat 256 MiB ran out at 79,441 once the
-# fifth-order refinements shared their rounds.
-WHOLE_SCAN_FIT_WORKING_BYTES = 64 << 20
+# fifth-order refinements shared their rounds. The fixed part was 64 MiB until a scan-region fit beside a viewer's
+# resident scan ran out by 24 MB in the tilt step's band power (3700 MiB card, 14 Nov 2026): with 96 MiB and more
+# the placement moves the encoded scan to host memory first and the fit has room.
+WHOLE_SCAN_FIT_WORKING_BYTES = 128 << 20
 WHOLE_SCAN_FIT_WORKING_BYTES_PER_FREQUENCY = 8704
 # Local memory a thread of the resident search's random-number kernel takes (direct_joint_random_words, a Mersenne
 # Twister state); CUDA reserves it for every thread the device can run while a fit runs (_free_fit_memory).

@@ -6,6 +6,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Small CUDA devices, scans arriving one after another: a parked encoded scan now leaves the device at once (its
+  chunks could stay until Python's collector ran, and the fit that parked it ran out of memory in about every second
+  run at 3400 MiB free); the fit's fixed working reserve is 128 MiB (was 64); `io.read` reserves eight times the
+  output plus 16 MiB, at most 256 MiB, so one diffraction pattern reads with 190 MiB free. `tests/tools/small_gpu.py`
+  rehearses a small card on a large shared one.
 - Direct ptychography on a 4 GB CUDA device: a 512 x 512 x 192 x 192 scan is reconstructed from its encoded counts in
   batches of 32 detector columns, with every aberration through fifth order. `DirectPtycho.open(path).aberrations()`
   fits the whole scan on G(q, k) at the fit band's frequencies (1.6 GB instead of 9.5 GB), the same fit as the dense

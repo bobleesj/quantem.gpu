@@ -5,6 +5,7 @@ streams. Spatial sums are derived from original counts while each input chunk is
 available. Neither coding probabilities nor indexes change scientific values.
 """
 
+import gc
 import math
 from dataclasses import dataclass
 from functools import cache
@@ -603,6 +604,10 @@ class StreamedCounts:
                 ]
         self.chunks = []
         self._blocks = None
+        # Chunks a finished decode or detector pass still refers to through a reference cycle keep their device
+        # memory until the collector next runs: on a 3400 MiB card the fit that parked the scan for room then ran
+        # out in about every second run, the whole scan (2.5 GB) still there. Collected now, the room is there.
+        gc.collect()
 
     def restore(self, first: int = 0, stop: int | None = None, *, keep_host: bool = False) -> None:
         """Return parked chunks to the device: those holding scans ``first`` to ``stop``, or all of them.
