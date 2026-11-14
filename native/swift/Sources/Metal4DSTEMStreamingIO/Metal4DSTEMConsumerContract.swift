@@ -561,7 +561,6 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
   /// Runtime ANS exposes raw and mean diffraction and binary BF/ABF/ADF
   /// reductions. Products that require detector moments remain explicit as
   /// unavailable instead of being falsely advertised to native frontends.
-  @available(macOS 15.0, iOS 18.0, *)
   public static func runtimeANS(
     _ source: MetalRuntimeANSResidentSource
   ) throws -> Self {
