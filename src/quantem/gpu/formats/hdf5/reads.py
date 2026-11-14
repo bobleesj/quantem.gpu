@@ -22,6 +22,13 @@ import numpy as np
 _SEEK_LOCK = Lock()
 
 
+def open_for_reading(path) -> int:
+    """A read-only descriptor for raw bytes. On Windows ``os.open`` is in text mode unless ``O_BINARY`` is given:
+    a read then stops at the first 0x1A byte (and turns CR LF into LF), which compressed counts are full of, so
+    every read of a detector file ended early ("short read")."""
+    return os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+
+
 def _pread_into(fd: int, view: memoryview, offset: int) -> int:
     """Read into `view` from byte `offset` of `fd`; returns the bytes read. os.preadv on Linux and macOS; on
     Windows (no preadv) a seek and a read under one lock, since the threads share each descriptor."""
@@ -77,7 +84,7 @@ class FrameReader:
         self.fds: dict[int, int] = {}
         try:
             for source_index, info in enumerate(self.source_infos):
-                self.fds[source_index] = os.open(info["path"], os.O_RDONLY)
+                self.fds[source_index] = open_for_reading(info["path"])
         except OSError:
             for descriptor in self.fds.values():
                 os.close(descriptor)

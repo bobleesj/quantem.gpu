@@ -547,7 +547,9 @@ def _read_verified(path, header, start, spans):
             if digest.hexdigest() != header["sha256"][number]:
                 raise ValueError(f"ANS checksum mismatch in block {number}; recopy the file.")
 
-        descriptor = os.open(path, os.O_RDONLY)
+        from quantem.gpu.formats.hdf5.reads import open_for_reading
+
+        descriptor = open_for_reading(path)                  # binary on Windows too
         try:
             blocks = len(header["sha256"])
             with ThreadPoolExecutor(max_workers=min(16, os.cpu_count() or 1, blocks)) as workers:
