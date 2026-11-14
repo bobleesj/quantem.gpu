@@ -193,6 +193,10 @@ def load_h5_ans(
             corrector.apply(raw)
             (source.append_device if bit_lanes else source.append)(raw)
             del raw
+        if not bit_lanes and source.host_nbytes:
+            print(f"quantem.gpu: the device had no room for {source.host_nbytes / 1e9:.2f} GB of this scan's encoded "
+                  "counts; they stay in page-locked host memory and the GPU reads them there (a whole-scan "
+                  "reconstruction about 5x slower, a new virtual image about 50x).")
         metadata = dict(info.metadata)
         metadata.update(
             resident_metadata(shape, dtype, source.nbytes, backend="cuda"),

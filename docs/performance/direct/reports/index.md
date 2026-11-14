@@ -8,6 +8,7 @@ A record that describes since-retired behaviour (the phase-variance search,
 Nelder–Mead or finite-difference refinement, the `mean_phase` and
 `complex_wave` estimators) says so in a **Historical** line at its top.
 
+- [The whole-scan fifth-order fit on a 4 GB CUDA device](2026-11-13-whole-scan-fit-small-device.md)
 - [Direct ptychography through fifth order on a 4 GB CUDA device: 512 x 512 x 192 x 192](2026-11-12-small-device-direct-ptycho.md)
 - [Native Direct Ptycho preparation and exact QEM column decoding](2026-11-05-direct-ptycho-preparation.md)
 - [Full-scan native Metal fitting on Apple M5](2026-11-05-mps-full-scan.md)

@@ -8,8 +8,38 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 - Direct ptychography on a 4 GB CUDA device: a 512 x 512 x 192 x 192 scan is reconstructed from its encoded counts in
   batches of 32 detector columns, with every aberration through fifth order. `DirectPtycho.open(path).aberrations()`
-  fits the central 128 x 128 scan region while the encoded scan waits in host memory, and prints the region.
-  Rehearsed with 3900 MiB free: fit 4.7 s, reconstruction 0.44 s, 3512 MiB peak (`docs/performance/direct/reports/2026-11-12-small-device-direct-ptycho.md`).
+  fits the whole scan on G(q, k) at the fit band's frequencies (1.6 GB instead of 9.5 GB), the same fit as the dense
+  path, while the encoded scan waits in host memory. A band spectrum larger than the device keeps what fits there
+  and streams the rest from host memory in slabs of 256 bright-field pixels. Rehearsed on seven real 512 x 512 scans
+  with 3700 and 3400 MiB free: every one fits the whole scan, in 6 to 35 s on a quiet card (a 5.7 GB band streamed);
+  reconstruction 0.5 s, or 1.4 to 1.9 s for a scan read from host memory
+  (`docs/performance/direct/reports/2026-11-13-whole-scan-fit-small-device.md`).
+- A file without a recorded detector sampling no longer crashes the small-device path (`StreamedDirect` called its
+  own `None` argument); the dense-or-encoded choice now counts the dense path's bright-field pixels; an HDF5 load on
+  a small card frees the memory pool's idle scratch before giving up on an encoded chunk's allocation.
+- The fifth-order fit's four refinements (the +-20 rad fit, both half-band checks, the +-2 rad fallback) share their
+  passes over G, with the same numbers bit for bit: 35 to 28 s for a streamed 5.7 GB band, 5.5 to 3.4 s on a large card;
+  38.7 to 31-33 s for that band with 3700 MiB free.
+- A fit no longer keeps about 400 MiB of local memory reserved on a large card: the stack limit the resident search
+  raises is set back before the scan returns to the device.
+- An encoded acquisition loaded from HDF5 packs its chunks back to back into blocks of up to 256 MiB, and a restored
+  one returns into a single allocation: each chunk's own allocation was rounded up to whole 2 MiB pages, about 400 MiB
+  lost over the 256 chunks of a 2.2 GB scan (33 MiB now). The fifth-order gradient pass builds its per-frequency
+  terms in one kernel instead of concatenating each refinement's sums, the same bits with a third of the memory.
+- `aberrations(scan_region=...)` on a device too small for the dense spectrum fits the region on its band spectrum,
+  gathered from the encoded scan (1.4 GB for a 256 x 256 region of a 0.5 A scan), instead of decoding the region
+  densely, which refused at 3400 MiB free. 256 x 256 regions fit in 7 to 9 s at 3400 MiB, re-display 0.7 to 1.5 s.
+- An encoded scan the CUDA device has no room for stays in page-locked host memory and the GPU reads it there, with
+  the same bits, instead of failing to load: a `.qem` load, the HDF5 chunks that do not fit, or a parked scan that
+  cannot come back (one printed line each). A whole-scan reconstruction is about 5x slower and a new virtual image
+  about 50x (0.96 s and 237 ms on PCIe 5.0 x8). With 3400 MiB free the oxide scans of 2.4 to 2.6 GB encoded now fit; a
+  3.3 GB scan that loaded on no 4 GB budget fits with 3400 MiB free. Needs unified addressing. A whole-scan fit
+  empties the memory pool's idle blocks and creates its cuBLAS handle before placing its band spectrum, and evaluates
+  the Newton step's derivative sums a few positions at a time (same bits), so `Show4DSTEM.watch` then
+  `direct_phase()` runs on such a scan with 3400 MiB free.
+- A whole-scan fit's working reserve grows with its band (64 MiB plus 8.5 KiB a frequency, measured), and the fit
+  no longer keeps launch buffers for every layout it used (about 300 MiB on a 79,441-frequency band) or its last sums
+  through the reconstruction that follows it.
 - `StreamedCounts.park()` and `restore()` move an encoded acquisition to page-locked host memory and back.
 - `DirectPtycho.on_park`: set it on a session over your own dataset to let a fit on a small device park that dataset;
   it is called first, so a viewer on the dataset closes its detector sessions there.

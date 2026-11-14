@@ -27,16 +27,18 @@ Hessian in z = (C10, C12 cos 2 phi12, C12 sin 2 phi12 [A], tilt row, tilt column
 """
 
 import copy
+import itertools
 
 import cupy as cp
 import numpy as np
 
-from quantem.gpu.direct_ptycho.cuda._broad_shared import kernel as _saturated_kernel
 from quantem.gpu.direct_ptycho._exact_newton import joint_trial
 from quantem.gpu.direct_ptycho.cuda.broad_batch import Objective as _BatchObjective
-from quantem.gpu.direct_ptycho.cuda.broad_batch import kernel as _tiled_kernel
-from quantem.gpu.direct_ptycho.cuda.broad_objective import kernel as _baseline_kernel
-from quantem.gpu.direct_ptycho.cuda.kernels.engine import THICK_FIT_MAX_BATCH, thick_fit_batch_kernel
+from quantem.gpu.direct_ptycho.cuda.kernels.engine import (
+    THICK_FIT_MAX_BATCH,
+    thick_fit_batch_kernel,
+)
+from quantem.gpu.direct_ptycho.cuda.thick import SlabSums
 from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE
 
 # tf_geometry and tf_sinc exactly as the production objective kernels define them.
@@ -240,6 +242,11 @@ class FifthOrderGradients(_BatchObjective):
         _, _, _, qx, qy, _ = self.e.thick._prepare_fit_band(band)
         return cp.asnumpy(qx).ravel(), cp.asnumpy(qy).ravel()
 
+    def release(self) -> None:
+        """Free the latest values' sums (candidates x band frequencies): a reconstruction after the fit may need the
+        room, on a small device to take its scan back."""
+        self._last = None
+
     def with_band_weights(self, factor):
         """This objective with each band frequency's weight multiplied by ``factor`` (one value per frequency of
         ``band_frequencies``; 0 leaves a frequency out of values and gradients)."""
@@ -247,6 +254,9 @@ class FifthOrderGradients(_BatchObjective):
         weighted._band_factor = cp.asarray(factor, dtype=cp.float32)
         weighted._last = None
         return weighted
+
+    def _pixel_arrays(self, stride):
+        return self._pixels(stride)[:2]
 
     def _pixels(self, stride):
         if stride not in self._pixels_by_stride:
@@ -264,19 +274,15 @@ class FifthOrderGradients(_BatchObjective):
             self._pixels_by_stride[stride] = (kx, ky, int(kx.size), cp.ascontiguousarray(monomials))
         return self._pixels_by_stride[stride]
 
-    def _sums(self, rows, packed, stride, band):
-        """Per-frequency numerators and denominators of ``score``'s kernels on every ``stride``-th BF pixel."""
+    def _sums(self, rows, packed, stride, band, factor=None):
+        """Per-frequency numerators and denominators of ``score``'s kernels on every ``stride``-th BF pixel, and the
+        band weights times ``factor`` (None for none)."""
         e = self.e
-        cache = e._cache
         rows = np.atleast_2d(rows)
         packed = np.asarray(packed, dtype=np.float32).reshape(len(rows), 28)
         _, _, flat, qx, qy, weight = e.thick._prepare_fit_band(band)
-        if self._band_factor is not None:
-            weight = weight * self._band_factor
-        kx, ky, nk, _ = self._pixels(stride)
-        plane = int(e.G_qk.shape[1] * e.G_qk.shape[2]) * stride
-        nb = int(flat.size)
-        chunks, blocks = (nk + 255) // 256, (nb + 255) // 256
+        if factor is not None:
+            weight = weight * factor
         trial = cp.asarray(
             np.stack(
                 [rows[:, 0], rows[:, 1], np.cos(2 * rows[:, 2]), np.sin(2 * rows[:, 2]), rows[:, 5],
@@ -285,41 +291,12 @@ class FifthOrderGradients(_BatchObjective):
             ).astype(np.float32)
         )
         coefficients = cp.asarray(packed)
-        saturated = blocks * chunks >= 2 * self.multiprocessors
-        execution = 8 if saturated else max(4, (self.partial_bytes // (chunks * nb * 12) // 4) * 4)
-        numerators = cp.empty((len(rows), nb), cp.complex64)
-        denominators = cp.empty((len(rows), nb), cp.float32)
-        for start in range(0, len(rows), execution):
-            batch = min(execution, len(rows) - start)
-            tiles = 1 if saturated else (batch + 3) // 4
-            capacity = max(4, batch) if saturated else 4
-            key = (chunks, tiles, nb, blocks, capacity)
-            if key not in self.scratch:
-                self.scratch[key] = (
-                    cp.empty((tiles, chunks, capacity, nb), cp.complex64),
-                    cp.empty((tiles, chunks, capacity, nb), cp.float32),
-                    cp.empty((tiles * capacity, nb), cp.complex64),
-                    cp.empty((tiles * capacity, nb), cp.float32),
-                    cp.empty((tiles, blocks), cp.uint32),
-                )
-            pn, pd, numer, denom, counter = self.scratch[key]
-            counter.fill(0)
-            launch_kernel = _tiled_kernel if tiles > 1 else _saturated_kernel if saturated else _baseline_kernel
-            launch_grid = (blocks, chunks, tiles) if tiles > 1 else (blocks, chunks)
-            launch_kernel(
-                launch_grid,
-                (256,),
-                (
-                    e.G_qk, flat, qx.ravel(), qy.ravel(), kx, ky, trial[start:start + batch].ravel(),
-                    pn, pd, counter, numer, denom,
-                    np.int32(nk), np.int64(plane), np.int32(nb), np.int32(batch),
-                    np.float32(e.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
-                    np.float32(cache["ang_x_rad"]), np.float32(e._factor), np.int32(256),
-                    coefficients[start:start + batch].ravel(),
-                ),
-            )
-            numerators[start:start + batch] = numer[:batch]
-            denominators[start:start + batch] = denom[:batch]
+        # each batch's sums go straight to their rows: a list joined at the end held them twice, and a shared round
+        # of 60 candidates on a 79,441-frequency band ran a small device out of memory (2026-11-13)
+        numerators = cp.empty((len(rows), flat.size), cp.complex64)
+        denominators = cp.empty((len(rows), flat.size), cp.float32)
+        for start, batch, numerator, denominator in self._batches(rows, trial, coefficients, flat, qx, qy, stride):
+            numerators[start:start + batch], denominators[start:start + batch] = numerator, denominator
         return numerators, denominators, weight, trial, coefficients
 
     @staticmethod
@@ -328,56 +305,236 @@ class FifthOrderGradients(_BatchObjective):
 
     def values(self, z, stride=1, band=(0.2, 0.9)):
         """Agreements of rows of z (fifth order) on every ``stride``-th BF pixel, per-frequency powers summed in float64."""
-        z = np.atleast_2d(np.asarray(z, dtype=np.float64))
-        rows, packed = self.encode(z, 5)
-        numerators, denominators, weight, trial, coefficients = self._sums(rows, packed, stride, band)
-        self._last = (z.copy(), stride, band, numerators, denominators, weight, trial, coefficients)
-        self.value_passes += len(z)
-        self.calls += len(z)
-        return cp.asnumpy(self._agreement64(numerators, denominators, weight))
+        (values, self._last), = self.values_many([(z, stride, self._band_factor)], band)
+        return values
 
     def gradients(self, z=None, stride=1, band=(0.2, 0.9)):
         """d agreement / dz at the points of the latest ``values`` call (which must match ``z`` and ``stride``)."""
         if self._last is None:
             raise RuntimeError("Evaluate the values before their gradients.")
-        last_z, last_stride, last_band, numerators, denominators, weight, trial, coefficients = self._last
+        last_z, last_stride, last_band = self._last[:3]
         if (z is not None and not np.array_equal(np.atleast_2d(z), last_z)) or stride != last_stride\
                 or band != last_band:
             raise RuntimeError("The gradient pass needs the value pass of the same points, stride and band.")
+        return self.gradients_many([self._last])[0]
+
+    def values_many(self, requests, band=(0.2, 0.9)):
+        """Several callers' agreements, one pass over G per stride: requests [(z rows, stride, band factor)].
+
+        Returns [(values, state)]: each request's agreements (its band weights times its factor, None for none) and
+        the state its gradient pass needs (``gradients_many``). A candidate's sums do not depend on the others it
+        shares a pass with, so this is the values of each request alone, read from G once.
+        """
+        results = [None] * len(requests)
+        for stride in sorted({request[1] for request in requests}):
+            members = [index for index, request in enumerate(requests) if request[1] == stride]
+            blocks = [np.atleast_2d(np.asarray(requests[index][0], dtype=np.float64)) for index in members]
+            z = np.vstack(blocks)
+            rows, packed = self.encode(z, 5)
+            numerators, denominators, weight, trial, coefficients = self._sums(rows, packed, stride, band, factor=None)
+            first = 0
+            for index, block in zip(members, blocks):
+                part = slice(first, first + len(block))
+                first += len(block)
+                factor = requests[index][2]
+                member_weight = weight if factor is None else weight * factor
+                state = (block.copy(), stride, band, numerators[part], denominators[part], member_weight, trial[part],
+                         coefficients[part])
+                results[index] = (cp.asnumpy(self._agreement64(numerators[part], denominators[part], member_weight)),
+                                  state)
+            self.value_passes += len(z)
+            self.calls += len(z)
+        return results
+
+    def gradients_many(self, states):
+        """d agreement / dz for several ``values_many`` states, one pass over G per stride."""
+        results = [None] * len(states)
+        for stride in sorted({state[1] for state in states}):
+            members = [index for index, state in enumerate(states) if state[1] == stride]
+            band = states[members[0]][2]
+            # each state writes its own rows: candidates x frequencies arrays are the fit's largest, and a shared
+            # pass of four refinements ran a 4 GB card out of memory concatenating them (2026-11-13)
+            scale = cp.empty((sum(len(states[index][3]) for index in members), states[members[0]][3].shape[1], 4),
+                             cp.float32)
+            first = 0
+            for index in members:
+                numerators, denominators, weight = states[index][3:6]
+                _gradient_scale(numerators, denominators, weight[None], scale[first:first + len(numerators)].ravel())
+                first += len(numerators)
+            trial = cp.ascontiguousarray(cp.concatenate([states[index][6] for index in members]))
+            coefficients = cp.ascontiguousarray(cp.concatenate([states[index][7] for index in members]))
+            raw = self._gradient_sums(scale, trial, coefficients, stride, band)
+            first = 0
+            for index in members:
+                count = len(states[index][0])
+                results[index] = self.gradient(raw[first:first + count])
+                first += count
+        return results
+
+    def _gradient_sums(self, scale, trial, coefficients, stride, band):
+        """The gradient kernel's 28 sums per candidate (rows of ``scale``, see _gradient_scale), summed over the
+        slabs of G."""
         e = self.e
         cache = e._cache
         _, _, flat, qx, qy, _ = e.thick._prepare_fit_band(band)
         kx, ky, nk, monomials = self._pixels(stride)
         nb = int(flat.size)
-        count = len(last_z)
-        covered = denominators > 0
-        safe = cp.where(covered, denominators, 1)
-        ar = cp.where(covered, numerators.real / safe, 0).astype(cp.float32)
-        ai = cp.where(covered, numerators.imag / safe, 0).astype(cp.float32)
-        scale = cp.stack(
-            [ar, ai, ar * ar + ai * ai, cp.where(covered, 2 * weight[None], 0).astype(cp.float32)], axis=-1
-        ).astype(cp.float32)
+        count = len(scale)
         chi_kernel, gradient_kernel = _fifth_kernels()
         chi = cp.empty((count, nk), cp.float32)
         chi_kernel(((nk + 255) // 256, count), (256,),
                    (kx, ky, coefficients, chi, np.int32(nk), np.int32(count), np.float32(e.wavelength)))
-        chunks, blocks = (nk + 255) // 256, (nb + 255) // 256
-        partial = cp.empty((count, chunks, blocks, 28), cp.float32)
-        gradient_kernel(
-            (blocks, chunks, count), (256,),
-            (e.G_qk, flat, qx.ravel(), qy.ravel(), kx, ky, monomials, chi, trial, coefficients, scale, partial,
-             np.int32(nk), np.int64(int(e.G_qk.shape[1] * e.G_qk.shape[2]) * stride), np.int32(nb),
-             np.float32(e.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
-             np.float32(cache["ang_x_rad"]), np.float32(e._factor)),
-        )
-        raw = cp.asnumpy(partial.sum(axis=(1, 2), dtype=cp.float64))
+        blocks = (nb + 255) // 256
+        raw = None
+        # the gradient is a sum over bright-field pixels: one launch a slab of G (DirectEngine.band_slabs)
+        for first, stop, slab, step in e.band_slabs(stride):
+            pixels = slice(first // stride, first // stride + len(range(first, stop, stride)))
+            count_k = pixels.stop - pixels.start
+            if count_k == 0:
+                continue
+            chunks = (count_k + 255) // 256
+            partial = cp.empty((count, chunks, blocks, 28), cp.float32)
+            gradient_kernel(
+                (blocks, chunks, count), (256,),
+                (slab, flat, qx.ravel(), qy.ravel(), kx[pixels], ky[pixels], monomials[pixels],
+                 cp.ascontiguousarray(chi[:, pixels]), trial, coefficients, scale, partial, np.int32(count_k),
+                 np.int64(int(slab.shape[1] * slab.shape[2]) * step), np.int32(nb),
+                 np.float32(e.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
+                 np.float32(cache["ang_x_rad"]), np.float32(e._factor)),
+            )
+            slab_sum = partial.sum(axis=(1, 2), dtype=cp.float64)
+            raw = slab_sum if raw is None else raw + slab_sum
         self.gradient_passes += count
-        return self.gradient(raw)
+        return cp.asnumpy(raw)
 
     def values_and_gradients(self, z, stride=1, band=(0.2, 0.9)):
         values = self.values(z, stride, band)
         return values, self.gradients(z, stride, band)
 
+
+class SharedPasses:
+    """Independent refinements of one ``FifthOrderGradients`` objective, their evaluations merged into shared passes.
+
+    Each job (a callable) runs in its own thread with its own ``member`` objectives. A member's ``values`` or
+    ``gradients`` call waits until every unfinished job is waiting too; then one ``values_many`` and one
+    ``gradients_many`` per stride serve all of them, members in the order they were made. A candidate's sums do not
+    depend on the others in its pass, so each job sees what it would see alone, and G is read once a round instead of
+    once a job: on a band spectrum streamed from host memory that is the time of the fit.
+    """
+
+    def __init__(self, objective):
+        import threading
+
+        self.objective = objective
+        self.condition = threading.Condition()
+        self.pending, self.answers = {}, {}
+        self.active = 0
+        self.order = itertools.count()
+        self.members = []
+
+    def member(self, factor=None):
+        """An objective for one job: the shared objective, its band weights times ``factor`` (None for none)."""
+        self.members.append(_SharedMember(self, next(self.order), factor))
+        return self.members[-1]
+
+    def run(self, jobs):
+        """Run the callables ``jobs`` together; their results in order, or the first job's error."""
+        import contextvars
+        import threading
+
+        results, errors = [None] * len(jobs), [None] * len(jobs)
+        self.active = len(jobs)
+
+        def work(index, job):
+            try:
+                results[index] = job()
+            except BaseException as error:  # noqa: BLE001  handed to the caller below, after every job has stopped
+                errors[index] = error
+            finally:
+                with self.condition:
+                    self.active -= 1
+                    self._serve()
+
+        threads = [threading.Thread(target=contextvars.copy_context().run, args=(work, index, job), daemon=True)
+                   for index, job in enumerate(jobs)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        for member in self.members:
+            member.state = None  # each member's last values sums, candidates x band frequencies, no longer needed
+        for error in errors:
+            if error is not None:
+                raise error
+        return results
+
+    def request(self, member, kind, z, stride):
+        ticket = object()
+        with self.condition:
+            self.pending[ticket] = (member, kind, z, stride)
+            self._serve()
+            while ticket not in self.answers:
+                self.condition.wait()
+            answer = self.answers.pop(ticket)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    def _serve(self):
+        """With the lock held: once every unfinished job waits, evaluate all waiting requests in shared passes."""
+        if not self.pending or len(self.pending) < self.active:
+            return
+        waiting = sorted(self.pending.items(), key=lambda item: item[1][0].order)
+        self.pending = {}
+        try:
+            values = [(ticket, request) for ticket, request in waiting if request[1] == "values"]
+            if values:
+                answers = self.objective.values_many([(z, stride, member.factor) for _, (member, _, z, stride) in values])
+                for (ticket, (member, _, _, _)), (result, state) in zip(values, answers):
+                    member.state = state
+                    self.answers[ticket] = result
+            gradients = [(ticket, request) for ticket, request in waiting if request[1] == "gradients"]
+            if gradients:
+                states = []
+                for _, (member, _, z, stride) in gradients:
+                    if member.state is None or member.state[1] != stride or (
+                            z is not None and not np.array_equal(np.atleast_2d(z), member.state[0])):
+                        raise RuntimeError("The gradient pass needs the value pass of the same points and stride.")
+                    states.append(member.state)
+                for (ticket, _), result in zip(gradients, self.objective.gradients_many(states)):
+                    self.answers[ticket] = result
+        except Exception as error:  # noqa: BLE001  every waiting job raises it (request)
+            for ticket, _ in waiting:
+                self.answers.setdefault(ticket, error)
+        self.condition.notify_all()
+
+
+class _SharedMember:
+    """One job's view of a ``SharedPasses`` objective: the calls ``_gradient_refinement`` and the half-band check make."""
+
+    def __init__(self, shared, order, factor):
+        self.shared, self.order, self.factor, self.state = shared, order, factor, None
+
+    @property
+    def p(self):
+        return self.shared.objective.p
+
+    @property
+    def num_bright_field_pixels(self):
+        return self.shared.objective.num_bright_field_pixels
+
+    def band_frequencies(self, band=(0.2, 0.9)):
+        return self.shared.objective.band_frequencies(band)
+
+    def with_band_weights(self, factor):
+        factor = cp.asarray(factor, dtype=cp.float32)
+        return self.shared.member(factor if self.factor is None else self.factor * factor)
+
+    def values(self, z, stride=1, band=(0.2, 0.9)):
+        return self.shared.request(self, "values", z, stride)
+
+    def gradients(self, z=None, stride=1, band=(0.2, 0.9)):
+        return self.shared.request(self, "gradients", z, stride)
 
 # w |N|^2 / D per band frequency in float64 (0 where D = 0), summed over the band: the agreements of the
 # production numerators and denominators with the last reduction in float64.
@@ -393,6 +550,27 @@ _power_terms = cp.ElementwiseKernel(
 
 def _power_sum(numerators, denominators, weight):
     return _power_terms(numerators, denominators, weight[None]).sum(axis=1)
+
+
+# The gradient kernel's terms per candidate and band frequency, [a_r, a_i, |a|^2, 2 w] with a = N / D (all 0 where
+# D = 0), written into a flat float32 output four at a time. One pass with no temporaries; the explicit roundings
+# keep |a|^2 from contracting into a fused multiply-add, so it equals the separate array operations bit for bit.
+_gradient_scale = cp.ElementwiseKernel(
+    "complex64 numerator, float32 denominator, float32 weight", "raw float32 scale",
+    """
+    float ar = 0.0f, ai = 0.0f, w = 0.0f;
+    if (denominator > 0.0f) {
+        ar = __fdiv_rn(numerator.real(), denominator);
+        ai = __fdiv_rn(numerator.imag(), denominator);
+        w = 2.0f * weight;
+    }
+    scale[4 * i] = ar;
+    scale[4 * i + 1] = ai;
+    scale[4 * i + 2] = __fadd_rn(__fmul_rn(ar, ar), __fmul_rn(ai, ai));
+    scale[4 * i + 3] = w;
+    """,
+    "direct_exact_gradient_scale",
+)
 
 
 _LOW_SOURCE = _GEOMETRY_SOURCE + r"""
@@ -571,6 +749,10 @@ def _low_kernel():
     return _low_module.get_function("low_order_derivatives")
 
 
+# Largest partial-sum array one launch of the low-order derivative kernel may take (LowOrderDerivatives.derivatives).
+DERIVATIVE_PARTIAL_BYTES = 64 << 20
+
+
 class LowOrderDerivatives:
     """The low-order joint agreement (``ThickSample.fit_resident``'s values) with exact gradient and Hessian.
 
@@ -589,27 +771,32 @@ class LowOrderDerivatives:
     def _sums(self, trial):
         e = self.e
         cache = e._cache
-        num_bf, _, _ = e._bf_grid()
         _, _, flat, qx, qy, weight = e.thick._prepare_fit_band(self.band)
         nb = int(flat.size)
         blocks = (nb + 255) // 256
-        k_blocks = (num_bf + _K_CHUNK - 1) // _K_CHUNK
         numerators = cp.empty((len(trial), nb), cp.complex64)
         denominators = cp.empty((len(trial), nb), cp.float32)
         for start in range(0, len(trial), THICK_FIT_MAX_BATCH):
             rows = trial[start:start + THICK_FIT_MAX_BATCH]
             batch = len(rows)
-            partial_numerator = cp.empty((k_blocks, batch, nb), dtype=cp.complex64)
-            partial_denominator = cp.empty((k_blocks, batch, nb), dtype=cp.float32)
-            thick_fit_batch_kernel(
-                (blocks, k_blocks), (256,),
-                (e.G_qk, flat, qx.ravel(), qy.ravel(), cache["kx_bf"], cache["ky_bf"], rows.ravel(),
-                 partial_numerator, partial_denominator, cp.zeros(blocks, dtype=cp.uint32),
-                 numerators[start:start + batch], denominators[start:start + batch],
-                 np.int32(num_bf), np.int64(e.G_qk.shape[1] * e.G_qk.shape[2]), np.int32(nb), np.int32(batch),
-                 np.float32(e.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
-                 np.float32(cache["ang_x_rad"]), np.float32(e._factor), np.int32(_K_CHUNK)),
-            )
+            sums = SlabSums()
+            for first, stop, slab, _ in e.band_slabs():
+                k_blocks = (stop - first + _K_CHUNK - 1) // _K_CHUNK
+                partial_numerator = cp.empty((k_blocks, batch, nb), dtype=cp.complex64)
+                partial_denominator = cp.empty((k_blocks, batch, nb), dtype=cp.float32)
+                numerator = cp.empty((batch, nb), cp.complex64)
+                denominator = cp.empty((batch, nb), cp.float32)
+                thick_fit_batch_kernel(
+                    (blocks, k_blocks), (256,),
+                    (slab, flat, qx.ravel(), qy.ravel(), cache["kx_bf"][first:stop], cache["ky_bf"][first:stop],
+                     rows.ravel(), partial_numerator, partial_denominator, cp.zeros(blocks, dtype=cp.uint32),
+                     numerator, denominator, np.int32(stop - first), np.int64(slab.shape[1] * slab.shape[2]),
+                     np.int32(nb), np.int32(batch), np.float32(e.wavelength), np.float32(cache["semiangle_rad"]),
+                     np.float32(cache["ang_y_rad"]), np.float32(cache["ang_x_rad"]), np.float32(e._factor),
+                     np.int32(_K_CHUNK)),
+                )
+                sums.add(numerator, denominator)
+            numerators[start:start + batch], denominators[start:start + batch] = sums.result()
         return numerators, denominators, weight
 
     def values(self, z, all_derivatives=False):
@@ -629,7 +816,6 @@ class LowOrderDerivatives:
             return []
         e = self.e
         cache = e._cache
-        num_bf, _, _ = e._bf_grid()
         _, _, flat, qx, qy, _ = e.thick._prepare_fit_band(self.band)
         nb = int(flat.size)
         chosen = cp.asarray(np.asarray(indices, dtype=np.int64))
@@ -643,18 +829,35 @@ class LowOrderDerivatives:
         ai = cp.where(covered, numerators.imag / safe, 0).astype(cp.float32)
         scale = cp.stack([ar, ai, ar * ar + ai * ai, cp.where(covered, weight[None], 0).astype(cp.float32)],
                          axis=-1).astype(cp.float32)
-        chunks, blocks = (num_bf + 255) // 256, (nb + 255) // 256
-        nd = cp.empty((count, chunks, 18, nb), cp.float32)
-        linear = cp.empty((count, chunks, blocks, 27), cp.float32)
-        _low_kernel()(
-            (blocks, chunks, count), (256,),
-            (e.G_qk, flat, qx.ravel(), qy.ravel(), cache["kx_bf"], cache["ky_bf"], cp.ascontiguousarray(trial),
-             scale, nd, linear, np.int32(num_bf), np.int64(e.G_qk.shape[1] * e.G_qk.shape[2]), np.int32(nb),
-             np.float32(e.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
-             np.float32(cache["ang_x_rad"]), np.float32(e._factor)),
-        )
-        lin = linear.sum(axis=(1, 2), dtype=cp.float64)
-        sums = nd.sum(axis=1, dtype=cp.float64)                       # (count, 18, nb)
+        blocks = (nb + 255) // 256
+        lin = sums = None
+        trial = cp.ascontiguousarray(trial)
+        # the derivative sums run over bright-field pixels: one launch a slab of G (DirectEngine.band_slabs)
+        for first, stop, slab, _ in e.band_slabs():
+            chunks = (stop - first + 255) // 256
+            # positions in groups whose partial sums fit DERIVATIVE_PARTIAL_BYTES: each position's sums are its own,
+            # and three positions on a 23,448-frequency band held whole took 174 MiB (2026-11-14)
+            group = max(1, DERIVATIVE_PARTIAL_BYTES // (chunks * 18 * nb * 4))
+            parts = []
+            for start in range(0, count, group):
+                rows = slice(start, min(start + group, count))
+                size = rows.stop - rows.start
+                nd = cp.empty((size, chunks, 18, nb), cp.float32)
+                linear = cp.empty((size, chunks, blocks, 27), cp.float32)
+                _low_kernel()(
+                    (blocks, chunks, size), (256,),
+                    (slab, flat, qx.ravel(), qy.ravel(), cache["kx_bf"][first:stop], cache["ky_bf"][first:stop],
+                     trial[rows], scale[rows], nd, linear, np.int32(stop - first),
+                     np.int64(slab.shape[1] * slab.shape[2]), np.int32(nb), np.float32(e.wavelength),
+                     np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]), np.float32(cache["ang_x_rad"]),
+                     np.float32(e._factor)),
+                )
+                parts.append((linear.sum(axis=(1, 2), dtype=cp.float64), nd.sum(axis=1, dtype=cp.float64)))
+                del nd, linear
+            slab_lin, slab_sums = (parts[0] if len(parts) == 1 else
+                                   (cp.concatenate([part[0] for part in parts]), cp.concatenate([part[1] for part in parts])))
+            lin, sums = (slab_lin, slab_sums) if lin is None else (lin + slab_lin, sums + slab_sums)
+        # sums: (count, 18, nb)
         den = safe.astype(cp.float64)[:, None, :]
         ar64 = numerators.real.astype(cp.float64)[:, None, :] / den
         ai64 = numerators.imag.astype(cp.float64)[:, None, :] / den

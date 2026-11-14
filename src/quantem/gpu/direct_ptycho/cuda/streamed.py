@@ -98,7 +98,8 @@ class StreamedDirect:
         self.radius = float(radius)
         self.detector_sampling_mrad = detector_sampling_mrad
         if self.detector_sampling_mrad is None:
-            self.detector_sampling_mrad = detector_sampling_mrad(self.mean_pattern, semiangle_mrad)
+            # a file without a recorded detector sampling: the disk edge sits at the semiangle
+            self.detector_sampling_mrad = detector.detector_sampling_mrad(self.mean_pattern, semiangle_mrad)
         self.transposed = bool(scan_detector_rotation_flipped)
         mean = self.mean_pattern.T if self.transposed else self.mean_pattern
         compute_center = self.center[::-1] if self.transposed else self.center
@@ -129,10 +130,79 @@ class StreamedDirect:
         self.chunks, self.descriptors = (), None
         self.source.park()
 
-    def restore(self):
-        """Return the whole encoded acquisition to the device after ``park``."""
-        self.source.restore()
+    def restore(self, *, keep_host: bool = False):
+        """Return the whole encoded acquisition to the device after ``park``.
+
+        ``keep_host`` keeps the host copy, so the next ``park`` only frees the device (no copy back).
+        """
+        self.source.restore(keep_host=keep_host)
         self._borrow_chunks()
+
+    def band_spectra(self, flat, scan_region=None):
+        """G(q, k) of every bright-field pixel at the stored half-plane frequencies ``flat``, in host memory.
+
+        Over every scan position, or over ``scan_region`` (row_start, row_stop, col_start, col_stop) only, whose
+        own spectra ``flat`` then indexes.
+
+        One pass of the reconstruction's column batches (``_column_spectra``): each batch's kept frequencies are
+        gathered on the device and copied into one page-locked host array, so the device holds one batch of spectra
+        at a time, never the whole result. Returns (spectra (bright-field pixels, len(flat)) complex64, the mean DC
+        value of G as the dense spectrum reports it).
+        """
+        memory = cp.cuda.alloc_pinned_memory(self.num_bright_field_pixels * flat.size * 8)
+        spectra = np.frombuffer(memory, np.complex64, self.num_bright_field_pixels * flat.size).reshape(
+            self.num_bright_field_pixels, flat.size)
+        dc = cp.empty(self.num_bright_field_pixels, cp.complex64)
+        for first, stop, batch in self._column_spectra(COLUMN_BATCH, scan_region):
+            dc[first:stop] = batch[:, 0, 0]
+            batch.reshape(stop - first, -1)[:, flat].get(out=spectra[first:stop])
+        return spectra, complex(dc.mean().get())
+
+    def _column_spectra(self, batch_size, scan_region=None):
+        """Each batch of ``batch_size`` bright-field pixels as (first, stop, spectra): decoded from the encoded
+        acquisition, transformed over every scan position, or over ``scan_region`` (row_start, row_stop, col_start,
+        col_stop) only, the Hermitian half plane (count, rows, cols / 2 + 1).
+
+        The spectra share one buffer: a batch is valid until the next is drawn.
+        """
+        rows, cols = self.scan_shape
+        row_start, row_stop, col_start, col_stop = (0, rows, 0, cols) if scan_region is None else scan_region
+        out_rows, out_cols = row_stop - row_start, col_stop - col_start
+        buffer = cp.empty((batch_size, out_rows, out_cols + 2), cp.float32)
+        counts = cp.empty(batch_size * rows * cols, cp.uint16)
+        spectra = buffer.view(cp.complex64)
+        errors = cp.zeros(1, cp.uint32)
+        plan = None
+        previous_count = None
+        for first in range(0, self.num_bright_field_pixels, batch_size):
+            stop = min(first + batch_size, self.num_bright_field_pixels)
+            count = stop - first
+            streams = math.ceil(self.max_chunk_scans / self.interval) * count
+            self.decode(
+                (math.ceil(streams / 128), len(self.chunks)), (128,),
+                (self.descriptors, self.decoding, self.pixels[first:stop], counts, errors,
+                 *(np.uint32(value) for value in
+                   (count, math.prod(self.detector_shape), self.interval))),
+            )
+            # the decoder writes each batch scan-major (position, pixel), so a region is a block of rows of it
+            selected = counts if scan_region is None else cp.ascontiguousarray(
+                counts[:rows * cols * count].reshape(rows, cols, count)[row_start:row_stop, col_start:col_stop])
+            self.to_fft(
+                (math.ceil(out_rows * out_cols / 32),), (32, 8),
+                (selected, buffer, *(np.uint32(value) for value in (count, out_rows, out_cols))),
+            )
+            if count != previous_count:
+                plan = None
+                plan = cufft.PlanNd(
+                    (out_rows, out_cols), (out_rows, out_cols + 2), 1, out_rows * (out_cols + 2),
+                    (out_rows, out_cols // 2 + 1), 1, out_rows * (out_cols // 2 + 1),
+                    cufft.CUFFT_R2C, count, "C", 2, out_cols // 2 + 1,
+                )
+                previous_count = count
+            plan.fft(buffer[:count], spectra[:count], cufft.CUFFT_FORWARD)
+            yield first, stop, spectra[:count]
+        if int(errors.get()[0]):
+            raise ValueError("An ANS detector column failed decoding. Reload the intact acquisition before reconstructing.")
 
     def phase(self, aberrations, *, voltage_kV, semiangle_mrad, scan_sampling_A,
               rotation_deg, upsample, sample_tilt_mrad, depth_spread_A,
@@ -188,39 +258,12 @@ class StreamedDirect:
         if higher_order_magnitudes is not None:
             kernel = thick_wave_sum_full_kernel
             parameters = (*parameters, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
-        buffer = cp.empty((batch_size, rows, cols + 2), cp.float32)
-        counts = cp.empty(batch_size * rows * cols, cp.uint16)
-        spectra = buffer.view(cp.complex64)
         spectrum = cp.zeros(output_shape, cp.complex128)
         partial = cp.empty((1, *output_shape), cp.complex128)
         dc = cp.empty(self.num_bright_field_pixels, cp.complex64)
-        errors = cp.zeros(1, cp.uint32)
-        plan = None
-        previous_count = None
-        for first in range(0, self.num_bright_field_pixels, batch_size):
-            stop = min(first + batch_size, self.num_bright_field_pixels)
+        for first, stop, spectra in self._column_spectra(batch_size):
             count = stop - first
-            streams = math.ceil(self.max_chunk_scans / self.interval) * count
-            self.decode(
-                (math.ceil(streams / 128), len(self.chunks)), (128,),
-                (self.descriptors, self.decoding, self.pixels[first:stop], counts, errors,
-                 *(np.uint32(value) for value in
-                   (count, math.prod(self.detector_shape), self.interval))),
-            )
-            self.to_fft(
-                (math.ceil(rows * cols / 32),), (32, 8),
-                (counts, buffer, *(np.uint32(value) for value in (count, rows, cols))),
-            )
-            if count != previous_count:
-                plan = None
-                plan = cufft.PlanNd(
-                    (rows, cols), (rows, cols + 2), 1, rows * (cols + 2),
-                    (rows, cols // 2 + 1), 1, rows * (cols // 2 + 1),
-                    cufft.CUFFT_R2C, count, "C", 2, cols // 2 + 1,
-                )
-                previous_count = count
-            plan.fft(buffer[:count], spectra[:count], cufft.CUFFT_FORWARD)
-            dc[first:stop] = spectra[:count, 0, 0]
+            dc[first:stop] = spectra[:, 0, 0]
             # the kernel's arguments in its order: bounds (read only by the bounded variant, so any float array),
             # then num_bf, native rows, cols and stored cols, output rows, cols and stored cols, first BF, group size
             kernel(
@@ -231,9 +274,7 @@ class StreamedDirect:
                  np.complex64(0), *parameters),
             )
             spectrum += partial[0]
-        if int(errors.get()[0]):
-            raise ValueError("An ANS detector column failed decoding. Reload the intact acquisition before reconstructing.")
-        del buffer, counts, spectra, plan, partial
+        del spectra, partial
         spectrum /= self.num_bright_field_pixels
         spectrum[0, 0] = dc.mean()
         wave = cupyx.scipy.fft.ifft2(spectrum, overwrite_x=True)

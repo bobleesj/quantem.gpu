@@ -25,14 +25,12 @@ from quantem.gpu.direct_ptycho.cuda.kernels.engine import (
     pk_kernel,
     sum_sumsq_phase_kernel,
 )
-from quantem.gpu.direct_ptycho.cuda.thick import ThickSample
+from quantem.gpu.direct_ptycho.cuda.thick import BAND_SLAB_ROWS, ThickSample
 
 # Above this many bytes of corrected planes (num_bright_field_pixels x scan_row x scan_col complex64) the full-BF staging buffer is never
 # allocated: the paths reduce bright-field chunks whose staging buffer targets _CHUNK_TARGET_BYTES instead.
 _STAGING_LIMIT_BYTES = 6 * 1024 ** 3
 _CHUNK_TARGET_BYTES = 2 * 1024 ** 3
-
-
 class _PreparedCudaBfSubset:
     """Reusable CUDA-owned state for an explicitly approximate drag preview.
 
@@ -160,8 +158,11 @@ class DirectEngine:
         semiangle_cutoff: float,
         angular_sampling: tuple[float, float],
         bright_field_radius_px: float | None = None,
+        fit_band_inv_A: tuple[float, float] | None = None,
+        spectra_host: np.ndarray | None = None,
+        resident_rows: int | None = None,
     ):
-        n_bf = int(G_qk.shape[0])
+        n_bf = int(G_qk.shape[0]) if resident_rows is None else int(spectra_host.shape[0])
         n_row = int(bf_inds_row.shape[0])
         n_col = int(bf_inds_col.shape[0])
         if n_bf != n_row or n_bf != n_col:
@@ -170,7 +171,17 @@ class DirectEngine:
                 f"lengths; got G_qk.shape[0]={n_bf}, "
                 f"len(row)={n_row}, len(col)={n_col}."
             )
-        self.G_qk = G_qk
+        self._G_qk = G_qk
+        # Set when G holds only the fit band's frequencies, (num_bf, 1, band frequencies) in the order
+        # ``thick.band_frequencies`` lists them: the fits read nothing else, the reconstructions cannot run on it.
+        self.fit_band_inv_A = None if fit_band_inv_A is None else tuple(float(value) for value in fit_band_inv_A)
+        # a host copy of G that release_spectra may lean on: G then leaves the device until it is next read
+        self._spectra_host = spectra_host
+        # None: G holds every bright-field pixel. Else G holds the first resident_rows pixels and the fits stream the
+        # rest from spectra_host (band_slabs), for a band spectrum larger than the device
+        self._resident_rows = resident_rows
+        self._slab_buffers = None
+        self._copy_stream = None
         self.bf_inds_row = bf_inds_row
         self.bf_inds_col = bf_inds_col
         if bright_field_center_px is None:
@@ -206,6 +217,80 @@ class DirectEngine:
         self._bf_source_write_seconds: float | None = None
         self._colvar_group = 32
         self.thick = ThickSample(self)
+
+    @property
+    def G_qk(self) -> cp.ndarray:
+        """The bright-field spectra G(q, k); after ``release_spectra`` copied back from host memory when next read."""
+        if self._G_qk is None and self._spectra_host is not None:
+            resident = self._spectra_host[:self._resident_rows]
+            self._G_qk = cp.asarray(resident).reshape(resident.shape[0], 1, resident.shape[1])
+        return self._G_qk
+
+    @G_qk.setter
+    def G_qk(self, value) -> None:
+        self._G_qk = value
+
+    def release_spectra(self) -> None:
+        """Free G on the device when a host copy holds it (``spectra_host``): another computation needs the room."""
+        if self._spectra_host is not None:
+            self._G_qk = self._slab_buffers = None
+
+    def band_slabs(self, stride: int = 1):
+        """G as (first, stop, slab, step) over bright-field pixels ``first:stop``; the fits sum their terms over them.
+
+        Every fit objective is a sum over bright-field pixels k (N_q = sum_k G conj(gamma), D_q = sum_k |gamma|^2 and
+        their derivatives), so slabs of pixels add up to the whole. ``stride`` is the objectives' every-n-th-pixel
+        subsample: a slab holds the pixels ``first``, ``first + stride``, ... below ``stop``, ``step`` slab rows
+        apart. A G that holds every pixel is one slab, the launch the dense sessions have always made. A band
+        spectrum larger than the device (``resident_rows``) gives views of its device rows in BAND_SLAB_ROWS slabs,
+        then the rest of the subsample copied from the page-locked host copy, one row per pixel (``step`` 1), into
+        two alternating device buffers on a second stream while the kernels read the previous slab. A subsample's
+        copy takes only its rows (a pitched copy), so a stride-8 pass moves an eighth of the bytes.
+        """
+        if self._resident_rows is None:
+            yield 0, int(self.G_qk.shape[0]), self.G_qk, stride
+            return
+        host = self._spectra_host
+        num_bf, resident_rows, rows = int(host.shape[0]), self._resident_rows, BAND_SLAB_ROWS
+        resident = self.G_qk
+        for first in range(0, resident_rows, rows):
+            offset = -first % stride
+            yield first + offset, min(first + rows, resident_rows), resident[first + offset:first + rows], stride
+        span = rows * stride
+        starts = list(range(resident_rows + (-resident_rows % stride), num_bf, span))
+        if not starts:
+            return
+        if self._slab_buffers is None:
+            self._slab_buffers = [cp.empty((rows, 1, host.shape[1]), cp.complex64) for _ in range(2)]
+            self._copy_stream = self._copy_stream or cp.cuda.Stream(non_blocking=True)
+        buffers, copy, compute = self._slab_buffers, self._copy_stream, cp.cuda.get_current_stream()
+        ready, read = [cp.cuda.Event(), cp.cuda.Event()], [None, None]
+        # the buffers come from the compute stream's memory pool: work still queued there may own that memory, so
+        # the copies start after it (without this the first slabs of a fresh allocation read back garbage)
+        queued = cp.cuda.Event()
+        queued.record(compute)
+        copy.wait_event(queued)
+        row_bytes = host.shape[1] * host.itemsize
+
+        def issue(index):
+            first, slot = starts[index], index % 2
+            count = len(range(first, min(first + span, num_bf), stride))
+            if read[slot] is not None:
+                copy.wait_event(read[slot])
+            cp.cuda.runtime.memcpy2DAsync(buffers[slot].data.ptr, row_bytes, host.ctypes.data + first * row_bytes,
+                                          row_bytes * stride, row_bytes, count, cp.cuda.runtime.memcpyHostToDevice,
+                                          copy.ptr)
+            ready[slot].record(copy)
+
+        issue(0)
+        for index, first in enumerate(starts):
+            if index + 1 < len(starts):
+                issue(index + 1)
+            slot, stop = index % 2, min(first + span, num_bf)
+            compute.wait_event(ready[slot])
+            yield first, stop, buffers[slot][:len(range(first, stop, stride))], 1
+            read[slot] = cp.cuda.Event()
+            read[slot].record(compute)
 
     def gqk_is_half_plane(self) -> bool:
         """Return True when ``G_qk`` stores only the Hermitian half-plane."""
@@ -401,7 +486,8 @@ class DirectEngine:
         }
         self._cache = cache
         self._cached_scan_detector_rotation_rad = scan_detector_rotation_rad
-        if self._custom_fft is None:
+        # the reconstruction's FFT kernels: a band-only G is never reconstructed, so it needs none
+        if self._custom_fft is None and self.fit_band_inv_A is None:
             if ny != nx:
                 raise ValueError(
                     "CUDA direct ptychography requires a square scan grid; "

@@ -13,9 +13,11 @@ from quantem.gpu.detector import disk_edge_radius
 from quantem.gpu.direct_ptycho.contract import ExportState, BackendPrecision
 from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra, select_bright_field
 from quantem.gpu.direct_ptycho.cuda.engine import DirectEngine
+from quantem.gpu.direct_ptycho.cuda.thick import BAND_SLAB_ROWS
 from quantem.gpu.direct_ptycho.cuda.optimizer import fit_sample, fit_standard
 from quantem.gpu.direct_ptycho.padding import pad_scan, padded_side
 from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+
 
 
 class CudaDirectBackend:
@@ -58,6 +60,12 @@ class CudaDirectBackend:
     precision = BackendPrecision()
     # A full-field region builds its own G(q, k) from its counts on first use; there is no prepared stack to share.
     shares_full_field_preparation = False
+    # the fit band whose frequencies alone G holds (from_band_spectra), else None: G is the whole half plane
+    fit_band_inv_A = None
+    # host copy of a band-only G, which lets release_prepared take it off the device
+    _spectra_host = None
+    # pixels of a band-only G on the device when the rest streams from _spectra_host (from_band_spectra), else None
+    _resident_rows = None
 
     def __init__(
         self,
@@ -103,14 +111,58 @@ class CudaDirectBackend:
         if padded_side(data.shape[:2], any_square=False) is not None:
             data = cp.from_dlpack(pad_scan(torch.from_dlpack(data), any_square=False))
 
-        if isinstance(scan_sampling, (int, float)):
-            scan_sampling = (float(scan_sampling), float(scan_sampling))
-
         # The bright-field disk edge sits at the semiangle, which calibrates the detector.
         if detector_sampling_mrad is None:
             detector_sampling_mrad = semiangle / disk_edge_radius(cp.asnumpy(mean_pattern(data)))
-            detector_sampling_mrad = (detector_sampling_mrad, detector_sampling_mrad)
-        elif isinstance(detector_sampling_mrad, (int, float)):
+        # The raw counts stay in their native dtype (usually uint16): the selection reduces them with an integer
+        # accumulator and the spectra cast only the selected pixels to complex64, never the full 4D block.
+        bf_inds_row, bf_inds_col, center, radius = select_bright_field(
+            data, bright_field_intensity_threshold, bright_field_radius_px, bright_field_center_px,
+        )
+        scan_gpts, det_gpts = data.shape[:2], data.shape[2:]
+        G_qk, dc_value = bright_field_spectra(data, bf_inds_row, bf_inds_col, scan_gpts, det_gpts)
+        del data
+        cp.get_default_memory_pool().free_all_blocks()
+        self._hold(G_qk, dc_value, bf_inds_row, bf_inds_col, center, radius, scan_gpts, det_gpts,
+                   semiangle=semiangle, scan_sampling=scan_sampling, detector_sampling_mrad=detector_sampling_mrad,
+                   voltage_kV=voltage_kV, bright_field_intensity_threshold=bright_field_intensity_threshold,
+                   aberrations=aberrations, scan_detector_rotation_rad=scan_detector_rotation_rad)
+
+    @classmethod
+    def from_band_spectra(cls, spectra, *, fit_band_inv_A, dc_value, bf_inds_row, bf_inds_col,
+                          bright_field_center_px, bright_field_radius_px, scan_shape, detector_shape, semiangle,
+                          scan_sampling, detector_sampling_mrad, voltage_kV, bright_field_intensity_threshold,
+                          aberrations, scan_detector_rotation_deg, device_bytes=None) -> "CudaDirectBackend":
+        """A backend for fits alone, whose G(q, k) holds only the fit band's frequencies.
+
+        ``spectra`` is (bright-field pixels, band frequencies) in page-locked host memory, in the order
+        ``thick.band_frequencies`` lists them; it stays the backend's host copy (``release_prepared``). The fits read
+        G nowhere else; on a 512 x 512 scan at 0.27 A the 0.2 to 0.9 1/A band is 23,448 of the half plane's 131,584
+        frequencies. ``device_bytes`` bounds the device memory G may take: all of G when it fits, else the first
+        bright-field pixels that fit beside two slab buffers, the rest streamed from ``spectra`` slab by slab
+        (``DirectEngine.band_slabs``). Reconstructions need every frequency and refuse (``_whole_spectrum``).
+        """
+        backend = cls.__new__(cls)
+        backend.fit_band_inv_A = tuple(float(value) for value in fit_band_inv_A)
+        backend._spectra_host = spectra
+        if device_bytes is not None and spectra.nbytes > device_bytes:
+            rows = max(0, int(device_bytes // (spectra.shape[1] * 8)) - 2 * BAND_SLAB_ROWS)
+            backend._resident_rows = rows - rows % BAND_SLAB_ROWS
+        evidence = cp.asarray(spectra[:backend._resident_rows])
+        backend._hold(evidence.reshape(evidence.shape[0], 1, spectra.shape[1]), dc_value, bf_inds_row, bf_inds_col,
+                      bright_field_center_px, bright_field_radius_px, tuple(scan_shape), tuple(detector_shape),
+                      semiangle=semiangle, scan_sampling=scan_sampling, detector_sampling_mrad=detector_sampling_mrad,
+                      voltage_kV=voltage_kV, bright_field_intensity_threshold=bright_field_intensity_threshold,
+                      aberrations=aberrations, scan_detector_rotation_rad=math.radians(scan_detector_rotation_deg))
+        return backend
+
+    def _hold(self, G_qk, dc_value, bf_inds_row, bf_inds_col, center, radius, scan_gpts, det_gpts, *, semiangle,
+              scan_sampling, detector_sampling_mrad, voltage_kV, bright_field_intensity_threshold, aberrations,
+              scan_detector_rotation_rad) -> None:
+        """Keep the bright-field spectra and the calibration and geometry the engine reads with them."""
+        if isinstance(scan_sampling, (int, float)):
+            scan_sampling = (float(scan_sampling), float(scan_sampling))
+        if isinstance(detector_sampling_mrad, (int, float)):
             detector_sampling_mrad = (float(detector_sampling_mrad), float(detector_sampling_mrad))
         if aberrations is None:
             aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
@@ -121,35 +173,15 @@ class CudaDirectBackend:
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.aberrations = aberrations.copy()
         self._scan_detector_rotation_rad = scan_detector_rotation_rad
-        scan_gpts = data.shape[:2]
-        det_gpts = data.shape[2:]
         wavelength = wavelength_A_from_kV(voltage_kV)
-
-        # Convert detector sampling: mrad -> reciprocal space
-        reciprocal_sampling = (
-            detector_sampling_mrad[0] * 1e-3 / wavelength,
-            detector_sampling_mrad[1] * 1e-3 / wavelength,
-        )
-        sampling = (
-            1.0 / (reciprocal_sampling[0] * det_gpts[0]),
-            1.0 / (reciprocal_sampling[1] * det_gpts[1]),
-        )
+        # detector sampling, mrad -> the real-space sampling whose reciprocal grid the detector pixels are
+        self.sampling = tuple(1.0 / (step * 1e-3 / wavelength * size)
+                              for step, size in zip(detector_sampling_mrad, det_gpts))
         self.gpts = det_gpts
         self.wavelength = wavelength
-        self.sampling = sampling
-
-        # The raw counts stay in their native dtype (usually uint16): the selection reduces them with an integer
-        # accumulator and the spectra cast only the selected pixels to complex64, never the full 4D block.
-        (self.bf_inds_row, self.bf_inds_col, self.bright_field_center_px,
-         self.bright_field_radius_px) = select_bright_field(
-            data, bright_field_intensity_threshold, bright_field_radius_px, bright_field_center_px,
-        )
-        self.G_qk, self.dc_value = bright_field_spectra(
-            data, self.bf_inds_row, self.bf_inds_col, scan_gpts, det_gpts,
-        )
-        del data
-        cp.get_default_memory_pool().free_all_blocks()
-
+        self.bf_inds_row, self.bf_inds_col = bf_inds_row, bf_inds_col
+        self.bright_field_center_px, self.bright_field_radius_px = center, radius
+        self.G_qk, self.dc_value = G_qk, dc_value
         self._scan_shape = scan_gpts
 
         # scan spatial frequencies (1/A), float32 as the kernels read them
@@ -182,8 +214,11 @@ class CudaDirectBackend:
         """
         if self._accelerator is not None:
             self._accelerator.release_reconstruction_buffers()
-        self.G_qk = None
+        self.G_qk = self._spectra_host = None
         if self._accelerator is not None:
+            # the engine's own G and host copy too: a traceback that still holds the engine (a fit that raised)
+            # would otherwise keep G on the device
+            self._accelerator.G_qk = self._accelerator._spectra_host = self._accelerator._slab_buffers = None
             # the geometry arrays too, so the pool flush below returns their memory
             self._accelerator._cache.clear()
             # Break the known ownership cycle directly. A global collection
@@ -209,6 +244,9 @@ class CudaDirectBackend:
                 wavelength=self.wavelength,
                 semiangle_cutoff=self.semiangle_mrad,
                 angular_sampling=self.detector_sampling_mrad,
+                fit_band_inv_A=self.fit_band_inv_A,
+                spectra_host=self._spectra_host,
+                resident_rows=self._resident_rows,
             )
             # Interactive preview/export may be the first operation, before
             # optimize or result has prepared rotation-dependent geometry.
@@ -266,6 +304,7 @@ class CudaDirectBackend:
         The phase is the native-grid phase of the bright-field mean wave, as ``preview_upsampled`` computes it at
         factor 1, held as a unit-amplitude wave; ``compute_loss=False`` skips the loss.
         """
+        self._whole_spectrum("the reconstruction")
         accel = self._get_accelerator()
         try:
             phase, _ = accel.thick.run(
@@ -378,6 +417,7 @@ class CudaDirectBackend:
         The loss is the phase variance over bright-field pixels: the engine's fused two-term pass for a thin sample,
         else ``ThickSample.phase_variance``.
         """
+        self._whole_spectrum("the reconstruction")
         accel = self._get_accelerator()
         coefficients = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
         phase, _ = accel.thick.run(
@@ -420,13 +460,32 @@ class CudaDirectBackend:
 
         The fits' own evaluator (``DirectEngine.reconstruct_with_loss``), so the loss matches the one a fit reports.
         """
+        self._whole_spectrum("the phase-variance loss")
         return self._get_accelerator().reconstruct_with_loss(aberrations["C10"], aberrations["C12"], aberrations["phi12"])
+
+    def _whole_spectrum(self, stage: str) -> None:
+        """Refuse ``stage`` on a band-only G (``from_band_spectra``): it reads every frequency of the half plane."""
+        if self.fit_band_inv_A is not None:
+            raise NotImplementedError(
+                f"This session holds G(q, k) at the fit band's frequencies only, for fitting the whole scan on a small "
+                f"device; {stage} needs every frequency. Reconstruct with run(..., compute_loss=False), which reads "
+                "the encoded scan in batches of detector columns.")
 
     def release_cache(self) -> None:
         """Nothing to release between calls: CuPy's pool keeps its blocks so the next fit or preview reuses them."""
 
     def release_prepared(self) -> None:
-        """Nothing to release: the CUDA session keeps G(q, k) resident until ``close``."""
+        """Nothing to release: the CUDA session keeps G(q, k) resident until ``close``.
+
+        Except a band-only G (``from_band_spectra``): it leaves the device and returns from its host copy when a fit
+        next reads it, so a reconstruction can decode the encoded scan in its place on a small device.
+        """
+        if self.fit_band_inv_A is None:
+            return
+        # the engine holds G from here on (it reloads it), so it is built before the backend lets go
+        self._get_accelerator().release_spectra()
+        self.G_qk = None
+        cp.get_default_memory_pool().free_all_blocks()
 
     def release_for_region(self, scan_shape: tuple[int, int]) -> None:
         """Nothing to release before a region fit: the CUDA session keeps G(q, k) resident until ``close``."""

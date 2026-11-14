@@ -5,6 +5,7 @@ device preparation and kernels, but they do not define a second user API.
 """
 
 import hashlib
+import copy
 import math
 import time
 from collections.abc import Callable, Sequence
@@ -352,21 +353,86 @@ def _streams_scan(data: Dataset4dstem, backend: str) -> bool:
     ) or _exceeds_device(data)
 
 
+# The fits' spatial-frequency band (fifth_order_fit fit_band_inv_A): a whole-scan fit of an encoded scan holds G(q, k)
+# at these frequencies only (DirectPtycho._whole_scan_for_fit).
+WHOLE_SCAN_FIT_BAND_INV_A = (0.2, 0.9)
+# Device memory such a fit uses beyond its band spectrum and the local memory below, most of it per band frequency:
+# trial batches and their launch partials, a shared fifth-order round's sums (up to 64 candidates), gradient terms.
+# The peak in use over a whole fit, measured with the band held whole (the most launch partials): 206 MiB at 23,448
+# frequencies, 379 MiB at 46,673, 676 MiB at 79,441 (2026-11-13). A flat 256 MiB ran out at 79,441 once the
+# fifth-order refinements shared their rounds.
+WHOLE_SCAN_FIT_WORKING_BYTES = 64 << 20
+WHOLE_SCAN_FIT_WORKING_BYTES_PER_FREQUENCY = 8704
+# Local memory a thread of the resident search's random-number kernel takes (direct_joint_random_words, a Mersenne
+# Twister state); CUDA reserves it for every thread the device can run while a fit runs (_free_fit_memory).
+RANDOM_WORDS_LOCAL_BYTES = 2496
+
+
+def _fit_working_bytes(frequencies: int) -> int:
+    """Device memory a whole-scan fit on ``frequencies`` band frequencies needs beyond its band spectrum.
+
+    The working arrays (WHOLE_SCAN_FIT_WORKING_BYTES and its per-frequency part) plus the local memory the search's
+    random-number kernel makes CUDA reserve: its per-thread excess over the stack limit times every thread the device
+    runs at once. 404 MiB on an RTX PRO 6000 (188 SMs x 1536 threads, measured), about 13 MiB on a 6-SM RTX A400.
+    """
+    properties = cp.cuda.runtime.getDeviceProperties(cp.cuda.runtime.getDevice())
+    stack_bytes = cp.cuda.runtime.deviceGetLimit(cp.cuda.runtime.cudaLimitStackSize)
+    threads = properties["multiProcessorCount"] * properties["maxThreadsPerMultiProcessor"]
+    return (WHOLE_SCAN_FIT_WORKING_BYTES + WHOLE_SCAN_FIT_WORKING_BYTES_PER_FREQUENCY * frequencies
+            + max(0, RANDOM_WORDS_LOCAL_BYTES - stack_bytes) * threads)
+
+
+def _load_fit_libraries() -> None:
+    """Create this thread's cuBLAS handle and load the batched matmul the fit's Newton steps use, so the device memory
+    they take is spent before a whole-scan fit measures what is left for its band spectrum.
+
+    Created part way through the fit instead, with the band spectrum on the device, cublasCreate found no memory
+    (CUBLAS_STATUS_ALLOC_FAILED) on a viewer's scan read from host memory with 3400 MiB free (2026-11-14).
+    """
+    trial = cp.ones((2, 6, 6), cp.float32)
+    cp.matmul(trial, trial.transpose(0, 2, 1))
+
+
+def _free_fit_memory(stack_bytes: int) -> None:
+    """Give back the device memory a fit leaves reserved, before an encoded acquisition returns to the device.
+
+    The fit's working arrays wait in both allocators' caches. And the resident search's random-number kernel
+    (``direct_joint_random_words``: a Mersenne Twister state per thread) takes 2,496 bytes of local memory a thread,
+    so CUDA raises the stack limit and reserves that much for every thread the device can run at once, then keeps it:
+    404 MiB measured on an RTX PRO 6000 (188 SMs x 1536 threads), about 22 MiB on a 6-SM RTX A400. Setting the
+    limit back to ``stack_bytes`` (the value before the fit) releases it.
+    """
+    cp.get_default_memory_pool().free_all_blocks()
+    torch.cuda.empty_cache()
+    if cp.cuda.runtime.deviceGetLimit(cp.cuda.runtime.cudaLimitStackSize) > stack_bytes:
+        cp.cuda.runtime.deviceSetLimit(cp.cuda.runtime.cudaLimitStackSize, stack_bytes)
+
+
+def _fit_region_bytes(side: int, num_bright_field_pixels: int) -> int:
+    """Device memory a dense fit over a ``side`` x ``side`` scan region needs beyond the CUDA context.
+
+    Per bright-field pixel and scan position the fit holds 4.1 bytes of G(q, k) (complex64, the half plane that
+    Hermitian symmetry leaves) and 2.7 bytes of decoded counts over the disk's box: 7 bytes. About 0.5 GiB of
+    solver libraries and working planes does not grow with the region. Measured on the whole process with 9052
+    bright-field pixels (2026-11-12): 1414 MiB at 128 x 128 and 4340 MiB at 256 x 256, against 1502 and 4472 MiB
+    from this rule; the whole 512 x 512 scan holds 9.53 GB of G(q, k) and 6.5 GB of counts.
+    """
+    return (512 << 20) + side * side * num_bright_field_pixels * 7
+
+
 def _central_fit_region(rows: int, columns: int, num_bright_field_pixels: int, verbose: bool,
                         reclaimable_bytes: int = 0) -> tuple[int, int, int, int]:
     """The largest central square fit region (512, 256 or 128 scan pixels a side) the free device memory holds.
 
-    A regional fit took 13 bytes a bright-field pixel and scan position beyond the encoded acquisition, measured
-    on the whole process (1.66 GiB at 128 x 128 with 9050 bright-field pixels: the decoded crop, G(q, k), the
-    fit's working planes and its solver libraries). A side is taken when that fits in 85 % of the free memory, so
-    the fit never starts on a region it cannot finish. ``reclaimable_bytes`` is memory the session frees for the
-    fit: the encoded acquisition of a session that opened its own file and reloads it afterwards.
+    A side is taken when ``_fit_region_bytes`` fits in 85 % of the free memory, so the fit never starts on a
+    region it cannot finish. ``reclaimable_bytes`` is memory the session frees for the fit: the encoded
+    acquisition it parks in host memory meanwhile.
     """
     from quantem.gpu.direct_ptycho.cuda.streamed import free_device_bytes
 
     budget = (free_device_bytes() + reclaimable_bytes) * 0.85
     for side in (512, 256, 128):
-        if side <= min(rows, columns) and side * side * num_bright_field_pixels * 13 <= budget:
+        if side <= min(rows, columns) and _fit_region_bytes(side, num_bright_field_pixels) <= budget:
             row_start, col_start = (rows - side) // 2, (columns - side) // 2
             scan_region = row_start, row_start + side, col_start, col_start + side
             if verbose:
@@ -375,19 +441,22 @@ def _central_fit_region(rows: int, columns: int, num_bright_field_pixels: int, v
                       "choose another.")
             return scan_region
     raise MemoryError(
-        f"A 128 x 128 fit region needs {128 * 128 * num_bright_field_pixels * 13 / 1e9:.2f} GB of free device memory; "
-        f"{budget / 1e9:.2f} GB is usable. Fit before loading other data on this device, or pass known aberrations "
-        "to run(aberrations=..., compute_loss=False)."
+        f"A 128 x 128 fit region needs {_fit_region_bytes(128, num_bright_field_pixels) / 1e9:.2f} GB of free device "
+        f"memory; {budget / 1e9:.2f} GB is usable. Fit before loading other data on this device, or pass known "
+        "aberrations to run(aberrations=..., compute_loss=False)."
     )
 
 
 def _exceeds_device(data: Dataset4dstem) -> bool:
     """Whether the device cannot hold the dense bright-field spectrum next to this encoded integer acquisition.
 
-    The dense path decodes the bright-field crop (2 bytes a count) and keeps G(q, k) (8 bytes a bright-field pixel
-    and scan position): together at least a quarter of the decoded acquisition unless the disk is under about a
-    fifth of the detector side. Below that much free memory the scan is reconstructed from the encoded counts in
-    bounded batches of detector columns instead, which needs megabytes.
+    The dense path decodes the bright-field crop and keeps G(q, k): ``_fit_region_bytes``'s 7 bytes a bright-field
+    pixel and scan position plus 0.5 GiB, the bright-field pixels counted on the mean pattern as the streamed path
+    selects them. Its fit's working arrays also grow with the band frequencies (140,000 at a 0.66 A step), so only
+    70 % of the free memory counts. With less than that the scan is reconstructed from the encoded counts in bounded
+    batches of detector columns instead, and fitted on its band spectrum (``_whole_scan_for_fit``). (A quarter of the
+    decoded acquisition, the earlier rule, and then 85 % of the free memory both sent a 512 x 512 scan with 1266
+    bright-field pixels to the dense path at 4096 MiB free, where the fit ran out.)
     """
     from quantem.gpu.direct_ptycho.cuda.streamed import free_device_bytes
     from quantem.gpu.resident.cuda.counts import StreamedCounts
@@ -395,7 +464,10 @@ def _exceeds_device(data: Dataset4dstem) -> bool:
     if type(data.data) is not StreamedCounts or max(data.shape[:2]) > 4096 or any(side % 2 for side in data.shape[:2]):
         return False
     with cp.cuda.Device(data.device.index):
-        return free_device_bytes() < math.prod(data.shape) * data.dtype.itemsize // 4
+        mean = np.asarray(detector.mean(data), dtype=np.float64)
+        bright_field_pixels = int((mean > mean.mean() + mean.std()).sum())
+        positions = math.prod(data.shape[:2])
+        return free_device_bytes() * 0.7 < (512 << 20) + positions * bright_field_pixels * 7
 
 
 class DirectPtycho:
@@ -494,6 +566,11 @@ class DirectPtycho:
     >>> # data stays open for other algorithms until data.close().
     """
 
+    # set during a whole-scan fit of an encoded scan (_whole_scan_for_fit): the band spectrum's host copy and whether
+    # the encoded acquisition waits in host memory meanwhile; a class default, so sessions built without __init__ have it
+    _band_fit = None
+    _said_read_from_host = False
+
     def __init__(
         self,
         data: object,
@@ -576,8 +653,9 @@ class DirectPtycho:
                     full_scan_only = max(data.shape[:2]) > 1024 or _exceeds_device(data)
                     if full_scan_only and max(data.shape[:2]) <= 1024:
                         print("Direct ptycho: the device cannot hold the dense bright-field spectrum; the full scan is "
-                              "reconstructed in batches of detector columns (no loss), and aberrations() fits a scan "
-                              "region. Free device memory for the dense path.")
+                              "reconstructed in batches of detector columns (no loss). aberrations() fits the whole "
+                              "scan on its fit band's frequencies when they fit the device; a primary, tilt=False or "
+                              "loss-computing fit reads a central region.")
                     with cp.cuda.Device(data.device.index):
                         self._streamed = StreamedDirect(
                             data, mean_pattern=mean_pattern, center=bright_field_center_px,
@@ -1343,7 +1421,17 @@ class DirectPtycho:
             result = fit() if search == 0 or mapped is None else mapped(fits[0])
             label_trials(result, search=search)
             fits.append(self._finish_fit(result))
-        branches = compare_branches(fits, dark_field=self._dark_field_image(), scan_sampling_A=self.scan_sampling_A,
+        compared, dark_field = fits, self._dark_field_image()
+        region = None if self._band_fit is None else self._band_fit.get("scan_region")
+        if region is not None:
+            # a band-only fit of a region (_whole_scan_for_fit) is judged on that region's phase and dark-field image,
+            # as a region session judges its own; outside the region its aberrations need not hold
+            rows, columns = slice(region[0], region[1]), slice(region[2], region[3])
+            compared = [copy.copy(fit) for fit in fits]
+            for view, fit in zip(compared, fits):
+                view.object_wave = fit.object_wave[rows, columns]  # its phase is angle(object_wave)
+            dark_field = None if dark_field is None else dark_field[rows, columns]
+        branches = compare_branches(compared, dark_field=dark_field, scan_sampling_A=self.scan_sampling_A,
                                     keep_first=keep_first)
         kept = fits[branches.kept]
         kept.trial_records = list(fits[0].trial_records or ()) + list(fits[1].trial_records or ())
@@ -1503,7 +1591,9 @@ class DirectPtycho:
         if ((self._owned_dataset is None and self.on_park is None)
                 or self._streamed is None or not self._streamed.full_scan_only):
             return 0
-        return sum(array.nbytes for chunk in self._streamed.chunks for array in chunk.arrays)
+        # chunks in host memory (a scan the device had no room for) take nothing to park
+        encoded = sum(array.nbytes for chunk in self._streamed.chunks for array in chunk.arrays)
+        return encoded - self._streamed.source.host_nbytes
 
     @contextmanager
     def _region_for_fit(self, scan_region):
@@ -1522,6 +1612,7 @@ class DirectPtycho:
             return
         streamed = self._streamed
         columns = streamed.scan_shape[1]
+        stack_bytes = cp.cuda.runtime.deviceGetLimit(cp.cuda.runtime.cudaLimitStackSize)
         # the 180-degree branch test reads the scan's dark-field image, which only the whole acquisition gives
         self._dark_field_image()
         if self.on_park is not None:
@@ -1536,22 +1627,164 @@ class DirectPtycho:
                 yield regional
         finally:
             regional = None
-            # the fit's working arrays wait in both allocators' caches, where the returning acquisition cannot use them
-            cp.get_default_memory_pool().free_all_blocks()
-            torch.cuda.empty_cache()
+            _free_fit_memory(stack_bytes)
             streamed.restore()
+
+    def _whole_scan_band(self, verbose: bool, scan_region=None) -> tuple | None:
+        """The fit band of this encoded scan, or of its ``scan_region``, and the device memory its spectrum may take,
+        or None when it cannot run.
+
+        Returns ((frequency rows, columns, half-plane flat index, weight) of ``thick.band_frequencies``, device
+        bytes, the scan region or None). The band spectrum takes 8 bytes a band frequency and bright-field pixel, the fit ``_fit_working_bytes``
+        beside it, with the encoded acquisition parked when this session may park it.
+        A spectrum larger than what is left stays in page-locked host memory except its first pixels, and the fit
+        streams the rest slab by slab (``DirectEngine.band_slabs``): the same sums, slower by the copies. The fit
+        needs room for two slab buffers at least.
+        """
+        from quantem.gpu.direct_ptycho.cuda.streamed import free_device_bytes
+        from quantem.gpu.direct_ptycho.cuda.thick import BAND_SLAB_ROWS, band_frequencies
+
+        streamed = self._streamed
+        if self._band_fit is not None or max(streamed.scan_shape) > 1024:
+            return None
+        _load_fit_libraries()
+        rows, columns = streamed.scan_shape if scan_region is None else (
+            scan_region[1] - scan_region[0], scan_region[3] - scan_region[2])
+        band = band_frequencies(cp.fft.fftfreq(rows, self.scan_sampling_A[0]).astype(cp.float32),
+                                cp.fft.fftfreq(columns, self.scan_sampling_A[1]).astype(cp.float32),
+                                WHOLE_SCAN_FIT_BAND_INV_A, half_plane=True)
+        row_bytes = int(band[2].size) * 8
+        spectrum_bytes = row_bytes * streamed.num_bright_field_pixels
+        working_bytes = _fit_working_bytes(int(band[2].size))
+        device_bytes = (free_device_bytes() + self._reclaimable_bytes()) * 0.85 - working_bytes
+        if device_bytes < 2 * BAND_SLAB_ROWS * row_bytes:
+            if verbose:
+                print(f"Direct ptycho: a {'whole-scan' if scan_region is None else 'scan-region'} fit needs "
+                      f"{(working_bytes + 2 * BAND_SLAB_ROWS * row_bytes) / 1e9:.2f} GB of device memory; "
+                      f"{max(device_bytes, 0) / 1e9 + working_bytes / 1e9:.2f} GB is usable"
+                      f"{', so a central region is fitted' if scan_region is None else ''}.")
+            return None
+        if verbose and spectrum_bytes > device_bytes:
+            print(f"Direct ptycho: the band spectrum ({spectrum_bytes / 1e9:.2f} GB, {band[2].size:,} frequencies x "
+                  f"{streamed.num_bright_field_pixels:,} bright-field pixels) is larger than the device holds beside "
+                  f"the fit; {max(device_bytes, 0) / 1e9:.2f} GB of it stays there and the rest streams from host "
+                  "memory at each evaluation.")
+        return band, device_bytes, scan_region
+
+    @contextmanager
+    def _whole_scan_for_fit(self, placement, verbose: bool):
+        """This session fits the whole encoded scan: its backend holds G(q, k) at the fit band's frequencies only.
+
+        The fits read G only between 0.2 and 0.9 1/A. On a 512 x 512 scan at 0.27 A that is 23,448 of the half
+        plane's 131,584 frequencies: 1.6 GB for 9052 bright-field pixels where the whole spectrum is 9.5 GB. One
+        pass of the reconstruction's column batches gathers them into host memory (``StreamedDirect.band_spectra``).
+        ``placement`` is ``_whole_scan_band``'s (band, device bytes, scan region or None); with a region the band is
+        that of the region's own spectra and the fit is the region's. When this session may park the encoded
+        acquisition (``_reclaimable_bytes``), it waits in host memory and the two take turns on the device: the
+        band spectrum while the fit scores its trials, the encoded scan while the fit reconstructs a phase
+        (``_encoded_on_device``); both keep their host copies, so a turn is one copy to the device. Otherwise both
+        stay on the device. A spectrum larger than its device bytes keeps its first pixels there and streams the
+        rest (``CudaDirectBackend.from_band_spectra``).
+        """
+        from quantem.gpu.direct_ptycho.cuda.backend import CudaDirectBackend
+
+        band, device_bytes, scan_region = placement
+        started = time.perf_counter()
+        streamed = self._streamed
+        stack_bytes = cp.cuda.runtime.deviceGetLimit(cp.cuda.runtime.cudaLimitStackSize)
+        spectra, parked = None, False
+        try:
+            spectra, dc_value = streamed.band_spectra(band[2], scan_region)
+            if self._reclaimable_bytes():
+                # the 180-degree branch test reads the scan's dark-field image, which only the whole acquisition gives
+                self._dark_field_image()
+                if self.on_park is not None:
+                    self.on_park()
+                # set first: a park that fails part way (no page-locked memory) is undone by the restore below
+                parked = True
+                streamed.park()
+            # The placement counted the pool's idle blocks (the gather's batches, a staging buffer) as free, but what is
+            # allocated outside the pool (cuBLAS workspaces, the random-number kernel's local memory) cannot use them:
+            # a viewer's scan read from host memory left 305 MiB idle and the fit's first cuBLAS call failed at 3400 MiB.
+            cp.get_default_memory_pool().free_all_blocks()
+            self._compute = CudaDirectBackend.from_band_spectra(
+                spectra, fit_band_inv_A=WHOLE_SCAN_FIT_BAND_INV_A, dc_value=dc_value,
+                bf_inds_row=streamed.rows, bf_inds_col=streamed.cols,
+                bright_field_center_px=self._center_in_data(), bright_field_radius_px=streamed.radius,
+                scan_shape=streamed.scan_shape if scan_region is None else (
+                    scan_region[1] - scan_region[0], scan_region[3] - scan_region[2]),
+                detector_shape=streamed.detector_shape[::-1] if streamed.transposed else streamed.detector_shape,
+                semiangle=self.semiangle_mrad, scan_sampling=self.scan_sampling_A,
+                detector_sampling_mrad=self._sampling_in_data(), voltage_kV=self.voltage_kV,
+                bright_field_intensity_threshold=self.bright_field_intensity_threshold,
+                aberrations=aberrations_to_engine(self.known_aberrations) if self._aberrations_explicit else None,
+                scan_detector_rotation_deg=self.scan_detector_rotation_deg, device_bytes=device_bytes,
+            )
+            self._band_fit = {"parked": parked, "stack_bytes": stack_bytes, "scan_region": scan_region}
+            if verbose:
+                streamed_part = ("" if spectra.nbytes <= device_bytes else
+                                 f", {max(device_bytes, 0) / 1e9:.2f} GB of it on the device and the rest streamed")
+                fitted = "the whole scan" if scan_region is None else f"scan region {tuple(scan_region)}"
+                print(f"Direct ptycho: fitting {fitted} on its {band[2].size:,} band frequencies "
+                      f"({spectra.nbytes / 1e9:.2f} GB{streamed_part}; prepared in {time.perf_counter() - started:.1f} s"
+                      f"{'; the encoded scan waits in host memory' if parked else ''}).")
+            yield
+        finally:
+            if self._compute is not None:
+                self._compute.close()
+            self._compute, self._band_fit, spectra = None, None, None
+            _free_fit_memory(stack_bytes)
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            if parked:
+                streamed.restore()
+                self._say_if_read_from_host()
+
+    def _say_if_read_from_host(self) -> None:
+        """One line, once a session, when the encoded scan came back to host memory the device reads in place
+        (``StreamedCounts.restore`` found no device room): every reconstruction and detector image is slower."""
+        host_bytes = self._streamed.source.host_nbytes
+        if host_bytes and not self._said_read_from_host:
+            self._said_read_from_host = True
+            print(f"Direct ptycho: the device has no room to take back the encoded scan ({host_bytes / 1e9:.2f} GB of "
+                  "it); it stays in page-locked host memory and the GPU reads it there, slower (a whole-scan "
+                  "reconstruction about 5x, a new virtual image about 50x).")
+
+    @contextmanager
+    def _encoded_on_device(self):
+        """The encoded scan on the device for one reconstruction of a whole-scan fit that parked it.
+
+        The band spectrum leaves the device first (``release_prepared``) and returns from its host copy when the
+        fit next reads it, so the two are never there together. Outside such a fit this does nothing.
+        """
+        band_fit = self._band_fit
+        if band_fit is None or not band_fit["parked"]:
+            yield
+            return
+        self._compute.release_prepared()
+        _free_fit_memory(band_fit["stack_bytes"])
+        self._streamed.restore(keep_host=True)
+        self._say_if_read_from_host()
+        try:
+            yield
+        finally:
+            # a viewer may have opened detector sessions on the returned chunks meanwhile; they would keep them
+            if self.on_park is not None:
+                self.on_park()
+            self._streamed.park()
+            cp.get_default_memory_pool().free_all_blocks()
 
     def _backend(self) -> DirectPtychoProtocol:
         """The session's CUDA or MPS implementation, built on first use.
 
         Building it reads the bright-field evidence and transforms it (seconds and gigabytes on a full scan), so a
-        session that is only configured, saved or closed never pays for it.
+        session that is only configured, saved or closed never pays for it. During a whole-scan fit of an encoded
+        scan it is the band-only backend ``_whole_scan_for_fit`` set.
         """
-        if self._streamed is not None and self._streamed.full_scan_only:
+        if self._compute is None and self._streamed is not None and self._streamed.full_scan_only:
             raise NotImplementedError(
-                "This large resident uses streamed full-scan reconstruction. "
-                "Fit with aberrations(scan_region=(row_start, row_stop, col_start, col_stop)), "
-                "then run(parameters, compute_loss=False)."
+                "This session holds the encoded scan only and reconstructs it in batches of detector columns: fit "
+                "with aberrations() and reconstruct with run(parameters, compute_loss=False). For a loss or parameter "
+                "slices, open a scan region with select_region((row_start, row_stop, col_start, col_stop)) and work there."
             )
         if self._compute is None:
             if self.backend == "cuda":
@@ -2172,10 +2405,7 @@ class DirectPtycho:
         if search in ("standard", "broad"):
             # a session built without __init__ (a stored result's, a test's) has no encoded acquisition
             streamed = getattr(self, "_streamed", None)
-            if scan_region is None and streamed is not None and streamed.full_scan_only and max(streamed.scan_shape) <= 1024:
-                # the fifth-order stage reads the dense spectrum, which only a regional session of this scan holds
-                scan_region = _central_fit_region(*streamed.scan_shape, streamed.num_bright_field_pixels, verbose,
-                                                  reclaimable_bytes=self._reclaimable_bytes())
+            whole_scan_band = None
             if scan_region is not None:
                 if len(scan_region) != 4 or any(type(value) is not int for value in scan_region):
                     raise ValueError("Use scan_region=(row_start, row_stop, col_start, col_stop), in integer scan pixels.")
@@ -2186,7 +2416,16 @@ class DirectPtycho:
                         and 0 <= col_start < col_stop <= columns
                         and side == col_stop - col_start and side in (128, 256, 512, 1024)):
                     raise ValueError(f"scan_region={scan_region} must be inside {rows} × {columns} and square with 128, 256, 512 or 1024 scan pixels per side.")
-
+            if (streamed is not None and streamed.full_scan_only
+                    and self._band_fit is None and max(streamed.scan_shape) <= 1024):
+                # the fits read G(q, k) only in their band, which a small device holds for the whole scan or for the
+                # caller's region (the same path, the band of the region's own spectra); when it does not, or the
+                # caller asks for the phase-variance loss (which needs every frequency), a region's dense spectrum
+                whole_scan_band = self._whole_scan_band(verbose, scan_region) if tilt and not compute_loss else None
+                if whole_scan_band is None and scan_region is None:
+                    scan_region = _central_fit_region(*streamed.scan_shape, streamed.num_bright_field_pixels, verbose,
+                                                      reclaimable_bytes=self._reclaimable_bytes())
+            if scan_region is not None and whole_scan_band is None:
                 from .fit_display import FitDisplay
 
                 preview = FitDisplay(self, enabled=show, size=size, columns=columns,
@@ -2246,16 +2485,18 @@ class DirectPtycho:
             from .fifth_order_fit import fit_fifth_order
 
             count = (400 if search == "broad" else 200) if trials is None else trials
-            return fit_fifth_order(
-                self, search=search, trials=count,
-                seed=(17 if search == "broad" else 42) if seed is None else seed,
-                save_dir=save_dir, force=force, verbose=verbose,
-                primary_options={"check_rotation": check_rotation, "refine_rotation": refine_rotation},
-                compute_loss=False if compute_loss is None else compute_loss, compare_standard=compare_standard,
-                show=show, size=size, columns=columns, show_convergence=show_convergence,
-                on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
-                **({"tilt": False} if not tilt else {}),
-            )
+            with (self._whole_scan_for_fit(whole_scan_band, verbose) if whole_scan_band is not None
+                  else nullcontext()):
+                return fit_fifth_order(
+                    self, search=search, trials=count,
+                    seed=(17 if search == "broad" else 42) if seed is None else seed,
+                    save_dir=save_dir, force=force, verbose=verbose,
+                    primary_options={"check_rotation": check_rotation, "refine_rotation": refine_rotation},
+                    compute_loss=False if compute_loss is None else compute_loss, compare_standard=compare_standard,
+                    show=show, size=size, columns=columns, show_convergence=show_convergence,
+                    on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
+                    **({"tilt": False} if not tilt else {}),
+                )
         if on_initial_fit is not None:
             raise ValueError("on_initial_fit is for standard or broad two-stage fits.")
         return self._find_aberrations(
@@ -2477,7 +2718,8 @@ class DirectPtycho:
                     return reused
             if verbose and any(path.exists() for path in paths):
                 print("Saved direct ptychography settings changed; running fit end to end")
-        if self._streamed is not None and scan_region is None:
+        # a whole-scan fit (_whole_scan_for_fit) already holds the evidence of every scan position
+        if self._streamed is not None and scan_region is None and self._band_fit is None:
             rows, columns = self._streamed.scan_shape
             if rows == columns == 1024 and not self._streamed.full_scan_only:
                 scan_region = (0, rows, 0, columns)
@@ -3358,16 +3600,17 @@ class DirectPtycho:
                     "The regional fit retains its own diagnostic loss; it is not a full-scan loss."
                 )
             if bounded:
-                return self._streamed.phase(
-                    coefs, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-                    scan_sampling_A=self.scan_sampling_A, rotation_deg=self.scan_detector_rotation_deg,
-                    upsample=upsample, sample_tilt_mrad=sample_tilt_mrad,
-                    depth_spread_A=float(depth_spread_nm) * ENGINE_PER_NM,
-                    # all 14 magnitudes are nm; the kernel takes Angstrom
-                    higher_order_magnitudes=None if higher_order_magnitudes is None
-                    else higher_order_magnitudes * np.float32(ENGINE_PER_NM),
-                    higher_order_angles=higher_order_angles,
-                )
+                with self._encoded_on_device():
+                    return self._streamed.phase(
+                        coefs, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
+                        scan_sampling_A=self.scan_sampling_A, rotation_deg=self.scan_detector_rotation_deg,
+                        upsample=upsample, sample_tilt_mrad=sample_tilt_mrad,
+                        depth_spread_A=float(depth_spread_nm) * ENGINE_PER_NM,
+                        # all 14 magnitudes are nm; the kernel takes Angstrom
+                        higher_order_magnitudes=None if higher_order_magnitudes is None
+                        else higher_order_magnitudes * np.float32(ENGINE_PER_NM),
+                        higher_order_angles=higher_order_angles,
+                    )
         backend = self._backend()
         # all 14 magnitudes (C10, C12 in slots 0-1, then C21..C56) are nm; the engines take Angstrom
         higher = {} if higher_order_magnitudes is None else {

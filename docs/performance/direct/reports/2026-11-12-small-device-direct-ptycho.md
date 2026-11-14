@@ -22,6 +22,16 @@ Measured on scan A (below) with the device held to 3.9 GiB free at the start: `o
 `run` 0.44 s, process peak 3.43 GiB (3512 MiB). The reconstructed phase equals the one from the same code on the
 unrestricted card bit for bit (maximum absolute difference 0.0).
 
+The fit region matters on this scan. The whole-scan fit, which needs 16.2 GiB, finds C10 +8.9 nm where the
+128 x 128 and 256 x 256 region fits find -1.5 and -1.6 nm, and its whole-scan phase shows separate atomic columns
+where the region fits' phase shows streaks (9 % more phase variance). So the 4 GB path computes, and its fit is not
+yet the fit the open card gives. See "Fit region size".
+
+**Superseded on 2026-11-13** ([the whole-scan fit on a 4 GB device](2026-11-13-whole-scan-fit-small-device.md)):
+the small device now fits the whole scan on G(q, k) at the fit band's frequencies (1.6 GB), the same fit as the
+dense path, from 3600 MiB free. The "about 420 MiB of GPU libraries" below was mostly local memory the resident
+search's random-number kernel reserves; the fits now give it back.
+
 ## Setup
 
 - Scan A: 512 x 512 scan, 192 x 192 detector, uint16, 2.58 GB as `.qem`. On the device: 2456 MiB encoded, of which
@@ -67,7 +77,7 @@ Batched against the dense path with the same aberrations, scan A, whole scan: 2.
 |---|---|
 | CUDA context and decode kernels | 556 |
 | Encoded acquisition (scan A) | 2456 |
-| Regional fit, 128 x 128, beyond the context (crop, G(q, k), working planes), acquisition parked | about 1000 |
+| Regional fit, 128 x 128, beyond the context (crop, G(q, k), working planes), acquisition parked | 970 held, 1414 at the peak |
 | GPU libraries a fit loads and the process keeps afterwards | 416 to 426 |
 | Batched reconstruction at 1x, 2x, 4x output | 58, 82, 178 |
 
@@ -105,18 +115,28 @@ Re-transforming costs about 30 times a resident redraw. The resident spectra of 
 
 ### Fit region size
 
-Same scan, fits on the central 128 x 128 and 256 x 256 regions (the larger needs 7.7 GB):
+Same scan, fits on the central 128 x 128 and 256 x 256 regions and on the whole scan, each followed by the
+whole-scan reconstruction:
 
-| | 128 x 128 | 256 x 256 |
-|---|---|---|
-| C10, C12 (nm) | -1.5, 9.7 | -1.6, 9.8 |
-| C21, C23 (nm) | 98.5, 81.0 | 98.5, 84.9 |
-| C30 (nm) | 3094.7 | 3094.7 |
-| Half-band check of the higher orders (limit 0.5 rad) | 2.68 rad, not trusted | 4.99 rad, not trusted |
+| | 128 x 128 | 256 x 256 | whole 512 x 512 |
+|---|---|---|---|
+| C10 (nm) | -1.5 | -1.6 | +8.9 |
+| C12 (nm) | 9.7 | 9.8 | 15.7 |
+| C21, C23 (nm) | 98.5, 81.0 | 98.5, 84.9 | 77.2, 60.5 |
+| Half-band check of the higher orders (limit 0.5 rad) | 2.68 rad | 4.99 rad | 3.35 rad |
+| Whole-scan phase, standard deviation (rad) | 0.0544 | 0.0546 | 0.0569 |
+| Fit memory beyond the CUDA context, peak | 1414 MiB | 4340 MiB | about 16 000 MiB |
 
-The whole-scan phases reconstructed from the two fits differ by 0.005 rad rms (0.024 rad maximum); the phase has a
-standard deviation of 0.054 rad. On this scan the fit's own check declines the higher orders at both sizes and
-shows the fit bounded at +-2, so the region size is not what limits them here.
+The two region fits agree (their whole-scan phases differ by 0.005 rad rms, 0.024 rad at most). The whole-scan fit
+differs from both by 0.039 rad rms and 0.14 rad at most (correlation 0.76) and gives the sharper image. The two were
+not scored on one loss: the shared card was too full for a second dense run. The fit's own check declines the
+higher orders at all three sizes.
+
+Fit memory, measured on the whole process: 7 bytes a bright-field pixel and scan position, of which 4.1 are
+G(q, k) (complex64, the half plane Hermitian symmetry leaves) and 2.7 the decoded counts over the disk's box, plus
+about 0.5 GiB that does not grow with the region. For the whole scan G(q, k) is 9.53 GB and the counts 6.5 GB; the
+dense session peaked at 16 552 MiB. A 4 GB card has about 2900 MiB beyond the context once the scan is parked, so
+it holds the 128 x 128 fit only. Without the decoded counts a 256 x 256 fit would need about 2700 MiB.
 
 ### Host memory transfer
 
@@ -144,6 +164,9 @@ memory and 1.2 to 2.7 s with page-locked memory.
 
 ## Limits
 
+- The fit a 4 GB card holds (128 x 128) is not the whole-scan fit: on scan A the two differ by 10 nm in C10 and the
+  whole-scan fit gives the better image. A whole-scan fit within 4 GB needs G(q, k) built in batches and kept only
+  at the frequencies that carry signal, or an objective evaluated in batches; neither exists yet.
 - The scan must leave room: about 3.4 GiB usable for scan A. Scan B does not fit a 4 GB card.
 - A dataset the caller loaded (`io.load`, then `DirectPtycho(data)`) is parked only when the caller set `on_park`,
   because a viewer on it may hold the same device memory. Without it the fit on a small device raises `MemoryError`.
@@ -165,5 +188,7 @@ memory and 1.2 to 2.7 s with page-locked memory.
 - Fitting with the acquisition resident. The region's crop and G(q, k) need about 1.0 GiB and 0.7 GiB is left.
 - Freeing the libraries a fit loads (cuBLAS workspaces, plan caches, kernel memo): 10 MiB of 426 came back.
 - Parking into ordinary host memory: 11 to 27 s inside the flow.
-- A 256 x 256 fit region on this device: 7.7 GB.
+- A 256 x 256 fit region on this device: 4340 MiB beyond the context, about 2900 are there. An earlier estimate of
+  13 bytes a pixel and position (7.7 GB at 256 x 256, 31 GB for the whole scan) had the fixed 0.5 GiB folded in;
+  the measured cost is 7 bytes plus 0.5 GiB.
 - Limiting the CuPy pool to rehearse a small card: Torch and unpooled allocations are not bound by it.

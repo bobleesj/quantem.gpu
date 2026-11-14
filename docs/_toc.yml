@@ -161,6 +161,7 @@ parts:
         - file: performance/direct/reports/index
           title: Direct ptychography reports
           sections:
+          - file: performance/direct/reports/2026-11-13-whole-scan-fit-small-device
           - file: performance/direct/reports/2026-11-12-small-device-direct-ptycho
           - file: performance/direct/reports/2026-11-06-native-direct-workflow
           - file: performance/direct/reports/2026-11-05-direct-ptycho-preparation

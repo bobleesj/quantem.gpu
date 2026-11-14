@@ -29,6 +29,62 @@ from quantem.gpu.direct_ptycho.higher_order import pack_coefficients
 from quantem.gpu.direct_ptycho.units import ENGINE_PER_NM, aberrations_to_engine, higher_order_arrays, validate_aberrations
 
 
+# Bright-field pixels in one slab of a band spectrum the device holds only in part (DirectEngine.band_slabs): one
+# 256-pixel chunk of the fit kernels, and a multiple of every bright-field subsample stride (8, 64).
+BAND_SLAB_ROWS = 256
+
+
+class SlabSums:
+    """The sums over slabs of per-slab kernel outputs (``DirectEngine.band_slabs``).
+
+    One slab's outputs are copied as they are (kernels write into scratch the next slab reuses), so a G held whole
+    gives the same bits as before slabs. Over several slabs the outputs are added in float64 (complex128) and cast
+    back to their dtype at the end.
+    """
+
+    def __init__(self):
+        self.parts, self.dtypes = None, None
+
+    def add(self, *arrays):
+        if self.parts is None:
+            self.parts, self.dtypes = [array.copy() for array in arrays], [array.dtype for array in arrays]
+            return
+        if self.parts[0].dtype == self.dtypes[0]:
+            self.parts = [part.astype(cp.complex128 if part.dtype.kind == "c" else cp.float64) for part in self.parts]
+        for part, array in zip(self.parts, arrays):
+            part += array
+
+    def result(self):
+        return [part.astype(dtype, copy=False) for part, dtype in zip(self.parts, self.dtypes)]
+
+
+def band_frequencies(q_row_1d, q_col_1d, band_inv_A, *, half_plane: bool):
+    """(rows, cols, flat index, weight) of the scan frequencies inside the fit band, band[0] < |q| < band[1].
+
+    ``q_row_1d`` and ``q_col_1d`` are the scan's ``fftfreq`` axes (1/A). On the Hermitian half plane (columns 0 to
+    nx/2) each stored frequency stands for itself and its mirror, so its weight is 2, except columns 0 and nx/2,
+    which are their own mirrors (weight 1). The flat index is row * stored columns + column.
+    """
+    ny, nx = int(q_row_1d.size), int(q_col_1d.size)
+    cols = nx // 2 + 1 if half_plane else nx
+    q_magnitude = cp.hypot(q_row_1d.reshape(ny, 1), q_col_1d[:cols].reshape(1, cols))
+    inside = (q_magnitude > band_inv_A[0]) & (q_magnitude < band_inv_A[1])
+    rows_idx, cols_idx = cp.nonzero(inside)
+    if rows_idx.size == 0:
+        raise ValueError(
+            f"The model-agreement fit needs spatial frequencies in {band_inv_A[0]:g}–{band_inv_A[1]:g} 1/A, "
+            f"but this scan reaches only {float(q_magnitude.max()):.3g} 1/A. "
+            "Acquire a finer scan. "
+            "Reconstruction upsample does not add measured frequencies."
+        )
+    if half_plane:
+        self_mirror = (cols_idx == 0) | ((nx % 2 == 0) & (cols_idx == nx // 2))
+        weight = cp.where(self_mirror, 1.0, 2.0).astype(cp.float32)
+    else:
+        weight = cp.ones(rows_idx.shape, dtype=cp.float32)
+    return rows_idx, cols_idx, (rows_idx * cols + cols_idx).astype(cp.int64), weight
+
+
 class ThickSample:
     """The thick-sample model on one ``DirectEngine``'s prepared ``G_qk`` and rotation geometry.
 
@@ -414,45 +470,42 @@ class ThickSample:
         numerator = cp.zeros((n_band,), dtype=cp.complex64)
         denominator = cp.zeros((n_band,), dtype=cp.float32)
         params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
-        g_flat = engine.G_qk.reshape(num_bright_field_pixels, -1)
-        for start in range(0, num_bright_field_pixels, chunk):
-            stop = min(num_bright_field_pixels, start + chunk)
-            gathered = g_flat[start:stop][:, flat]                      # (chunk, n_band): only the band's q, half-plane
-            kx = cache["kx_bf"][start:stop].reshape(-1, 1)
-            ky = cache["ky_bf"][start:stop].reshape(-1, 1)
-            projected, weight2 = thick_fit_kernel(gathered, qx, qy, kx, ky, *params)
-            numerator += projected.sum(axis=0)
-            denominator += weight2.sum(axis=0)
+        for first, stop, slab, _ in engine.band_slabs():
+            g_flat = slab.reshape(stop - first, -1)
+            for start in range(0, stop - first, chunk):
+                end = min(stop - first, start + chunk)
+                gathered = g_flat[start:end][:, flat]                   # (chunk, n_band): only the band's q, half-plane
+                kx = cache["kx_bf"][first + start:first + end].reshape(-1, 1)
+                ky = cache["ky_bf"][first + start:first + end].reshape(-1, 1)
+                projected, weight2 = thick_fit_kernel(gathered, qx, qy, kx, ky, *params)
+                numerator += projected.sum(axis=0)
+                denominator += weight2.sum(axis=0)
             del gathered, projected, weight2
         keep = denominator > 0
         return float((weight[keep] * cp.abs(numerator[keep]) ** 2 / denominator[keep]).sum())
 
     def _prepare_fit_band(self, band_inv_A):
-        """Cache frequency indices without evaluating or downloading an objective."""
+        """Cache frequency indices without evaluating or downloading an objective.
+
+        An engine whose G holds only its fit band's frequencies (``DirectEngine.fit_band_inv_A``) stores them in the
+        order ``band_frequencies`` lists them, so the index of the n-th band frequency is n.
+        """
         engine = self.engine
         cache = engine._cache
         num_bright_field_pixels, ny, nx = engine._bf_grid()
-        half = engine.gqk_is_half_plane()
+        band_only = engine.fit_band_inv_A is not None
+        if band_only and (float(band_inv_A[0]), float(band_inv_A[1])) != engine.fit_band_inv_A:
+            raise ValueError(f"This G(q, k) holds only the {engine.fit_band_inv_A} 1/A band's frequencies; the fit "
+                             f"asked for {tuple(band_inv_A)}.")
+        half = band_only or engine.gqk_is_half_plane()
         cols = nx // 2 + 1 if half else nx
-        key = (ny, nx, cols, float(band_inv_A[0]), float(band_inv_A[1]))
+        key = (ny, nx, cols, float(band_inv_A[0]), float(band_inv_A[1]), band_only)
         if self._band_key != key:
-            q_magnitude = cp.hypot(cache["qx_1d"].reshape(ny, 1), cache["qy_1d"][:cols].reshape(1, cols))
-            inside = (q_magnitude > band_inv_A[0]) & (q_magnitude < band_inv_A[1])
-            rows_idx, cols_idx = cp.nonzero(inside)
-            if rows_idx.size == 0:
-                raise ValueError(
-                    f"The model-agreement fit needs spatial frequencies in {band_inv_A[0]:g}–{band_inv_A[1]:g} 1/A, "
-                    f"but this scan reaches only {float(q_magnitude.max()):.3g} 1/A. "
-                    "Acquire a finer scan. "
-                    "Reconstruction upsample does not add measured frequencies."
-                )
-            if half:
-                # columns 0 and nx/2 map onto themselves (their mirror is in the stored half): count once there
-                self_mirror = (cols_idx == 0) | ((nx % 2 == 0) & (cols_idx == nx // 2))
-                weight = cp.where(self_mirror, 1.0, 2.0).astype(cp.float32)
-            else:
-                weight = cp.ones(rows_idx.shape, dtype=cp.float32)
-            self._band = (rows_idx, cols_idx, (rows_idx * cols + cols_idx).astype(cp.int64),
+            rows_idx, cols_idx, flat, weight = band_frequencies(cache["qx_1d"], cache["qy_1d"], band_inv_A,
+                                                                half_plane=half)
+            if band_only:
+                flat = cp.arange(flat.size, dtype=cp.int64)
+            self._band = (rows_idx, cols_idx, flat,
                           cache["qx_1d"][rows_idx].reshape(1, -1), cache["qy_1d"][cols_idx].reshape(1, -1), weight)
             self._band_key = key
         return self._band
@@ -465,14 +518,16 @@ class ThickSample:
         """
         engine = self.engine
         _, _, flat, _, _, weight = self._prepare_fit_band(band_inv_A)
-        key = (self._band_key, engine.G_qk.data.ptr, engine.G_qk.shape)
+        # a G with a host copy keeps its identity through release_spectra; any other G is identified by its device array
+        evidence = (id(engine._spectra_host),) if engine._spectra_host is not None else (engine.G_qk.data.ptr, engine.G_qk.shape)
+        key = (self._band_key, *evidence)
         if self._band_power is None or self._band_power[0] != key:
-            num_bf, _, _ = engine._bf_grid()
-            g = engine.G_qk.reshape(num_bf, -1)
             per_q = cp.zeros(flat.size, dtype=cp.float64)
-            for start in range(0, num_bf, 256):
-                columns = g[start:start + 256][:, flat]
-                per_q += (columns.real.astype(cp.float64) ** 2 + columns.imag.astype(cp.float64) ** 2).sum(axis=0)
+            for first, stop, slab, _ in engine.band_slabs():
+                g = slab.reshape(stop - first, -1)
+                for start in range(0, stop - first, 256):
+                    columns = g[start:start + 256][:, flat]
+                    per_q += (columns.real.astype(cp.float64) ** 2 + columns.imag.astype(cp.float64) ** 2).sum(axis=0)
             self._band_power = (key, float((weight.astype(cp.float64) * per_q).sum()))
         return self._band_power[1]
 
@@ -511,23 +566,32 @@ class ThickSample:
         blocks = (n_band + threads - 1) // threads
         # enough blocks to fill the GPU: split the pixel loop so blocks x k_blocks is a few thousand
         k_chunk = 256
-        k_blocks = (num_bright_field_pixels + k_chunk - 1) // k_chunk
-        for start in range(0, len(trial), THICK_FIT_MAX_BATCH):
-            rows = trial[start:start + THICK_FIT_MAX_BATCH]
-            batch = len(rows)
-            # one partial sum per 256-pixel slice, added in slice order by the kernel
-            partial_numerator = cp.empty((k_blocks, batch, n_band), dtype=cp.complex64)
-            partial_denominator = cp.empty((k_blocks, batch, n_band), dtype=cp.float32)
-            numerator = cp.empty((batch, n_band), dtype=cp.complex64)
-            denominator = cp.empty((batch, n_band), dtype=cp.float32)
-            thick_fit_batch_kernel(
-                (blocks, k_blocks), (threads,),
-                (engine.G_qk, flat, qx.ravel(), qy.ravel(), cache["kx_bf"], cache["ky_bf"], rows.ravel(),
-                 partial_numerator, partial_denominator, cp.zeros(blocks, dtype=cp.uint32), numerator, denominator,
-                 np.int32(num_bright_field_pixels), np.int64(engine.G_qk.shape[1] * engine.G_qk.shape[2]), np.int32(n_band), np.int32(batch),
-                 np.float32(engine.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
-                 np.float32(cache["ang_x_rad"]), np.float32(engine._factor), np.int32(k_chunk)),
-            )
+        starts = range(0, len(trial), THICK_FIT_MAX_BATCH)
+        sums = [SlabSums() for _ in starts]
+        # slabs outside, candidate groups inside: a G streamed slab by slab is read once for every candidate
+        for first, stop, slab, _ in engine.band_slabs():
+            k_blocks = (stop - first + k_chunk - 1) // k_chunk
+            for start, group in zip(starts, sums):
+                rows = trial[start:start + THICK_FIT_MAX_BATCH]
+                batch = len(rows)
+                # one partial sum per 256-pixel slice, added in slice order by the kernel
+                partial_numerator = cp.empty((k_blocks, batch, n_band), dtype=cp.complex64)
+                partial_denominator = cp.empty((k_blocks, batch, n_band), dtype=cp.float32)
+                numerator = cp.empty((batch, n_band), dtype=cp.complex64)
+                denominator = cp.empty((batch, n_band), dtype=cp.float32)
+                thick_fit_batch_kernel(
+                    (blocks, k_blocks), (threads,),
+                    (slab, flat, qx.ravel(), qy.ravel(), cache["kx_bf"][first:stop], cache["ky_bf"][first:stop],
+                     rows.ravel(), partial_numerator, partial_denominator, cp.zeros(blocks, dtype=cp.uint32), numerator,
+                     denominator, np.int32(stop - first), np.int64(slab.shape[1] * slab.shape[2]), np.int32(n_band),
+                     np.int32(batch), np.float32(engine.wavelength), np.float32(cache["semiangle_rad"]),
+                     np.float32(cache["ang_y_rad"]), np.float32(cache["ang_x_rad"]), np.float32(engine._factor),
+                     np.int32(k_chunk)),
+                )
+                group.add(numerator, denominator)
+        for start, group in zip(starts, sums):
+            batch = len(trial[start:start + THICK_FIT_MAX_BATCH])
+            numerator, denominator = group.result()
             covered = denominator > 0
             if extended:
                 real = numerator.real.astype(cp.float64)

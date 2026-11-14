@@ -43,7 +43,7 @@ from quantem.gpu.formats.qem.snapshot import (
 )
 from quantem.gpu.io.dataset import Dataset4dstem, resident_metadata
 from quantem.gpu.resident.bit_ans import BitANSResident
-from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts
+from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts, host_mapped, pinned
 from quantem.gpu.resident.float_ans import FloatANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts, _Chunk
 from quantem.gpu.resident.mps.precision import PrecisionSource, _ANSPart
@@ -262,6 +262,20 @@ def _cached_block_order(path: str | Path, start: int, size: int) -> list[int]:
         return order
 
 
+def _arena(nbytes, device):
+    """(device array, None) for a loaded scan's encoded bytes, or (host-mapped array, its host view) when the device
+    has no room for them: the device then reads the scan in place over the bus (``host_mapped``)."""
+    import cupy as cp
+
+    for attempt in range(2):
+        try:
+            return cp.empty(nbytes, cp.uint8), None
+        except cp.cuda.memory.OutOfMemoryError:
+            cp.get_default_memory_pool().free_all_blocks()
+    host = pinned(nbytes)
+    return host_mapped(host, device), host
+
+
 def _load_counts_cuda(path, header, start, device, verbose, started):
     """Read and authenticate bounded blocks in parallel before uploading them."""
     import cupy as cp
@@ -274,7 +288,11 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
         stream = cp.cuda.Stream(non_blocking=True)
         # The arena may be pool blocks the caller has just freed with reads of them still queued.
         start_after_queued_work(stream)
-        arena = cp.empty(header["bytes"], cp.uint8)
+        arena, host_arena = _arena(header["bytes"], selected)
+        if host_arena is not None:
+            print(f"quantem.gpu: the device has no room for this scan's {header['bytes'] / 1e9:.2f} GB of encoded "
+                  "counts; they stay in page-locked host memory and the GPU reads them there (a whole-scan "
+                  "reconstruction about 5x slower, a new virtual image about 50x).")
         capacity = min(BLOCK_BYTES, header["bytes"])
         workers = min(16, len(header["sha256"]))
         owners = [cp.cuda.alloc_pinned_memory(capacity) for _ in range(workers)]
@@ -319,13 +337,17 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
                     for future in done:
                         number, slot = pending.pop(future)
                         count = future.result()
-                        with stream:
-                            first = number * BLOCK_BYTES
-                            arena[first:first + count].set(
-                                buffers[slot][:count], stream=stream
-                            )
-                            uploaded = cp.cuda.Event()
-                            uploaded.record(stream)
+                        first = number * BLOCK_BYTES
+                        if host_arena is not None:
+                            host_arena[first:first + count] = buffers[slot][:count]
+                            uploaded = None
+                        else:
+                            with stream:
+                                arena[first:first + count].set(
+                                    buffers[slot][:count], stream=stream
+                                )
+                                uploaded = cp.cuda.Event()
+                                uploaded.record(stream)
                         following = next(block_iterator, None)
                         if following is not None:
                             pending[reader.submit(read, following, slot, uploaded)] = (
@@ -365,7 +387,8 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
                 print(
                     f"Restored exact CUDA ANS {shape} in {time.perf_counter() - started:.3f} s. "
                     f"{metadata['working_logical_tensor_bytes'] / 1e9:.2f} GB uncompressed "
-                    f"to {metadata['physical_resident_bytes'] / 1e9:.2f} GB resident on GPU."
+                    f"to {metadata['physical_resident_bytes'] / 1e9:.2f} GB resident "
+                    f"{'in host memory, read by the GPU' if host_arena is not None else 'on GPU'}."
                 )
             return Dataset4dstem(source, metadata)
         except BaseException:

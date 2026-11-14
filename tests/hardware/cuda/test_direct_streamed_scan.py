@@ -160,6 +160,167 @@ def test_fit_region_parks_the_owned_acquisition_then_restores_it(tmp_path, monke
         cp.testing.assert_array_equal(after, before)
 
 
+def test_whole_scan_fit_holds_the_band_spectrum_and_the_encoded_scan_in_turn(tmp_path, monkeypatch):
+    """Beyond the dense path, aberrations() fits every scan position on G(q, k) at the fit band's frequencies.
+
+    The encoded scan waits in host memory except while the fit reconstructs a phase, when the band spectrum leaves
+    the device instead; afterwards the scan is back, the band spectrum gone and the stack limit as before.
+    """
+    from quantem.gpu import io
+    from quantem.gpu.direct_ptycho import workflow
+
+    monkeypatch.setattr(workflow, "_exceeds_device", lambda data: True)
+    path = tmp_path / "scan.qem"
+    with _encoded(_counts((256, 256, 8, 8))) as original:
+        io.save(path, original)
+    turns = []
+    batched = StreamedDirect.phase
+
+    def phase(self, *args, **kwargs):
+        if session._band_fit is not None:
+            turns.append((len(self.chunks), session._compute.G_qk is None))
+        return batched(self, *args, **kwargs)
+
+    monkeypatch.setattr(StreamedDirect, "phase", phase)
+    stack_bytes = cp.cuda.runtime.deviceGetLimit(cp.cuda.runtime.cudaLimitStackSize)
+    with DirectPtycho.open(str(path), **SETTINGS) as session:
+        streamed = session._streamed
+        chunks = len(streamed.chunks)
+        fit = session.aberrations(show=False, verbose=False)
+        assert fit.fit_scan_region is None and turns and all(turn == (chunks, True) for turn in turns)
+        assert session._compute is None and session._band_fit is None
+        assert streamed.source._parked is None and len(streamed.chunks) == chunks
+        assert cp.cuda.runtime.deviceGetLimit(cp.cuda.runtime.cudaLimitStackSize) == stack_bytes
+        cp.testing.assert_array_equal(fit.phase, session.run(fit, compute_loss=False).phase)
+
+
+@pytest.mark.parametrize("transposed", [False, True])
+def test_band_spectrum_scores_trials_as_the_whole_spectrum(transposed, monkeypatch):
+    """G(q, k) gathered at the fit band from batched detector columns is the dense half plane there, and every fit
+    objective (the joint agreement, the fifth-order agreement and its exact gradients) reads the same values."""
+    from quantem.gpu.direct_ptycho import workflow
+    from quantem.gpu.direct_ptycho.cuda.exact_derivatives import FifthOrderGradients
+
+    monkeypatch.setattr(workflow, "_exceeds_device", lambda data: True)
+    values = _counts((128, 128, 8, 8))
+    band_inv_A = workflow.WHOLE_SCAN_FIT_BAND_INV_A
+    rng = np.random.default_rng(3)
+    points = np.column_stack([rng.uniform(-80, 80, 6), rng.uniform(0, 40, 6), rng.uniform(-1.5, 1.5, 6),
+                              rng.uniform(-8, 8, (6, 2)), rng.uniform(0, 60, 6)])
+    z = rng.uniform(-0.5, 0.5, (5, 28))
+    z[:, 5] = rng.uniform(0.2, 2, 5)
+    with _encoded(values) as data, DirectPtycho(data, **SETTINGS, scan_detector_rotation_flipped=transposed) as encoded:
+        values[..., 2, 3] = 0  # independent dense reference's scientific validity mask
+        with DirectPtycho(values, **SETTINGS, scan_detector_rotation_flipped=transposed) as dense, \
+                encoded._whole_scan_for_fit(encoded._whole_scan_band(False), False):
+            band, whole = encoded._backend(), dense._backend()
+            flat = whole._get_accelerator().thick._prepare_fit_band(band_inv_A)[2]
+            expected = whole.G_qk.reshape(whole.G_qk.shape[0], -1)[:, flat]
+            # R2C and C2C forward transforms of the same counts round differently in float32
+            # measured 2.3e-7 of the largest |G|, 1.3e-7 relative agreement, 6e-7 of the largest gradient
+            cp.testing.assert_allclose(band.G_qk[:, 0], expected, rtol=0, atol=1e-6 * float(cp.abs(expected).max()))
+            assert flat.size == band.G_qk.shape[2]
+            np.testing.assert_allclose(band.sample_agreement(points, band_inv_A),
+                                       whole.sample_agreement(points, band_inv_A), rtol=5e-7)
+            np.testing.assert_allclose(band.band_power(band_inv_A), whole.band_power(band_inv_A), rtol=1e-7)
+            band_fifth = FifthOrderGradients(band._get_accelerator())
+            whole_fifth = FifthOrderGradients(whole._get_accelerator())
+            np.testing.assert_allclose(band_fifth.values(z), whole_fifth.values(z), rtol=2e-7)
+            gradients = whole_fifth.gradients(z)
+            np.testing.assert_allclose(band_fifth.gradients(z), gradients, rtol=0,
+                                       atol=2e-6 * float(np.abs(gradients).max()))
+            with pytest.raises(NotImplementedError, match="fit band's frequencies only"):
+                band.preview_upsampled(aberrations_to_engine(ABERRATIONS), upsample=1, compute_loss=False)
+
+
+def test_band_spectrum_of_a_scan_region_scores_trials_as_the_region_alone(monkeypatch):
+    """A scan region's band spectrum, gathered from the whole encoded scan, is the dense half plane of the region's
+    own counts at the region's band, and the joint agreement and the fifth-order values read the same there."""
+    from quantem.gpu.direct_ptycho import workflow
+    from quantem.gpu.direct_ptycho.cuda.exact_derivatives import FifthOrderGradients
+
+    monkeypatch.setattr(workflow, "_exceeds_device", lambda data: True)
+    values = _counts((256, 256, 8, 8))
+    region = (64, 192, 32, 160)  # a side the dense reference takes without padding
+    band_inv_A = workflow.WHOLE_SCAN_FIT_BAND_INV_A
+    rng = np.random.default_rng(5)
+    points = np.column_stack([rng.uniform(-80, 80, 6), rng.uniform(0, 40, 6), rng.uniform(-1.5, 1.5, 6),
+                              rng.uniform(-8, 8, (6, 2)), rng.uniform(0, 60, 6)])
+    z = rng.uniform(-0.5, 0.5, (5, 28))
+    z[:, 5] = rng.uniform(0.2, 2, 5)
+    with _encoded(values) as data, DirectPtycho(data, **SETTINGS) as encoded:
+        cropped = cp.ascontiguousarray(values[region[0]:region[1], region[2]:region[3]])
+        cropped[..., 2, 3] = 0  # independent dense reference's scientific validity mask
+        placement = encoded._whole_scan_band(False, region)
+        with DirectPtycho(cropped, **SETTINGS) as dense, encoded._whole_scan_for_fit(placement, False):
+            band, whole = encoded._backend(), dense._backend()
+            flat = whole._get_accelerator().thick._prepare_fit_band(band_inv_A)[2]
+            expected = whole.G_qk.reshape(whole.G_qk.shape[0], -1)[:, flat]
+            assert flat.size == band.G_qk.shape[2] == placement[0][2].size
+            # R2C and C2C forward transforms of the same counts round differently in float32
+            cp.testing.assert_allclose(band.G_qk[:, 0], expected, rtol=0, atol=1e-6 * float(cp.abs(expected).max()))
+            np.testing.assert_allclose(band.sample_agreement(points, band_inv_A),
+                                       whole.sample_agreement(points, band_inv_A), rtol=5e-7)
+            np.testing.assert_allclose(FifthOrderGradients(band._get_accelerator()).values(z),
+                                       FifthOrderGradients(whole._get_accelerator()).values(z), rtol=2e-7)
+
+
+
+@pytest.mark.parametrize("resident_slabs", [1, 0])
+def test_streamed_band_slabs_sum_to_the_band_held_whole(resident_slabs, monkeypatch):
+    """A band spectrum the device holds only in part (its first slab of pixels, or none) streams the rest slab by slab;
+    every fit objective then reads what it reads from the spectrum held whole: the joint agreement and its Newton
+    derivatives, the band power, the fifth-order agreement and its gradients, on every pixel and on a subsample whose
+    stride does not divide the slab."""
+    from quantem.gpu.direct_ptycho import workflow
+    from quantem.gpu.direct_ptycho.cuda.exact_derivatives import FifthOrderGradients, LowOrderDerivatives
+    from quantem.gpu.direct_ptycho.cuda.thick import BAND_SLAB_ROWS
+
+    monkeypatch.setattr(workflow, "_exceeds_device", lambda data: True)
+    # 48 x 48 detector: about a thousand bright-field pixels, so the band spectrum spans four slabs
+    settings = {**SETTINGS, "detector_sampling_mrad": (1.6, 1.75), "bright_field_center_px": (23.3, 24.1),
+                "bright_field_radius_px": 18.0}
+    band_inv_A = workflow.WHOLE_SCAN_FIT_BAND_INV_A
+    rng = np.random.default_rng(5)
+    points = np.column_stack([rng.uniform(-80, 80, 4), rng.uniform(0, 40, 4), rng.uniform(-1.5, 1.5, 4),
+                              rng.uniform(-8, 8, (4, 2)), rng.uniform(0, 60, 4)])
+    newton = np.column_stack([rng.uniform(-0.5, 0.5, (3, 5)), rng.uniform(0.2, 2, 3)])
+    z = rng.uniform(-0.5, 0.5, (3, 28))
+    z[:, 5] = rng.uniform(0.2, 2, 3)
+
+    def objectives(backend):
+        engine = backend._get_accelerator()
+        low = LowOrderDerivatives(engine, band_inv_A)
+        fifth = FifthOrderGradients(engine)
+        # the band power first: it is the first reader of freshly allocated slab buffers
+        record = {"power": backend.band_power(band_inv_A)}
+        record.update(agreement=backend.sample_agreement(points, band_inv_A), low=low.values(newton),
+                      low_derivatives=low.derivatives([0, 2]))
+        for stride in (1, 14):
+            record[f"fifth {stride}"] = fifth.values(z, stride)
+            record[f"gradients {stride}"] = fifth.gradients(z, stride)
+        return record
+
+    with _encoded(_counts((64, 64, 48, 48))) as data, DirectPtycho(data, **settings) as encoded:
+        band, _, _ = encoded._whole_scan_band(False)
+        row_bytes = int(band[2].size) * 8
+        assert encoded.num_bright_field_pixels > 3 * 256 and BAND_SLAB_ROWS == 256
+        with encoded._whole_scan_for_fit((band, None, None), False):
+            whole = objectives(encoded._backend())
+        with encoded._whole_scan_for_fit((band, (resident_slabs * 256 + 2 * 256) * row_bytes, None), False):
+            backend = encoded._backend()
+            assert backend._resident_rows == resident_slabs * 256 and backend.G_qk.shape[0] == resident_slabs * 256
+            streamed = objectives(backend)
+    for name in ("agreement", "power", "low", "fifth 1", "fifth 14"):
+        np.testing.assert_allclose(streamed[name], whole[name], rtol=1e-6, err_msg=name)
+    for name in ("gradients 1", "gradients 14"):
+        np.testing.assert_allclose(streamed[name], whole[name], rtol=0, atol=1e-5 * np.abs(whole[name]).max(), err_msg=name)
+    for (value, gradient, hessian), (value_whole, gradient_whole, hessian_whole) in zip(streamed["low_derivatives"],
+                                                                                         whole["low_derivatives"]):
+        np.testing.assert_allclose(value, value_whole, rtol=1e-6)
+        np.testing.assert_allclose(gradient, gradient_whole, rtol=0, atol=1e-5 * np.abs(gradient_whole).max())
+        np.testing.assert_allclose(hessian, hessian_whole, rtol=0, atol=1e-5 * np.abs(hessian_whole).max())
+
 # ---
 
 
@@ -181,14 +342,19 @@ def test_parked_counts_return_the_same_counts_and_refuse_reads_meanwhile():
             source.decode_scan_range_device(3000, 4100)
         source.park()
         assert source.chunks == []
-        # a device with no room refuses the return and loses nothing: the next restore succeeds
+        # a device with no room that cannot read host memory either (no unified addressing) refuses the return and
+        # loses nothing: the next restore succeeds
         from quantem.gpu.resident.cuda import counts
 
-        def no_room(arrays):
+        def no_room(*args):
             raise cp.cuda.memory.OutOfMemoryError(1, 0, 0)
+
+        def no_unified_addressing(*args):
+            raise MemoryError("no unified addressing")
 
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(counts, "retain", no_room)
+            patch.setattr(counts, "host_mapped", no_unified_addressing)
             with pytest.raises(MemoryError, match="intact in host memory"):
                 source.restore()
         assert source.chunks == [] and source._parked is not None
@@ -196,6 +362,156 @@ def test_parked_counts_return_the_same_counts_and_refuse_reads_meanwhile():
         assert source._parked is None and source.nbytes == device_bytes
         cp.testing.assert_array_equal(source.decode_scan_range_device(0, frames.shape[0]), frames)
 
+
+
+def test_shared_passes_give_every_refinement_what_it_gets_alone(monkeypatch):
+    """Refinements that share passes over G (``SharedPasses``, ``_MergedEvaluations``) see the values and gradients
+    they see alone, bit for bit: per-member band weights, mixed strides and searches of different lengths included."""
+    from quantem.gpu.direct_ptycho import workflow
+    from quantem.gpu.direct_ptycho._resident_search import _Device, _MergedEvaluations, _search
+    from quantem.gpu.direct_ptycho.cuda.exact_derivatives import FifthOrderGradients, SharedPasses
+
+    monkeypatch.setattr(workflow, "_exceeds_device", lambda data: True)
+    rng = np.random.default_rng(7)
+    z = rng.uniform(-0.4, 0.4, (3, 28))
+    z[:, 5] = 1.0
+    with _encoded(_counts((128, 128, 8, 8))) as data, DirectPtycho(data, **SETTINGS) as encoded:
+        with encoded._whole_scan_for_fit(encoded._whole_scan_band(False), False):
+            engine = encoded._backend()._get_accelerator()
+            objective = FifthOrderGradients(engine)
+            mask = np.arange(objective.band_frequencies()[0].size) % 2 == 0
+
+            def alone(target, point, stride):
+                values = target.values(point, stride)
+                return values, target.gradients(point, stride)
+
+            expected = [alone(objective, z[0], 1), alone(objective.with_band_weights(mask), z[1], 1),
+                        alone(objective, z[2], 4)]
+            shared = SharedPasses(objective)
+            members = [shared.member(), shared.member().with_band_weights(mask), shared.member()]
+            got = shared.run([lambda: alone(members[0], z[0], 1), lambda: alone(members[1], z[1], 1),
+                              lambda: [alone(members[2], z[2], 4), alone(members[2], z[0], 4)][0]])
+            for (values, gradients), (values_alone, gradients_alone) in zip(got, expected):
+                np.testing.assert_array_equal(values, values_alone)
+                np.testing.assert_array_equal(gradients, gradients_alone)
+            device = _Device("cuda")
+            evaluate = lambda trial: engine.thick.fit_resident(trial, (0.2, 0.9))
+            bounds = device.pack([-300.0, 0.0, -1.5, -25.0, -25.0, 0.0, 300.0, 200.0, 1.5, 25.0, 25.0, 300.0])
+            thin = device.pack([-300.0, 0.0, -1.5, 0.0, 0.0, 0.0, 300.0, 200.0, 1.5, 0.0, 0.0, 0.0])
+            separate = [_search(device, evaluate, thin, 40, 3, thin=True), _search(device, evaluate, bounds, 24, 3)]
+            merged = _MergedEvaluations(evaluate, cp).run([lambda shared: _search(device, shared, thin, 40, 3, thin=True),
+                                                           lambda shared: _search(device, shared, bounds, 24, 3)])
+            for (points, scores), (points_alone, scores_alone) in zip(merged, separate):
+                cp.testing.assert_array_equal(points, points_alone)
+                cp.testing.assert_array_equal(scores, scores_alone)
+
+
+def test_retain_frees_idle_pool_blocks_when_the_exact_allocation_runs_out(monkeypatch):
+    """An encoded chunk's own allocation that runs out frees the memory pool's idle blocks and succeeds on retry."""
+    from quantem.gpu.resident.cuda import counts
+
+    arrays = (cp.arange(1000, dtype=cp.uint16), cp.ones(77, cp.uint32))
+    from types import SimpleNamespace
+
+    calls, freed, empty = [], [], cp.empty
+    monkeypatch.setattr(cp, "get_default_memory_pool", lambda: SimpleNamespace(free_all_blocks=lambda: freed.append(True)))
+
+    def runs_out_once(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise cp.cuda.runtime.CUDARuntimeError(2)  # cudaErrorMemoryAllocation
+        return empty(*args, **kwargs)
+
+    monkeypatch.setattr(cp, "empty", runs_out_once)
+    kept = counts.retain(arrays)
+    assert len(calls) == 2 and freed
+    for array, view in zip(arrays, kept):
+        cp.testing.assert_array_equal(view, array)
+
+
+def test_encoded_chunks_share_blocks_and_a_restored_scan_takes_one_allocation():
+    """Loaded chunks pack back to back into blocks sized to the scans still to come, not one allocation each (each
+    rounded up to whole 2 MiB pages); a parked scan returns into one allocation; every scan decodes as appended."""
+    values = _counts((40, 40, 16, 16))
+    source = _encoded(values, chunk_scans=50).data
+    page = 2 << 20
+    encoded = sum(math.ceil(array.nbytes / 256) * 256 for chunk in source.chunks for array in chunk.arrays)
+
+    def allocations():
+        return {id(array.data.mem): array.data.mem.size for chunk in source.chunks for array in chunk.arrays}
+
+    loaded = allocations()
+    assert len(source.chunks) == 32 and source._blocks is None
+    assert sum(loaded.values()) <= math.ceil(encoded / page) * page + len(loaded) * page < 32 * page
+    source.park()
+    source.restore()
+    assert list(allocations().values()) == [math.ceil(encoded / page) * page]
+    frames = values.reshape(-1, 16, 16)
+    cp.testing.assert_array_equal(source.decode_scan_range_device(0, 1600).reshape(frames.shape), frames)
+
+
+def test_encoded_scan_the_device_has_no_room_for_reads_the_same_from_host_memory(tmp_path):
+    """Chunks the device has no room for stay in page-locked host memory, read there in place: every pattern, the
+    detector total, a virtual image, the centre of mass and a whole-scan phase give the device-resident scan's bits.
+    Parked, the scan returns to host memory while the device still has no room and to the device once it has; a
+    `.qem` the device has no room for loads into host memory the same way."""
+    from quantem.gpu import io
+    from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
+    from quantem.gpu.io import qem
+    from quantem.gpu.resident.cuda import counts
+
+    values = _counts((40, 40, 16, 16))
+    mask = np.zeros((16, 16), bool)
+    mask[4:12, 4:12] = True
+    options = dict(voltage_kV=300., semiangle_mrad=30., scan_sampling_A=SETTINGS["scan_sampling_A"], rotation_deg=27.,
+                   upsample=1, sample_tilt_mrad=(1., -2.), depth_spread_A=0.)
+
+    def reads(data):
+        source = data.data
+        source._detector_total = None  # summed again from the chunks, as for a scan read from a file
+        queries = StreamedSeriesCompute([data])
+        streamed = StreamedDirect(
+            data, mean_pattern=None, center=SETTINGS["bright_field_center_px"],
+            radius=SETTINGS["bright_field_radius_px"], threshold=0., semiangle_mrad=30.,
+            detector_sampling_mrad=SETTINGS["detector_sampling_mrad"], scan_detector_rotation_flipped=False,
+            full_scan_only=False,
+        )
+        return (source.decode_scan_range_device(0, 1600), source.detector_total_device(),
+                queries.masked_sum_exact(mask), *queries.center_of_mass(),
+                streamed.phase(aberrations_to_engine(ABERRATIONS), **options)[0])
+
+    def assert_same(expected, got):
+        for one, other in zip(expected, got, strict=True):
+            cp.testing.assert_array_equal(cp.asarray(other), cp.asarray(one))
+
+    device_data = _encoded(values, chunk_scans=50)
+    on_device = reads(device_data)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(counts, "_allocate", lambda nbytes: None)
+        data = _encoded(values, chunk_scans=50)
+        source = data.data
+        assert source.host_nbytes == sum(chunk.nbytes for chunk in source.chunks) > 0
+        assert_same(on_device, reads(data))
+        source.park()
+        source.restore()
+        assert source.host_nbytes == sum(chunk.nbytes for chunk in source.chunks)
+        assert_same(on_device, reads(data))
+    source.park()
+    source.restore()
+    assert source.host_nbytes == 0
+    assert_same(on_device, reads(data))
+    saved = tmp_path / "scan.qem"
+    io.save(saved, device_data)
+
+    def host_arena(nbytes, device):
+        host = counts.pinned(nbytes)
+        return counts.host_mapped(host, device), host
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(qem, "_arena", host_arena)
+        with io.load(saved, device="cuda", verbose=False) as loaded:
+            assert loaded.data.host_nbytes == sum(chunk.nbytes for chunk in loaded.data.chunks) > 0
+            assert_same(on_device, reads(loaded))
 
 # ---
 

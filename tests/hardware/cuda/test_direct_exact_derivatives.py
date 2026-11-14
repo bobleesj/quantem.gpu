@@ -53,6 +53,26 @@ def test_low_order_gradient_and_hessian_match_the_reference(direct):
     checks.check_low_order_derivatives(direct)
 
 
+def test_low_order_derivatives_of_each_position_do_not_depend_on_its_launch_group(direct, monkeypatch):
+    """Positions evaluated one launch at a time (a small device's partial-sum limit) give the bits they give together."""
+    import math
+
+    from quantem.gpu.direct_ptycho.cuda import exact_derivatives
+
+    low = checks.low_order(direct)
+    phi = math.radians(checks.TRUTH["phi12_deg"] + 7) * 2
+    base = np.array([10 * checks.TRUTH["C10_nm"] + 8, 25 * math.cos(phi), 25 * math.sin(phi), 1.5, -2.0, 150.0])
+    points = base + np.linspace(-1, 1, 5)[:, None] * np.array([4.0, 3.0, -2.0, 0.5, 0.3, 20.0])
+    low.values(points)
+    together = low.derivatives(range(5))
+    monkeypatch.setattr(exact_derivatives, "DERIVATIVE_PARTIAL_BYTES", 1)
+    one_by_one = low.derivatives(range(5))
+    for (value, gradient, hessian), (value_one, gradient_one, hessian_one) in zip(together, one_by_one, strict=True):
+        assert value == value_one
+        np.testing.assert_array_equal(gradient_one, gradient)
+        np.testing.assert_array_equal(hessian_one, hessian)
+
+
 def test_opposite_branch_point_has_the_same_agreement(simulation):
     checks.check_opposite_branch(simulation, "cuda")
 

@@ -9,7 +9,13 @@ import numpy as np
 from quantem.gpu.detector.cuda.mask_plan import CudaMaskPlanner
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.dataset import Dataset4dstem
-from quantem.gpu.resident.cuda.counts import StreamedCounts, field_count, kernels
+from quantem.gpu.resident.cuda.counts import (
+    Staging,
+    StreamedCounts,
+    field_count,
+    kernels,
+    on_host,
+)
 from quantem.gpu.resident.queries import DetectorQueries, weight_digits
 
 
@@ -79,6 +85,7 @@ class StreamedSeriesCompute(DetectorQueries):
             "uint32" if maximum <= np.iinfo(np.uint32).max else "uint64"
         )
         self.keepalive, rows = [], []
+        self.row_arrays = []
         # (first scan, scans) of every descriptor row, for queries planned per stream block
         self.chunk_spans = []
         self.max_scans = 0
@@ -114,6 +121,7 @@ class StreamedSeriesCompute(DetectorQueries):
                     source.interval,
                 ]
                 rows.append(row)
+                self.row_arrays.append(chunk.arrays)
                 self.chunk_spans.append((chunk.first, chunk.scans))
                 self.max_scans = max(self.max_scans, chunk.scans)
         if len(rows) > 65535:
@@ -122,6 +130,8 @@ class StreamedSeriesCompute(DetectorQueries):
             )
         self.residual_warps = min(16, math.ceil(self.max_scans / self.interval))
         self.valid_pixels = np.stack([source.valid_pixels for source in sources])
+        self.rows = rows
+        self.on_host = any(on_host(array) for arrays in self.row_arrays for array in arrays)
         with cp.cuda.Device(self.device):
             self.descriptors = cp.asarray(rows, dtype=cp.uint64)
             self.chunk_count = len(rows)
@@ -486,6 +496,22 @@ class StreamedSeriesCompute(DetectorQueries):
         com_col = (col_moment.astype(cp.float64) / denominator).astype(cp.float32)
         return com_col, com_row
 
+    def _passes(self):
+        """(descriptor table, chunk count) for one pass that decodes every stream of every chunk.
+
+        The whole table in one launch; for a scan held in host memory (``host_mapped``), one chunk at a time from a
+        device copy (``Staging``): read in place, the moments of a 2.5 GB scan took 8.6 s.
+        """
+        if not self.on_host:
+            yield self.descriptors, self.chunk_count
+            return
+        staging = Staging(self.row_arrays)
+        for row, arrays in zip(self.rows, self.row_arrays):
+            payload, offsets, models, words, starts, widths = staging(arrays)
+            pointers = [array.data.ptr for array in (payload, offsets, models)] + [row[3]] + [
+                array.data.ptr for array in (words, starts, widths)]
+            yield cp.asarray([pointers + row[7:]], dtype=cp.uint64), 1
+
     def _moments(self, row_weights, col_weights):
         """Exact uint64 per-scan sums of the row and the column weighting of a centre of mass.
 
@@ -505,21 +531,22 @@ class StreamedSeriesCompute(DetectorQueries):
             if len(pixels):
                 weights = [cp.asarray(values.ravel()[pixels].astype(np.int32)) for values in (row_weights, col_weights)]
                 groups = math.ceil(len(pixels) / 32) * math.ceil(self.max_scans / self.interval / self.residual_warps)
-                self.kernels["moment_pair"](
-                    (groups, self.chunk_count),
-                    (32 * self.residual_warps,),
-                    (
-                        self.descriptors,
-                        cp.asarray(pixels),
-                        *weights,
-                        np.uint32(len(pixels)),
-                        *moments,
-                        errors,
-                        np.uint64(self.n_frames),
-                        np.uint32(self.pixels),
-                        np.uint32(self.interval),
-                    ),
-                )
+                for descriptors, chunk_count in self._passes():
+                    self.kernels["moment_pair"](
+                        (groups, chunk_count),
+                        (32 * self.residual_warps,),
+                        (
+                            descriptors,
+                            cp.asarray(pixels),
+                            *weights,
+                            np.uint32(len(pixels)),
+                            *moments,
+                            errors,
+                            np.uint64(self.n_frames),
+                            np.uint32(self.pixels),
+                            np.uint32(self.interval),
+                        ),
+                    )
             info = {
                 "query_launches": int(bool(len(pixels))),
                 "residual_pixels": len(pixels),

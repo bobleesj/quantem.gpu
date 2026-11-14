@@ -58,21 +58,22 @@ def tables(device: int):
         return cp.asarray(encoding), cp.asarray(decoding)
 
 
-def retain(arrays) -> tuple:
-    """Copy the arrays a resident keeps into one exact allocation outside the memory pool.
+def retain(arrays, blocks: "Blocks | None" = None, expected: int = 0) -> tuple:
+    """Copy the arrays a resident keeps into memory outside the memory pool, back to back at 256-byte offsets.
 
-    The arrays are packed back to back at 256-byte offsets and returned as views.
-    A kept array carved from a pooled block that also served decode or encode
-    scratch holds the whole block until the resident is released, so neither
-    that scratch nor, after release, the resident returns to the GPU. One
-    allocation per chunk, freed with its last view, because separate
-    allocations are each rounded up to whole 2 MiB pages.
+    The arrays are returned as views. A kept array carved from a pooled block
+    that also served decode or encode scratch holds the whole block until the
+    resident is released, so neither that scratch nor, after release, the
+    resident returns to the GPU. Without ``blocks`` the arrays get one exact
+    allocation of their own; with ``blocks`` they are placed in its current
+    block, or in a new one sized to the ``expected`` bytes still to come.
     """
     import cupy as cp
 
     sizes = [math.ceil(array.nbytes / 256) * 256 for array in arrays]
-    with cp.cuda.using_allocator():
-        storage = cp.empty(sum(sizes), cp.uint8)
+    storage = _allocate(sum(sizes)) if blocks is None else blocks.take(sum(sizes), expected)
+    if storage is None:
+        raise MemoryError(f"The device has no room for {sum(sizes)} bytes of encoded counts.")
     views = []
     for array, start in zip(arrays, [0, *accumulate(sizes)]):
         view = storage[start : start + array.nbytes].view(array.dtype).reshape(array.shape)
@@ -86,6 +87,135 @@ def retain(arrays) -> tuple:
     # without this wait, loads under GPU contention kept another chunk's counts.
     cp.cuda.get_current_stream().synchronize()
     return tuple(views)
+
+
+class Blocks:
+    """Allocations outside the memory pool that a resident's chunks are packed into, back to back.
+
+    The device rounds every allocation up to whole 2 MiB pages: 100 allocations of 8.45 MiB took 1000 MiB, so one
+    allocation per chunk lost about 1 MiB a chunk, 260 to 400 MiB over the 256 chunks of a 2.2 GB encoded scan, and on
+    a 4 GB card that scan's load ran out on its last chunk (2026-11-13). A block holds up to ``limit`` bytes, sized to
+    what is still expected, so only the tail a chunk did not fit in is lost. A block returns to the device when its
+    last chunk is freed, so a source read once in scan order shrinks a block at a time. With ``device`` set, a block
+    the device has no room for, and every block after it, is page-locked host memory the device reads in place
+    (``host_mapped``); without it, ``take`` returns None there.
+    """
+
+    def __init__(self, limit: int | None = 256 << 20, device: int | None = None):
+        self.limit = limit
+        self.device = device
+        self.block = None
+        self.used = 0
+        self.on_host = False
+
+    def take(self, nbytes: int, expected: int):
+        """``nbytes`` of memory from the current block, or from a new one of the ``expected`` bytes (at least
+        ``nbytes``, at most ``limit``) when the current block has no room."""
+        if self.block is None or self.used + nbytes > self.block.nbytes:
+            size = max(nbytes, expected if self.limit is None else min(self.limit, expected))
+            size = math.ceil(size / (2 << 20)) * (2 << 20)  # the pages the device allocates anyway
+            self.block = None if self.on_host else _allocate(size)
+            if self.block is None:
+                if self.device is None:
+                    return None
+                self.on_host = True
+                self.block = host_mapped(pinned(size), self.device)
+            self.used = 0
+        storage = self.block[self.used : self.used + nbytes]
+        self.used += nbytes
+        return storage
+
+
+def _allocate(nbytes: int):
+    """One exact allocation of ``nbytes`` outside the memory pool (see retain), or None when the device has no room."""
+    import cupy as cp
+
+    for attempt in range(2):
+        try:
+            with cp.cuda.using_allocator():
+                return cp.empty(nbytes, cp.uint8)
+        except cp.cuda.runtime.CUDARuntimeError as error:
+            if "memory" not in str(error).lower():
+                raise
+        # the pool's idle blocks (a loader's scratch from earlier batches) hold the room; on a 4 GB card a 2.2 GB
+        # scan loading from HDF5 ran out here at 3700 MiB free while the pool kept hundreds of MiB idle
+        cp.get_default_memory_pool().free_all_blocks()
+    return None
+
+
+def pinned(nbytes: int) -> np.ndarray:
+    """``nbytes`` of page-locked host memory as a uint8 array."""
+    import cupy as cp
+
+    return np.frombuffer(cp.cuda.alloc_pinned_memory(max(nbytes, 1)), np.uint8, nbytes)
+
+
+def host_mapped(host: np.ndarray, device: int):
+    """A page-locked host array as a device array that kernels read and write in place, over the bus.
+
+    Under unified addressing a kernel dereferences a page-locked host pointer directly, so an encoded scan the device
+    has no room for still decodes, slower: on a 512 x 512 x 192 x 192 scan (RTX PRO 6000, PCIe 5.0 x8, 2026-11-13) a
+    whole-scan phase took 0.96 s against 0.20 s from device memory, a new virtual image 237 ms against 5 ms, a 1-pixel
+    detector drag 53 ms against 2.3 ms, one pattern 4 ms against 2.4 ms, with the same bits.
+    """
+    import cupy as cp
+
+    if not _unified_addressing(device):
+        raise MemoryError("The device has no room for the encoded counts, and it cannot read them from host memory "
+                          "(no unified addressing).")
+    memory = cp.cuda.UnownedMemory(host.ctypes.data, max(host.nbytes, 1), host, device)
+    return cp.ndarray(host.shape, host.dtype, cp.cuda.MemoryPointer(memory, 0))
+
+
+@cache
+def _unified_addressing(device: int) -> bool:
+    """Whether kernels on ``device`` read page-locked host memory by its own address (asked once: a restore that maps
+    256 chunks asked 1536 times and took 3 s)."""
+    import cupy as cp
+
+    return bool(cp.cuda.runtime.getDeviceProperties(device)["unifiedAddressing"])
+
+
+def on_host(array) -> bool:
+    """Whether a device array lives in page-locked host memory (``host_mapped``)."""
+    import cupy as cp
+
+    host = cp.cuda.runtime.memoryTypeHost
+    return bool(array.size) and cp.cuda.runtime.pointerGetAttributes(array.data.ptr).type == host
+
+
+class Staging:
+    """One device buffer that chunks held in host memory (``host_mapped``) are copied into, a chunk at a time.
+
+    For a pass that decodes every stream of every chunk: read in place over the bus, the thousands of short streams
+    are latency bound (a detector total of a 2.5 GB scan took 8.7 s, its centre-of-mass moments 8.6 s); one bulk copy
+    of each chunk first runs at the bus's rate. One buffer the size of the largest chunk serves every chunk: copies
+    and kernels queue on one stream, so a chunk's copy waits for the kernels that read the one before (2026-11-13).
+    """
+
+    def __init__(self, chunks):
+        import cupy as cp
+
+        sizes = [sum(math.ceil(array.nbytes / 256) * 256 for array in arrays)
+                 for arrays in chunks if any(on_host(array) for array in arrays)]
+        self.buffer = cp.empty(max(sizes), cp.uint8) if sizes else None
+
+    def __call__(self, arrays) -> tuple:
+        """``arrays`` on the device: those in host memory copied into the buffer, valid until the next call."""
+        import cupy as cp
+
+        if self.buffer is None:
+            return tuple(arrays)
+        staged, offset = [], 0
+        for array in arrays:
+            if on_host(array):
+                view = self.buffer[offset : offset + array.nbytes].view(array.dtype).reshape(array.shape)
+                cp.cuda.runtime.memcpyAsync(view.data.ptr, array.data.ptr, array.nbytes, cp.cuda.runtime.memcpyDefault,
+                                            cp.cuda.get_current_stream().ptr)
+                offset += math.ceil(array.nbytes / 256) * 256
+                array = view
+            staged.append(array)
+        return tuple(staged)
 
 
 def _to_host(array) -> np.ndarray:
@@ -150,6 +280,9 @@ class StreamedCounts:
     spatial_index = True
     # The encoded chunks as host arrays while they are parked off the device (see park), else None.
     _parked = None
+    # The blocks ``append`` packs chunks into until the last scan arrives, and the bytes it has encoded so far.
+    _blocks = None
+    _appended_bytes = 0
 
     def __init__(self, shape: tuple[int, int, int, int], dtype, valid=None):
         import cupy as cp
@@ -186,6 +319,12 @@ class StreamedCounts:
     def nbytes(self) -> int:
         total = 0 if self._detector_total is None else self._detector_total.nbytes
         return sum(chunk.nbytes for chunk in self.chunks) + self.valid.nbytes + total
+
+    @property
+    def host_nbytes(self) -> int:
+        """Bytes of the encoded chunks the device reads from page-locked host memory (``host_mapped``): those a load
+        or a ``restore`` found no device room for."""
+        return sum(array.nbytes for chunk in self.chunks for array in chunk.arrays if on_host(array))
 
     @property
     def index_nbytes(self) -> int:
@@ -291,9 +430,17 @@ class StreamedCounts:
                 )
                 kept += (words, starts, widths)
             indexed.record()
+            # A new block holds the scans still to come at the bytes per scan so far: a short guess costs one more
+            # block, a long one leaves memory unused at the end.
+            self._appended_bytes += sum(math.ceil(array.nbytes / 256) * 256 for array in kept)
+            remaining = math.prod(self.shape[:2]) - self.ready_scans
+            expected = self._appended_bytes * remaining // (self.ready_scans + scans)
+            self._blocks = self._blocks or Blocks(device=self.device)
             # retain() waits for the stream, so the events are complete when read.
-            self.chunks.append(Chunk(self.ready_scans, scans, retain(kept)))
+            self.chunks.append(Chunk(self.ready_scans, scans, retain(kept, self._blocks, expected)))
             self.ready_scans += scans
+            if self.ready_scans == math.prod(self.shape[:2]):
+                self._blocks = None  # the chunks alone hold their blocks, so freeing them frees the memory
             if keeps_total:
                 if self._detector_total is None:
                     with cp.cuda.using_allocator():  # retained, so outside the memory pool (see retain)
@@ -402,13 +549,14 @@ class StreamedCounts:
                     total = cp.zeros(self.shape[2:], cp.uint64)
                 errors = cp.zeros(1, cp.uint32)
                 pixels = math.prod(self.shape[2:])
+                staging = Staging([chunk.arrays[:3] for chunk in self.chunks])
                 for chunk in self.chunks:
                     streams = math.ceil(chunk.scans / self.interval) * pixels
                     self.kernels["total"](
                         ((streams + 127) // 128,),
                         (128,),
                         (
-                            *chunk.arrays[:3],
+                            *staging(chunk.arrays[:3]),
                             self.decoding,
                             total,
                             errors,
@@ -425,8 +573,9 @@ class StreamedCounts:
     def release_scans_before(self, stop: int) -> None:
         """Free the chunks that end by scan ``stop``, so a source read once in scan order shrinks as it is read.
 
-        Only whole chunks are freed; each owns its own allocation (see retain),
-        so its memory returns to the GPU at once. Decoding a freed scan raises.
+        Only whole chunks are freed, and their memory returns to the GPU once
+        every chunk sharing its block is freed (see Blocks). Decoding a freed
+        scan raises.
         """
         kept = [chunk for chunk in self.chunks if chunk.first + chunk.scans > stop]
         if len(kept) != len(self.chunks):
@@ -446,17 +595,22 @@ class StreamedCounts:
 
         if self._parked is None:
             with cp.cuda.Device(self.device):
+                # chunks already in host memory (``host_mapped``) stay where they are
                 self._parked = [
-                    Chunk(chunk.first, chunk.scans, tuple(_to_host(array) for array in chunk.arrays))
+                    Chunk(chunk.first, chunk.scans,
+                          tuple(array if on_host(array) else _to_host(array) for array in chunk.arrays))
                     for chunk in self.chunks
                 ]
         self.chunks = []
+        self._blocks = None
 
-    def restore(self, first: int = 0, stop: int | None = None) -> None:
+    def restore(self, first: int = 0, stop: int | None = None, *, keep_host: bool = False) -> None:
         """Return parked chunks to the device: those holding scans ``first`` to ``stop``, or all of them.
 
         A partial restore keeps the host copies, so another range or the whole scan can follow; restoring the
-        whole scan drops them. Each chunk gets its own exact allocation (see retain).
+        whole scan drops them unless ``keep_host``, with which the next ``park`` only frees the device. The chunks
+        return into one exact allocation (see Blocks); when the device has no room for them they stay in host memory
+        and the device reads them there (``host_mapped``, slower; ``host_nbytes`` says how much).
         """
         import cupy as cp
 
@@ -466,20 +620,24 @@ class StreamedCounts:
         stop = self.ready_scans if stop is None else stop
         self.chunks = []
         wanted = [chunk for chunk in self._parked if chunk.first < stop and chunk.first + chunk.scans > first]
-        try:
-            with cp.cuda.Device(self.device):
-                self.chunks = [Chunk(chunk.first, chunk.scans, retain(chunk.arrays)) for chunk in wanted]
-        except (MemoryError, RuntimeError) as error:
-            # CuPy's pool raises MemoryError; an allocation outside the pool (retain) raises the runtime's own error
-            if not isinstance(error, MemoryError) and "memory" not in str(error).lower():
-                raise
-            self.chunks = []
-            raise MemoryError(
-                f"The device has no room to take back {sum(chunk.nbytes for chunk in wanted) / 1e9:.2f} GB of the "
-                "encoded acquisition. It is intact in host memory: free device memory (close other notebooks' "
-                "kernels, or restart this one), then call restore() again."
-            ) from error
-        if complete:
+        total = sum(math.ceil(array.nbytes / 256) * 256 for chunk in wanted for array in chunk.arrays)
+        with cp.cuda.Device(self.device):
+            try:
+                blocks = Blocks(limit=None)
+                self.chunks = [Chunk(chunk.first, chunk.scans, retain(chunk.arrays, blocks, total)) for chunk in wanted]
+            except MemoryError:
+                try:
+                    self.chunks = [Chunk(chunk.first, chunk.scans, tuple(
+                        array if isinstance(array, cp.ndarray) else host_mapped(array, self.device)
+                        for array in chunk.arrays)) for chunk in wanted]
+                except MemoryError as error:
+                    self.chunks = []
+                    raise MemoryError(
+                        f"The device has no room to take back {sum(chunk.nbytes for chunk in wanted) / 1e9:.2f} GB of "
+                        "the encoded acquisition. It is intact in host memory: free device memory (close other "
+                        "notebooks' kernels, or restart this one), then call restore() again."
+                    ) from error
+        if complete and not keep_host:
             self._parked = None
             # the page-locked host copies would otherwise wait in the pinned pool, as host memory nothing else can use
             cp.get_default_pinned_memory_pool().free_all_blocks()
@@ -487,6 +645,7 @@ class StreamedCounts:
     def release(self) -> None:
         """Drop this owner's references without invalidating active borrowed sessions."""
         self._parked = None
+        self._blocks = None
         self.chunks.clear()
         self._detector_total = None
         self.is_released = True

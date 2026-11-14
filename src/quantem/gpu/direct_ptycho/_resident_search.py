@@ -315,6 +315,79 @@ def _rank(device, scores):
     )[0]
 
 
+class _MergedEvaluations:
+    """One objective ``evaluate`` called by several searches at once, each in its own thread.
+
+    A call waits until every unfinished search is waiting too; then the waiting calls' trial rows are concatenated
+    (searches in the order given), evaluated in one call, and split back. The kernels score each group of
+    THICK_FIT_MAX_BATCH trials on its own, and each search asks in groups of 8, so every search gets the scores it
+    would get alone; G is read once a round instead of once a search.
+    """
+
+    def __init__(self, evaluate, xp):
+        import threading
+
+        self.evaluate, self.xp = evaluate, xp
+        self.condition = threading.Condition()
+        self.pending, self.answers, self.active = {}, {}, 0
+
+    def run(self, jobs):
+        """Run the callables ``jobs`` (each taking this object as its ``evaluate``) together; their results in order."""
+        import contextvars
+        import threading
+
+        results, errors = [None] * len(jobs), [None] * len(jobs)
+        self.active = len(jobs)
+
+        def work(index, job):
+            try:
+                results[index] = job(lambda trial, index=index: self._call(index, trial))
+            except BaseException as error:  # handed to the caller below, after every search has stopped
+                errors[index] = error
+            finally:
+                with self.condition:
+                    self.active -= 1
+                    self._serve()
+
+        threads = [threading.Thread(target=contextvars.copy_context().run, args=(work, index, job), daemon=True)
+                   for index, job in enumerate(jobs)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        for error in errors:
+            if error is not None:
+                raise error
+        return results
+
+    def _call(self, index, trial):
+        with self.condition:
+            self.pending[index] = trial
+            self._serve()
+            while index not in self.answers:
+                self.condition.wait()
+            answer = self.answers.pop(index)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    def _serve(self):
+        if not self.pending or len(self.pending) < self.active:
+            return
+        waiting = sorted(self.pending.items())
+        self.pending = {}
+        try:
+            scores = self.evaluate(self.xp.concatenate([trial for _, trial in waiting], axis=0))
+            first = 0
+            for index, trial in waiting:
+                self.answers[index] = scores[first:first + len(trial)]
+                first += len(trial)
+        except Exception as error:  # every waiting search gets the error
+            for index, _ in waiting:
+                self.answers.setdefault(index, error)
+        self.condition.notify_all()
+
+
 def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
     xp = device.xp
     startup = max(30, trials // 6) if not thin else 10
@@ -482,13 +555,24 @@ def fit_resident(
     begin = time.perf_counter()
     standard = None
     standard_fit = None
+    merged = None
     if compare_standard:
         thin_bounds = device.pack(
             lower[:3] + [0.0, 0.0, 0.0] + upper[:3] + [0.0, 0.0, 0.0]
         )
-        thin_points, thin_scores = _search(
-            device, evaluate, thin_bounds, 200, seed, thin=True
-        )
+        if backend == "cuda" and not standard_only and trials:
+            # the standard comparison's search and the joint search are independent: run together, they share each
+            # round's pass over G (the same scores as one after the other)
+            merged = _MergedEvaluations(evaluate, device.xp)
+            (thin_points, thin_scores), (points, scores) = merged.run([
+                lambda shared: _search(device, shared, thin_bounds, 200, seed, thin=True),
+                lambda shared: _search(device, shared, bounds, int(trials), int(seed),
+                                       fixed=fixed_aberrations is not None),
+            ])
+        else:
+            thin_points, thin_scores = _search(
+                device, evaluate, thin_bounds, 200, seed, thin=True
+            )
         thin_ranks = _rank(device, thin_scores)
         thin_point, thin_value = device.run(
             "direct_joint_best",
@@ -505,7 +589,9 @@ def fit_resident(
     if standard_only:
         return {"standard_fit": standard_fit, "standard": standard, "timings": timings}
     begin = time.perf_counter()
-    if trials:
+    if merged is not None:
+        pass  # searched together with the standard comparison, which timed both
+    elif trials:
         points, scores = _search(
             device,
             evaluate,
