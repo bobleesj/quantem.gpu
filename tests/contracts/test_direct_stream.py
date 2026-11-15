@@ -793,6 +793,42 @@ def test_full_refit_fits_every_scan_independently(monkeypatch, tmp_path):
 
 
 @pytest.mark.usefixtures("cuda_runtime")
+def test_a_full_refit_every_few_scans_is_held_by_the_defocus_refits_between(monkeypatch, tmp_path):
+    """full_refit_every=2: scans 2 and 4 fit every aberration (rotation kept); scans 1 and 3 refit only the low
+    orders, scan 3 with the higher orders of scan 2's fit held. Settings that cannot go with it are refused."""
+    from quantem.gpu.direct_ptycho import stream as stream_module
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    size = len(fit.optimizer["coordinates"])
+    fits, held = [], []
+
+    def aberrations(self, **options):
+        fits.append(options)
+        return SimpleNamespace(aberrations={"C10_nm": 10.0 * len(fits), "C12_nm": 0.0, "phi12_deg": 0.0},
+                               sample_tilt_mrad=(0.0, 0.0), depth_spread_nm=1.0,
+                               optimizer={"coordinates": np.full(size, float(len(fits))).tolist(), "evaluations": 7})
+
+    real_refit = stream_module._refit
+
+    def refit(objective, reference, start, bounds):
+        held.append(float(np.asarray(reference)[-1]))      # a higher-order coordinate the refit holds
+        return real_refit(objective, reference, start, bounds)
+
+    monkeypatch.setattr(FakeSession, "aberrations", aberrations, raising=False)
+    monkeypatch.setattr(stream_module, "_refit", refit)
+    series, _ = streamed(sources, fit, None, full_refit_every=2)
+    assert len(fits) == 2 and all(options["check_rotation"] is False for options in fits)
+    assert [series.aberrations[index]["C10_nm"] for index in (2, 4)] == [10.0, 20.0]
+    assert held == [float(fit.optimizer["coordinates"][-1])] * 2 + [1.0]     # scans 0, 1, then 3
+    for options, message in (({"full_refit_every": 0}, "positive integer"),
+                             ({"full_refit_every": 2, "refit": "none"}, 'refit="defocus"')):
+        with pytest.raises(ValueError, match=message):
+            streamed(sources, fit, None, **options)
+    with pytest.raises(ValueError, match="leave it unset"):
+        streamed(sources, fit, tmp_path / "records", full_refit_every=2)
+
+
+@pytest.mark.usefixtures("cuda_runtime")
 def test_fixed_fit_reconstructs_each_scan_without_changing_any_optics(monkeypatch, tmp_path):
     """Live additions equal the recorded series while all initial optics stay fixed."""
     from quantem.gpu.direct_ptycho import stream as stream_module

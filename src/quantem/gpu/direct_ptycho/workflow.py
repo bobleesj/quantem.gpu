@@ -3149,7 +3149,7 @@ class DirectPtycho:
                method: Literal["phase_of_mean", "phase", "complex"] | tuple[str, ...] = "phase_of_mean",
                upsample: int | Literal["auto"] = "auto", save_dir: str | Path | None = None,
                max_frames: int | None = None, neural_model: "NeuralPhaseModel | None" = None,
-               annulus_mrad: tuple[float, float] | None = None,
+               annulus_mrad: tuple[float, float] | None = None, full_refit_every: int | None = None,
                show: bool = True, verbose: bool = True, **strengths):
         """Reconstruct a series of scans of one area, following defocus, astigmatism and drift from scan to scan.
 
@@ -3164,6 +3164,8 @@ class DirectPtycho:
         ``refit="none"`` applies the complete initial fit to every scan unchanged, including every
         aberration, sample tilt and depth. No fitting evaluations run; reconstruction and drift
         registration still run for each scan. ``save_dir`` is only supported by ``refit="defocus"``.
+        ``full_refit_every=5`` fits every aberration through fifth order on every 5th scan (rotation kept); the
+        scans between refit defocus and astigmatism from it.
 
         ``max_frames=N`` retains the latest N reconstructed frames, sources, fits and report rows,
         and combines only accepted frames within that window. Drift remains relative to scan zero;
@@ -3186,6 +3188,7 @@ class DirectPtycho:
         >>> series = ptycho.series(method="phase")  # doctest: +SKIP
         >>> series = ptycho.series(fit=fit, refit="none", method="phase")  # doctest: +SKIP
         >>> series = ptycho.series(fit=fit, refit="none", max_frames=5, show=False)  # doctest: +SKIP
+        >>> series = ptycho.series(fit=fit, full_refit_every=5, method="phase")  # doctest: +SKIP
         >>> arina_stream = ArinaListener(config, reference=reference, process=series.add)  # doctest: +SKIP
         """
         from quantem.gpu.direct_ptycho.stream import series
@@ -3198,6 +3201,7 @@ class DirectPtycho:
             fit = self.aberrations(show=False, verbose=verbose)
         return series(self, sources, fit, refit=refit, method=method, upsample=upsample, save_dir=save_dir,
                       max_frames=max_frames, neural_model=neural_model, annulus_mrad=annulus_mrad,
+                      full_refit_every=full_refit_every,
                       show=show, verbose=verbose, **strengths)
 
     @_on_scan_gpu

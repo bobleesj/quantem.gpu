@@ -205,9 +205,17 @@ class _FrameStep:
         """The next frame's refit starts from this frame's low-order values."""
         self.start = coordinates[VARIED].copy()
 
+    def rebase(self, fitted):
+        """A periodic full refit becomes the reference: later frames refit defocus and astigmatism with its
+        higher orders, tilt and depth held, starting from its low orders."""
+        self.fit = fitted
+        self.reference = np.array(fitted.optimizer["coordinates"])
+        self.start = self.reference[VARIED].copy()
+
 
 def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method="phase_of_mean", upsample="auto", save_dir=None,
-           max_frames: int | None = None, neural_model=None, annulus_mrad=None, show: bool = True, verbose: bool = True, **strengths) -> "DirectPtychoSeries":
+           max_frames: int | None = None, neural_model=None, annulus_mrad=None, full_refit_every: int | None = None,
+           show: bool = True, verbose: bool = True, **strengths) -> "DirectPtychoSeries":
     """Refit C10, C12 and phi12 on each source with ``fit``'s higher orders, tilt and depth held.
 
     Each source, a recorded file or a scan already resident as an ANS dataset (``ArinaListener.datasets``), is
@@ -222,6 +230,9 @@ def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method=
     the reference session. ``refit="full"`` instead fits every frame independently (``aberrations()``,
     standard search, the reference rotation kept): the baseline the defocus refit is compared with.
     ``refit="none"`` holds every aberration, sample tilt and depth at the initial fit, without fitting.
+    ``full_refit_every=5`` (with ``refit="defocus"``) fits every aberration through fifth order on scans 5, 10, ...
+    (``aberrations()``, the reference rotation kept); the scans between refit defocus and astigmatism with that
+    fit's higher orders, tilt and depth held, so slow changes of the higher orders are followed too.
 
     Each direct ptychography phase is then registered against the last confidently placed frame (``_place``: lattice-safe
     band registration with frame 0's Bragg spots), whatever the methods: the regularized images move by
@@ -245,7 +256,8 @@ def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method=
     # encoded datasets) are used in place and stay the caller's.
     sources = [Path(source) if isinstance(source, (str, Path)) else source for source in sources]
     result = DirectPtychoSeries._begin(ptycho, fit, refit=refit, method=method, upsample=upsample, save_dir=save_dir,
-                              show=show, strengths=strengths, frames=len(sources), max_frames=max_frames, neural_model=neural_model,
+                              show=show, strengths=strengths, frames=len(sources), max_frames=max_frames,
+                              full_refit_every=full_refit_every, neural_model=neural_model,
                               annulus_mrad=annulus_mrad)
     iterator = sources
     if verbose:
@@ -377,13 +389,20 @@ class DirectPtychoSeries:
 
     @classmethod
     def _begin(cls, ptycho, fit, *, refit, method, upsample, save_dir, show, strengths,
-               frames=0, max_frames=None, neural_model=None, annulus_mrad=None):
+               frames=0, max_frames=None, full_refit_every=None, neural_model=None, annulus_mrad=None):
         """An empty series on ``ptycho``'s calibration; ``frames`` sizes the image stacks when known."""
         if refit not in ("none", "defocus", "full"):
             raise ValueError(f'refit={refit!r}: use "defocus" (C10, C12, phi12 from the frame before) or "full" '
                              '(aberrations on every frame), or "none" (the complete initial fit, unchanged).')
         if max_frames is not None and (isinstance(max_frames, bool) or not isinstance(max_frames, int) or max_frames < 1):
             raise ValueError(f"max_frames must be a positive integer or None for complete history; got {max_frames!r}.")
+        if full_refit_every is not None:
+            if isinstance(full_refit_every, bool) or not isinstance(full_refit_every, int) or full_refit_every < 1:
+                raise ValueError(f"full_refit_every must be a positive integer or None; got {full_refit_every!r}.")
+            if refit != "defocus":
+                raise ValueError(f'full_refit_every refits in between with refit="defocus"; got refit="{refit}".')
+            if save_dir is not None:
+                raise ValueError("save_dir resumes defocus refits from the initial fit; leave it unset with full_refit_every.")
         records = None if save_dir is None else Path(save_dir).expanduser() / "stream"
         if records is not None and refit != "defocus":
             raise ValueError(f'save_dir resumes defocus refits; refit="{refit}" keeps no frame records.')
@@ -415,7 +434,8 @@ class DirectPtychoSeries:
         }
         regularization = {key: _regularization(key, strengths) for key in _keys(methods)}
         state = SimpleNamespace(
-            step=step, refit=refit, strengths=strengths, factor=factor, records=records, shared=shared,
+            step=step, refit=refit, full_refit_every=full_refit_every, strengths=strengths, factor=factor,
+            records=records, shared=shared,
             resuming=records is not None, previous=None, panel=_LivePanel(fit.phase_limits, methods[0],
                 damping=_damping_caption(regularization[methods[0]]), enabled=show),
             # What each load did with the detector's flagged pixels, announced once for the series.
@@ -558,7 +578,7 @@ class DirectPtychoSeries:
                 coordinates, evaluations, stop = step.reference.copy(), 0, "fixed initial fit"
                 optics = dict(step.fit.aberrations)
                 tilt, depth = step.fit.sample_tilt_mrad, step.fit.depth_spread_nm
-            elif state.refit == "full":
+            elif state.refit == "full" or (state.full_refit_every and index and index % state.full_refit_every == 0):
                 clock["setup_s"] = time.perf_counter() - began
                 began = time.perf_counter()
                 # The reference rotation is kept: the session is opened with it and a flipped frame is another calibration.
@@ -567,6 +587,8 @@ class DirectPtychoSeries:
                 coordinates, evaluations = np.array(fitted.optimizer["coordinates"]), fitted.optimizer.get("evaluations")
                 stop = fitted.optimizer.get("stop", "full fit")
                 optics, tilt, depth = fitted.aberrations, fitted.sample_tilt_mrad, fitted.depth_spread_nm
+                if state.refit == "defocus":
+                    step.rebase(fitted)
             else:
                 objective, coordinates, evaluations, stop, optics, tilt, depth = step.refit(session, clock, began)
             chosen, reconstructed, sampling, seconds = step.run(session, optics, tilt, depth, state.factor,
