@@ -38,7 +38,7 @@ def test_standard_fit_is_the_agreement_refined_by_the_newton(tmp_path, monkeypat
     assert "objective" not in backend.fits[-1]
     assert backend.fits[-1]["refinement"] == fit.refinement == "newton"
     assert fit.objective == "agreement"
-    assert fit.report().loc["objective"].iloc[0] == "agreement"
+    assert fit.report(columns=1).loc["objective"].iloc[0] == "agreement"
     assert "Objective      agreement" in repr(fit)
 
 

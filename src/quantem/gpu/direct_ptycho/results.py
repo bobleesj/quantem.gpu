@@ -252,19 +252,19 @@ class DirectPtychoResult(Mapping[str, float]):
             return pd.DataFrame(index=pd.Index([], name="trial"))
         return pd.DataFrame.from_records(deepcopy(rows)).set_index("trial")
 
-    def report(self, *, columns: int = 1, to_dict: bool = False,
+    def report(self, *, columns: int = 3, to_dict: bool = False,
                show_convergence: bool = False) -> "pd.DataFrame | dict[str | int, object]":
         """Report fitted optics, geometry, objective and recorded timing.
 
         Parameters are rows, so ``fit.report()`` is readable directly in a
-        notebook. ``pd.concat([a.report(), b.report()], axis=1)`` compares fits
+        notebook. ``pd.concat([a.report(columns=1), b.report(columns=1)], axis=1)`` compares fits
         side by side. No reconstruction or fitting is performed.
 
         Parameters
         ----------
         columns : int, optional
-            Number of parameter/value groups across a single-fit table.
-            Use ``columns=2`` or ``columns=3`` for a shorter report. Read down
+            Number of parameter/value groups across a single-fit table, three by default.
+            Use ``columns=1`` for one long list. Read down
             each group, then across; every parameter retains its value and
             units. This layout option does not change dictionary exports or
             series trial tables.
@@ -305,12 +305,12 @@ class DirectPtychoResult(Mapping[str, float]):
         --------
         >>> fit = ptycho.aberrations()  # doctest: +SKIP
         >>> fit.report()  # doctest: +SKIP
-        >>> fit.report(columns=2)  # doctest: +SKIP
+        >>> fit.report(columns=1)  # doctest: +SKIP
         >>> parameters = fit.report(to_dict=True)  # doctest: +SKIP
         >>> parameters["aberrations"]["C30_nm"]  # doctest: +SKIP
         >>> fit.report(show_convergence=True)  # doctest: +SKIP
         """
-        resolve_columns(1, columns=columns, default=1)
+        resolve_columns(1, columns=columns, default=3)
         if show_convergence:
             if to_dict:
                 raise ValueError("Use report(to_dict=True) to export data, or report(show_convergence=True) "
@@ -404,7 +404,7 @@ class DirectPtychoResult(Mapping[str, float]):
             row["Nominal requirement (×)"] = record["nominal_upsample_requirement"]
         model = "standard direct ptychography" if self.sample_tilt_mrad is None else "tilt-aware direct ptychography"
         table = pd.DataFrame.from_dict(row, orient="index", columns=[model]).rename_axis("Parameter")
-        columns = resolve_columns(len(table), columns=columns, default=1)
+        columns = resolve_columns(len(table), columns=columns, default=3)
         if columns == 1:
             return table
         height = (len(table) + columns - 1) // columns

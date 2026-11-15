@@ -38,7 +38,7 @@ def test_inspect_all_fitted_coefficients_and_export_without_rounding():
         refine_nfev=250,
         optimizer={"stop": "evaluation limit"},
     )
-    table = fit.report()
+    table = fit.report(columns=1)
     assert table.index.name == "Parameter"
     assert table.columns.tolist() == ["tilt-aware direct ptychography"]
     assert table.shape[1] == 1
@@ -65,7 +65,7 @@ def test_inspect_all_fitted_coefficients_and_export_without_rounding():
     record["timings"]["refinement_s"] = 0.0
     table.loc["C10 (nm)", table.columns[0]] = 0.0
     assert fit.aberrations == coefficients
-    assert fit.report().loc["C10 (nm)"].iloc[0] == coefficients["C10_nm"]
+    assert fit.report(columns=1).loc["C10 (nm)"].iloc[0] == coefficients["C10_nm"]
     assert fit.timings["refinement_s"] == 7.123456789
 
 
@@ -79,7 +79,7 @@ def test_compact_report_preserves_every_parameter_and_export(columns):
         depth_spread_nm=12.5519129023298, objective="broad_fifth_agreement",
         elapsed_s=12.345678901, timings={"joint_fit_s": 12.345678901},
     )
-    vertical = fit.report()
+    vertical = fit.report(columns=1)
     exported = fit.report(to_dict=True)
     compact = fit.report(columns=columns)
     assert len(compact) == (len(vertical) + columns - 1) // columns
@@ -105,7 +105,7 @@ def test_compare_reports_and_export_series_trial_ids():
         object_wave=np.ones((8, 8), dtype=np.complex64),
         aberrations={"C10_nm": 1.23456789, "C12_nm": 0.0, "phi12_deg": 0.0},
     )
-    comparison = pd.concat({"first": fit.report(), "repeat": fit.report()}, axis=1)
+    comparison = pd.concat({"first": fit.report(columns=1), "repeat": fit.report(columns=1)}, axis=1)
     assert comparison.loc["C10 (nm)"].tolist() == [1.23456789, 1.23456789]
     assert "C30 (nm)" not in comparison.index
     series = DirectPtychoResult(

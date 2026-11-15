@@ -6,6 +6,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- `fit.report()` shows its parameters in three groups across by default (a long single column filled the notebook); `report(columns=1)` gives the one long list, as for `pd.concat` comparisons.
 - Small CUDA devices, scans arriving one after another: a parked encoded scan now leaves the device at once (its
   chunks could stay until Python's collector ran, and the fit that parked it ran out of memory in about every second
   run at 3400 MiB free); the fit's fixed working reserve is 128 MiB (was 64); `io.read` reserves eight times the
