@@ -420,7 +420,7 @@ class DirectPtychoSeries:
                 damping=_damping_caption(regularization[methods[0]]), enabled=show),
             # What each load did with the detector's flagged pixels, announced once for the series.
             flagged={} if max_frames is None else deque(maxlen=max_frames),
-            capacity=frames, stacks=None, scan=None, views=[], frozen=False, count=0, shifts_px=(),
+            capacity=frames, stacks=None, scan=None, views=[], blank=[], frozen=False, count=0, shifts_px=(),
         )
         session = {"kind": type(ptycho), "settings": step.settings, "upsample": factor, "device": device,
                    "regularization": regularization}
@@ -775,9 +775,14 @@ class DirectPtychoSeries:
     def _redraw(self):
         """Refresh every open interactive view with the scan just added."""
         for view, keys in self._state.views:
-            images, labels, title, _ = self._view(keys)
+            images, labels, title, limits = self._view(keys)
             view.set_image(images, labels=labels)
             view.title = title
+            if view in self._state.blank:
+                # Opened before the first scan: its scale and contrast are known only now.
+                self._state.blank.remove(view)
+                view.pixel_size, view.pixel_unit = float(self.object_sampling_A[1]), "Å"
+                view.vmins, view.vmaxs = [low for low, _ in limits], [high for _, high in limits]
 
     def _freeze(self):
         """align and reconstruct replace stacks and shifts that adding a frame extends; no frame is added after."""
@@ -842,15 +847,27 @@ class DirectPtychoSeries:
         acquisition and fitted C10, C12, phi12) and the combined images at full resolution, redrawn with
         every scan ``add`` brings; ``size`` is a preset name or a panel width in pixels for either.
         """
-        keys = list(self.combined) if method is None else [method, *(["amplitude"] if method == "complex" else [])]
+        keys = ((list(self.combined) or _keys(self.methods)) if method is None
+                else [method, *(["amplitude"] if method == "complex" else [])])
         if method is None and "phase" in keys and "neural" in keys:
             keys.remove("neural")
             keys.insert(keys.index("phase") + 1, "neural")
         if interactive:
             from quantem.widget import Show2D
 
-            images, labels, title, limits = self._view(keys)
             width = {"size": size} if isinstance(size, str) else {"panel_width_px": size}
+            if not self.frames:
+                if self._state is None:
+                    raise ValueError("This series has no scans to show.")
+                # A series started empty, its scans still to come: a blank view the first add fills in.
+                blank = np.zeros((2, 2), dtype=np.float32)
+                view = Show2D([blank] * (1 + len(keys)), labels=["waiting for the first scan"] * (1 + len(keys)),
+                              title="0 scans", cmap=cmap, link_contrast=False, columns=min(2, 1 + len(keys)),
+                              display_bin=1, verbose=False, **width)
+                self._state.views.append((view, keys))
+                self._state.blank.append(view)
+                return view
+            images, labels, title, limits = self._view(keys)
             view = Show2D(images, labels=labels, title=title, cmap=cmap, sampling=self.object_sampling_A[1], units="Å",
                           vmin=[low for low, _ in limits], vmax=[high for _, high in limits], link_contrast=False,
                           columns=min(2, len(images)), display_bin=1, verbose=False, **width)
@@ -858,6 +875,8 @@ class DirectPtychoSeries:
                 # A series still growing redraws this view with every added scan.
                 self._state.views.append((view, keys))
             return view
+        if not self.frames:
+            raise ValueError("This series has no scans yet: show(interactive=True) opens a view the scans fill in.")
         covered = self.cover > 0
         limits = [_limits(self.combined[key], covered) if key == "amplitude" else self.reference.phase_limits
                   for key in keys]

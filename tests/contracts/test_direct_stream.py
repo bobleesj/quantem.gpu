@@ -726,6 +726,28 @@ def test_a_series_built_scan_by_scan_equals_the_series_of_all_scans(monkeypatch,
     assert FakeSession.open == 0
 
 
+def test_a_view_opened_before_the_first_scan_is_filled_in_by_it(monkeypatch, tmp_path):
+    """An empty series (scans still to come) shows a blank view; the first add gives it the scan, its scale
+    and the reference phase contrast, as a view opened after the first scan has."""
+    from quantem.gpu.direct_ptycho.stream import DirectPtychoSeries
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    FakeSession.runs, FakeSession.open = [], 0
+    growing = DirectPtychoSeries._begin(FakeSession(), fit, refit="defocus", method="phase", upsample="auto", save_dir=None,
+                               show=False, strengths={})
+    with pytest.raises(ValueError, match="no scans yet"):
+        growing.show()
+    viewer = growing.show(interactive=True)
+    assert viewer.title == "0 scans" and viewer.labels[0] == "waiting for the first scan"
+    growing.add(sources[0])
+    later = growing.show(interactive=True)
+    assert viewer.labels == later.labels and viewer.title == later.title
+    assert viewer.pixel_size == later.pixel_size > 0 and viewer.pixel_unit == later.pixel_unit
+    assert viewer.vmins == later.vmins and viewer.vmaxs == later.vmaxs
+    growing.add(sources[1])
+    assert viewer.labels[0].startswith(f"{growing.frames[-1]}: ") and not growing._state.blank
+
+
 @pytest.mark.usefixtures("cuda_runtime")
 def test_a_live_scan_is_named_by_its_acquisition(monkeypatch, tmp_path):
     """A resident scan carrying its acquisition id (series metadata) is reported under it."""
