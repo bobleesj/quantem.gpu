@@ -450,6 +450,9 @@ class DirectPtychoSeries:
     session: dict = field(repr=False)
     max_frames: int | None = None
     sigma_A: np.ndarray | None = field(default=None, repr=False)
+    # Every frame since the first, also those that left a rolling window: scan name, start time (UTC), shift (Å),
+    # whether it was placed, and the piezo position and scan rotation its scan recorded at Go. A few numbers a frame.
+    timeline: tuple = field(default=(), repr=False)
     # What adding the next frame needs: the frame step, the record chain and the growing image stacks.
     _state: SimpleNamespace | None = field(default=None, repr=False)
     _latest_annular_counts: object = field(default=None, init=False, repr=False)
@@ -535,8 +538,17 @@ class DirectPtychoSeries:
         return tuple(range(self.total_frames - len(self.frames), self.total_frames))
 
     @_locked
-    def drift_rate(self) -> DriftVelocity:
-        """Estimate image drift in (row, col) nm/s from registered shifts and acquisition times."""
+    def drift(self) -> DriftVelocity:
+        """Image drift in (row, col) nm/s, a line through the retained frames' shifts against their start times.
+
+        With ``max_frames=3`` that is the newest three scans: the scans since the last piezo jog when the jog
+        follows every third scan.
+
+        Examples
+        --------
+        >>> series.drift()  # doctest: +SKIP
+        DirectPtycho drift 0.0371 nm/s (row +0.0300, col -0.0218) over series_4 to series_6 (3 scans, 9.1 s), R² 0.99/0.98
+        """
         from datetime import datetime, timezone
 
         if not all(self.placed):
@@ -707,6 +719,11 @@ class DirectPtychoSeries:
                 (*self.refits, {"evaluations": evaluations, "stop": stop, "resumed": saved is not None})[window],
                 (*self.fits, chosen)[window], (*self.timings, clock)[window])
             self._latest_annular_counts = reconstructed.get("annular_counts")
+            optics_at_go = (getattr(source, "metadata", None) or {}).get("optics") or {}
+            self.timeline = (*self.timeline, {
+                "scan": name, "started_utc": (getattr(source, "metadata", None) or {}).get("received_utc"),
+                "shift_A": [float(value) for value in shifts[-1]], "placed": bool(placed[-1]),
+                "piezo_nm": optics_at_go.get("piezo_nm"), "scan_rotation_deg": optics_at_go.get("scan_rotation_deg")})
             state.count = index + 1
             if self.max_frames is not None:
                 state.step, state.stacks, state.shifts_px = step, stacks, shifts_px
@@ -923,6 +940,12 @@ class DirectPtychoSeries:
         import pandas as pd
 
         rows = {}
+        piezo = any(entry.get("piezo_nm") is not None for entry in self.timeline)
+        if self.max_frames is not None:             # frames that left the window: what was kept of them
+            for index, entry in enumerate(self.timeline[:self.total_frames - len(self.frames)]):
+                rows[index] = {"Frame": entry["scan"], "Shift row (Å)": entry["shift_A"][0],
+                               "Shift col (Å)": entry["shift_A"][1], "Placed": entry["placed"],
+                               **_piezo_columns(entry, piezo)}
         sigma = [None] * len(self.frames) if self.sigma_A is None else self.sigma_A
         values = zip(self.frames, self.aberrations, self.refits, self.timings, self.shifts_A,
                      self.confidence, sigma, strict=True)
@@ -935,7 +958,11 @@ class DirectPtychoSeries:
                 **({"Frame": frame} if self.max_frames is not None else {}),
                 "C10 (nm)": optics["C10_nm"], "C12 (nm)": optics["C12_nm"], "phi12 (deg)": optics["phi12_deg"],
                 "Refit evaluations": refit["evaluations"], "Resumed": refit["resumed"],
-                "Shift row (Å)": shift[0], "Shift col (Å)": shift[1], "Live confidence": score, **placement,
+                "Shift row (Å)": shift[0], "Shift col (Å)": shift[1],
+                **({"Placed": bool(self.placed[index - (self.total_frames - len(self.frames))])}
+                   if self.max_frames is not None else {}),
+                **_piezo_columns(self.timeline[index] if index < len(self.timeline) else {}, piezo),
+                "Live confidence": score, **placement,
                 "Load (s)": clock["load_s"], "Setup (s)": clock["setup_s"], "Refit (s)": clock["refit_s"],
                 **methods, **({"Annular detector (s)": clock["annular_s"]} if "annular_s" in clock else {}),
                 "Align (s)": clock["align_s"], "Display (s)": clock["display_s"], "Total (s)": clock["total_s"],
@@ -1042,6 +1069,14 @@ _NAMES = {"neural": "Neural phase", "phase_of_mean": "Direct ptycho", "phase": "
           "amplitude": "Relative amplitude"}
 # Pixels no frame reaches: a colour no gray value takes.
 _UNCOVERED = "#b9c7d6"
+
+
+def _piezo_columns(entry, shown):
+    """The piezo (x, y) nm a scan recorded at Go, as two report columns; none when no scan recorded one."""
+    if not shown:
+        return {}
+    position = entry.get("piezo_nm") or (None, None)
+    return {"Piezo x (nm)": position[0], "Piezo y (nm)": position[1]}
 
 
 def _check_neural_strengths(strengths):

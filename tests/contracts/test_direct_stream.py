@@ -962,7 +962,9 @@ def test_rolling_results_keep_absolute_rows_and_release_evicted_owners(rolling_b
             first_snapshot = result.phase
         expected = tuple(range(max(0, index + 1 - max_frames), index + 1))
         assert result.frame_indices == expected and result.total_frames == index + 1
-        assert tuple(result.report().index) == tuple(result.report(to_dict=True)) == expected
+        # the report keeps every frame: the retained ones in full, the older ones by shift and placement
+        assert tuple(result.report().index) == tuple(result.report(to_dict=True)) == tuple(range(index + 1))
+        assert len(result.timeline) == index + 1
         assert row["Frame"] == "repeated label" and row["Refit evaluations"] == 0
         assert len(result.sources) == len(result.fits) == len(result.timings) == len(result.frames) == len(expected)
         assert tuple(item.index for item in result.sources) == tuple(item.source_index for item in result.fits) == expected
@@ -1101,7 +1103,7 @@ def test_rolling_cuda_results_match_full_history_and_exact_window_combination(mo
         window.add(source)
         retained = tuple(range(max(0, index + 1 - max_frames), index + 1))
         assert window.frame_indices == retained
-        assert tuple(window.report().index) == retained and len(window._state.step.placed) <= 2
+        assert tuple(window.report().index) == tuple(range(retained[-1] + 1)) and len(window._state.step.placed) <= 2
         np.testing.assert_array_equal(window.shifts_A, full.shifts_A[list(retained)])
         assert window.confidence == tuple(full.confidence[i] for i in retained)
         assert window.placed == tuple(full.placed[i] for i in retained)
@@ -1183,3 +1185,31 @@ def test_latest_keeps_native_detector_counts_separate_from_registered_phase(monk
     cupy.testing.assert_array_equal(first.annular_counts, counts[sources[0].name])
     cupy.testing.assert_array_equal(current.annular_counts, counts[sources[1].name])
     assert "annular_counts" not in series.combined
+
+
+def test_a_rolling_series_keeps_every_scans_shift_time_and_piezo_and_fits_drift_on_the_window(rolling_bookkeeping):
+    """max_frames=3 keeps three images, yet the report and timeline keep all five calibration scans with the piezo
+    position each recorded at Go; drift() fits only the three retained scans."""
+    setup = rolling_bookkeeping
+    result = setup.begin(3)
+    positions = [(0, 0), (1, 0), (0, 0), (0, 1), (0, 0)]
+    for index, piezo in enumerate(positions):
+        scan = setup.Source(index)
+        scan.metadata.update(received_utc=f"2026-11-16T06:00:{10 * index:02d}+00:00",
+                             optics={"piezo_nm": list(piezo), "scan_rotation_deg": 0.0})
+        result.add(scan)
+    report = result.report()
+    assert list(report.index) == [0, 1, 2, 3, 4]
+    assert list(zip(report["Piezo x (nm)"], report["Piezo y (nm)"])) == positions
+    assert [entry["piezo_nm"] for entry in result.timeline] == [list(piezo) for piezo in positions]
+    assert [entry["started_utc"][-11:-6] for entry in result.timeline] == ["00:00", "00:10", "00:20", "00:30", "00:40"]
+    with pytest.raises(ValueError, match="registered"):    # scans 4 and 5 did not register (the fixture's 0.01)
+        result.drift()
+    placed = setup.begin(3)
+    for index in range(3):
+        scan = setup.Source(index)
+        scan.metadata.update(received_utc=f"2026-11-16T06:00:{10 * index:02d}+00:00", optics={})
+        placed.add(scan)
+    drift = placed.drift()                  # one pixel (0.02 nm) a scan on each axis, 10 s apart
+    np.testing.assert_allclose(drift["velocity"], [0.002, -0.002])
+    assert drift["velocity_unit"] == "nm/s" and "Piezo x (nm)" not in placed.report()
