@@ -25,8 +25,12 @@ READABLE_CALIBRATION_SCHEMAS = (CALIBRATION_SCHEMA,)
 
 
 def capture_calibration(session, result):
-    """Snapshot small acquisition metadata, without hashing files or retaining GPU state."""
-    if result.calibration_context is not None or session.source_kind == "array" or session.source_path is None:
+    """Snapshot small acquisition metadata, without hashing files or retaining GPU state.
+
+    A scan held in GPU memory (no file yet, ``source_path`` None) records its calibration too: the record then names
+    no source file (2026-11-16, a fit on ``spectra.arina.latest()`` could not save the calibration streaming reuses).
+    """
+    if result.calibration_context is not None or session.source_kind == "array":
         return
     shape = session.input_scan_shape
     prepared_shape = tuple(int(n) // result.upsample for n in result.object_wave.shape[-2:])
@@ -53,7 +57,7 @@ def capture_calibration(session, result):
             },
         },
     }
-    result._calibration_source = {
+    result._calibration_source = None if session.source_path is None else {
         "source_path": session.source_path, "scan_shape": shape,
         "hot_pixel_correction": deepcopy((session.source_provenance or {}).get("hot_pixel_correction")),
         "storage_path": session.source_storage_path, "calibration_path": session.calibration_path,
@@ -85,9 +89,11 @@ def save_calibration(result, path):
     context = deepcopy(result.calibration_context)
     identity = context["session_identity"]
     if "source" not in identity:
-        if result._calibration_source is None:
+        if result._calibration_source is None and result.source_path is not None:
             raise ValueError("This saved fit has no acquisition fingerprint. Reopen its acquisition and reload the fit.")
-        identity["source"] = source_identity(**result._calibration_source)
+        # a scan in GPU memory has no file to fingerprint: the record names no source and loads onto any scan its shape
+        identity["source"] = (None if result._calibration_source is None
+                              else source_identity(**result._calibration_source))
     geometry = identity["geometry"]
     if any(geometry.get(key) is None for key in (
         "voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad", "num_bright_field_pixels",
