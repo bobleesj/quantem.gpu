@@ -6,6 +6,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Check the opposite rotation independently when a joint aberration fit reaches a tilt bound.
+
 - Save and reopen reviewed direct ptychography object and probe waves with their sampling and aberrations.
 
 ## rc18 - 2026-11-11

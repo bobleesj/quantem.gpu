@@ -819,7 +819,7 @@ class DirectPtychoResult(Mapping[str, float]):
             if self.rotation_branches is None:
                 raise ValueError(
                     "This result has no 180-degree branch comparison: its rotation was given or recorded, or "
-                    "check_rotation=False. Run direct.scan_rotations(report=False, ) to fit and compare both branches.")
+                    "check_rotation=False. Run direct.scan_rotations(report=False) to fit and compare both branches.")
             return self.rotation_branches.show(axsize=axsize, cmap=cmap, save=save)
         if view == "convergence":
             from quantem.gpu.direct_ptycho.convergence import plot_convergence
