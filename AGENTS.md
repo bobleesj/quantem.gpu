@@ -66,3 +66,7 @@ full-field and regional joint direct ptychography fits.
 
 `pytest` runs the fast tier (about a minute); `pytest -m ""` runs everything,
 including tests marked `slow`. Run the full set before a release.
+
+## Progress lines
+
+One short line per step: the action and the number that matters (`Direct ptycho: rotation refined 199.1° → 189.1° (1.3 s)`). No method explanations or evidence lists in printed lines; the detail belongs in the result's record (`report()`, `optimizer`). Say where anything was saved.
