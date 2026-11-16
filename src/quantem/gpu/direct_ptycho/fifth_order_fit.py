@@ -253,6 +253,8 @@ def fit_fifth_order(
     fit's gain is that gain times its agreement over the primary's.
     """
     higher_order_limit = validate_higher_order_limit(higher_order_limit)
+    if max_order < 5 and verbose:
+        print(f"Direct ptycho: aberrations through order {max_order}")
     if not _exact_gradients(direct):
         raise NotImplementedError("Fifth-order fitting requires a CUDA or MPS session.")
     refinement = "bfgs"
@@ -491,7 +493,7 @@ def fit_fifth_order(
     chosen.optimizer = {
         "search": search,
         "model": "broad_fifth_v1",
-        "max_order": 5,
+        "max_order": max_order,
         **({"tilt": False, "fixed_coordinates": {"sample_tilt_mrad": [0.0, 0.0],
                                                  "depth_spread_nm": 0.0}} if not tilt else {}),
         "host_numerical_search": True,
@@ -510,7 +512,7 @@ def fit_fifth_order(
         "normalization": norm,
         "band_power": band_power,
         "fit_band_inv_A": [0.2, 0.9],
-        "higher_order_limit": float(bounds[6, 1]),
+        "higher_order_limit": float(bounds[6:, 1].max()) or float(higher_order_limit),   # the shown fit's (2 after a fallback)
         "bounds": bounds.tolist(),
         "coordinates": np.asarray(best_z).tolist(),
         "proposals": proposals,

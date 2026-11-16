@@ -2432,8 +2432,6 @@ class DirectPtycho:
         max_order = validate_max_order(max_order)
         if search == "primary" and max_order != 5:
             raise ValueError("max_order bounds the fifth-order fit; search='primary' fits C10 and C12 only.")
-        if max_order < 5 and verbose:
-            print(f"Direct ptycho: aberrations through order {max_order}")
         if search == "primary" and higher_order_limit is not None:
             raise ValueError("higher_order_limit bounds the fifth-order fit; search='primary' fits the low orders only.")
         higher_order_limit = validate_higher_order_limit(
@@ -2465,7 +2463,7 @@ class DirectPtycho:
                         fixed_aberrations=fixed_aberrations, refine_rotation=refine_rotation,
                         compute_loss=compute_loss,
                         show=show, size=size, columns=columns, show_convergence=show_convergence,
-                        on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
+                        on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit, max_order=max_order,
                     )
             return fits
         if search in ("standard", "broad"):
@@ -2518,7 +2516,7 @@ class DirectPtycho:
                         refine_rotation=refine_rotation, compute_loss=compute_loss,
                         show=False, size=size, columns=columns,
                         show_convergence=show_convergence,
-                        on_initial_fit=initial_region, higher_order_limit=higher_order_limit,
+                        on_initial_fit=initial_region, higher_order_limit=higher_order_limit, max_order=max_order,
                     )
                     if result.rotation_branches is not None:
                         # Keep the region's Auto panels before its GPU evidence closes.
