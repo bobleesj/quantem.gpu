@@ -296,6 +296,15 @@ class RotationBranches:
             return f"kept {choice}. {self.status}"
         return f"kept the given {self.kept_rotation_deg:.1f}°; the evidence selects {choice}. {self.status}"
 
+    @property
+    def brief(self) -> str:
+        """The printed line: the angle kept and how sure (``summary`` has the evidence, for ``fit.report()``)."""
+        chosen = self.branches[self.chosen]
+        how = "atomic columns" if self.decided_by == "columns" else "phase tail, not certain"
+        if self.kept == self.chosen:
+            return f"rotation {chosen.scan_detector_rotation_deg:.1f}° ({how})"
+        return f"rotation {self.kept_rotation_deg:.1f}° as given ({how} suggests {chosen.scan_detector_rotation_deg:.1f}°)"
+
     def __repr__(self) -> str:
         return f"RotationBranches({self.summary})"
 

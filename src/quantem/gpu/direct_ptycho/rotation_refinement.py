@@ -81,4 +81,10 @@ def refinement_summary(record: dict) -> str:
             f"{record['evaluations']} polishes, {record['seconds']:.1f} s)")
 
 
-__all__ = ["LIMIT_DEG", "STEP_DEG", "TOLERANCE_DEG", "fit_score", "refine_rotation", "refinement_summary"]
+def refinement_brief(record: dict) -> str:
+    """The printed line: from, to and how long (``refinement_summary`` has the change and the agreement)."""
+    return f"rotation refined {record['estimate_deg']:.1f}° → {record['refined_deg']:.1f}° ({record['seconds']:.1f} s)"
+
+
+__all__ = ["LIMIT_DEG", "STEP_DEG", "TOLERANCE_DEG", "fit_score", "refine_rotation", "refinement_brief",
+           "refinement_summary"]

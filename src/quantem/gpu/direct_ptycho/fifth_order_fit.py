@@ -157,7 +157,7 @@ def ring_parity(q_row, q_col, width=RING_WIDTH_INV_A) -> np.ndarray:
     return np.floor(q / width).astype(np.int64) % 2
 
 
-def half_band_fit(objective, start, limit, cap, ring, *, tilt=True):
+def half_band_fit(objective, start, limit, cap, ring, *, tilt=True, max_order=5):
     """One ring half of the half-band check: the fifth order refined at ``limit`` from ``start`` with the other half's
     weights 0 (``higher_order_consistency``)."""
     parity = ring_parity(*objective.band_frequencies())
@@ -169,7 +169,7 @@ def half_band_fit(objective, start, limit, cap, ring, *, tilt=True):
     norm = float(half.values(start, 1)[0])
     if not np.isfinite(norm) or norm <= 0:
         raise ValueError("The half-band check needs a positive finite agreement on each ring half.")
-    record = _refine_with_gradients(half, start, fifth_order_bounds(limit, tilt=tilt), norm, cap)
+    record = _refine_with_gradients(half, start, fifth_order_bounds(limit, tilt=tilt, max_order=max_order), norm, cap)
     return {"ring_parity": ring, "frequencies": int(mask.sum()),
             "coordinates": np.asarray(record["coordinates"]).tolist(),
             "agreement": float(record["agreement"]), "normalization": norm,
@@ -177,7 +177,7 @@ def half_band_fit(objective, start, limit, cap, ring, *, tilt=True):
             "seconds": time.perf_counter() - started}
 
 
-def higher_order_consistency(objective, start, checked, limit, cap, *, tilt=True, halves=None):
+def higher_order_consistency(objective, start, checked, limit, cap, *, tilt=True, halves=None, max_order=5):
     """The half-band check of a fifth-order fit at ``limit`` with coordinates ``checked``.
 
     The fifth order is refined at ``limit`` from the low-order ``start`` once on each ring half of the band
@@ -192,7 +192,7 @@ def higher_order_consistency(objective, start, checked, limit, cap, *, tilt=True
     from .fifth_order_parameters import aperture_phase, aperture_rms
 
     if halves is None:
-        halves = [half_band_fit(objective, start, limit, cap, ring, tilt=tilt) for ring in (0, 1)]
+        halves = [half_band_fit(objective, start, limit, cap, ring, tilt=tilt, max_order=max_order) for ring in (0, 1)]
     chi = aperture_phase([half["coordinates"] for half in halves], float(objective.p.wavelength),
                          float(objective.p.semiangle_rad))
     disagreement = float(aperture_rms(chi[0], chi[1]))
@@ -203,23 +203,41 @@ def higher_order_consistency(objective, start, checked, limit, cap, *, tilt=True
             "start_coordinates": np.asarray(start).tolist(), "checked_coordinates": np.asarray(checked).tolist()}
 
 
-def fifth_order_bounds(higher_order_limit, *, tilt=True) -> np.ndarray:
+def fifth_order_bounds(higher_order_limit, *, tilt=True, max_order=5) -> np.ndarray:
     """Bounds of the 28 coordinates: C10, the C12 pair, tilt, depth spread, then +-limit for the higher orders.
 
     ``higher_order_limit`` (2 or 20, ``validate_higher_order_limit``) has no default: the fit's own default is 20.
+    ``max_order`` (1 to 5): the aberrations above it are held at zero, as ``tilt=False`` holds tilt and depth.
     """
     limit = validate_higher_order_limit(higher_order_limit)
     bounds = np.array([(-3, 3), (-2, 2), (-2, 2), (-5, 5), (-5, 5), (0.2, 6)] + [(-limit, limit)] * 22)
     if not tilt:
         bounds[3:6] = 0.0
+    from .higher_order import ORDERS
+
+    j = 6
+    for n, m in ORDERS:
+        if n < 2:
+            continue
+        width = 2 if m else 1
+        if n > max_order:
+            bounds[j:j + width] = 0.0
+        j += width
     return bounds
+
+
+def validate_max_order(max_order) -> int:
+    """The highest aberration order fitted: 1 (C10, C12) to 5 (through C56, the default)."""
+    if type(max_order) is not int or not 1 <= max_order <= 5:
+        raise ValueError(f"max_order is 1 to 5 (1: C10 and C12; 2: also C21, C23; ...; 5: through C56); got {max_order!r}.")
+    return max_order
 
 
 def fit_fifth_order(
     direct, *, search, trials, seed, save_dir, force, verbose,
     primary_options, compute_loss=False, compare_standard=True,
     show=True, on_initial_fit=None, size="medium", columns=2, show_convergence=False,
-    higher_order_limit=DEFAULT_HIGHER_ORDER_LIMIT, tilt=True,
+    higher_order_limit=DEFAULT_HIGHER_ORDER_LIMIT, tilt=True, max_order=5,
 ):
     """Fit the fifth-order model; standard skips additional higher-order TPE.
 
@@ -267,6 +285,7 @@ def fit_fifth_order(
         "compute_loss": bool(compute_loss),
         **({"compare_standard": False} if not compare_standard else {}),
         **({"tilt": False} if not tilt else {}),
+        **({"max_order": max_order} if max_order < 5 else {}),
     }
     if higher_order_limit == DEFAULT_HIGHER_ORDER_LIMIT:
         settings["higher_order_check"] = {"ring_width_inv_A": RING_WIDTH_INV_A,
@@ -311,7 +330,7 @@ def fit_fifth_order(
     # Keep plotting/caller work out of the numerical fit and convergence clocks.
     started += initial_handoff_s
     objective = _objective(direct, gradients=True)
-    bounds = fifth_order_bounds(higher_order_limit, tilt=tilt)
+    bounds = fifth_order_bounds(higher_order_limit, tilt=tilt, max_order=max_order)
     norm = float(objective.evaluate(vector(primary, 1), 1)[0])
     if not np.isfinite(norm) or norm <= 0:
         raise ValueError(
@@ -394,7 +413,7 @@ def fit_fifth_order(
 
     check = higher_order_limit == DEFAULT_HIGHER_ORDER_LIMIT
     low_order = np.clip(vector(primary, 5), bounds[:, 0], bounds[:, 1])
-    fallback_bounds = fifth_order_bounds(2.0, tilt=tilt)
+    fallback_bounds = fifth_order_bounds(2.0, tilt=tilt, max_order=max_order)
     fallback_starts = [(name, np.clip(point, fallback_bounds[:, 0], fallback_bounds[:, 1])) for name, point in starts]
     consistency, consistency_s, fallback_s, fallback = None, None, None, None
     if check and hasattr(objective, "values_many") and not show_convergence:
@@ -416,14 +435,16 @@ def fit_fifth_order(
 
         requested, half_0, half_1, fallback = shared.run([
             job("requested", lambda: refine_within(bounds, starts, target=members[0], score=False)),
-            job("half 0", lambda: half_band_fit(members[1], low_order, higher_order_limit, 400, 0, tilt=tilt)),
-            job("half 1", lambda: half_band_fit(members[2], low_order, higher_order_limit, 400, 1, tilt=tilt)),
+            job("half 0", lambda: half_band_fit(members[1], low_order, higher_order_limit, 400, 0, tilt=tilt,
+                                                max_order=max_order)),
+            job("half 1", lambda: half_band_fit(members[2], low_order, higher_order_limit, 400, 1, tilt=tilt,
+                                                max_order=max_order)),
             job("fallback", lambda: refine_within(fallback_bounds, fallback_starts, target=members[3], score=False)),
         ])
         for record in (requested, fallback):
             record["best_score"] = float(objective.evaluate(record["best_z"], 5)[0])
         consistency = higher_order_consistency(objective, low_order, requested["best_z"], higher_order_limit, 400,
-                                               tilt=tilt, halves=[half_0, half_1])
+                                               tilt=tilt, halves=[half_0, half_1], max_order=max_order)
         consistency_s, fallback_s = max(timed["half 0"], timed["half 1"]), timed["fallback"]
         consistency["shared_passes"] = True
     else:
@@ -434,7 +455,7 @@ def fit_fifth_order(
             check_started = time.perf_counter()
             consistency = higher_order_consistency(
                 objective, low_order, requested["best_z"], higher_order_limit, 400,
-                **({"tilt": False} if not tilt else {}))
+                **({"tilt": False} if not tilt else {}), max_order=max_order)
             consistency_s = time.perf_counter() - check_started
         consistency.update(checked_agreement=float(requested["best_score"] / norm), checked_stop=requested["stop"],
                            checked_objectives=int(requested["nfev"]))
@@ -444,9 +465,8 @@ def fit_fifth_order(
                 fallback_s = fallback["elapsed_s"]
             shown = fallback
             if verbose:
-                print(f"Higher orders not trusted: the half-band fits differ by {consistency['half_band_rms_rad']:.2f} "
-                      f"rad rms over the aperture (> {MAX_HALF_BAND_RMS_RAD} rad); showing the +-2 fit. The checked "
-                      "+-20 fit is in optimizer['higher_order_consistency'].")
+                print(f"Direct ptycho: higher orders unreliable ({consistency['half_band_rms_rad']:.2f} rad): "
+                      "using the ±2 fit")
         else:
             fallback_s = None
     bounds = shown["bounds"]

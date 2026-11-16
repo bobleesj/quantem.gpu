@@ -142,7 +142,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
     assert record["evaluations"] == len(backend.fits) - 1 and len(record["evaluated_deg"]) == record["evaluations"]
     # the search trials of the fit stay; a polish adds none
     assert len(fit.trials) == 4 and len(fit.trial_records) == 4
-    assert f"Direct ptycho: refined rotation 3.00° → {fit.scan_detector_rotation_deg:.2f}° (+" in capsys.readouterr().out
+    assert f"Direct ptycho: rotation refined 3.0° → {fit.scan_detector_rotation_deg:.1f}° (" in capsys.readouterr().out
     report = fit.report(columns=1).iloc[:, 0]
     assert report["Estimated rotation (deg)"] == 3.0
     assert report["Direct ptycho rotation (deg)"] == pytest.approx(5.0, abs=0.1)

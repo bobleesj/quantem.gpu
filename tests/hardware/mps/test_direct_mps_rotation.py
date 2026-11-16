@@ -430,7 +430,7 @@ def test_gold_refined_rotation(capsys):
     assert 3 <= record["evaluations"] <= 15
     assert fit.timings["rotation_refinement_s"] == record["seconds"]
     out = capsys.readouterr().out
-    assert out.count("Direct ptycho: refined rotation ") == 1 and out.index("Direct ptycho: kept ") < out.index("Direct ptycho: refined rotation ")
+    assert out.count("Direct ptycho: rotation refined ") == 1 and out.index("Direct ptycho: rotation ") < out.index("Direct ptycho: rotation refined ")
     report = fit.report(columns=1).iloc[:, 0]
     assert report["Estimated rotation (deg)"] == round(fit.rotation_estimate_deg, 3)
     assert report["Direct ptycho rotation (deg)"] == round(fit.scan_detector_rotation_deg, 3)

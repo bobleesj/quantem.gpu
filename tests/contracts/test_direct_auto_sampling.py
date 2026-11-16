@@ -72,8 +72,7 @@ def test_interaction_parameter_at_300_kV_and_invalid_voltages():
             interaction_parameter(voltage_kV)
 
 
-NOTICE = ("Direct ptycho: auto upsample capped at 4× (the scan sampling supports 8×); "
-          "pass upsample=8 for the full factor.\n")
+NOTICE = "Direct ptycho: upsample 4× (8× possible: upsample=8)\n"
 
 
 def test_max_factor_changes_the_cap_and_explicit_factors_are_unchanged():

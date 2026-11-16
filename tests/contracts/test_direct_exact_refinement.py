@@ -670,7 +670,7 @@ def test_wide_fit_is_checked_on_two_band_halves(monkeypatch, capsys, difference,
         assert max(abs(v) for v in fit.optimizer["coordinates"][6:]) <= 2.0
         assert check["checked_coordinates"][10] > 2.0
         assert fit.timings["higher_order_fallback_s"] > 0
-        assert "Higher orders not trusted" in printed and "1.49 rad" in printed
+        assert "higher orders unreliable" in printed and "1.49 rad" in printed
 
 
 @pytest.mark.parametrize("difference", [0.0, 5.0])
@@ -693,3 +693,19 @@ def test_zero_tilt_fifth_order_stays_fixed_in_refinement_and_band_checks(monkeyp
     assert abs(fit.optimizer["coordinates"][6]) > 0.1
     for half in fit.optimizer["higher_order_consistency"]["halves"]:
         np.testing.assert_array_equal(np.asarray(half["coordinates"])[3:6], 0)
+
+
+def test_max_order_holds_the_orders_above_it_at_zero():
+    """aberrations(max_order=2) fits C10, C12, C21, C23; C30..C56 stay 0 (2026-11-16, to compare model orders)."""
+    import numpy as np
+    import pytest
+    from quantem.gpu.direct_ptycho.fifth_order_fit import fifth_order_bounds, validate_max_order
+
+    free = lambda bounds: [bool(np.ptp(pair)) for pair in bounds[6:]]   # noqa: E731
+    assert all(free(fifth_order_bounds(20.0)))
+    assert free(fifth_order_bounds(20.0, max_order=2)) == [True] * 4 + [False] * 18      # C21, C23 pairs only
+    assert free(fifth_order_bounds(20.0, max_order=3)) == [True] * 9 + [False] * 13      # + C30, C32, C34
+    assert not any(free(fifth_order_bounds(20.0, max_order=1)))
+    for bad in (0, 6, 2.0, "2"):
+        with pytest.raises(ValueError, match="max_order is 1 to 5"):
+            validate_max_order(bad)

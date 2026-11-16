@@ -396,8 +396,7 @@ def test_a_capped_auto_factor_is_announced_once_per_series(monkeypatch, tmp_path
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     monkeypatch.setattr(FakeSession, "scan_sampling_A", 1.0)
-    for requested, factor, notice in (("auto", 4, "Direct ptycho: auto upsample capped at 4× (the scan sampling supports "
-                                                  "8×); pass upsample=8 for the full factor.\n"),
+    for requested, factor, notice in (("auto", 4, "Direct ptycho: upsample 4× (8× possible: upsample=8)\n"),
                                       (8, 8, "")):
         FakeSession.runs, FakeSession.open = [], 0
         capsys.readouterr()

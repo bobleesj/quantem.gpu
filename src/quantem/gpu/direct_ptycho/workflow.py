@@ -154,8 +154,7 @@ def _bright_field_center_of_mass(frames: "MpsBfColumnFrames") -> tuple[np.ndarra
 
 def _announce_rotation(angle_deg: float, flipped: bool) -> None:
     """The one line a session prints when it estimated the rotation itself."""
-    print(f"Direct ptycho: scan-detector rotation {angle_deg:.1f}°, rotation flipped: {'yes' if flipped else 'no'} "
-          "(estimated by DPC, the centre-of-mass curl; aberrations settles the 180° choice).")
+    print(f"Direct ptycho: rotation {angle_deg:.1f}°{', flipped' if flipped else ''} (DPC estimate)")
 
 
 def _announce_detector_sampling(detector_sampling_mrad, semiangle_mrad: float, *, recordable: bool) -> None:
@@ -284,7 +283,7 @@ def _recorded_detector_sampling_mrad(metadata: dict[str, object], voltage_kV: fl
 def _announce_rotation_branches(result: DirectPtychoResult) -> None:
     """The one line a fit prints when it compared both 180-degree branches of an estimated rotation."""
     if result.rotation_branches is not None:
-        print(f"Direct ptycho: {result.rotation_branches.summary}")
+        print(f"Direct ptycho: {result.rotation_branches.brief}")
 
 
 def _dark_field_of(source, semiangle_mrad: float, detector_sampling_mrad, center_px=None) -> np.ndarray:
@@ -1559,7 +1558,7 @@ class DirectPtycho:
         rebuilt). The polishes skip the standard comparison; a kept ``tilt_fit_gain`` is measured again at the
         refined angle. A given or recorded rotation (or ``apply=False``) is left as it is.
         """
-        from quantem.gpu.direct_ptycho.rotation_refinement import refine_rotation, refinement_summary
+        from quantem.gpu.direct_ptycho.rotation_refinement import refine_rotation, refinement_brief
 
         if self.scan_detector_rotation_source != "estimated" or keep:
             if verbose:
@@ -1591,7 +1590,7 @@ class DirectPtycho:
         refined.rotation_estimate_deg, refined.rotation_refined = kept.scan_detector_rotation_deg, True
         refined.rotation_refinement = record
         if verbose:
-            print(f"Direct ptycho: {refinement_summary(record)}")
+            print(f"Direct ptycho: {refinement_brief(record)}")
         return self._accept_result(refined)
 
     def _release_cached_buffers(self, region_shape: tuple[int, int] | None = None) -> None:
@@ -1889,8 +1888,7 @@ class DirectPtycho:
             full = direct_auto_upsample(**calibration, max_factor=max(DIRECT_UPSAMPLE_CHOICES))
             if full > upsample and not getattr(self, "_auto_upsample_cap_announced", False):
                 self._auto_upsample_cap_announced = True
-                print(f"Direct ptycho: auto upsample capped at {upsample}× (the scan sampling supports {full}×); "
-                      f"pass upsample={full} for the full factor.")
+                print(f"Direct ptycho: upsample {upsample}× ({full}× possible: upsample={full})")
         if type(upsample) is not int or upsample not in (1, 2, 3, 4, 8):
             raise ValueError("upsample must be 'auto', 1, 2, 3, 4, or 8.")
         return upsample
@@ -2184,6 +2182,7 @@ class DirectPtycho:
         show_convergence: bool = False,
         on_initial_fit: Callable[[DirectPtychoResult], None] | None = None,
         higher_order_limit: float | None = None,
+        max_order: int = 5,
     ) -> DirectPtychoResult | dict[int, DirectPtychoResult]:
         """Fit aberrations, sample tilt and depth with one search interface.
 
@@ -2202,6 +2201,9 @@ class DirectPtycho:
         Every fit uses ``refinement="auto"``. ``refinement=None`` skips the local
         refinement of a ``search="primary"`` fit (the best trial as is).
 
+        ``max_order`` (1 to 5, default 5) fits the aberrations through that order and holds the rest at zero:
+        ``max_order=2`` fits C10, C12, C21 and C23, so ``aberrations(max_order=2)`` and ``aberrations(max_order=4)``
+        compare a low-order and a fuller model on the same scan.
         ``higher_order_limit`` bounds each of the 22 higher-order Cartesian
         coordinates of the fifth-order fit, in rad of phase at the aperture
         edge: 20 (wide, the default for ``None``) or 2 (standard). A wide fit
@@ -2425,6 +2427,13 @@ class DirectPtycho:
             raise ValueError("search must be 'standard', 'broad' or 'primary'.")
         from .fifth_order_fit import DEFAULT_HIGHER_ORDER_LIMIT, validate_higher_order_limit
 
+        from .fifth_order_fit import validate_max_order
+
+        max_order = validate_max_order(max_order)
+        if search == "primary" and max_order != 5:
+            raise ValueError("max_order bounds the fifth-order fit; search='primary' fits C10 and C12 only.")
+        if max_order < 5 and verbose:
+            print(f"Direct ptycho: aberrations through order {max_order}")
         if search == "primary" and higher_order_limit is not None:
             raise ValueError("higher_order_limit bounds the fifth-order fit; search='primary' fits the low orders only.")
         higher_order_limit = validate_higher_order_limit(
@@ -2553,6 +2562,7 @@ class DirectPtycho:
                     show=show, size=size, columns=columns, show_convergence=show_convergence,
                     on_initial_fit=on_initial_fit, higher_order_limit=higher_order_limit,
                     **({"tilt": False} if not tilt else {}),
+                    **({"max_order": max_order} if max_order < 5 else {}),
                 )
         if on_initial_fit is not None:
             raise ValueError("on_initial_fit is for standard or broad two-stage fits.")
@@ -3508,7 +3518,9 @@ class DirectPtycho:
         if method != "phase_of_mean":
             result.upsample_mode = "auto" if upsample == "auto" else "explicit"
         if save_calibration:
-            result.save_calibration(path)
+            saved = result.save_calibration(path)
+            if verbose is not False:
+                print(f"Direct ptycho: calibration saved: {saved}")
         if parameters is not None and parameters is self._aberration_search and trial_ids is None:
             controls = {key: value for key, value in policy.items()
                         if key in ("phase_damp", "amplitude_damp", "smoothness_inv_A", "detector_weighting")}
