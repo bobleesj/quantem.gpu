@@ -255,8 +255,24 @@ def disk_edge_radius(mean_pattern: np.ndarray) -> float:
     return _edge_radius(pattern, _bright_disk(pattern))
 
 
+FLAGGED_COUNTS = 65535.0   # a detector pixel the ARINA flags (dead, hot) reads 2**16 - 1 in every frame
+
+
+def _unflagged(pattern: np.ndarray) -> np.ndarray:
+    """The mean pattern with flagged pixels (2**16 - 1 in every frame) at 0: a handful of them outweigh the whole
+    disk in mean + std and the fit took them for it (2026-11-16: six such pixels gave a 1.4 px disk for a 43 px one)."""
+    flagged = pattern >= FLAGGED_COUNTS
+    if not flagged.any():
+        return pattern
+    clean = pattern.copy()
+    clean[flagged] = 0.0
+    return clean
+
+
 def _bright_disk(pattern: np.ndarray) -> np.ndarray:
-    """The pixels of a float64 mean pattern above mean + std: the bright-field disk every fit starts from."""
+    """The pixels of a float64 mean pattern above mean + std, flagged pixels left out: the bright-field disk every
+    fit starts from."""
+    pattern = _unflagged(pattern)
     disk = pattern > pattern.mean() + pattern.std()
     if not disk.any():
         raise ValueError(
@@ -268,6 +284,7 @@ def _bright_disk(pattern: np.ndarray) -> np.ndarray:
 
 def _edge_radius(pattern: np.ndarray, disk: np.ndarray) -> float:
     """Equivalent-area radius of the pixels above half the disk's median plateau (``disk_edge_radius``)."""
+    pattern = _unflagged(pattern)
     half_plateau = 0.5 * float(np.median(pattern[disk]))
     return math.sqrt(np.count_nonzero(pattern > half_plateau) / math.pi)
 
