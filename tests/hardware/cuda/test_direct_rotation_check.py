@@ -285,3 +285,23 @@ def test_preview_context_follows_a_rotation_set_after_it_was_made():
     np.testing.assert_array_equal(phase, expected)
     assert loss == expected_loss
 
+
+
+def test_a_closed_session_keeps_no_reference_to_the_callers_scan():
+    """close() lets go of the scan: one opened in place from a receiver (CUDA IPC) is unmapped once the caller drops
+    it, so the receiver can reuse that GPU memory without the kernel still mapping it."""
+    import gc
+    import weakref
+
+    from quantem.gpu import DirectPtycho
+
+    _require_cuda()
+    counts = cp.full((32, 32, 16, 16), 20, dtype=cp.uint16)
+    alive = weakref.ref(counts)
+    session = DirectPtycho(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5),
+                           detector_sampling_mrad=(5, 5), bright_field_center_px=(8, 8), bright_field_radius_px=4,
+                           scan_detector_rotation_deg=0)
+    session.close()
+    del counts
+    gc.collect()
+    assert alive() is None and session._dark_field_source is None

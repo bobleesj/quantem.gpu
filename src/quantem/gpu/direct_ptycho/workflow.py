@@ -3916,6 +3916,9 @@ class DirectPtycho:
         self._direct_windows = {}
         self._data = None
         self._input_dataset = None
+        # the dark field is computed once (_dark_field); a closed session keeps no reference to the caller's
+        # dataset, so a scan opened in place from a receiver (CUDA IPC) is unmapped when the caller drops it
+        self._dark_field_source = None
         self._streamed = None
         if self._owned_dataset is not None:
             self._owned_dataset.close()
