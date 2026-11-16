@@ -576,6 +576,20 @@ class DirectPtycho:
     _band_fit = None
     _said_read_from_host = False
 
+    def _say_masked_pixels_in_disk(self, metadata: dict) -> None:
+        """One line when a pixel the detector excludes lies inside the bright-field disk: it was filled with its
+        neighbours' median before the fit, so the fit is not silently shaped by it (2026-11-16)."""
+        correction = metadata.get("hot_pixel_correction") or {}
+        pixels = correction.get("coordinates_row_col") or []
+        if not pixels or self.bright_field_center_px is None or self.bright_field_radius_px is None:
+            return
+        row, col = self.bright_field_center_px
+        inside = [tuple(p) for p in pixels if (p[0] - row) ** 2 + (p[1] - col) ** 2 <= float(self.bright_field_radius_px) ** 2]
+        if inside:
+            filled = "filled with the median of its neighbours" if correction.get("applied") else "NOT filled"
+            print(f"{len(inside)} masked detector pixel{'s' * (len(inside) != 1)} inside the bright-field disk "
+                  f"{', '.join(map(str, inside))}: {filled}.", flush=True)
+
     def __init__(
         self,
         data: object,
@@ -771,6 +785,7 @@ class DirectPtycho:
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.bright_field_radius_px = bright_field_radius_px
         self.bright_field_center_px = None if bright_field_center_px is None else (float(bright_field_center_px[0]), float(bright_field_center_px[1]))
+        self._say_masked_pixels_in_disk(getattr(data, "metadata", None) or {})
         self.sample_tilt_mrad = tuple(record["sample_tilt_mrad"]) if record.get("sample_tilt_mrad") is not None else None
         self.depth_spread_nm = record.get("depth_spread_nm")
         self._compare_standard = True

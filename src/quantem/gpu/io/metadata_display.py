@@ -148,7 +148,8 @@ def calibration_rows(metadata: dict) -> dict:
         )
     correction = metadata.get("hot_pixel_correction", {})
     rows["Pixel correction"] = row(
-        f"{correction.get('method', 'unspecified')} ({correction['pixel_count']} pixels)"
+        f"{correction.get('method', 'unspecified')} {correction.get('largest_window_px') or 3} x "
+        f"{correction.get('largest_window_px') or 3}, {correction['pixel_count']} pixels"
         if correction.get("applied") and "pixel_count" in correction
         else "Not applied"
         if correction.get("applied") is False
@@ -189,4 +190,7 @@ def calibration_table(metadata: dict) -> "pd.DataFrame":
                            if CALIBRATION_LABELS[name] in rows)
     table = {label: {"Value": display_value(rows[label]["Value"]), "Unit": rows[label]["Unit"], "Source": rows[label]["Metadata"]}
              for label in labels}
+    if rows.get("Pixel correction", {}).get("Value") is not None:   # the flagged pixels, filled or kept, and from what
+        table["Pixel correction"] = {"Value": rows["Pixel correction"]["Value"], "Unit": "",
+                                     "Source": metadata.get("pixel_mask_source") or "the stored pixel mask"}
     return pd.DataFrame.from_dict(table, orient="index", columns=["Value", "Unit", "Source"]).rename_axis("Calibration")
