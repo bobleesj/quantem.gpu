@@ -6,6 +6,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Save and reopen reviewed direct ptychography object and probe waves with their sampling and aberrations.
+
 ## rc18 - 2026-11-11
 
 ### Renamed: direct ptychography (no aliases)

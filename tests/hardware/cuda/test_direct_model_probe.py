@@ -98,11 +98,11 @@ def test_phase_and_probe_views_keep_data_and_calibration():
 
     figure = result.show("probe")
     image_axes = [axis for axis in figure.axes if axis.images]
-    assert len(image_axes) == 2
-    assert image_axes[0].images[0].get_array().shape[:2] == intensity.shape
-    assert image_axes[1].images[0].get_array().shape[:2] == result.probe(space="fourier").shape
+    assert len(image_axes) == 1
+    assert result.object is result.object_wave
+    assert image_axes[0].images[0].get_array().shape[0] <= intensity.shape[0]
+    assert image_axes[0].get_title() == "Real-space probe intensity"
     assert any("Å" in text.get_text() for text in image_axes[0].findobj(Text))
-    assert any("mrad" in text.get_text() for text in image_axes[1].findobj(Text))
     assert figure.number not in plt.get_fignums()
     cp.testing.assert_array_equal(result.phase, phase)
     cp.testing.assert_array_equal(abs(result.probe()) ** 2, intensity)
