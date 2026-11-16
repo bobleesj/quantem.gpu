@@ -523,7 +523,7 @@ def fit_fifth_order(
     if hasattr(objective, "release"):
         objective.release()  # its last sums are not needed again; a small device takes its scan back for this run
     result = direct.run(
-        chosen, upsample=1, compute_loss=compute_loss, force=True
+        chosen, upsample=1, compute_loss=compute_loss, save_calibration=False, force=True
     )
     # reconstruct carries fit provenance only when compatible; assign the new fit explicitly.
     for field in (

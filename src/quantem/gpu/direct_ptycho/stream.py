@@ -80,6 +80,65 @@ def _damping_caption(policy):
     return " · ".join(f"{key.replace('_', ' ')} {value:g}" for key, value in policy.items())
 
 
+class DriftVelocity(dict):
+    """A drift fit as ``viewer.drift`` holds it; a notebook shows it as one line, ``dict(...)`` every field."""
+
+    def summary(self) -> str:
+        row, col = self["velocity"]
+        scans = self["scans"]
+        rotation = self.get("scan_rotation_deg")
+        return (f"DirectPtycho drift {(row ** 2 + col ** 2) ** 0.5:.4f} nm/s (row {row:+.4f}, col {col:+.4f}) over "
+                f"{scans[0]} to {scans[-1]} ({len(scans)} scans, {self['times_s'][-1]:.1f} s), R² "
+                f"{self['fit_r2'][0]:.2f}/{self['fit_r2'][1]:.2f}"
+                + ("" if rotation is None else f", scan rotation {rotation:.1f}°")
+                )
+
+    def __repr__(self) -> str:
+        return self.summary()
+
+    def _repr_pretty_(self, printer, cycle) -> None:
+        printer.text(self.summary())
+
+    @classmethod
+    def from_shifts(cls, picked, names, started, shifts_A, sampling_A, rotations, time_source):
+        """Fit registered image displacements over one interval of constant commanded velocity."""
+
+        if len(started) < 3 or any(t is None for t in started):
+            raise ValueError("Measure drift from at least three timed, registered scans.")
+        seconds = np.asarray([(t - started[0]).total_seconds() for t in started])
+        if not np.isfinite(seconds).all() or not (np.diff(seconds) > 0).all():
+            raise ValueError("Every fitted scan needs its own increasing time; see phases.report().")
+        times = seconds - seconds[0]
+        sampling = np.asarray(sampling_A, dtype=float)[:2]
+        if not np.isclose(sampling[0], sampling[1], rtol=1e-3):
+            raise ValueError(f"Square scan steps only: sampling_A={tuple(sampling)}.")
+        shift_A = np.asarray(shifts_A, dtype=float)
+        shift_px = (shift_A - shift_A[0]) / sampling
+        frames = np.asarray(picked, dtype=float)
+        per_s = np.polyfit(times, shift_px, 1)                 # (2, 2): slope and intercept per axis
+        fitted = np.outer(times, per_s[0]) + per_s[1]
+        spread = ((shift_px - shift_px.mean(axis=0)) ** 2).sum(axis=0)
+        r2 = [1.0 if spread[axis] == 0 else float(1 - ((shift_px[:, axis] - fitted[:, axis]) ** 2).sum() / spread[axis])
+              for axis in (0, 1)]
+        pixel_nm = float(sampling[0]) / 10
+        rotations = {round(r, 3) for r in rotations if r is not None}
+        if len(rotations) > 1:
+            raise ValueError(f"The fitted scans ran at different scan rotations {sorted(rotations)}°: fit one rotation.")
+        result = {
+            "frames": picked, "scans": names,
+            "shift_px": shift_px.tolist(), "times_s": times.tolist(),
+            "velocity_px_per_frame": np.polyfit(frames, shift_px, 1)[0].tolist(),
+            "velocity_px_per_s": per_s[0].tolist(), "fit_r2": r2,
+            "velocity": (per_s[0] * pixel_nm).tolist(), "velocity_unit": "nm/s",
+            "pixel_size": pixel_nm, "pixel_unit": "nm",
+            "frame_interval_s": float(times[-1] / (picked[-1] - picked[0])),
+            "scan_rotation_deg": rotations.pop() if len(rotations) == 1 else None,
+            "scans_started_utc": [None if when is None else when.isoformat() for when in started],
+            "time_source": time_source, "backend": "directptycho",
+        }
+        return cls(result)
+
+
 def _locked(method):
     """Keep live additions and public result reads on the same completed frame."""
     @wraps(method)
@@ -259,8 +318,17 @@ def series(ptycho, sources, fit: DirectPtychoResult, *, refit="defocus", method=
                               show=show, strengths=strengths, frames=len(sources), max_frames=max_frames,
                               full_refit_every=full_refit_every, neural_model=neural_model,
                               annulus_mrad=annulus_mrad)
+    if show and not sources and result._state.panel.display is not None:
+        try:
+            view = result.show(interactive=True)
+        except ModuleNotFoundError as error:
+            if error.name not in {"quantem.widget", "ipywidgets"}:
+                raise
+        else:
+            result._state.panel.display(view)
+            result._state.panel.display = None  # the interactive view updates on each add
     iterator = sources
-    if verbose:
+    if verbose and sources:
         from tqdm.auto import tqdm
 
         description = {"full": "Fitting every frame", "none": "Reconstructing with fixed optics",
@@ -465,6 +533,25 @@ class DirectPtychoSeries:
     def frame_indices(self) -> tuple[int, ...]:
         """Absolute zero-based indices of the retained frames, in chronological order."""
         return tuple(range(self.total_frames - len(self.frames), self.total_frames))
+
+    @_locked
+    def drift_rate(self) -> DriftVelocity:
+        """Estimate image drift in (row, col) nm/s from registered shifts and acquisition times."""
+        from datetime import datetime, timezone
+
+        if not all(self.placed):
+            raise ValueError("Only successfully registered phases can determine a drift velocity.")
+        times, rotations = [], []
+        for source in self.sources:
+            metadata = getattr(source, "metadata", {})
+            stamp = metadata.get("received_utc")
+            if not stamp:
+                raise ValueError("A drift rate requires an acquisition timestamp for each scan.")
+            when = datetime.fromisoformat(stamp)
+            times.append(when if when.tzinfo else when.replace(tzinfo=timezone.utc))
+            rotations.append((metadata.get("optics") or {}).get("scan_rotation_deg"))
+        return DriftVelocity.from_shifts(list(self.frame_indices), list(self.frames), times, self.shifts_A,
+                                         self.object_sampling_A, rotations, "scan start")
 
     @property
     @_locked
@@ -978,7 +1065,7 @@ def _run(session, chosen, methods, upsample, strengths, *, neural=False):
         options = {} if name == "phase_of_mean" else strengths
         if neural and name == "phase" and "complex" in methods:
             options = {key: value for key, value in options.items() if key != "amplitude_damp"}
-        result = session.run(chosen, method=name, upsample=upsample, compute_loss=False,
+        result = session.run(chosen, method=name, upsample=upsample, compute_loss=False, save_calibration=False,
                                      force=True, verbose=False, **options)
         images[name] = cp.asarray(result.phase, dtype=cp.float32)
         if name == "complex":

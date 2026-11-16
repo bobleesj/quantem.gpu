@@ -193,3 +193,27 @@ def test_detector_sampling_needs_the_semiangle_and_its_disk_is_not_set_by_hand()
     # a fitted provenance belongs to the detector step alone
     with pytest.raises(ValueError, match="calibration override"):
         data._record_calibration(voltage_kV=200, provenance=metadata.BRIGHT_FIELD_DISK_FIT, evidence="fit")
+
+
+
+def test_microscope_values_are_read_and_set_on_the_acquisition():
+    """data.semiangle_mrad = 30 is data.calibration.semiangle_mrad = 30: one record, its source and units kept;
+    the acquisition's own fields stay frozen."""
+    import dataclasses
+
+    data = Dataset4dstem(np.zeros((2, 3, 4, 5), np.uint32), {"voltage_kV": 300, "scan_sampling_A": [0.4, 0.5]})
+    assert data.voltage_kV == 300 and data.scan_sampling_A == (0.4, 0.5) and data.semiangle_mrad is None
+    data.semiangle_mrad = 30
+    assert data.semiangle_mrad == 30 == data.calibration.semiangle_mrad
+    assert data.calibration.table().loc["Convergence semiangle", "Source"] == "Overridden"
+    data.scan_sampling_A = (0.2, 0.2)
+    assert data.calibration.scan_sampling_A == (0.2, 0.2)
+    assert data.scan_detector_rotation_deg is None
+    data.scan_detector_rotation_deg = 529
+    assert data.scan_detector_rotation_deg == 169.0 == data.metadata["scan_detector_rotation_deg"]
+    data.scan_detector_rotation_deg = None
+    assert "scan_detector_rotation_deg" not in data.metadata
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        data.data = None
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        data.anything_else = 1

@@ -1,12 +1,13 @@
 """Notebook phase preview and an optional throttled convergence chart."""
 
 import time
+from typing import Literal
 
 
 class FitDisplay:
     """Render only in a live notebook; command-line fitting stays display-free."""
 
-    def __init__(self, direct, *, enabled: bool, size: str = "medium", columns: int = 2,
+    def __init__(self, direct, *, enabled: bool | Literal["rotation"], size: str = "medium", columns: int = 2,
                  show_convergence: bool = False,
                  scan_region: tuple[int, int, int, int] | None = None):
         from quantem.gpu.display._layout import panel_inches, resolve_columns
@@ -74,19 +75,23 @@ class FitDisplay:
         """Compare final direct methods without refitting or replacing the native fit."""
         if self.display is None or not self.enabled:
             return
+        if self.enabled == "rotation":
+            if final and getattr(fit, "rotation_branches", None) is not None:
+                self.display(fit.rotation_branches.show(axsize=(1.5 * self.width, 0.45 * self.width)))
+            return
         try:
             image = self.direct.run(
-                fit, upsample="auto", compute_loss=False, verbose=False,
+                fit, upsample="auto", compute_loss=False, verbose=False, save_calibration=False,
             )
             comparisons = ()
             if final and self.direct.backend == "cuda" and self.direct._streamed is None:
                 # Prepare only after fitting. Finish with phase so subsequent
                 # regularization exploration can reuse its prepared equations.
                 complex_image = self.direct.run(
-                    fit, method="complex", upsample="auto", compute_loss=False,
+                    fit, method="complex", upsample="auto", compute_loss=False, save_calibration=False,
                 )
                 phase_image = self.direct.run(
-                    fit, method="phase", upsample="auto", compute_loss=False,
+                    fit, method="phase", upsample="auto", compute_loss=False, save_calibration=False,
                 )
                 comparisons = (phase_image, complex_image)
             if self.scan_region is not None:
@@ -111,6 +116,8 @@ class FitDisplay:
                 self.handle = self.display(figure, display_id=True)
             else:
                 self.handle.update(figure)
+            if final and getattr(fit, "rotation_branches", None) is not None:
+                self.display(fit.rotation_branches.show(size=self.size))
         finally:
             # Rendering must not replace the native fit, loss or calibration.
             self.direct._accept_result(fit)

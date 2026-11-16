@@ -188,7 +188,7 @@ def test_record_round_trip_and_figure():
     solid, dashed = tail_axis.get_lines()[:2]
     assert solid.get_color() == "#29243e" and solid.get_linestyle() == "-"
     assert dashed.get_color() == "#cc4b42" and dashed.get_linestyle() == "--"
-    assert tail_axis.get_legend().get_texts()[0].get_text().startswith("0.0° · S = +")
+    assert tail_axis.get_legend().get_texts()[0].get_text().startswith("0.0° · skewness +")
     assert "high-passed" not in tail_axis.get_xlabel()
     assert not np.any(solid.get_ydata() == 0)
 
@@ -201,7 +201,7 @@ def test_figure_shows_both_fits_upsampled_with_columns_on_the_display_grid():
     branches, session = _branches(), _Session()
     native = [(branch.phase_skewness, branch.column_z) for branch in branches.branches]
     branches.bind_session(session.panels)
-    figure = branches.show()
+    figure = branches.show(atom_columns=True)
     assert session.calls == ["auto"] and branches.upsample == 3
     assert branches.object_sampling_A == pytest.approx((0.264 / 3, 0.264 / 3))
     image_axes = [axis for axis in figure.axes if axis.images]
@@ -214,7 +214,7 @@ def test_figure_shows_both_fits_upsampled_with_columns_on_the_display_grid():
     # the decision and the evidence panels still read the native phases
     assert [(branch.phase_skewness, branch.column_z) for branch in branches.branches] == native
     tail_axis = next(axis for axis in figure.axes if axis.get_yscale() == "log")
-    assert tail_axis.get_legend().get_texts()[0].get_text() == f"0.0° · S = +{native[0][0]:.3f}"
+    assert tail_axis.get_legend().get_texts()[0].get_text() == f"0.0° · skewness +{native[0][0]:.3f}"
     branches.show()
     assert session.calls == ["auto"]   # reconstructed once
     branches.show(upsample=1)
@@ -255,7 +255,7 @@ def test_display_helpers_default_to_the_auto_factor():
 
     assert inspect.signature(DirectPtycho._show_trials).parameters["upsample"].default == "auto"
     assert inspect.signature(RotationBranches.show).parameters["upsample"].default == "auto"
-    assert inspect.signature(DirectPtycho.run).parameters["upsample"].default == 1   # the fit grid
+    assert inspect.signature(DirectPtycho.run).parameters["upsample"].default is None   # reference phase uses auto
     for step, factor in ((0.264, 2), (0.373, 3), (0.5, 4)):
         calibration = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(step, step))
         assert DirectPtycho._resolve_upsample(calibration, "auto") == factor

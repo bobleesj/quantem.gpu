@@ -44,8 +44,8 @@ def test_omitted_rotation_is_estimated_like_dpc_and_labelled(capsys):
         assert direct.scan_detector_rotation_source == "estimated"
         table = direct.calibration()
         assert table.loc["Scan-detector rotation", "Source"] == "Estimated (centre-of-mass curl)"
-        assert table.loc["Rotation flipped", "Value"] == "no"
-    assert "estimated from the centre-of-mass curl" in capsys.readouterr().out
+        assert table.loc["Rotation flipped", "Value used"] == "no"
+    assert "estimated by DPC, the centre-of-mass curl" in capsys.readouterr().out
 
 
 def test_a_given_rotation_is_used_as_given_without_an_estimate(capsys):

@@ -13,6 +13,7 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext, supp
 from dataclasses import replace
 from functools import partial, wraps
 from pathlib import Path
+from weakref import ref
 from typing import TYPE_CHECKING, Literal, Self
 
 import numpy as np
@@ -154,7 +155,7 @@ def _bright_field_center_of_mass(frames: "MpsBfColumnFrames") -> tuple[np.ndarra
 def _announce_rotation(angle_deg: float, flipped: bool) -> None:
     """The one line a session prints when it estimated the rotation itself."""
     print(f"Direct ptycho: scan-detector rotation {angle_deg:.1f}°, rotation flipped: {'yes' if flipped else 'no'} "
-          "(estimated from the centre-of-mass curl; aberrations settles the 180° choice).")
+          "(estimated by DPC, the centre-of-mass curl; aberrations settles the 180° choice).")
 
 
 def _announce_detector_sampling(detector_sampling_mrad, semiangle_mrad: float, *, recordable: bool) -> None:
@@ -545,6 +546,8 @@ class DirectPtycho:
         192 x 192 region of a 512 x 512 scan costs a seventh of the whole scan's). The bright-field disk is still found
         on the whole scan's mean pattern; the rotation and the detector sampling are the caller's to give from the whole
         scan.
+    calibration : path, optional
+        Saved full-field Direct calibration to use for this acquisition. Explicit optics take precedence.
     mean_pattern : array, optional
         The whole scan's mean pattern (``detector.mean(data)``) when the caller has it already, so an encoded dataset
         does not compute it a second time.
@@ -586,11 +589,12 @@ class DirectPtycho:
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float | None = None,
         scan_detector_rotation_flipped: bool | None = None,
-        bright_field_intensity_threshold: float = 0.0,
+        bright_field_intensity_threshold: float | None = None,
         bright_field_radius_px: float | None = None,
         source_path: str | None = None,
         bright_field_center_px: tuple[float, float] | None = None,
         scan_region: tuple[int, int, int, int] | None = None,
+        calibration: str | Path | None = None,
         mean_pattern=None,
     ) -> None:
         supplied = {
@@ -602,6 +606,41 @@ class DirectPtycho:
         source_dataset = data if isinstance(data, Dataset4dstem) else None
         self._browser_qem = _browser_qem_source(source_dataset)
         metadata = {} if source_dataset is None else source_dataset.metadata
+        record = metadata.get("direct_calibration", {})
+        if calibration is not None:
+            import json
+            from .calibration import READABLE_CALIBRATION_SCHEMAS
+
+            record = json.loads(Path(calibration).read_text(encoding="utf-8"))
+            if record.get("schema") not in READABLE_CALIBRATION_SCHEMAS:
+                raise ValueError(f"Unsupported Direct Ptycho calibration in {calibration}.")
+            shape = tuple(scan_shape or data.shape[:2])
+            if list(shape) != record["scan_shape"] or record["scan_region"] != [0, shape[0], 0, shape[1]]:
+                raise ValueError(f"Choose a full-field calibration matching scan shape {shape}.")
+
+        geometry = record.get("session_identity", {}).get("geometry", {})
+        if aberrations is None:
+            aberrations = record.get("aberrations")
+        if scan_detector_rotation_deg is None:
+            scan_detector_rotation_deg = record.get("scan_detector_rotation_deg")
+            if scan_detector_rotation_flipped is None:
+                scan_detector_rotation_flipped = record.get("scan_detector_rotation_flipped")
+        if voltage_kV is None:
+            voltage_kV = record.get("voltage_kV")
+        if semiangle_mrad is None:
+            semiangle_mrad = record.get("semiangle_mrad")
+        if scan_sampling_A is None:
+            scan_sampling_A = record.get("scan_sampling_A")
+        if detector_sampling_mrad is None:
+            detector_sampling_mrad = record.get("detector_sampling_mrad")
+        if bright_field_center_px is None:
+            bright_field_center_px = geometry.get("bright_field_center_px")
+        if bright_field_radius_px is None:
+            bright_field_radius_px = record.get("bright_field_radius_px")
+        if bright_field_intensity_threshold is None:
+            bright_field_intensity_threshold = geometry.get("bright_field_intensity_threshold", 0.0)
+        self._saved_reconstruction = record.get("reconstruction", {})
+        self._saved_upsample = record.get("upsample", 1)
         voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
             metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
         self._detector_sampling_recorded = False
@@ -732,8 +771,8 @@ class DirectPtycho:
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.bright_field_radius_px = bright_field_radius_px
         self.bright_field_center_px = None if bright_field_center_px is None else (float(bright_field_center_px[0]), float(bright_field_center_px[1]))
-        self.sample_tilt_mrad: tuple[float, float] | None = None
-        self.depth_spread_nm: float | None = None
+        self.sample_tilt_mrad = tuple(record["sample_tilt_mrad"]) if record.get("sample_tilt_mrad") is not None else None
+        self.depth_spread_nm = record.get("depth_spread_nm")
         self._compare_standard = True
         self.source_path = source_path
         self.calibration_path: str | None = None
@@ -2124,7 +2163,7 @@ class DirectPtycho:
         fixed_aberrations: dict[str, float] | None = None,
         refine_rotation: bool = False,
         compute_loss: bool | None = None,
-        show: bool = True,
+        show: bool | Literal["rotation"] = True,
         size: Literal["small", "medium", "large", "xlarge"] | int = "medium",
         columns: int = 2,
         show_convergence: bool = False,
@@ -2162,6 +2201,7 @@ class DirectPtycho:
         limit of the fit returned. A wider box lets degenerate polynomial
         directions move C10 and C12 at the bright-field rim.
 
+        Use ``show="rotation"`` to display only the fitted rotation branches.
         In a live notebook, ``show=True`` displays the initial fit at Auto
         sampling. After standard/broad refinement, resident CUDA sessions
         replace that preview with three methods: conventional direct ptychography, regularized
@@ -3146,12 +3186,15 @@ class DirectPtycho:
     @_on_scan_gpu
     def series(self, sources: Sequence = (), fit: DirectPtychoResult | None = None, *,
                refit: Literal["none", "defocus", "full"] = "defocus",
-               method: Literal["phase_of_mean", "phase", "complex"] | tuple[str, ...] = "phase_of_mean",
+               method: Literal["phase_of_mean", "phase", "complex"] | tuple[str, ...] | None = None,
                upsample: int | Literal["auto"] = "auto", save_dir: str | Path | None = None,
                max_frames: int | None = None, neural_model: "NeuralPhaseModel | None" = None,
                annulus_mrad: tuple[float, float] | None = None, full_refit_every: int | None = None,
                show: bool = True, verbose: bool = True, **strengths):
         """Reconstruct a series of scans of one area, following defocus, astigmatism and drift from scan to scan.
+
+        A series using the reference fit inherits its last reconstruction method and damping.
+        Explicit series settings override those choices.
 
         ``sources`` are scans of one scan shape: recorded files, or scans already on the GPU (a live stream's
         ``datasets``). The optics are fitted once on this session's scan (``aberrations()``) unless ``fit``
@@ -3193,6 +3236,15 @@ class DirectPtycho:
         """
         from quantem.gpu.direct_ptycho.stream import series
 
+        reference = getattr(self, "_series_reference", None)
+        if reference is not None and fit is not None and reference[0]() is fit:
+            _, reference_method, reference_strengths = reference
+            if method is None:
+                method = reference_method
+            if method == reference_method:
+                strengths = {**reference_strengths, **strengths}
+        if method is None:
+            method = "phase_of_mean"
         names = (method,) if isinstance(method, str) else method
         for name in names:
             if name not in ("phase_of_mean", "phase", "complex"):
@@ -3246,7 +3298,7 @@ class DirectPtycho:
 
     def run(
         self, parameters: DirectPtychoResult | None = None, *,
-        method: Literal["phase_of_mean", "phase", "complex", "all"] = "phase_of_mean",
+        method: Literal["phase_of_mean", "phase", "complex", "all"] | None = None,
         neural_model: NeuralPhaseModel | None = None,
         scan_basis: tuple[tuple[float, float], tuple[float, float]] | None = None,
         phase_damp: float | None = None,
@@ -3254,8 +3306,8 @@ class DirectPtycho:
         smoothness_inv_A: float | None = None,
         detector_weighting: Literal["uniform", "inverse_mean"] | None = None,
         aberrations: dict[str, float] | None = None, trial_ids: object = None,
-        upsample: int | Literal["auto"] = 1,
-        compute_loss: bool = True, save_dir: str | Path | None = None,
+        upsample: int | Literal["auto"] | None = None,
+        compute_loss: bool | None = None, save_dir: str | Path | None = None, save_calibration: bool | None = None,
         force: bool = False, verbose: bool = False,
     ) -> DirectPtychoResult | dict[str, DirectPtychoResult]:
         """Reconstruct with fitted optics using direct ptychography or a regularized direct model.
@@ -3312,11 +3364,15 @@ class DirectPtycho:
             and ``depth_spread_nm``, not from this mapping. Trial replay applies
             only to direct ptychography. ``"auto"`` sampling covers the modeled aperture
             support up to 4× (one line names a larger factor the scan sampling
-            supports); it does not establish resolution.
+            supports); it does not establish resolution. A phase run using the fitted reference defaults to automatic sampling.
         compute_loss
             Compute a diagnostic: direct ptychography phase variance, or regularized prediction
             error under ``result.reconstruction_diagnostics``. These are distinct
-            quantities and must not be compared as the same loss.
+            quantities and must not be compared as the same loss. A phase calibration skips this diagnostic
+            by default. Pass True to include it. Other runs compute it by default.
+        save_calibration
+            The completed reference fit automatically saves to the acquisition’s calibration folder
+            when the dataset carries a calibration destination. False skips the write.
         save_dir
             Save results and full settings. Regularized alternatives use separate
             signature-named files so changing strengths preserves earlier saves.
@@ -3346,6 +3402,26 @@ class DirectPtycho:
         """
         from quantem.gpu.direct_ptycho import direct_workflow
 
+        saved = getattr(self, "_saved_reconstruction", {}) if parameters is None and trial_ids is None else {}
+        if method is None:
+            method = saved.get("method", "phase_of_mean")
+        if upsample is None:
+            if saved:
+                upsample = getattr(self, "_saved_upsample", 1)
+            elif method == "phase" and parameters is not None and parameters is self._aberration_search:
+                upsample = "auto"
+            else:
+                upsample = 1
+        if method == saved.get("method"):
+            if phase_damp is None:
+                phase_damp = saved.get("phase_damp")
+            if amplitude_damp is None:
+                amplitude_damp = saved.get("amplitude_damp")
+            if smoothness_inv_A is None:
+                smoothness_inv_A = saved.get("smoothness_inv_A")
+            if detector_weighting is None:
+                detector_weighting = saved.get("detector_weighting")
+
         if isinstance(method, str) and method not in ("phase_of_mean", "phase", "complex", "all"):
             raise ValueError(
                 f'method must be "phase_of_mean", "phase", "complex" or "all"; got {method!r}.'
@@ -3354,6 +3430,22 @@ class DirectPtycho:
             raise ValueError('Use method="phase" with neural_model; the model corrects phase only.')
         if scan_basis is not None and method not in ("phase", "complex"):
             raise ValueError('Use method="phase" or "complex" with a calibrated scan_basis.')
+        dataset = getattr(self, "_input_dataset", None)
+        path = None if dataset is None else dataset.metadata.get("direct_calibration_destination")
+        if save_calibration is None:
+            save_calibration = (path is not None and parameters is not None
+                                and parameters is self._aberration_search and trial_ids is None
+                                and method != "all")
+        if compute_loss is None:
+            compute_loss = not (save_calibration and method == "phase")
+        if save_calibration:
+            if method == "all":
+                raise ValueError("Choose one reconstruction method to save its calibration.")
+            if path is None:
+                if not self.source_path:
+                    raise ValueError("Open a saved scan or use the ARINA session's latest scan to save its calibration.")
+                source = Path(self.source_path)
+                path = source.parent / "calibration" / source.with_suffix(".json").name
         if method == "all":
             if self.backend != "cuda":
                 raise NotImplementedError("method='all' requires CUDA; use method='phase_of_mean' on other backends.")
@@ -3371,7 +3463,7 @@ class DirectPtycho:
                     from_fit=parameters is not None)
             return {
                 name: self.run(
-                    parameters, method=name, aberrations=aberrations,
+                    parameters, method=name, aberrations=aberrations, save_calibration=False,
                     upsample=upsample, compute_loss=compute_loss,
                     save_dir=save_dir, force=force, verbose=verbose,
                     phase_damp=phase_damp if name != "phase_of_mean" else None,
@@ -3385,18 +3477,30 @@ class DirectPtycho:
         policy = direct_workflow.settings(method, phase_damp, amplitude_damp,
                                           smoothness_inv_A, detector_weighting)
         if method == "phase_of_mean":
-            return self._run_direct(parameters, aberrations=aberrations, trial_ids=trial_ids,
+            result = self._run_direct(parameters, aberrations=aberrations, trial_ids=trial_ids,
                                  upsample=upsample,
                                  compute_loss=compute_loss, save_dir=save_dir, force=force, verbose=verbose)
-        if trial_ids is not None:
-            raise ValueError("trial_ids apply only to method='phase_of_mean'; omit them for direct inversion.")
-        if scan_basis is not None:
-            policy["scan_basis"] = direct_workflow._scan_basis(scan_basis, self.backend)
-        return direct_workflow.run(
-            self, parameters, aberrations=aberrations, neural_model=neural_model,
-            factor=self._resolve_upsample(upsample), policy=policy,
-            compute_loss=compute_loss, save_dir=save_dir, force=force, verbose=verbose,
-        )
+        else:
+            if trial_ids is not None:
+                raise ValueError("trial_ids apply only to method='phase_of_mean'; omit them for direct inversion.")
+            if scan_basis is not None:
+                policy["scan_basis"] = direct_workflow._scan_basis(scan_basis, self.backend)
+            result = direct_workflow.run(
+                self, parameters, aberrations=aberrations, neural_model=neural_model,
+                factor=self._resolve_upsample(upsample), policy=policy,
+                compute_loss=compute_loss, save_dir=save_dir, force=force, verbose=verbose,
+            )
+        if method != "phase_of_mean":
+            result.upsample_mode = "auto" if upsample == "auto" else "explicit"
+        if save_calibration:
+            result.save_calibration(path)
+        if parameters is not None and parameters is self._aberration_search and trial_ids is None:
+            controls = {key: value for key, value in policy.items()
+                        if key in ("phase_damp", "amplitude_damp", "smoothness_inv_A", "detector_weighting")}
+            self._series_reference = (ref(parameters), method, controls)
+            if method == "phase":
+                parameters._phase_settings = dict(controls)
+        return result
 
     @_on_scan_gpu
     def validate_damping(

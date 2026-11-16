@@ -137,6 +137,7 @@ class DirectPtychoResult(Mapping[str, float]):
     semiangle_mrad: float | None = None
     object_sampling_A: tuple[float, float] | None = None
     upsample: int = 1
+    upsample_mode: Literal["auto", "explicit"] = field(default="explicit", kw_only=True)
     reconstruction_method: str = "phase_of_mean"
     reconstruction_options: dict[str, object] = field(default_factory=dict)
     reconstruction_diagnostics: dict[str, object] = field(default_factory=dict)

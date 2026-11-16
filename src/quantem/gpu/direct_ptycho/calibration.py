@@ -118,7 +118,7 @@ def save_calibration(result, path):
         "loss": result.loss,
         "reconstruction": {**deepcopy(result.reconstruction_options), "method": method},
         "reconstruction_diagnostics": deepcopy(result.reconstruction_diagnostics),
-        "upsample": factor, "upsample_mode": "auto" if method == "phase_of_mean" else "explicit",
+        "upsample": factor, "upsample_mode": "auto" if method == "phase_of_mean" else result.upsample_mode,
         "display_negate_phase": False,
         "display": {"tilt_correction": sample is not None, "max_columns": 3},
         "session_identity": identity, "local_tilt": None,

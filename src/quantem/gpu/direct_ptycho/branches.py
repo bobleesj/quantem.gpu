@@ -333,7 +333,7 @@ class RotationBranches:
     def show(self, *, upsample: int | Literal["auto"] = "auto", panels: bool = True,
              size: str | None = None, zoom: float = 1,
              axsize: tuple[float, float] | None = None,
-             cmap: str = "inferno", save: str | Path | None = None):
+             cmap: str = "inferno", atom_columns: bool = False, save: str | Path | None = None):
         """Both rotations' phase images above their full-field phase histograms.
 
         Top: each branch's fit reconstructed at ``upsample`` (``upsampled_phases``, ``"auto"`` by default),
@@ -347,6 +347,9 @@ class RotationBranches:
         ``zoom`` adds boxed central magnifications below the full fitted fields;
         the full-region evidence and fitted arrays stay unchanged.
         ``cmap`` chooses the phase colormap; ``save`` exports the static figure.
+        ``atom_columns=True`` circles the dark-field columns the decision read on the full fields
+        (off by default: on a dense lattice the markers hide the image). The legend gives each
+        branch's phase skewness. Each row of panels shares one colorbar, in rad.
         The phase/evidence layout is fixed rather than a rows/columns gallery.
 
         Returns
@@ -371,16 +374,18 @@ class RotationBranches:
             width = panel_inches("medium" if size is None else size)
             axsize = (width, width * 3.4 / 5)
         heights = ([axsize[0]] * (2 if zoom > 1 else 1) if panels else []) + [axsize[1]]
-        figure = plt.figure(figsize=(2 * axsize[0], sum(heights) + (0.6 if panels else 0.0)))
+        figure = plt.figure(figsize=(2 * axsize[0] + (0.5 if panels else 0.0), sum(heights) + (0.35 * (len(heights) - 1))),
+                            layout="constrained")
+        figure.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.02, hspace=0.02)
         grid = figure.add_gridspec(len(heights), 2, height_ratios=heights)
         if panels:
             axes = [figure.add_subplot(grid[0, index]) for index in (0, 1)]
-            self._show_panels(figure, axes, upsample, cmap)
+            self._show_panels(figure, axes, upsample, cmap, atom_columns=atom_columns)
             if zoom > 1:
                 from matplotlib.patches import Rectangle
 
                 zoom_axes = [figure.add_subplot(grid[1, index]) for index in (0, 1)]
-                self._show_panels(figure, zoom_axes, upsample, cmap, zoom=zoom)
+                self._show_panels(figure, zoom_axes, upsample, cmap, zoom=zoom)  # never marked: the zoom is for reading the columns themselves
                 bounds = zoom_bounds(self.branches[0].phase.shape, zoom)
                 row, stop_row, col, stop_col = (value * self.upsample for value in bounds)
                 for axis in axes:
@@ -398,21 +403,21 @@ class RotationBranches:
             fractions = np.histogram(centred[index], bins=edges)[0] / centred[index].size
             branch = self.branches[index]
             tail_axis.plot(centres, np.where(fractions > 0, fractions, np.nan), linewidth=1.4, **styles[index],
-                           label=f"{branch.scan_detector_rotation_deg:.1f}° · S = {_signed(branch.phase_skewness, 3)}")
+                           label=f"{branch.scan_detector_rotation_deg:.1f}° · skewness {_signed(branch.phase_skewness, 3)}")
         tail_axis.axvline(0.0, color="0.5", linewidth=0.6)
         tail_axis.set(yscale="log", xlim=(-1e3 * limit, 1e3 * limit), xlabel="phase − mean (mrad)",
                       ylabel="fraction of pixels")
-        tail_axis.legend(frameon=False, fontsize=9, loc="lower left", bbox_to_anchor=(0.0, 1.0))
+        tail_axis.legend(frameon=False, fontsize=9, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncols=2, borderaxespad=0.1)  # one line above the curves
 
         tail_axis.spines[["top", "right"]].set_visible(False)
-        figure.tight_layout()
         if save is not None:
             figure.savefig(save, dpi="figure", bbox_inches="tight")
         plt.close(figure)
         return figure
 
-    def _show_panels(self, figure, axes, upsample, cmap="inferno", *, zoom=1) -> None:
-        """Draw ``upsampled_phases`` on ``axes`` (branch order), the columns at scan pixels times the factor."""
+    def _show_panels(self, figure, axes, upsample, cmap="inferno", *, zoom=1, atom_columns=False) -> None:
+        """Draw ``upsampled_phases`` on ``axes`` (branch order) with one colorbar for the row (the panels share their
+        limits); ``atom_columns`` circles the columns at scan pixels times the factor."""
         from quantem.core.visualization import show_2d
 
         centred = [phase.astype(np.float64) - phase.astype(np.float64).mean()
@@ -431,11 +436,17 @@ class RotationBranches:
 
             row, stop_row, col, stop_col = (value * factor for value in zoom_bounds(self.branches[0].phase.shape, zoom))
             displayed = [phase[row:stop_row, col:stop_col] for phase in centred]
-            titles = [f"{title}\nCentral zoom {zoom:g}×" for title in titles]
-        show_2d(displayed, figax=(figure, np.asarray(axes)), title=titles, cmap=cmap, cbar=True,
+            titles = [f"{branch.scan_detector_rotation_deg:.1f}°{' kept' if index == self.kept else ''} · zoom {zoom:g}×"
+                      for index, branch in enumerate(self.branches)]
+        show_2d(displayed, figax=(figure, np.asarray(axes)), title=titles, cmap=cmap, cbar=False,
                 norm={"interval_type": "manual", "vmin": -limit, "vmax": limit}, tight_layout=False, title_fontsize=12,
                 scalebar=None if sampling is None else {"sampling": sampling[1], "units": "Å", "fontsize": 11})
-        if self._column_count:
+        from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import Normalize
+
+        # show_2d draws RGBA pixels, which carry no scale: the bar is made from the limits the panels share
+        figure.colorbar(ScalarMappable(norm=Normalize(-limit, limit), cmap=cmap), ax=list(axes), fraction=0.046, pad=0.01, label="rad")
+        if atom_columns and self._column_count:
             positions = self.columns.astype(np.float64) * factor - np.array([row, col])
             for axis in axes:
                 limits = axis.get_xlim(), axis.get_ylim()

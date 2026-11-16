@@ -794,6 +794,40 @@ class Dataset4dstem:
         self.close()
 
 
+# The microscope values a user states are read and set on the acquisition itself, ``data.semiangle_mrad = 30``: the
+# same record ``data.calibration`` keeps, with its units, sources and checks. The dataclass stays frozen for its own
+# fields (``data``, ``metadata``); only these names pass through.
+MICROSCOPE = ("voltage_kV", "semiangle_mrad", "scan_sampling_A")
+
+
+def _microscope_value(name: str) -> property:
+    return property(lambda self: getattr(self.calibration, name),
+                    doc=f"``calibration.{name}``, read and set on the acquisition: ``data.{name} = ...``.")
+
+
+def _set_microscope_or_frozen(self, name: str, value) -> None:
+    if name in MICROSCOPE:
+        setattr(self.calibration, name, value)
+    elif name == "scan_detector_rotation_deg":
+        # a rotation known for the session (written down at the microscope): recorded with the acquisition, so
+        # DirectPtycho takes it as recorded and never estimates or moves it; None forgets it
+        if value is None:
+            self.metadata.pop("scan_detector_rotation_deg", None)
+        else:
+            self.metadata["scan_detector_rotation_deg"] = float(value) % 360.0
+    else:
+        _frozen_setattr(self, name, value)
+
+
+for _name in MICROSCOPE:
+    setattr(Dataset4dstem, _name, _microscope_value(_name))
+Dataset4dstem.scan_detector_rotation_deg = property(
+    lambda self: self.metadata.get("scan_detector_rotation_deg"),
+    doc="Scan-to-detector rotation in degrees when known, else None: ``data.scan_detector_rotation_deg = 169``.")
+_frozen_setattr = Dataset4dstem.__setattr__
+Dataset4dstem.__setattr__ = _set_microscope_or_frozen
+
+
 def resident_metadata(shape, dtype, resident_bytes: int, *, backend: str, representation: str = "encoded") -> dict:
     """Return the metadata fields every resident loader records about what it holds.
 
