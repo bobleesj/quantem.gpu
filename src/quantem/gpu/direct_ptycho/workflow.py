@@ -7,6 +7,7 @@ device preparation and kernels, but they do not define a second user API.
 import hashlib
 import math
 import time
+import weakref
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import replace
@@ -616,6 +617,7 @@ class DirectPtycho:
             correction = source_dataset.metadata.get("hot_pixel_correction")
             self.source_provenance = None if correction is None else {"hot_pixel_correction": correction}
         self._compute: DirectPtychoProtocol | None = None
+        self._review_viewer = None
         self._reconstruction: DirectPtychoResult | None = None
         self.best_loss = float("inf")
         self.trial_history: list[dict[str, object]] = []
@@ -1726,7 +1728,7 @@ class DirectPtycho:
             if save is not None:
                 figure.savefig(save, dpi="figure", bbox_inches="tight")
             return figure
-        if any(value is not None for value in (size, region, rows, columns, cmap, save)):
+        if any(value is not None for value in (region, rows, columns, cmap, save)):
             raise ValueError(
                 "Use size, rows, columns, cmap and save with direct.show('focus') or a static landscape "
                 "('depth', 'tilt', 'parameters'); use mode='static' to save focus images. "
@@ -1736,11 +1738,47 @@ class DirectPtycho:
             from quantem.widget import ShowPtycho
         except ImportError as exc:
             raise ImportError("direct.show() opens ShowPtycho from quantem.widget: pip install quantem.widget") from exc
+        if size is not None:
+            options["size"] = size
         if show_probe:
             from quantem.gpu.direct_ptycho.probe_explorer import ProbeExplorer
 
-            return ProbeExplorer(self, **options)
-        return ShowPtycho(self, **options)
+            explorer = ProbeExplorer(self, **options)
+            self._review_viewer = weakref.ref(explorer.reconstruction)
+            return explorer
+        viewer = ShowPtycho(self, **options)
+        self._review_viewer = weakref.ref(viewer)
+        return viewer
+
+    def save(self, save_dir: str | Path) -> DirectPtychoResult:
+        """Save the reviewed complex object, real-space probe and their sampling in result.zip.
+
+        A live viewer supplies the reviewed optics, sampling and reconstruction settings
+        and writes its calibration and phase preview beside the waves. Without a viewer,
+        the most recent reconstruction is saved. Returns the saved reconstruction.
+        """
+        folder = Path(save_dir)
+        viewer = self._review_viewer() if self._review_viewer is not None else None
+        if viewer is not None:
+            if not hasattr(viewer, "_reviewed_result"):
+                raise RuntimeError("Install a quantem.widget build with reviewed-result saving support.")
+            result = viewer._reviewed_result(folder)
+        else:
+            result = self._reconstruction
+            if result is None:
+                raise ValueError("Open ptycho.show() or call ptycho.run() before saving the waves.")
+            folder.mkdir(parents=True, exist_ok=True)
+        from quantem.gpu.direct_ptycho.archive import save_review
+
+        save_review(result, folder)
+        return result
+
+    @staticmethod
+    def load(path: str | Path) -> DirectPtychoResult:
+        """Open the saved waves for inspection without loading the scan or fitting the optics."""
+        from quantem.gpu.direct_ptycho.archive import load_review
+
+        return load_review(Path(path))
 
     def _show_trials(self, *, best: int | None = None, last: int | None = None,
                      first: int | None = None, upsample: int | Literal["auto"] = "auto",
