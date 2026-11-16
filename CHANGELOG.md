@@ -6,6 +6,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- The WebGPU direct fit batches independent trial scores and reuses seed gradients across validation rings. Full-field phase reconstruction transforms only the required spectrum of each detector column.
+
+- Mobile WebGPU detector integration can replace verified ANS groups with losslessly bit-packed counts for random-access aperture changes.
+
+- WebGPU uses a direct symbol table for camera QEM detector reductions while preserving native counts and stream verification.
+
+- WebGPU decodes selected scan windows once for diffraction-pattern reductions and reuses exact detector moments across DPC views.
+
 - Save and reopen reviewed direct ptychography object and probe waves with their sampling and aberrations.
 
 ## rc18 - 2026-11-11

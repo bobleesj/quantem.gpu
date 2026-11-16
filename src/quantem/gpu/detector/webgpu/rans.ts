@@ -33,10 +33,16 @@ struct Unit { payload_word: u32, offsets_base: u32, colmeta_word: u32, entries_w
 @group(0) @binding(7) var<uniform> p: Params;
 const LOWER: u32 = ${LOWER}u;
 override BINARY_LOOKUP: bool = false;
+override DIRECT_LOOKUP: bool = false;
 struct Col { cursor: u32, end: u32, state: u32, left0: u32, right0: u32, raw: bool, bad: bool, lutbyte: u32, pay: u32, ebase: u32, mode: u32 }
 fn byte_at(c: ptr<function, Col>, at: u32) -> u32 { let w = (*c).pay + (at >> 2u); return (payload[w] >> ((at & 3u) * 8u)) & 255u; }
 fn open_col(u: Unit, k: u32) -> Col {
   var c: Col;
+  if (offsets[u.offsets_base + p.K] == 0xffffffffu) {
+    let code = offsets[u.offsets_base + k];
+    c.mode = 6u; c.pay = code >> 5u; c.right0 = code & 31u;
+    return c;
+  }
   c.pay = u.payload_word; c.ebase = u.entries_word;
   // A block staged inside a resident payload group may start mid-word: bits
   // 28-29 of pad carry its byte offset within payload_word.
@@ -45,6 +51,7 @@ fn open_col(u: Unit, k: u32) -> Col {
   c.right0 = tables[u.colmeta_word + k * 3u + 1u];
   c.left0 = tables[u.colmeta_word + k * 3u]; c.mode = tables[u.colmeta_word + k * 3u + 2u]; c.raw = c.mode == 1u;
   c.bad = false; c.state = LOWER; c.lutbyte = u.lut_word * 4u + k * 256u;
+  if (DIRECT_LOOKUP) { c.lutbyte = u.lut_word + (c.left0 / 33u) * 1024u; }
   return c;
 }
 fn unit_frames(u: Unit) -> u32 { return select(p.frames, u.pad & 0x0fffffffu, (u.pad & 0x0fffffffu) != 0u); }
@@ -57,7 +64,22 @@ fn start_col(c: ptr<function, Col>) {
   (*c).state = s;
   if (s < LOWER || s >= 2147483648u) { (*c).bad = true; }
 }
+fn packed_value(base: u32, width: u32, row: u32) -> u32 {
+  if (width == 0u) { return 0u; }
+  let bit = row * width; let word = base + (bit >> 5u); let shift = bit & 31u;
+  var value = payload[word] >> shift;
+  if (shift + width > 32u) { value |= payload[word + 1u] << (32u - shift); }
+  return value & ((1u << width) - 1u);
+}
+fn seek(c: ptr<function, Col>, u: Unit, k: u32, w: u32) {
+  if ((*c).mode == 6u) { (*c).cursor = w * 256u; return; }
+  let i = u.chk_base + (k * p.windows + w) * 2u;
+  (*c).state = chk[i]; (*c).cursor = chk[i + 1u];
+}
 fn decode_one(c: ptr<function, Col>) -> u32 {
+  if ((*c).mode == 6u) {
+    let row = (*c).cursor; (*c).cursor++; return packed_value((*c).pay, (*c).right0, row);
+  }
   if ((*c).mode == 3u) { return 0u; }
   if ((*c).mode == 4u) {
     let value = byte_at(c, (*c).end - 2u) | (byte_at(c, (*c).end - 1u) << 8u);
@@ -79,7 +101,11 @@ fn decode_one(c: ptr<function, Col>) -> u32 {
   }
   let slot = (*c).state & ((1u << p.scale) - 1u);
   var e: u32; var e0: u32; var freq: u32;
-  if (BINARY_LOOKUP) {
+  if (DIRECT_LOOKUP) {
+    let entry = tables[(*c).lutbyte + slot];
+    e0 = ((entry & 1023u) << 16u) | (entry >> 21u);
+    freq = (entry >> 10u) & 2047u;
+  } else if (BINARY_LOOKUP) {
     var low = (*c).left0; var high = (*c).right0;
     loop {
       if (high - low <= 1u) { break; }
@@ -130,22 +156,78 @@ const BUILD_WGSL = COMMON_WGSL + /* wgsl */ `
   if (c.bad || c.cursor != c.end || (!c.raw && c.mode != 5u && c.state != LOWER)) { atomicAdd(&out[p.N * 2u], 1u); }
 }`;
 // Exact BF columns for direct ptychography: reuse the validated recurrence and checkpoints.
-const COLUMNS_WGSL = COMMON_WGSL + /* wgsl */ `
+// Each selected column and scan position has a single writer.
+const COLUMNS_WGSL = COMMON_WGSL.replace("out: array<atomic<u32>>", "out: array<vec2<f32>>") + /* wgsl */ `
 @compute @workgroup_size(64) fn decode_columns(@builtin(global_invocation_id) g: vec3u) {
   let i = g.x; if (i >= p.n_cols) { return; }
   let u = units[p.unit0 + g.z]; let k = cols[i]; let w = g.y;
   let first = w * 256u;
   if (first >= unit_frames(u)) { return; }
-  var c = open_col(u, k);
-  let ci = u.chk_base + (k * p.windows + w) * 2u;
-  c.state = chk[ci]; c.cursor = chk[ci + 1u];
+  let scan0 = (u.out_base % p.N) + first;
+  let stride = cols[p.n_cols]; let row0 = cols[p.n_cols + 1u];
+  let col0 = cols[p.n_cols + 2u]; let width = cols[p.n_cols + 3u];
+  let height = cols[p.n_cols + 4u];
+  if (scan0 >= (row0 + height) * stride || scan0 + 256u <= row0 * stride) { return; }
   let count = min(256u, unit_frames(u) - first);
+  let whole = width == stride && width * height == p.N;
+  if (!whole && scan0 / stride == (scan0 + count - 1u) / stride &&
+      (scan0 % stride >= col0 + width || scan0 % stride + count <= col0)) { return; }
+  var c = open_col(u, k);
+  seek(&c, u, k, w);
+  if (whole) {
+    let dst = i * p.N + scan0;
+    for (var r = 0u; r < count; r++) { out[dst + r] = vec2<f32>(f32(decode_one(&c)), 0.0); }
+    return;
+  }
   for (var r = 0u; r < count; r++) {
     let value = decode_one(&c);
-    let scan = (u.out_base % p.N) + first + r;
-    atomicStore(&out[(i * p.N + scan) * 2u], bitcast<u32>(f32(value)));
-    atomicStore(&out[(i * p.N + scan) * 2u + 1u], 0u);
+    let scan = scan0 + r;
+    let row = scan / stride; let col = scan % stride;
+    if (row < row0 || row >= row0 + height || col < col0 || col >= col0 + width) { continue; }
+    let dst = i * width * height + (row - row0) * width + col - col0;
+    out[dst] = vec2<f32>(f32(value), 0.0);
   }
+}`;
+// Two passes convert one authenticated group. The widest value selects the
+// bit width of each column, including literal and escaped uint16 counts.
+const PACK_WGSL = COMMON_WGSL + /* wgsl */ `
+@compute @workgroup_size(64) fn measure(@builtin(global_invocation_id) id: vec3u) {
+  let k = id.x; if (k >= p.K) { return; }
+  let u = units[p.unit0 + id.z]; let count = unit_frames(u);
+  var c = open_col(u,k); start_col(&c); var bits = 0u;
+  for (var r = 0u; r < count; r++) { bits |= decode_one(&c); }
+  let width = 32u - countLeadingZeros(bits);
+  let base = atomicAdd(&out[p.N], (width * count + 31u) >> 5u);
+  atomicStore(&out[u.offsets_base+k], (base << 5u) | width);
+  if (k == 0u) { atomicStore(&out[u.offsets_base+p.K], 0xffffffffu); }
+}
+@compute @workgroup_size(64) fn pack(@builtin(global_invocation_id) id: vec3u) {
+  let k = id.x; if (k >= p.K) { return; }
+  let u = units[p.unit0 + id.z]; let code = cols[u.offsets_base+k]; let width = code & 31u;
+  if (width == 0u) { return; }
+  var word = code >> 5u; var shift = 0u; var value = 0u;
+  var c = open_col(u,k); start_col(&c);
+  for (var r = 0u; r < unit_frames(u); r++) {
+    let v = decode_one(&c); value |= v << shift;
+    if (shift + width >= 32u) {
+      atomicStore(&out[word], value); word++;
+      value = select(0u, v >> (32u-shift), shift + width > 32u);
+    }
+    shift = (shift + width) & 31u;
+  }
+  if (shift != 0u) { atomicStore(&out[word], value); }
+}`;
+const PACKED_INTEGRATE = COMMON_WGSL + /* wgsl */ `
+@compute @workgroup_size(64) fn integrate(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_index) lane: u32) {
+  let u = units[p.unit0 + wg.z]; let row = wg.y * 64u + lane;
+  if (row >= unit_frames(u)) { return; }
+  var delta = 0u;
+  for (var i=wg.x*64u; i<min(p.n_cols,(wg.x+1u)*64u); i++) {
+    let item=cols[i]; let code=offsets[u.offsets_base+(item & 16777215u)];
+    let v=packed_value(code >> 5u, code & 31u, row);
+    delta += select(0u,v,(item & 0x1000000u)!=0u) - select(0u,v,(item & 0x2000000u)!=0u);
+  }
+  atomicAdd(&out[u.out_base + row],delta);
 }`;
 const INTEGRATE_WGSL = COMMON_WGSL + /* wgsl */ `
 var<workgroup> s_add: array<atomic<u32>, 256>;
@@ -160,12 +242,15 @@ var<workgroup> s_sub: array<atomic<u32>, 256>;
   var c: Col; var flag = 0u;
   if (valid) {
     let entry = cols[idx]; let k = entry & 16777215u; flag = entry >> 24u;
-    c = open_col(u, k); let ci = u.chk_base + (k * p.windows + w) * 2u; c.state = chk[ci]; c.cursor = chk[ci + 1u];
+    c = open_col(u, k); seek(&c, u, k, w);
   }
   for (var r = 0u; r < count; r++) {
     var v = 0u;
     if (valid && !c.bad) { v = decode_one(&c); }
-    if (v != 0u) { if ((flag & 1u) != 0u) { atomicAdd(&s_add[r], v); } if ((flag & 2u) != 0u) { atomicAdd(&s_sub[r], v); } }
+    if (v != 0u) {
+      if ((flag & 1u) != 0u) { atomicAdd(&s_add[r], v); }
+      if ((flag & 2u) != 0u) { atomicAdd(&s_sub[r], v); }
+    }
   }
   if (valid && c.bad) { atomicAdd(&out[p.N * 2u], 1u); }
   workgroupBarrier();
@@ -175,39 +260,67 @@ var<workgroup> s_sub: array<atomic<u32>, 256>;
     if (s != 0u) { atomicAdd(&out[p.N + u.out_base + w * 256u + r], s); }
   }
 }`;
-// Whole-detector patterns at listed scan positions, summed into out[0..K): cols[2i] = unit index, cols[2i+1] = frame within the block.
+// A window header points to sorted local rows, including repeated selections.
 const GATHER_WGSL = COMMON_WGSL + /* wgsl */ `
 @compute @workgroup_size(64) fn gather_accumulate(@builtin(global_invocation_id) g: vec3u) {
   let k = g.x; if (k >= p.K) { return; }
-  let pos = g.y; if (pos >= p.n_cols) { return; }
-  let u = units[cols[pos * 2u]]; let local = cols[pos * 2u + 1u]; let w = local / 256u;
-  var c = open_col(u, k); let ci = u.chk_base + (k * p.windows + w) * 2u; c.state = chk[ci]; c.cursor = chk[ci + 1u];
-  var v = 0u;
-  for (var r = w * 256u; r <= local; r++) { if (c.bad) { break; } v = decode_one(&c); }
-  if (c.bad) { atomicAdd(&out[p.N * 2u], 1u); }
-  if (v != 0u) {
-    let previous = atomicAdd(&out[k], v);
-    if (previous > 0xffffffffu - v) { atomicAdd(&out[p.K + k], 1u); }
+  let base = g.y * 4u;
+  let u = units[cols[base]]; let w = cols[base + 1u];
+  var index = cols[base + 2u]; let end = cols[base + 3u];
+  var c = open_col(u, k); seek(&c, u, k, w);
+  for (var r = 0u; index < end; r++) {
+    let v = decode_one(&c);
+    if (c.bad) { atomicAdd(&out[p.N * 2u], 1u); break; }
+    while (index < end && cols[index] == r) {
+      if (v != 0u) {
+        let previous = atomicAdd(&out[k], v);
+        if (previous > 0xffffffffu - v) { atomicAdd(&out[p.K + k], 1u); }
+      }
+      index++;
+    }
   }
 }`;
 // Gather each selected detector column once per checkpoint window. Integer
 // moments use paired words so saturated pixels cannot overflow weighted sums.
 const MOMENTS_WGSL = COMMON_WGSL + /* wgsl */ `
-fn add_wide(index: u32, value: u32) {
-  let previous = atomicAdd(&out[index * 2u], value);
-  if (previous > 0xffffffffu - value) { atomicAdd(&out[index * 2u + 1u], 1u); }
+// Each workgroup combines 64 detector columns before writing to global memory.
+var<workgroup> sums: array<atomic<u32>, 1536>;
+fn add_local(index: u32, value: u32) {
+  let previous = atomicAdd(&sums[index], value);
+  if (previous > 0xffffffffu - value) { atomicAdd(&sums[index + 1u], 1u); }
 }
-@compute @workgroup_size(64) fn gather_moments(@builtin(global_invocation_id) g: vec3u) {
-  if (g.x >= p.n_cols) { return; }
-  let k = cols[g.x]; let u = units[p.unit0 + g.z]; let window = g.y;
-  var c = open_col(u, k); let ci = u.chk_base + (k * p.windows + window) * 2u;
-  c.state = chk[ci]; c.cursor = chk[ci + 1u];
-  for (var r = 0u; r < 256u && window * 256u + r < unit_frames(u); r++) {
-    let value = decode_one(&c);
+@compute @workgroup_size(64) fn gather_moments(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_index) lane: u32) {
+  for (var i = lane; i < 1536u; i += 64u) { atomicStore(&sums[i], 0u); }
+  workgroupBarrier();
+  let col = wg.x * 64u + lane;
+  let u = units[p.unit0 + wg.z]; let window = wg.y;
+  let count = min(256u, unit_frames(u) - min(window * 256u, unit_frames(u)));
+  if (col < p.n_cols) {
+    let k = cols[col]; var c = open_col(u, k);
+    seek(&c, u, k, window);
+    let row = k / p.n_units; let column = k % p.n_units;
+    for (var r = 0u; r < count; r++) {
+      let value = decode_one(&c);
+      if (value != 0u) {
+        add_local(r * 2u, value);
+        add_local(512u + r * 2u, value * row);
+        add_local(1024u + r * 2u, value * column);
+      }
+    }
+  }
+  workgroupBarrier();
+  for (var r = lane; r < count; r += 64u) {
     let scan = u.out_base % p.N + window * 256u + r;
-    add_wide(scan, value);
-    add_wide(p.N + scan, value * (k / p.n_units));
-    add_wide(p.N * 2u + scan, value * (k % p.n_units));
+    for (var m = 0u; m < 3u; m++) {
+      let at = m * 512u + 2u * r;
+      let low = atomicLoad(&sums[at]); var high = atomicLoad(&sums[at + 1u]);
+      let dest = 2u * (m * p.N + scan);
+      if (low != 0u) {
+        let previous = atomicAdd(&out[dest], low);
+        high += select(0u, 1u, previous > 0xffffffffu - low);
+      }
+      if (high != 0u) { atomicAdd(&out[dest + 1u], high); }
+    }
   }
 }`;
 // Center of mass from the exact paired-word moments: each moment divided by the weight and
@@ -256,10 +369,10 @@ export interface RansLoadProfile extends RansPayloadProfile {
 }
 
 export interface RansManifest { tilts: RansTiltMeta[]; bad_pixels?: number[]; scan_shape?: number[]; detector_shape?: number[]; source_metadata?: Record<string, unknown>; native_dtype?: "uint8" | "uint16" }
-export interface RansTiltMeta { tilt: number; K: number; frames: number; blocks: number; scale: number; model_frames: number; payload_url?: string; blocks_meta: { index: number; bytes: number; model: number; byte_start?: number; byte_end?: number; frames?: number }[]; models: { index: number; symbols: number; colmeta_url?: string; entries_url?: string; lut_url?: string }[]; binary_lookup?: boolean }
+export interface RansTiltMeta { tilt: number; K: number; frames: number; blocks: number; scale: number; model_frames: number; payload_url?: string; blocks_meta: { index: number; first?: number; bytes: number; model: number; byte_start?: number; byte_end?: number; frames?: number }[]; models: { index: number; symbols: number; colmeta_url?: string; entries_url?: string; lut_url?: string }[]; binary_lookup?: boolean; direct_lookup?: boolean }
 
 interface Span { unit0: number; n: number; params: GPUBuffer; group: GPUBindGroup }
-interface Group { payload: GPUBuffer; offsets: GPUBuffer; chk: GPUBuffer; params: GPUBuffer; group: GPUBindGroup; unit0: number; units: UnitRec[]; spans: Map<number, Span>; bind: (paramsBuf: GPUBuffer, outBuf?: GPUBuffer, colsB?: GPUBuffer, unitsB?: GPUBuffer) => GPUBindGroup }
+interface Group { packed?: boolean; replacePayload: (data: GPUBuffer, index: GPUBuffer) => void; payload: GPUBuffer; offsets: GPUBuffer; chk: GPUBuffer; params: GPUBuffer; group: GPUBindGroup; unit0: number; units: UnitRec[]; spans: Map<number, Span>; bind: (paramsBuf: GPUBuffer, outBuf?: GPUBuffer, colsB?: GPUBuffer, unitsB?: GPUBuffer) => GPUBindGroup }
 interface UnitRec { payload_word: number; offsets_base: number; colmeta_word: number; entries_word: number; lut_word: number; chk_base: number; out_base: number; tilt: number; block: number; frameFlags: number }
 
 const pad4 = (n: number) => Math.ceil(n / 4) * 4;
@@ -272,7 +385,7 @@ function concatU32(parts: Uint32Array[]): Uint32Array { const total = parts.redu
 function checkpointAdmission(device: GPUDevice) {
   let pipeline: GPUComputePipeline | undefined, faults: GPUBuffer | undefined;
   return {
-    submit({ payload, K, nativeDtype, entries, blocks }: QemCheckpointGroup): RansPreparedGroup {
+    submit({ payload, K, nativeDtype, entries, directLookup, blocks }: QemCheckpointGroup): RansPreparedGroup {
       pipeline ??= device.createComputePipeline({ layout: "auto", compute: {
         module: device.createShaderModule({ code: BUILD_WGSL }), entryPoint: "build_checkpoints",
         constants: { BINARY_LOOKUP: 1 },
@@ -291,7 +404,7 @@ function checkpointAdmission(device: GPUDevice) {
       const chk = device.createBuffer({ size: blocks.length * K * 2 * 2 * 4, usage: GPUBufferUsage.STORAGE });
       try {
         const columns = blocks.length * K * 3;
-        const table = upload([...blocks.map(block => block.columns), entries]);
+        const table = upload([...blocks.map(block => block.columns), entries, directLookup]);
         const offsets = upload(blocks.map(block => block.offsets));
         const units = upload([Uint32Array.from(blocks.flatMap((block, i) => [
           Math.floor(block.offset / 4), i * (K + 1), i * K * 3, columns, 0, i * K * 4, 0,
@@ -312,7 +425,7 @@ function checkpointAdmission(device: GPUDevice) {
         // concatenation or GPU upload when the final set takes ownership.
         temporary.splice(temporary.indexOf(table), 1);
         temporary.splice(temporary.indexOf(offsets), 1);
-        return { checkpoints: chk, tables: table, offsets, entriesWord: columns };
+        return { checkpoints: chk, tables: table, offsets, entriesWord: columns, lookupWord: columns + entries.length };
       } catch (error) { chk.destroy(); throw error; }
       finally { for (const buffer of temporary) buffer.destroy(); }
     },
@@ -370,6 +483,7 @@ export class RansResidentSet {
   private imageCountParams!: GPUBuffer;
   private disposed = false;
   private readonly binaryLookup: boolean;
+  private readonly directLookup: boolean;
 
   private constructor(readonly device: GPUDevice, manifest: RansManifest, built: {
     groups: Group[]; out: GPUBuffer; images: GPUBuffer; imagesF32: GPUBuffer; colsBuf: GPUBuffer; unitsBuf: GPUBuffer;
@@ -378,6 +492,7 @@ export class RansResidentSet {
   }) {
     const first = manifest.tilts[0];
     this.binaryLookup = Boolean(first.binary_lookup);
+    this.directLookup = Boolean(first.direct_lookup);
     this.K = first.K; this.frames = first.frames; this.scale = first.scale; this.windows = Math.ceil(first.frames / WINDOW);
     this.scanCount = manifest.scan_shape ? manifest.scan_shape[0] * manifest.scan_shape[1] : first.frames * first.blocks; this.detSize = first.K; this.T = manifest.tilts.length;
     this.badPx = new Uint32Array(manifest.bad_pixels ?? []);
@@ -423,7 +538,8 @@ export class RansResidentSet {
     const manifest = JSON.parse(new TextDecoder().decode(await readFile("manifest.json"))) as RansManifest;
     const tilts = manifest.tilts; const T = tilts.length;
     const binaryLookup = Boolean(tilts[0].binary_lookup);
-    if (tilts.some(tilt => Boolean(tilt.binary_lookup) !== binaryLookup)) throw new Error("Use one rANS table profile per resident series");
+    const directLookup = Boolean(tilts[0].direct_lookup);
+    if (tilts.some(tilt => Boolean(tilt.binary_lookup) !== binaryLookup || Boolean(tilt.direct_lookup) !== directLookup)) throw new Error("Use one rANS table profile per resident series");
     const { K, frames, blocks, scale } = tilts[0]; const windows = Math.ceil(frames / WINDOW); const N = manifest.scan_shape ? manifest.scan_shape[0] * manifest.scan_shape[1] : frames * blocks;
     const preparedOnly = tilts.every(tilt => tilt.blocks_meta.every(block => {
       const segment = tilt.payload_url && block.byte_start !== undefined && block.byte_end !== undefined
@@ -542,9 +658,9 @@ export class RansResidentSet {
         const blockOffsets = prepared ? undefined : new Uint32Array(await readFile(`${prefix}offsets-${String(block.index).padStart(2, "0")}.u32`));
         payloadBytes += block.bytes;
         const modelBase = prepared
-          ? { colmeta_word: group.units.length * K * 3, entries_word: prepared.entriesWord, lut_word: 0 }
+          ? { colmeta_word: group.units.length * K * 3, entries_word: prepared.entriesWord, lut_word: prepared.lookupWord ?? 0 }
           : modelBases[tiltIndex][block.model];
-        const unit: UnitRec = { payload_word: Math.floor(offset / 4), offsets_base: group.offLen, ...modelBase, chk_base: group.units.length * K * windows * 2, out_base: tiltIndex * N + block.index * frames, tilt: tiltIndex, block: block.index, frameFlags: ((block.frames ?? 0) | ((offset % 4) << 28) | (tilt.binary_lookup ? 0x80000000 : 0) | (manifest.native_dtype === "uint8" ? 0x40000000 : 0)) >>> 0 };
+        const unit: UnitRec = { payload_word: Math.floor(offset / 4), offsets_base: group.offLen, ...modelBase, chk_base: group.units.length * K * windows * 2, out_base: tiltIndex * N + (block.first ?? block.index * frames), tilt: tiltIndex, block: block.index, frameFlags: ((block.frames ?? 0) | ((offset % 4) << 28) | (tilt.binary_lookup ? 0x80000000 : 0) | (manifest.native_dtype === "uint8" ? 0x40000000 : 0)) >>> 0 };
         if (blockOffsets) group.offParts.push(blockOffsets);
         group.offLen += blockOffsets?.length ?? K + 1; group.units.push(unit);
       }
@@ -576,21 +692,22 @@ export class RansResidentSet {
     ];
     const layout = device.createBindGroupLayout({ entries: layoutEntries });
     const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-    const pipeline = (code: string, entryPoint: string) => device.createComputePipeline({ layout: pipelineLayout, compute: { module: device.createShaderModule({ code }), entryPoint, constants: { BINARY_LOOKUP: binaryLookup ? 1 : 0 } } });
+    const pipeline = (code: string, entryPoint: string) => device.createComputePipeline({ layout: pipelineLayout, compute: { module: device.createShaderModule({ code }), entryPoint, constants: { BINARY_LOOKUP: binaryLookup ? 1 : 0, DIRECT_LOOKUP: directLookup ? 1 : 0 } } });
     const buildPipe = pipeline(BUILD_WGSL, "build_checkpoints"), intPipe = pipeline(INTEGRATE_WGSL, "integrate_windows"), gatherPipe = pipeline(GATHER_WGSL, "gather_accumulate");
     const applyPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: APPLY_WGSL }), entryPoint: "apply" } });
     const imageCountParams = upload(new Uint32Array([T * N, 0, 0, 0]), GPUBufferUsage.UNIFORM);
     const applyGroup = device.createBindGroup({ layout: applyPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: out } }, { binding: 1, resource: { buffer: images } }, { binding: 2, resource: { buffer: imagesF32 } }, { binding: 3, resource: { buffer: imageCountParams } }] });
     let unitCursor = 0;
     for (const planned of pending) {
-      const payload = planned.payload;
+      let payload = planned.payload;
       const prepared = source.residentCheckpoints?.(payload);
-      const offsets = prepared?.offsets ?? upload(concatU32(planned.offParts), GPUBufferUsage.STORAGE);
-      const chk = prepared?.checkpoints ?? device.createBuffer({ size: planned.units.length * K * windows * 2 * 4, usage: GPUBufferUsage.STORAGE });
+      let offsets = prepared?.offsets ?? upload(concatU32(planned.offParts), GPUBufferUsage.STORAGE);
+      let chk = prepared?.checkpoints ?? device.createBuffer({ size: planned.units.length * K * windows * 2 * 4, usage: GPUBufferUsage.STORAGE });
       if (prepared) loadProfile.checkpointPrebuiltGroups = (loadProfile.checkpointPrebuiltGroups ?? 0) + 1;
       const params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      let tables = prepared?.tables ?? tablesBuf;
       const bind = (paramsBuf: GPUBuffer, outBuf: GPUBuffer = out, colsB: GPUBuffer = colsBuf, unitsB: GPUBuffer = unitsBuf) => device.createBindGroup({ layout, entries: [
-        { binding: 0, resource: { buffer: payload } }, { binding: 1, resource: { buffer: offsets } }, { binding: 2, resource: { buffer: prepared?.tables ?? tablesBuf } },
+        { binding: 0, resource: { buffer: payload } }, { binding: 1, resource: { buffer: offsets } }, { binding: 2, resource: { buffer: tables } },
         { binding: 3, resource: { buffer: chk } }, { binding: 4, resource: { buffer: colsB } }, { binding: 5, resource: { buffer: outBuf } },
         { binding: 6, resource: { buffer: unitsB } }, { binding: 7, resource: { buffer: paramsBuf } }] });
       const group = bind(params);
@@ -604,7 +721,24 @@ export class RansResidentSet {
         const spanParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         spans.set(unit.tilt, { unit0: unitCursor + i, n: 1, params: spanParams, group: bind(spanParams) });
       });
-      groups.push({ payload, offsets, chk, params, group, unit0: unitCursor, units: planned.units, spans, bind });
+      const record: Group = { payload, offsets, chk, params, group, unit0: unitCursor, units: planned.units, spans, bind,
+        replacePayload(data, index) {
+          const priorData = payload, priorIndex = offsets;
+          // Packed readers need neither ANS probabilities nor decoder bookmarks.
+          // Keep a minimal writable binding to satisfy the shared pipeline layout.
+          const oldBookmarks = chk;
+          record.chk = chk = device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE });
+          if (tables !== tablesBuf) tables.destroy();
+          tables = tablesBuf;
+          record.payload = payload = data;
+          record.offsets = offsets = index;
+          record.group = bind(params);
+          for (const span of spans.values()) span.group = bind(span.params);
+          record.packed = true;
+          priorData.destroy(); priorIndex.destroy(); oldBookmarks.destroy();
+        },
+      };
+      groups.push(record);
       unitCursor += planned.units.length;
     }
     const loadMs = performance.now() - started;
@@ -632,6 +766,91 @@ export class RansResidentSet {
     return set;
   }
 
+  private packedPipe?: GPUComputePipeline;
+  private packing?: Promise<void>;
+  private foreground = new Set<Promise<void>>();
+
+  /** Keep optional drag preparation off the queue while a requested operation runs. */
+  async withForegroundCompute<T>(compute: () => Promise<T>): Promise<T> {
+    let release!: () => void;
+    const finished = new Promise<void>(resolve => { release = resolve; });
+    this.foreground.add(finished);
+    try { return await compute(); }
+    finally { this.foreground.delete(finished); release(); }
+  }
+
+  /** Prepare random-access integer counts one group at a time; ANS remains usable until each swap. */
+  prepareDetectorDrags(): Promise<void> {
+    return this.packing ??= this.packDetectorGroups();
+  }
+
+  private async packDetectorGroups(): Promise<void> {
+    const device = this.device;
+    const layout = device.createPipelineLayout({bindGroupLayouts: [this.intPipe.getBindGroupLayout(0)]});
+    const pipeline = (code: string, entryPoint: string) => device.createComputePipelineAsync({layout, compute: {
+      module: device.createShaderModule({code}), entryPoint,
+      constants: {BINARY_LOOKUP: Number(this.binaryLookup), DIRECT_LOOKUP: Number(this.directLookup)},
+    }});
+    const [measure, pack, integrate] = await Promise.all([
+      pipeline(PACK_WGSL, "measure"), pipeline(PACK_WGSL, "pack"), pipeline(PACKED_INTEGRATE, "integrate"),
+    ]);
+    this.packedPipe = integrate;
+    for (const group of this.groups) {
+      if (this.disposed) return;
+      const n = group.units.length * (this.K + 1);
+      // The packed index reserves five bits per column for the width.
+      if (group.units.length * this.K * Math.ceil(this.frames / 2) >= 2**32) continue;
+      const index = device.createBuffer({size:(n+1)*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC});
+      const params = device.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
+      const size = device.createBuffer({size:4,usage:GPUBufferUsage.MAP_READ|GPUBufferUsage.COPY_DST});
+      let data: GPUBuffer | undefined;
+      try {
+        const run = async (pipe: GPUComputePipeline, binding: GPUBindGroup) => {
+          for (let i = 0; i < group.units.length && !this.disposed; i++) {
+            while (this.foreground.size && !this.disposed) await Promise.all(this.foreground);
+            if (this.disposed) return;
+            device.queue.writeBuffer(params, 0, new Uint32Array([this.frames, this.K, this.scale, this.windows, 0, group.unit0 + i, 1, n]));
+            const enc = device.createCommandEncoder();
+            const pass = enc.beginComputePass();
+            pass.setPipeline(pipe);
+            pass.setBindGroup(0, binding);
+            pass.dispatchWorkgroups(Math.ceil(this.K / 64));
+            pass.end();
+            device.queue.submit([enc.finish()]);
+            await device.queue.onSubmittedWorkDone();
+          }
+        };
+        await run(measure,group.bind(params,index));
+        if (this.disposed) return;
+        const enc = device.createCommandEncoder();
+        enc.copyBufferToBuffer(index, n * 4, size, 0, 4);
+        device.queue.submit([enc.finish()]);
+        await size.mapAsync(GPUMapMode.READ);
+        const words = new Uint32Array(size.getMappedRange())[0];
+        size.unmap();
+        if (this.disposed) return;
+        if (words >= 2**27 || words*4 > Math.min(device.limits.maxStorageBufferBindingSize,device.limits.maxBufferSize)) continue;
+        // Highly sparse or outlier-heavy columns can be smaller as ANS. Limit expansion and
+        // preserve the verified decoder when the optional interactive index cannot fit.
+        if (words * 4 > group.payload.size * 1.75 + 1024 * 1024) continue;
+        let allocationError: GPUError | null;
+        device.pushErrorScope("out-of-memory");
+        try {
+          data = device.createBuffer({size: Math.max(4, words * 4), usage: GPUBufferUsage.STORAGE});
+        } finally {
+          allocationError = await device.popErrorScope();
+        }
+        if (allocationError || this.disposed) return;
+        await run(pack,group.bind(params,data,index));
+        if (this.disposed) return;
+        group.replacePayload(data,index);
+      } finally {
+        params.destroy(); size.destroy();
+        if (!group.packed) { index.destroy(); data?.destroy(); }
+      }
+    }
+  }
+
   /** Decode only the listed columns (bit0 add, bit1 subtract) for the given acquisitions; images stay on the GPU.
    * With `encoder`, the work is recorded there and the caller submits it.
    */
@@ -641,14 +860,30 @@ export class RansResidentSet {
     for (let k = 0; k < this.K; k++) { const flags = (added && added[k] ? 1 : 0) | (removed && removed[k] ? 2 : 0); if (flags) this.colsList[n++] = k | (flags << 24); }
     if (!n) return 0;
     this.device.queue.writeBuffer(this.colsBuf, 0, this.colsList.buffer as ArrayBuffer, 0, n * 4);
-    const enc = encoder ?? this.device.createCommandEncoder(); const pass = enc.beginComputePass(); pass.setPipeline(this.intPipe);
+    const chunked = !encoder && this.device.adapterInfo?.vendor?.toLowerCase() === "qualcomm";
+    const unitsPerSubmit = chunked ? Math.max(1, Math.floor(16_777_216 / (n * this.frames))) : Infinity;
+    let enc = encoder ?? this.device.createCommandEncoder();
+    let pass = enc.beginComputePass();
+    pass.setPipeline(this.intPipe);
     for (const group of this.groups) {
-      const spans: { unit0: number; n: number; params: GPUBuffer; group: GPUBindGroup }[] = tilts
+      const spans = tilts
         ? [...group.spans].filter(([tilt]) => tilts.has(tilt)).map(([, span]) => span)
         : [{ unit0: group.unit0, n: group.units.length, params: group.params, group: group.group }];
       for (const span of spans) {
-        this.device.queue.writeBuffer(span.params, 0, new Uint32Array([this.frames, this.K, this.scale, this.windows, n, span.unit0, span.n, this.T * this.scanCount]));
-        pass.setBindGroup(0, span.group); pass.dispatchWorkgroups(Math.ceil(n / 64), this.windows, span.n);
+        for (let first = 0; first < span.n; first += unitsPerSubmit) {
+          const count = Math.min(span.n - first, unitsPerSubmit);
+          this.device.queue.writeBuffer(span.params, 0, new Uint32Array([this.frames, this.K, this.scale, this.windows, n, span.unit0 + first, count, this.T * this.scanCount]));
+          pass.setPipeline(group.packed ? this.packedPipe! : this.intPipe);
+          pass.setBindGroup(0, span.group);
+          pass.dispatchWorkgroups(Math.ceil(n / 64), group.packed ? Math.ceil(this.frames / 64) : this.windows, count);
+          if (chunked && n * this.frames * span.n > 16_777_216) {
+            pass.end();
+            this.device.queue.submit([enc.finish()]);
+            enc = this.device.createCommandEncoder();
+            pass = enc.beginComputePass();
+            pass.setPipeline(this.intPipe);
+          }
+        }
       }
     }
     pass.setPipeline(this.applyPipe); pass.setBindGroup(0, this.applyGroup); pass.dispatchWorkgroups(Math.ceil(this.T * this.scanCount / 256));
@@ -659,40 +894,55 @@ export class RansResidentSet {
   /** Decode selected detector columns directly into caller-owned complex64 GPU storage.
    * Layout is [column, scan, real/imaginary]. Every native integer is exact.
    */
-  async columnsComplex(tilt: number, indices: Uint32Array, output: GPUBuffer): Promise<void> {
+  async columnsComplex(tilt: number, indices: Uint32Array, output: GPUBuffer, region?: readonly [number, number, number, number]): Promise<void> {
+    const encoder = this.device.createCommandEncoder();
+    const temps: GPUBuffer[] = [];
+    try {
+      this.encodeColumnsComplex(encoder, temps, tilt, indices, output, region);
+      this.device.queue.submit([encoder.finish()]);
+      await this.device.queue.onSubmittedWorkDone();
+    } finally { temps.forEach(buffer => buffer.destroy()); }
+  }
+
+  /** Record the decode before its consumer in the same GPU submission. */
+  encodeColumnsComplex(encoder: GPUCommandEncoder, temps: GPUBuffer[], tilt: number,
+    indices: Uint32Array, output: GPUBuffer, region?: readonly [number, number, number, number]): void {
     if (this.disposed) throw new Error("rANS resident set disposed");
     if (!Number.isInteger(tilt) || tilt < 0 || tilt >= this.T || !indices.length
       || indices.some(index => index >= this.K)) {
       throw new Error("Select existing detector columns from one acquisition.");
     }
-    if (output.size < indices.length * this.scanCount * 8) {
+    const stride = this.shape?.[1] ?? this.scanCount;
+    const [row, col, height, width] = region ?? [0, 0, this.scanCount / stride, stride];
+    if (![row, col, height, width].every(Number.isSafeInteger) || row < 0 || col < 0 || height < 1 || width < 1
+      || row + height > this.scanCount / stride || col + width > stride) throw new Error("Scan crop exceeds the QEM field.");
+    if (output.size < indices.length * height * width * 8) {
       throw new Error("BF output buffer must hold all selected columns and scan positions as complex64.");
     }
     const device = this.device;
     this.columnsPipe ??= device.createComputePipeline({
       layout: device.createPipelineLayout({bindGroupLayouts: [this.intPipe.getBindGroupLayout(0)]}),
       compute: {module: device.createShaderModule({code: COLUMNS_WGSL}), entryPoint: "decode_columns",
-        constants: {BINARY_LOOKUP: this.binaryLookup ? 1 : 0}},
+        constants: {BINARY_LOOKUP: this.binaryLookup ? 1 : 0, DIRECT_LOOKUP: this.directLookup ? 1 : 0}},
     });
-    const selected = device.createBuffer({size: indices.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST});
-    device.queue.writeBuffer(selected, 0, indices as Uint32Array<ArrayBuffer>);
-    const temps = [selected];
-    try {
-      const encoder = device.createCommandEncoder(); const pass = encoder.beginComputePass();
-      pass.setPipeline(this.columnsPipe);
-      for (const group of this.groups) {
-        const span = group.spans.get(tilt); if (!span) continue;
-        const params = device.createBuffer({size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
-        temps.push(params);
-        device.queue.writeBuffer(params, 0, new Uint32Array([
-          this.frames, this.K, this.scale, this.windows, indices.length, span.unit0, span.n, this.scanCount,
-        ]));
-        pass.setBindGroup(0, group.bind(params, output, selected, this.unitsBuf));
-        pass.dispatchWorkgroups(Math.ceil(indices.length / 64), this.windows, span.n);
-      }
-      pass.end(); device.queue.submit([encoder.finish()]);
-      await device.queue.onSubmittedWorkDone();
-    } finally { temps.forEach(buffer => buffer.destroy()); }
+    const geometry = new Uint32Array(indices.length + 5);
+    geometry.set(indices); geometry.set([stride, row, col, width, height], indices.length);
+    const selected = device.createBuffer({size: geometry.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST});
+    device.queue.writeBuffer(selected, 0, geometry);
+    temps.push(selected);
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(this.columnsPipe);
+    for (const group of this.groups) {
+      const span = group.spans.get(tilt); if (!span) continue;
+      const params = device.createBuffer({size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
+      temps.push(params);
+      device.queue.writeBuffer(params, 0, new Uint32Array([
+        this.frames, this.K, this.scale, this.windows, indices.length, span.unit0, span.n, this.scanCount,
+      ]));
+      pass.setBindGroup(0, group.bind(params, output, selected, this.unitsBuf));
+      pass.dispatchWorkgroups(Math.ceil(indices.length / 64), this.windows, span.n);
+    }
+    pass.end();
   }
 
   /** Sum or mean of selected patterns; accumulate paired-word integers before f64 division. */
@@ -705,27 +955,57 @@ export class RansResidentSet {
     }
     const scratch = this.device.createBuffer({ size: (K * 2 + 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const temps: GPUBuffer[] = [scratch];
-    const enc = this.device.createCommandEncoder(); const pass = enc.beginComputePass(); pass.setPipeline(this.gatherPipe);
-    const batchSize = this.device.limits.maxComputeWorkgroupsPerDimension;
-    for (const group of this.groups) {
-      const list: number[] = [];
-      for (const idx of scanIdxs) {
-        const block = Math.floor(idx / this.frames);
-        const unitIndex = group.units.findIndex((unit) => unit.tilt === tilt && unit.block === block);
-        if (unitIndex >= 0) list.push(group.unit0 + unitIndex, idx % this.frames);
+    try {
+      // Decode each requested checkpoint window once. Bound each submission so a
+      // full-pattern mean cannot monopolize an integrated GPU's command queue.
+      const windowsPerBatch = Math.max(1, Math.min(this.device.limits.maxComputeWorkgroupsPerDimension,
+        Math.floor(16_777_216 / (K * WINDOW))));
+      const positionsInOrder = [...scanIdxs].sort((a, b) => a - b);
+      for (const group of this.groups) {
+        const windows = new Map<number, { unit: number; window: number; rows: number[] }>();
+        let selected = 0;
+        for (const [i, record] of group.units.entries()) {
+          if (record.tilt !== tilt) continue;
+          const unit = group.unit0 + i;
+          const first = record.out_base - tilt * this.scanCount;
+          const count = (record.frameFlags & 0x0fffffff) || this.frames;
+          while (selected < positionsInOrder.length && positionsInOrder[selected] < first) selected++;
+          while (selected < positionsInOrder.length && positionsInOrder[selected] < first + count) {
+            const local = positionsInOrder[selected++] - first;
+            const window = Math.floor(local / WINDOW);
+            const key = unit * this.windows + window;
+            if (!windows.has(key)) windows.set(key, { unit, window, rows: [] });
+            windows.get(key)!.rows.push(local % WINDOW);
+          }
+        }
+        const all = [...windows.values()];
+        for (let offset = 0; offset < all.length; offset += windowsPerBatch) {
+          const batch = all.slice(offset, offset + windowsPerBatch);
+          const positions = new Uint32Array(batch.length * 4 + batch.reduce((n, entry) => n + entry.rows.length, 0));
+          let cursor = batch.length * 4;
+          batch.forEach(({ unit, window, rows }, i) => {
+            positions.set([unit, window, cursor, cursor + rows.length], i * 4);
+            positions.set(rows.sort((a, b) => a - b), cursor);
+            cursor += rows.length;
+          });
+          const cols = this.device.createBuffer({ size: positions.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+          const params = this.device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+          try {
+            this.device.queue.writeBuffer(cols, 0, positions);
+            this.device.queue.writeBuffer(params, 0, new Uint32Array([this.frames, K, this.scale, this.windows, batch.length, 0, 0, K]));
+            const enc = this.device.createCommandEncoder();
+            const pass = enc.beginComputePass();
+            pass.setPipeline(this.gatherPipe);
+            pass.setBindGroup(0, group.bind(params, scratch, cols, this.unitsBuf));
+            pass.dispatchWorkgroups(Math.ceil(K / 64), batch.length);
+            pass.end();
+            this.device.queue.submit([enc.finish()]);
+            if (all.length > windowsPerBatch) await this.device.queue.onSubmittedWorkDone();
+          } finally { cols.destroy(); params.destroy(); }
+        }
       }
-      // Each dispatch has its own positions and uniform, including ROIs larger
-      // than the device's workgroup limit. No scan positions are dropped.
-      for (let start = 0; start < list.length; start += batchSize * 2) {
-        const positions = new Uint32Array(list.slice(start, start + batchSize * 2));
-        const colsTmp = this.device.createBuffer({ size: positions.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }); temps.push(colsTmp);
-        this.device.queue.writeBuffer(colsTmp, 0, positions);
-        const params = this.device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }); temps.push(params);
-        this.device.queue.writeBuffer(params, 0, new Uint32Array([this.frames, K, this.scale, this.windows, positions.length / 2, 0, 0, K]));
-        pass.setBindGroup(0, group.bind(params, scratch, colsTmp, this.unitsBuf)); pass.dispatchWorkgroups(Math.ceil(K / 64), positions.length / 2);
-      }
-    }
-    pass.end();
+    } catch (error) { scratch.destroy(); throw error; }
+    const enc = this.device.createCommandEncoder();
     const readback = this.device.createBuffer({ size: (K * 2 + 1) * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     enc.copyBufferToBuffer(scratch, 0, readback, 0, (K * 2 + 1) * 4);
     this.device.queue.submit([enc.finish()]);
@@ -746,7 +1026,7 @@ export class RansResidentSet {
     }
     const device = this.device;
     if (!this.momentsPipe) {
-      this.momentsPipe = device.createComputePipeline({ layout: device.createPipelineLayout({ bindGroupLayouts: [this.intPipe.getBindGroupLayout(0)] }), compute: { module: device.createShaderModule({ code: MOMENTS_WGSL }), entryPoint: "gather_moments", constants: { BINARY_LOOKUP: this.binaryLookup ? 1 : 0 } } });
+      this.momentsPipe = device.createComputePipeline({ layout: device.createPipelineLayout({ bindGroupLayouts: [this.intPipe.getBindGroupLayout(0)] }), compute: { module: device.createShaderModule({ code: MOMENTS_WGSL }), entryPoint: "gather_moments", constants: { BINARY_LOOKUP: this.binaryLookup ? 1 : 0, DIRECT_LOOKUP: this.directLookup ? 1 : 0 } } });
       this.momentRatioPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: MOMENT_RATIO_WGSL }), entryPoint: "main" } });
     }
     const moments = device.createBuffer({ size: this.scanCount * 6 * 4, usage: GPUBufferUsage.STORAGE });
@@ -754,10 +1034,20 @@ export class RansResidentSet {
     pass.setPipeline(this.momentsPipe);
     for (const group of this.groups) {
       const span = group.spans.get(tilt); if (!span) continue;
-      const params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }); temps.push(params);
-      device.queue.writeBuffer(params, 0, new Uint32Array([this.frames, this.K, this.scale, this.windows, count, span.unit0, detCols, this.scanCount]));
-      pass.setBindGroup(0, group.bind(params, moments, indices, this.unitsBuf));
-      pass.dispatchWorkgroups(Math.ceil(count / 64), this.windows, span.n);
+      const mobile = device.adapterInfo?.vendor?.toLowerCase() === "qualcomm";
+      const unitsPerSubmit = mobile ? Math.max(1, Math.floor(16_777_216 / (count * this.frames))) : span.n;
+      for (let offset = 0; offset < span.n; offset += unitsPerSubmit) {
+        const params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        temps.push(params);
+        device.queue.writeBuffer(params, 0, new Uint32Array([this.frames, this.K, this.scale, this.windows, count, span.unit0 + offset, detCols, this.scanCount]));
+        // Queue bounded work before the caller submits the final ratio and display pass.
+        const encoder = mobile ? device.createCommandEncoder() : null;
+        const work = encoder?.beginComputePass() ?? pass;
+        work.setPipeline(this.momentsPipe);
+        work.setBindGroup(0, group.bind(params, moments, indices, this.unitsBuf));
+        work.dispatchWorkgroups(Math.ceil(count / 64), this.windows, Math.min(unitsPerSubmit, span.n - offset));
+        if (encoder) { work.end(); device.queue.submit([encoder.finish()]); }
+      }
     }
     const ratioParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }); temps.push(ratioParams);
     device.queue.writeBuffer(ratioParams, 0, new Uint32Array([this.scanCount, 0, 0, 0]));
