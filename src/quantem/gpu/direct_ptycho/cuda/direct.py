@@ -16,18 +16,6 @@ from quantem.gpu.direct_ptycho.cuda.kernels.engine import _THICK_GEOMETRY_SOURCE
 from quantem.gpu.direct_ptycho.higher_order import CHI_SOURCE, pack_coefficients
 from quantem.gpu.direct_ptycho.units import higher_order_arrays
 
-_evaluate = cp.ElementwiseKernel(
-    "raw complex128 basis, raw float64 eigen, float64 strength, int32 dim",
-    "complex64 coefficient",
-    """complex<double> value(0.0, 0.0);
-       for (int j = 0; j < dim; ++j) {
-           value += basis[i * dim + j] / (eigen[(i / dim) * dim + j] + strength);
-       }
-       coefficient = complex<float>(value.real(), value.imag());""",
-    "direct_ptycho_regularization",
-)
-
-
 _WARPS = 4
 _ENTRIES_PER_WARP = 128
 
@@ -164,105 +152,6 @@ __global__ void __launch_bounds__(128, COMPLEX ? 3 : 5) direct_normal_equations(
     }
 }
 
-// Eigenbasis of one phase system per thread: M = D G D / scale with D = diag(prior^-1/2),
-// M = V diag(lambda) V^H by cyclic complex Jacobi rotations, and
-// basis[i][j] = D_i V_ij (V^H D rhs / scale)_j, so any strength s evaluates as
-// x_i = sum_j basis[i][j] / (lambda_j + s). Each rotation first turns M_pq real
-// with a phase on column q, then zeroes it with a real rotation (c, s).
-// Every loop over N is unrolled so each index is a compile-time constant: with
-// runtime indices into these local arrays the optimized NVRTC build returned
-// wrong eigenvalues for N >= 5 (correct under -G).
-template <int N>
-__global__ void direct_eigenbasis(const complex<double>* gram, const complex<double>* rhs,
-                                  const double* inverse, double scale, int nfrequency,
-                                  double* eigen, complex<double>* basis) {
-    const int f = blockIdx.x * blockDim.x + threadIdx.x;
-    if (f >= nfrequency) return;
-    double mr[N][N], mi[N][N], vr[N][N], vi[N][N], d[N];
-    #pragma unroll
-    for (int i = 0; i < N; ++i) d[i] = inverse[f * N + i];
-    #pragma unroll
-    for (int i = 0; i < N; ++i)
-        #pragma unroll
-        for (int j = 0; j < N; ++j) {
-            const complex<double> g = gram[((long long)f * N + i) * N + j];
-            mr[i][j] = g.real() * d[i] * d[j] / scale;
-            mi[i][j] = g.imag() * d[i] * d[j] / scale;
-            vr[i][j] = i == j ? 1.0 : 0.0;
-            vi[i][j] = 0.0;
-        }
-    for (int sweep = 0; sweep < 30; ++sweep) {
-        double off = 0.0, diagonal = 0.0;
-        #pragma unroll
-        for (int i = 0; i < N; ++i) {
-            diagonal += mr[i][i] * mr[i][i];
-            #pragma unroll
-            for (int j = i + 1; j < N; ++j) off += mr[i][j] * mr[i][j] + mi[i][j] * mi[i][j];
-        }
-        if (off <= 1e-34 * diagonal) break;
-        #pragma unroll
-        for (int p = 0; p < N - 1; ++p)
-            #pragma unroll
-            for (int q = p + 1; q < N; ++q) {
-                const double magnitude = hypot(mr[p][q], mi[p][q]);
-                if (magnitude == 0.0) continue;
-                // e = M_pq / |M_pq|: column q times conj(e) and row q times e make M_pq real
-                const double er = mr[p][q] / magnitude, ei = mi[p][q] / magnitude;
-                #pragma unroll
-                for (int k = 0; k < N; ++k) {
-                    double re = mr[k][q], im = mi[k][q];
-                    mr[k][q] = re * er + im * ei; mi[k][q] = im * er - re * ei;
-                    re = vr[k][q]; im = vi[k][q];
-                    vr[k][q] = re * er + im * ei; vi[k][q] = im * er - re * ei;
-                }
-                #pragma unroll
-                for (int k = 0; k < N; ++k) {
-                    const double re = mr[q][k], im = mi[q][k];
-                    mr[q][k] = re * er - im * ei; mi[q][k] = im * er + re * ei;
-                }
-                const double theta = (mr[q][q] - mr[p][p]) / (2.0 * magnitude);
-                double t = 1.0 / (fabs(theta) + sqrt(theta * theta + 1.0));
-                if (theta < 0.0) t = -t;
-                const double c = 1.0 / sqrt(t * t + 1.0), s = t * c;
-                #pragma unroll
-                for (int k = 0; k < N; ++k) {
-                    double a = mr[k][p], b = mr[k][q];
-                    mr[k][p] = c * a - s * b; mr[k][q] = s * a + c * b;
-                    a = mi[k][p]; b = mi[k][q];
-                    mi[k][p] = c * a - s * b; mi[k][q] = s * a + c * b;
-                    a = vr[k][p]; b = vr[k][q];
-                    vr[k][p] = c * a - s * b; vr[k][q] = s * a + c * b;
-                    a = vi[k][p]; b = vi[k][q];
-                    vi[k][p] = c * a - s * b; vi[k][q] = s * a + c * b;
-                }
-                #pragma unroll
-                for (int k = 0; k < N; ++k) {
-                    double a = mr[p][k], b = mr[q][k];
-                    mr[p][k] = c * a - s * b; mr[q][k] = s * a + c * b;
-                    a = mi[p][k]; b = mi[q][k];
-                    mi[p][k] = c * a - s * b; mi[q][k] = s * a + c * b;
-                }
-                mr[p][q] = mi[p][q] = mr[q][p] = mi[q][p] = 0.0;
-            }
-    }
-    #pragma unroll
-    for (int j = 0; j < N; ++j) {
-        // projected = (V^H D rhs / scale)_j
-        double pr = 0.0, pi = 0.0;
-        #pragma unroll
-        for (int i = 0; i < N; ++i) {
-            const complex<double> b = rhs[f * N + i];
-            const double br = b.real() * d[i] / scale, bi = b.imag() * d[i] / scale;
-            pr += vr[i][j] * br + vi[i][j] * bi;
-            pi += vr[i][j] * bi - vi[i][j] * br;
-        }
-        eigen[f * N + j] = mr[j][j];
-        #pragma unroll
-        for (int i = 0; i < N; ++i)
-            basis[((long long)f * N + i) * N + j] = complex<double>(d[i] * (vr[i][j] * pr - vi[i][j] * pi),
-                                                                    d[i] * (vr[i][j] * pi + vi[i][j] * pr));
-    }
-}
 """
 )
 _pixel_terms = cp.RawKernel(_SOURCE, "direct_pixel_terms", options=("-std=c++17",))
@@ -272,8 +161,11 @@ _pixel_terms = cp.RawKernel(_SOURCE, "direct_pixel_terms", options=("-std=c++17"
 # The regularized normal equations (G + diag(p)) x = b of one frequency per
 # thread, Hermitian positive definite for p > 0, so a float64 Cholesky
 # factorization solves them stably (condition below about 1e2 on the test field
-# at strength 0.03). Loops are unrolled for the same NVRTC reason as
-# direct_eigenbasis.
+# at strength 0.03). Loops are unrolled: with runtime indices into local
+# arrays the optimized NVRTC build has returned wrong results. Checked against
+# cp.linalg.solve for 1 to 64 aliases (8x). Every phase solve uses it since
+# 11-16; the per-frequency Jacobi eigenbasis before it was wrong at 16 aliases
+# (4x with a coarse scan step) and 400x slower there.
 _CHOLESKY_SOURCE = r"""
 #include <cupy/complex.cuh>
 template <int N>
@@ -345,15 +237,6 @@ def _cholesky(dim: int):
     name = f"direct_cholesky<{dim}>"
     if name not in _kernels:
         module = cp.RawModule(code=_CHOLESKY_SOURCE, options=("-std=c++17",), name_expressions=[name])
-        _kernels[name] = module.get_function(name)
-    return _kernels[name]
-
-
-def _eigenbasis(count: int):
-    """The batched Jacobi eigenbasis kernel for phase systems of one alias count."""
-    name = f"direct_eigenbasis<{count}>"
-    if name not in _kernels:
-        module = cp.RawModule(code=_SOURCE, options=("-std=c++17",), name_expressions=[name])
         _kernels[name] = module.get_function(name)
     return _kernels[name]
 
@@ -494,8 +377,6 @@ class _Group:
     gram: object
     rhs: object
     prior: object
-    basis: object | None
-    eigen: object | None
 
 
 @dataclass
@@ -520,7 +401,6 @@ class PreparedDirect:
         complex_object: bool,
         smoothness_inv_A: float,
         detector_weighting: str,
-        eigenbasis: bool = True,
         detector_mask=None,
     ):
         """Build normal equations once; strengths are applied at evaluation.
@@ -531,9 +411,8 @@ class PreparedDirect:
         detector weights and g = G_qk / dose the measured spectrum. Everything
         but T depends on the data alone and is kept on the engine
         (`_layout`), so a change of optics costs one kernel per alias count,
-        which evaluates T and reduces all three (`_normal_equations`), and for
-        phase one batched eigendecomposition (skipped with ``eigenbasis=False``
-        by a `DragWindow` node, which solves by Cholesky instead).
+        which evaluates T and reduces all three (`_normal_equations`). Each
+        strength is then one float64 Cholesky solve per frequency (`solve`).
         """
         basis = optics.get("scan_basis")
         transform = None if basis is None else np.linalg.inv(np.asarray(basis)).T
@@ -608,20 +487,8 @@ class PreparedDirect:
             power += augmented[:, dim, dim].real.sum() / layout.dose**2
             if not count:
                 continue
-            if complex_object or not eigenbasis:
-                prior = cp.concatenate((group.prior, group.prior), axis=1) if complex_object else group.prior
-                basis = eigen = None
-            else:
-                prior = group.prior
-                eigen = cp.empty((size, count), cp.float64)
-                basis = cp.empty((size, count, count), cp.complex128)
-                _eigenbasis(count)(
-                    (-(-size // 128),),
-                    (128,),
-                    (gram, cp.ascontiguousarray(rhs), group.inverse, np.float64(layout.scale_value),
-                     np.int32(size), eigen, basis),
-                )
-            groups.append(_Group(group.rows, group.cols, gram, rhs, prior, basis, eigen))
+            prior = cp.concatenate((group.prior, group.prior), axis=1) if complex_object else group.prior
+            groups.append(_Group(group.rows, group.cols, gram, rhs, prior))
         return cls(layout.shape, factor, groups, complex_object, layout.scale, power, layout.dose)
 
     def phase_error(self, phase) -> float:
@@ -668,14 +535,14 @@ class PreparedDirect:
                     ..., 0
                 ].astype(cp.complex64)
             else:
-                nfrequency, dim = group.eigen.shape
-                coefficients = _evaluate(
-                    group.basis,
-                    group.eigen,
-                    phase_damp,
-                    dim,
-                    size=nfrequency * dim,
-                ).reshape(nfrequency, dim)
+                # (G + phase_damp scale P) x = b, float64 Cholesky per frequency, as DragWindow solves
+                nfrequency, dim = group.rhs.shape
+                coefficients = cp.empty((nfrequency, dim), cp.complex64)
+                _cholesky(dim)(
+                    (-(-nfrequency // 64),), (64,),
+                    (group.gram, cp.ascontiguousarray(group.rhs),
+                     cp.ascontiguousarray(group.prior * self.scale * phase_damp), np.int32(nfrequency), coefficients),
+                )
             if compute_loss:
                 precise = coefficients.astype(cp.complex128)
                 prediction = (group.gram @ precise[..., None])[..., 0]
@@ -720,7 +587,7 @@ class DragWindow:
         self.engine, self.optics, self.control, self.factor = engine, optics, control, factor
         self.complex_object = complex_object
         self.options = dict(complex_object=complex_object, smoothness_inv_A=smoothness_inv_A,
-                            detector_weighting=detector_weighting, eigenbasis=False)
+                            detector_weighting=detector_weighting)
         self.series = chebyshev.series(engine, optics["aberrations"], control)
         self.template = None
 

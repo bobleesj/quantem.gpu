@@ -58,7 +58,7 @@ def ptycho():
 
 
 def test_prepared_systems_match_previous_implementation(ptycho):
-    """Gram, right side, eigenvalues, power and both images against the complex128 GEMM reference."""
+    """Gram, right side, power and both images against the complex128 GEMM reference."""
     engine = ptycho._backend()._get_accelerator()
     for complex_object in (False, True):
         for weighting in ("uniform", "inverse_mean"):
@@ -73,9 +73,6 @@ def test_prepared_systems_match_previous_implementation(ptycho):
                 cp.testing.assert_array_equal(group.prior, reference.prior)
                 assert float(cp.abs(group.gram - reference.gram).max()) <= 1e-6 * float(cp.abs(reference.gram).max())
                 assert float(cp.abs(group.rhs - reference.rhs).max()) <= 1e-6 * float(cp.abs(reference.rhs).max())
-                if not complex_object:
-                    eigen, expected = cp.sort(group.eigen, axis=1), cp.sort(reference.eigen, axis=1)
-                    assert float(cp.abs(eigen - expected).max()) <= 1e-6 * float(cp.abs(expected).max())
             for strengths in ((0.03, 0.03), (0.01, 0.3)):
                 wave, _ = new.solve(*strengths, compute_loss=False)
                 expected, _ = old.solve(*strengths, compute_loss=False)
@@ -308,3 +305,28 @@ def test_damping_selection_returns_full_data_phase(ptycho):
                                   upsample=3, compute_loss=False)
     cp.testing.assert_array_equal(result.phase, expected.phase)
     assert len(result.show("damping").axes) == 2
+
+
+def test_phase_solve_matches_lu_at_every_alias_count():
+    """Each frequency's (G + p) x = b, as solve() runs it, against cp.linalg.solve for 1 to 64 aliases (8x).
+
+    The per-frequency Jacobi eigenbasis it replaced was wrong at 16 aliases (4x with a coarse scan step, 11-16).
+    """
+    from quantem.gpu.direct_ptycho.cuda.direct import _cholesky
+
+    random = cp.random.default_rng(16)
+    frequencies = 512
+    for aliases in (*range(1, 17), 24, 64):
+        shape = (frequencies, aliases, aliases)
+        a = random.standard_normal(shape) + 1j * random.standard_normal(shape)
+        gram = cp.ascontiguousarray(a @ a.conj().transpose(0, 2, 1))
+        rhs = cp.ascontiguousarray(random.standard_normal((frequencies, aliases))
+                                   + 1j * random.standard_normal((frequencies, aliases)))
+        penalty = cp.ascontiguousarray(random.uniform(1, 3, (frequencies, aliases)) * 0.03)
+        solved = cp.empty((frequencies, aliases), cp.complex64)
+        _cholesky(aliases)((-(-frequencies // 64),), (64,), (gram, rhs, penalty, np.int32(frequencies), solved))
+        system = gram.copy()
+        diagonal = cp.arange(aliases)
+        system[:, diagonal, diagonal] += penalty
+        expected = cp.linalg.solve(system, rhs[..., None])[..., 0]
+        assert float(cp.abs(solved - expected).max()) <= 1e-6 * float(cp.abs(expected).max()), aliases
