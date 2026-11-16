@@ -50,6 +50,9 @@ from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
 
 # Coordinates 0..2 of the fifth-order vector: C10 and the two C12 components.
 VARIED = slice(0, 3)
+# A defocus refit that moves C10 more than this from the last frame's, or ends on its search bounds, is not trusted:
+# the frame keeps the last frame's optics (one bad scan must not carry into the phases and the drift after it).
+MAX_DEFOCUS_STEP_NM = 50.0
 EVALUATION_CAP = 300
 # Pair confidence below which a frame is not added to the combined image. On the measured series every pair
 # drift rejected as a wrong region or lattice image scored at most 0.034 and every neighbour pair at
@@ -259,6 +262,20 @@ class _FrameStep:
                     if key != "phase_of_mean":
                         _add(canvas, reconstructed[key], shift)
         return shift, score
+
+    def untrusted(self, coordinates, optics, previous) -> str:
+        """Why this frame's refit is not used (empty when it is): C10 moved more than ``MAX_DEFOCUS_STEP_NM`` from
+        the last frame's, or the refit ended on a search bound of C10 or C12."""
+        varied = np.asarray(coordinates, dtype=float)[VARIED]
+        span = self.bounds[:, 1] - self.bounds[:, 0]
+        edge = (np.abs(varied - self.bounds[:, 0]) < 1e-6 * span) | (np.abs(varied - self.bounds[:, 1]) < 1e-6 * span)
+        if edge.any():
+            return "the refit ended on its search bound"
+        if previous is not None and "C10_nm" in optics and "C10_nm" in previous:
+            jump = abs(float(optics["C10_nm"]) - float(previous["C10_nm"]))
+            if jump > MAX_DEFOCUS_STEP_NM:
+                return f"defocus moved {jump:.0f} nm from the last frame (more than {MAX_DEFOCUS_STEP_NM:g} nm)"
+        return ""
 
     def advance(self, coordinates):
         """The next frame's refit starts from this frame's low-order values."""
@@ -690,6 +707,13 @@ class DirectPtychoSeries:
                     step.rebase(fitted)
             else:
                 objective, coordinates, evaluations, stop, optics, tilt, depth = step.refit(session, clock, began)
+                kept = step.untrusted(coordinates, optics, self.aberrations[-1] if self.aberrations else None)
+                if kept:
+                    coordinates = np.array(step.reference, dtype=float)
+                    coordinates[VARIED] = step.start
+                    optics, tilt, depth = public_params(objective, coordinates, 5)
+                    stop = f"kept the last frame's optics: {kept}"
+                    print(f"{name}: {stop}", flush=True)
             chosen, reconstructed, sampling, seconds = step.run(session, optics, tilt, depth, state.factor,
                                                                         state.strengths, data)
             clock.update(seconds)
