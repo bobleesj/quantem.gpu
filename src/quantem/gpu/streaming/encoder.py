@@ -67,6 +67,7 @@ class LiveEncoder:
         self.staging, self.staged = None, 0
         self.started = time.perf_counter()
         method = normalize_hot_pixel_correction(hot_pixel_correction)
+        self._method = method
         with cp.cuda.Device(self.device):
             self.corrector = CUDAHotPixelCorrector(self.pixel_mask, method)
             valid = np.ones(self.detector_shape, bool)
@@ -131,6 +132,21 @@ class LiveEncoder:
             self.updated = cp.cuda.Event()
             self.updated.record()
 
+    def _mask_flagged_pixels(self, first) -> None:
+        """No pixel mask announced: the pixels at the counter's maximum (2**16 - 1 or 2**32 - 1, never a count) in
+        every pattern of the first batch are the detector's flagged pixels; they are filled by the same correction
+        as an announced mask. 8-bit counts are left alone: 255 can be a real count. (2026-11-16: the ARINA stream
+        announced no mask and six flagged pixels at 65535 reached every scan.)"""
+        if self._method == "none" or self.dtype not in (np.dtype("uint16"), np.dtype("uint32")):
+            return
+        flagged = cp.all(first == np.iinfo(self.dtype).max, axis=0)
+        if not bool(flagged.any()):
+            return
+        self.pixel_mask = flagged.get().astype(np.uint32)
+        self.corrector = CUDAHotPixelCorrector(self.pixel_mask, self._method)
+        self.metadata["pixel_mask_source"] = (f"{int(flagged.sum())} pixels at {np.iinfo(self.dtype).max} in every "
+                                              "pattern of the first batch (no mask announced)")
+
     def _add(self, first_image_id: int, patterns) -> None:
         if self.source.is_released:
             raise ValueError("This live acquisition was released; start another acquisition.")
@@ -152,6 +168,8 @@ class LiveEncoder:
             raise ValueError(f"Batch overruns the {self.total}-pattern scan.")
         with cp.cuda.Device(self.device):
             raw = cp.ascontiguousarray(raw)
+            if self.received == 0 and self.pixel_mask is None:
+                self._mask_flagged_pixels(raw)
             self.corrector.apply(raw)
             offset = 0
             while offset < count:

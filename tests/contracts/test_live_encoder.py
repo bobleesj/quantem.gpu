@@ -180,3 +180,23 @@ def test_selected_frame_does_not_wait_for_a_virtual_image(monkeypatch):
         session.close()
         live.release()
     assert not worker.is_alive() and not errors
+
+
+def test_flagged_pixels_are_filled_when_no_mask_is_announced():
+    """2026-11-16: the ARINA stream announced no pixel mask; pixels at 65535 in every pattern are filled as if it had."""
+    cp = pytest.importorskip("cupy")
+    if not cp.cuda.runtime.getDeviceCount():
+        pytest.skip("CUDA hardware required")
+    raw = cp.full((64 * 64, 16, 16), 7, dtype=cp.uint16)
+    raw[:, 5, 6] = 65535                                  # flagged in every pattern
+    raw[3, 9, 9] = 65535                                  # one bright pattern at one pixel: not a flag
+    live = LiveEncoder((64, 64), (16, 16))
+    try:
+        live.add(0, raw.copy())
+        assert live.pixel_mask is not None and live.pixel_mask.sum() == 1 and live.pixel_mask[5, 6]
+        assert "no mask announced" in live.metadata["pixel_mask_source"]
+        decoded = live.finish().data.decode_scan_range_device(0, live.total).get()
+        assert (decoded[:, 5, 6] == 7).all()                # the 3 x 3 median of its neighbours
+        assert decoded[3, 9, 9] == 65535                    # left as measured
+    finally:
+        live.release()
