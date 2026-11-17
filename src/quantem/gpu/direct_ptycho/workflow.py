@@ -80,6 +80,11 @@ from quantem.gpu.direct_ptycho.units import (
 MAP_OPPOSITE_BRANCH = True
 
 
+
+#: The subfolder a scan's calibration is saved in, beside the scan: the same as its saved phases
+#: (Spectra's ``direct-ptycho/``), from a notebook or the scanning GUI alike (2026-11-17; before: ``calibration/``).
+CALIBRATION_FOLDER = "direct-ptycho"
+
 def _browser_qem_source(data: object) -> dict[str, object] | None:
     """Retain the identity of an unchanged, native-count QEM acquisition."""
     if not isinstance(data, Dataset4dstem):
@@ -3468,7 +3473,7 @@ class DirectPtycho:
                 if not self.source_path:
                     raise ValueError("Open a saved scan or use the ARINA session's latest scan to save its calibration.")
                 source = Path(self.source_path)
-                path = source.parent / "calibration" / source.with_suffix(".json").name
+                path = source.parent / CALIBRATION_FOLDER / source.with_suffix(".json").name
         if method == "all":
             if self.backend != "cuda":
                 raise NotImplementedError("method='all' requires CUDA; use method='phase_of_mean' on other backends.")
@@ -3914,7 +3919,7 @@ class DirectPtycho:
         return self._streamed.num_bright_field_pixels if self._streamed is not None else self._backend().num_bright_field_pixels
 
     def save_calibration(self, save_dir: str | Path) -> Path:
-        """Save this session's calibration in ``save_dir/calibration`` and return the file.
+        """Save this session's calibration in ``save_dir/direct-ptycho`` (``CALIBRATION_FOLDER``) and return the file.
 
         With ``show()`` open, the file holds what ShowPtycho shows: its aberrations as the sliders stand, rotation,
         sample tilt and depth, method and damping. Otherwise it holds the latest ``aberrations()`` fit. The file is
@@ -3937,7 +3942,7 @@ class DirectPtycho:
             name = Path(self.source_path).with_suffix(".json").name
         else:
             name = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + ".json"
-        path = Path(save_dir).expanduser() / "calibration" / name
+        path = Path(save_dir).expanduser() / CALIBRATION_FOLDER / name
         viewer = getattr(self, "_viewer", None)
         viewer = None if viewer is None else viewer()
         if viewer is not None:

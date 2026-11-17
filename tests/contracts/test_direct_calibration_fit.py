@@ -150,7 +150,7 @@ def test_save_calibration_names_the_file_after_the_scan_and_needs_a_fit(tmp_path
     with pytest.raises(ValueError, match="no fit to save"):
         session.save_calibration(tmp_path)
     session._aberration_search = Fit()
-    assert session.save_calibration(tmp_path) == tmp_path / "calibration" / "scan_7.json"
+    assert session.save_calibration(tmp_path) == tmp_path / "direct-ptycho" / "scan_7.json"
 
     class Viewer:
         def save_calibration(self, path):
@@ -160,9 +160,9 @@ def test_save_calibration_names_the_file_after_the_scan_and_needs_a_fit(tmp_path
     viewer = Viewer()
     session._viewer = lambda: viewer                # show() keeps a weak reference to its ShowPtycho
     session._input_dataset, session.source_path = None, str(tmp_path / "data" / "scan_9_master.h5")
-    assert session.save_calibration(tmp_path) == tmp_path / "calibration" / "scan_9_master.json"
-    assert written == [tmp_path / "calibration" / "scan_7.json",
-                       ("viewer", tmp_path / "calibration" / "scan_9_master.json")]
+    assert session.save_calibration(tmp_path) == tmp_path / "direct-ptycho" / "scan_9_master.json"
+    assert written == [tmp_path / "direct-ptycho" / "scan_7.json",
+                       ("viewer", tmp_path / "direct-ptycho" / "scan_9_master.json")]
 
 
 @pytest.fixture(scope="module")
