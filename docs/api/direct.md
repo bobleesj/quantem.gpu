@@ -144,6 +144,24 @@ acquisition identity in ShowPtycho's calibration format. It computes no phase
 or loss; file fingerprinting and writing happen only when called. It requires
 a calibrated file-backed session and selects Auto sampling for the viewer.
 Use the widget's own `save_calibration()` to save subsequent interactive edits.
+
+`ptycho.save_calibration(save_dir)` saves the session instead of one fit: with `ptycho.show()` open it writes
+what ShowPtycho shows (the aberrations as its sliders stand, the rotation, method and damping), otherwise the
+latest fit, as `save_dir/calibration/<scan>.json`. `DirectPtycho.load_calibration(path)` gives that
+calibration back as a fit, with no scan and no fitting, for `ptycho.series(fit=...)` and `ptycho.run(fit)`:
+
+```python
+ptycho.show()                                      # fit, look, adjust
+path = ptycho.save_calibration("results")          # results/calibration/<scan>.json
+fit = DirectPtycho.load_calibration(path)          # later, or in another kernel
+series = ptycho.series(fit=fit, refit="defocus", method="phase")
+```
+
+The saved aberrations are the model. The loader computes the fit coordinates a series refits from out of them,
+so an edited calibration loads too, and takes the search bounds from the record's `max_order` and
+`higher_order_limit`. On two real 512 x 512 scans the next scan's phase from the loaded fit equals the one from
+the original fit exactly with `refit="none"`, within 1e-5 rad with `"defocus"` and 2e-4 rad with `"full"`
+(the phase's standard deviation is 0.04 rad).
 This JSON contains the correction and calibration, not the reconstructed
 image or the convergence history; `aberrations(save_dir=...)` saves the
 complete fit for reuse.

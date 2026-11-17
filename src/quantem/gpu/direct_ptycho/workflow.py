@@ -54,7 +54,7 @@ from quantem.gpu.direct_ptycho.persistence import (
     source_identity,
 )
 from quantem.gpu.direct_ptycho.neural_phase import NeuralPhaseModel
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array, reference_phase_limits
 from quantem.gpu.direct_ptycho.trials import (
     choose_trials,
     label_trials,
@@ -2129,7 +2129,9 @@ class DirectPtycho:
             from quantem.gpu.direct_ptycho.probe_explorer import ProbeExplorer
 
             return ProbeExplorer(self, **options)
-        return ShowPtycho(self, **options)
+        viewer = ShowPtycho(self, **options)
+        self._viewer = ref(viewer)                  # save_calibration() writes what it shows
+        return viewer
 
     def _show_trials(self, *, best: int | None = None, last: int | None = None,
                      first: int | None = None, upsample: int | Literal["auto"] = "auto",
@@ -3195,7 +3197,7 @@ class DirectPtycho:
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
             object_sampling_A=self._output_sampling(upsample), upsample=upsample,
             amplitude_estimated=False,
-            phase_clim=correction.phase_limits if correction is not None else None,
+            phase_clim=reference_phase_limits(correction) if correction is not None else None,
             fit_scan_region=correction.fit_scan_region if correction is not None else None,
             **evidence,
         )
@@ -3912,6 +3914,53 @@ class DirectPtycho:
         """Number of pixels in the complete detected bright-field disk."""
 
         return self._streamed.num_bright_field_pixels if self._streamed is not None else self._backend().num_bright_field_pixels
+
+    def save_calibration(self, save_dir: str | Path) -> Path:
+        """Save this session's calibration in ``save_dir/calibration`` and return the file.
+
+        With ``show()`` open, the file holds what ShowPtycho shows: its aberrations as the sliders stand, rotation,
+        sample tilt and depth, method and damping. Otherwise it holds the latest ``aberrations()`` fit. The file is
+        named after the scan (its saved file, or its acquisition time for a scan in GPU memory), so one scan has
+        one calibration and a second save replaces it. ``DirectPtycho.load_calibration(path)`` gives the fit back.
+
+        Examples
+        --------
+        >>> ptycho.show()  # doctest: +SKIP
+        >>> path = ptycho.save_calibration("results")  # doctest: +SKIP
+        >>> fit = DirectPtycho.load_calibration(path)  # doctest: +SKIP
+        """
+        from datetime import UTC, datetime
+
+        dataset = getattr(self, "_input_dataset", None)
+        destination = None if dataset is None else dataset.metadata.get("direct_calibration_destination")
+        if destination is not None:
+            name = Path(destination).name
+        elif self.source_path:
+            name = Path(self.source_path).with_suffix(".json").name
+        else:
+            name = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + ".json"
+        path = Path(save_dir).expanduser() / "calibration" / name
+        viewer = getattr(self, "_viewer", None)
+        viewer = None if viewer is None else viewer()
+        if viewer is not None:
+            return viewer.save_calibration(path)
+        if self._aberration_search is None:
+            raise ValueError("This session has no fit to save: fit in ptycho.show() or with ptycho.aberrations() first.")
+        return self._aberration_search.save_calibration(path)
+
+    @classmethod
+    def load_calibration(cls, path: str | Path) -> DirectPtychoResult:
+        """The fit a saved calibration describes, with no scan and no fitting: ``series(fit=...)`` and ``run(fit)``
+        use it as they use the fit that was saved, also after its aberrations were edited in ShowPtycho.
+
+        Examples
+        --------
+        >>> fit = DirectPtycho.load_calibration("results/calibration/scan.json")  # doctest: +SKIP
+        >>> series = ptycho.series(fit=fit, refit="defocus", method="phase")  # doctest: +SKIP
+        """
+        from quantem.gpu.direct_ptycho.calibration import load_calibration
+
+        return load_calibration(path)
 
     @_on_scan_gpu
     def set_rotation(self, scan_detector_rotation_deg: float) -> None:
