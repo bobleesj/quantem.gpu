@@ -1,7 +1,9 @@
 """Open original files, query native DPs, and retain measurements in QEM."""
 
-import os
 import hashlib
+import os
+import subprocess
+import sys
 
 import h5py
 import numpy as np
@@ -177,8 +179,7 @@ def test_float_original_to_qem_and_native_patterns(
     inspected = io.inspect(original, scan_shape=(5, 7))
     assert inspected.ready and inspected.detector_shape == (128, 128)
     assert inspected.scan_shape == (5, 7) and inspected.dtype == "float32"
-    options = {} if format_name == "numpy" else {"backend": backend}
-    with io.load(original, scan_shape=(5, 7), verbose=False, **options) as loaded:
+    with io.load(original, scan_shape=(5, 7), device=backend, verbose=False) as loaded:
         assert loaded.representation.value == "encoded"
         assert loaded.metadata["backend"] == backend
         assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= limit
@@ -466,3 +467,25 @@ def test_gzip_frame_stack_loads_every_stored_value(tmp_path, backend, stored):
         assert loaded.metadata["load_timings"]["storage_reader"] == "bounded-hdf5"
         restored = _host(loaded[:, :]).reshape(expected.shape)
         assert restored.dtype == np.float32 and restored.tobytes() == expected.tobytes()
+
+
+def test_float32_bitshuffle_opens_in_a_fresh_process(tmp_path, backend):
+    """Opening compressed float32 measurements does not require a previous save."""
+    import hdf5plugin
+
+    source = tmp_path / "scan_master.h5"
+    values = np.arange(8 * 16 * 16, dtype=np.float32).reshape(8, 16, 16) / 8
+    with h5py.File(source, "w") as handle:
+        handle.create_dataset("entry/data/data", data=values, chunks=(1, 16, 16),
+                              **hdf5plugin.Bitshuffle(cname="lz4"))
+    reader = """
+import sys
+import numpy as np
+from quantem.gpu import io
+
+with io.load(sys.argv[1], device=sys.argv[2], scan_shape=(2, 4)) as scan:
+    actual = scan.read().cpu().numpy()
+    expected = np.arange(actual.size, dtype=np.float32).reshape(2, 4, 16, 16) / 8
+    np.testing.assert_array_equal(actual, expected)
+"""
+    subprocess.run([sys.executable, "-c", reader, str(source), backend], check=True)

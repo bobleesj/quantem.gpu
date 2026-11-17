@@ -6,6 +6,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Open bitshuffle-compressed float32 HDF5 scans directly with `io.load()` in a fresh Python process.
+
 - Check the opposite rotation independently when a joint aberration fit reaches a tilt bound.
 
 - Keep HDF5 acquisition loading and MAPED block export on the selected CUDA device.
