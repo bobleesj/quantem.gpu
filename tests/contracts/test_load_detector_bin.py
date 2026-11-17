@@ -71,3 +71,28 @@ def test_detector_bin_is_refused_where_it_would_be_ignored(tmp_path):
     path, _ = master(tmp_path)
     with pytest.raises(ValueError, match="1, 2, 4 or 8"):
         io.load(str(path), detector_bin=3, verbose=False)
+
+
+def test_a_small_gpu_decodes_in_64_position_blocks_with_the_same_counts(tmp_path, monkeypatch):
+    """2026-11-17: on the A400 a 512-position block needed 1.2 GB of staging; a GPU with little free memory decodes in
+    blocks of 64 positions instead, and every count is the same as h5py reads it."""
+    from quantem.gpu import io
+    from quantem.gpu.io import encoded
+
+    rng = np.random.default_rng(5)
+    data = rng.poisson(3.0, size=(256, 16, 16)).astype(np.uint16)                    # 16 x 16 positions
+    path = tmp_path / "small_master.h5"
+    with h5py.File(path, "w") as handle:
+        handle.create_group("entry/instrument/detector/detectorSpecific")["ntrigger"] = 256
+        with h5py.File(tmp_path / "small_data_000001.h5", "w") as part:
+            part.create_dataset("entry/data/data", data=data, chunks=(1, 16, 16), **hdf5plugin.Bitshuffle(cname="lz4"))
+        handle["entry/data/data_000001"] = h5py.ExternalLink("small_data_000001.h5", "entry/data/data")
+    real = cp.cuda.runtime.memGetInfo
+    staging = 128 * 1024 ** 2 + 70 * 16 * 16 * 8 * 8                                # room for 70 positions: blocks of 64
+    monkeypatch.setattr(encoded.cp.cuda.runtime, "memGetInfo", lambda: (staging, real()[1]))
+    scan = io.load(str(path), verbose=False)
+    monkeypatch.setattr(encoded.cp.cuda.runtime, "memGetInfo", real)
+    try:
+        np.testing.assert_array_equal(cp.asnumpy(scan.read(output="native")).reshape(256, 16, 16), data)
+    finally:
+        scan.close()

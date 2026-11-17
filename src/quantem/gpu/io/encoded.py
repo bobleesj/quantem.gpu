@@ -34,6 +34,7 @@ from quantem.gpu.resident.mps.hot_pixels import MPSHotPixelCorrector
 from quantem.gpu.resident.mps.spatial import build_index
 
 _CUDA_MAX_STAGING_SCANS = 16384
+_CUDA_MIN_STAGING_SCANS = 64          # the smallest decode block (a small GPU), positions
 
 
 def _prepare_cuda_loader() -> None:
@@ -157,13 +158,16 @@ def load_h5_ans(
             _CUDA_MAX_STAGING_SCANS,
             max(1, int((free - 128 * 1024**2) // (per_scan * 8))),
         )
-        if chunk_scans < min(512, math.prod(info.scan_shape)):
+        # A small GPU (the ARINA PC's 4 GB A400) decodes in blocks of 64 positions: 0.15 GB of staging instead of
+        # 1.2 GB, the same counts (11-17); larger GPUs keep blocks of 512 or more.
+        if chunk_scans < min(_CUDA_MIN_STAGING_SCANS, math.prod(info.scan_shape)):
             raise MemoryError(
-                "Insufficient CUDA staging space; close another resident document "
-                "before loading."
+                f"Not enough free GPU memory to decode this scan ({free / 1e9:.2f} GB free): close or release the "
+                "scans loaded before, then load it again."
             )
         chunk_scans = (min(512, arrays.MAX_INGEST_BYTES // (math.prod(shape[2:]) * dtype.itemsize))
-                       if bit_lanes else max(512, chunk_scans // 512 * 512))
+                       if bit_lanes else (chunk_scans // 512 * 512 if chunk_scans >= 512
+                                          else chunk_scans // _CUDA_MIN_STAGING_SCANS * _CUDA_MIN_STAGING_SCANS))
         dataset_path = dataset_path or info.metadata.get("dataset_path")
         dataset = None
         reader = None
