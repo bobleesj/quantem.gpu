@@ -20,6 +20,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 - WebGPU decodes selected scan windows once for diffraction-pattern reductions and reuses exact detector moments across DPC views.
 
+- Direct ptychography previews use the scan GPU on fresh notebook callback threads.
+
 - Save and reopen reviewed direct ptychography object and probe waves with their sampling and aberrations.
 
 ## rc18 - 2026-11-11
