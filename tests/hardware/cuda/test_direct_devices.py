@@ -1,5 +1,8 @@
 """CUDA direct ptychography on the GPU that holds the scan, which need not be the current one."""
 
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -86,3 +89,21 @@ def test_detector_products_follow_the_resident_gpu(dtype):
             assert cp.cuda.runtime.getDevice() == 0
             for found, reference in zip(actual, expected, strict=True):
                 np.testing.assert_array_equal(found, reference)
+
+
+def test_fresh_preview_thread_uses_only_the_scan_gpu():
+    """A first preview on another thread must not initialize the default GPU on return."""
+    _require_cuda(2)
+    from quantem.gpu.direct_ptycho.workflow import _on_scan_gpu
+
+    @_on_scan_gpu
+    def sample(session):
+        return cp.ones(1).device.id
+
+    def preview():
+        assert not cp.cuda.driver.ctxGetCurrent()
+        device = sample(SimpleNamespace(_device=1))
+        return device, cp.cuda.runtime.getDevice()
+
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        assert worker.submit(preview).result() == (1, 1)

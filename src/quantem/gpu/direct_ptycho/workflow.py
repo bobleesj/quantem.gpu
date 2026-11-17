@@ -324,6 +324,9 @@ def _on_scan_gpu(method):
     """
     @wraps(method)
     def on_scan_gpu(self, *args, **kwargs):
+        # A new notebook callback thread has no CUDA context to restore.
+        if self._device is not None and not cp.cuda.driver.ctxGetCurrent():
+            cp.cuda.Device(self._device).use()
         with nullcontext() if self._device is None else cp.cuda.Device(self._device):
             return method(self, *args, **kwargs)
     return on_scan_gpu
