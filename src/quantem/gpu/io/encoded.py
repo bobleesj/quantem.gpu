@@ -70,8 +70,15 @@ def load_h5_ans(
     verbose,
     backend,
     hot_pixel_correction,
+    detector_bin: int = 1,
+    progress: bool = False,
 ):
-    """Load bounded native chunks into a backend-owned runtime encoded resident."""
+    """Load bounded native chunks into a backend-owned runtime encoded resident.
+
+    ``detector_bin`` (2, 4 or 8, CUDA, 8- and 16-bit ARINA masters): each decoded block has its flagged pixels
+    corrected, is summed ``detector_bin`` x ``detector_bin`` on the GPU (``bin``: every electron kept) and only then
+    encoded, so the resident is about ``detector_bin**2`` times smaller (a GPU too small for the full scan, 11-17).
+    A binned sum that does not fit the stored dtype raises; nothing is clipped."""
     started = time.perf_counter()
     info = inspect(path, scan_shape=scan_shape, dataset_path=dataset_path)
     saved_correction = info.metadata.get(HOT_PIXEL_CORRECTION_ATTRIBUTE)
@@ -86,11 +93,17 @@ def load_h5_ans(
         device=device, verbose=verbose, hot_pixel_correction=hot_pixel_correction,
         info=info,
     )
+    if generic is not None and detector_bin != 1:
+        generic.close()
+        raise NotImplementedError("detector_bin applies to ARINA masters (direct chunk decoding); this layout "
+                                  "loads at its native detector size.")
     if generic is not None:
         if saved_correction is not None:
             generic.metadata.update(arrays.correction_metadata(saved_correction))
         return generic
     if backend == "mps":
+        if detector_bin != 1:
+            raise NotImplementedError("detector_bin needs CUDA.")
         return _load_h5_ans_mps(path, info, hot_pixel_correction, verbose)
     if backend != "cuda":
         raise NotImplementedError("Runtime HDF5-to-encoded needs CUDA or MPS.")
@@ -101,6 +114,12 @@ def load_h5_ans(
     stored_dtype = np.dtype(info.dtype)
     dtype = stored_dtype
     bit_lanes = dtype == np.dtype("uint32")
+    factor = int(detector_bin)
+    if factor not in (1, 2, 4, 8):
+        raise ValueError(f"detector_bin is 1, 2, 4 or 8; got {detector_bin!r}.")
+    if factor != 1 and bit_lanes:
+        raise NotImplementedError("detector_bin applies to 8- and 16-bit counts; this master stores 32-bit counts.")
+    binned = (*info.scan_shape, info.detector_shape[0] // factor, info.detector_shape[1] // factor)
     if dtype not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32")):
         raise TypeError(
             "Direct HDF5 decoding supports uint8/uint16/uint32. Use the bounded array reader for other dtypes."
@@ -115,8 +134,16 @@ def load_h5_ans(
         if info.pixel_mask is not None and not corrector.record["applied"]:
             valid &= np.asarray(info.pixel_mask) == 0
         cp.get_default_memory_pool().free_all_blocks()
+        unfilled = None
+        if factor != 1:
+            # a flagged pixel not filled by the correction is zeroed before the sum and its binned pixel is invalid:
+            # its marker (65535) never reaches a neighbour's count (11-17)
+            if not corrector.record["applied"] and not valid.all():
+                unfilled = cp.asarray(~valid)
+            rows, cols = binned[2] * factor, binned[3] * factor
+            valid = valid[:rows, :cols].reshape(binned[2], factor, binned[3], factor).all(axis=(1, 3))
         source = (arrays.bit_resident(shape, dtype, info.metadata, valid, "cuda", selected)
-                  if bit_lanes else StreamedCounts(shape, dtype, valid))
+                  if bit_lanes else StreamedCounts(binned, dtype, valid))
         resident = source._lanes if bit_lanes else source
         # A failed load frees the chunks it encoded: they live outside the memory
         # pool, and a traceback keeps this frame (and the source) alive.
@@ -178,6 +205,12 @@ def load_h5_ans(
             for number in range(min(2, len(blocks)))
         }
         stack.callback(release_unread_block)
+        bar = None
+        if progress:                                # a bar over the scan positions decoded and encoded (11-17)
+            from tqdm.auto import tqdm
+
+            bar = stack.enter_context(tqdm(total=scans, desc=f"Loading {path.name}", unit=" positions",
+                                           unit_scale=True, leave=False, mininterval=0.3))
         for number, (first, stop) in enumerate(blocks):
             if dataset is not None:
                 # A chunk can cut a rectangular scan row. h5py reads and decodes
@@ -191,15 +224,30 @@ def load_h5_ans(
                 raw = decompress_prepared(prepared, batch_bytes_target=128 * 1024**2)
                 raw = raw.reshape(stop - first, *info.detector_shape)
             corrector.apply(raw)
+            if factor != 1:
+                from quantem.gpu.io.load import bin as bin_blocks
+
+                if unfilled is not None:
+                    raw[:, unfilled] = 0
+                summed = bin_blocks(raw, factor=factor, axes="detector")          # exact, in 64-bit integers
+                largest = int(summed.max()) if summed.size else 0
+                if largest > np.iinfo(dtype).max:
+                    raise ValueError(f"A {factor} x {factor} detector sum reaches {largest}, beyond {dtype.name}; "
+                                     "load with a smaller detector_bin.")
+                del raw
+                raw = summed.astype(dtype)
+                del summed
             (source.append_device if bit_lanes else source.append)(raw)
             del raw
+            if bar is not None:
+                bar.update(stop - first)
         if not bit_lanes and source.host_nbytes:
             print(f"quantem.gpu: the device had no room for {source.host_nbytes / 1e9:.2f} GB of this scan's encoded "
                   "counts; they stay in page-locked host memory and the GPU reads them there (a whole-scan "
                   "reconstruction about 5x slower, a new virtual image about 50x).")
         metadata = dict(info.metadata)
         metadata.update(
-            resident_metadata(shape, dtype, source.nbytes, backend="cuda"),
+            resident_metadata(binned if not bit_lanes else shape, dtype, source.nbytes, backend="cuda"),
             source_dtype=stored_dtype.name,
             source_read_passes=1,
             source_logical_tensor_bytes=math.prod(shape) * stored_dtype.itemsize,
@@ -212,6 +260,8 @@ def load_h5_ans(
                 resident_ready_seconds=time.perf_counter() - started,
             ),
         )
+        if factor != 1:                          # after the resident's own fields, which say detector_bin=1
+            metadata.update(_binned_record(info, factor, binned))
         if verbose:
             print(_loaded_report(source.shape, "NVIDIA GPU", metadata))
         return Dataset4dstem(source, metadata)
@@ -219,6 +269,67 @@ def load_h5_ans(
 
 class _ExceedsUint16(Exception):
     """A decoded uint32 value does not fit 16 bits, so the scan keeps uint32 storage."""
+
+
+def _binned_record(info, factor: int, binned) -> dict:
+    """What a binned load changes in the record: the detector's shape and sampling (``factor`` times coarser), the
+    binned mask (a binned pixel is flagged when any of its pixels is), and the bin itself."""
+    record = dict(detector_bin=factor, detector_shape=list(binned[2:]), binned_from_detector_shape=list(info.detector_shape),
+                  image_size_x=binned[3], image_size_y=binned[2])
+    for key in ("detector_sampling_mrad", "detector_sampling_inv_A"):
+        value = info.metadata.get(key)
+        if value is not None:
+            try:
+                record[key] = [float(item) * factor for item in np.atleast_1d(np.asarray(value, dtype=float))]
+            except (TypeError, ValueError):
+                pass
+    if info.pixel_mask is not None:
+        mask = np.asarray(info.pixel_mask)[:binned[2] * factor, :binned[3] * factor]
+        record["pixel_mask"] = mask.reshape(binned[2], factor, binned[3], factor).max(axis=(1, 3))
+    disk = info.metadata.get("bright_field_disk")
+    if isinstance(disk, str):
+        import json
+
+        try:
+            disk = json.loads(disk)
+        except json.JSONDecodeError:
+            disk = None
+    if isinstance(disk, dict):
+        # the fitted disk in binned pixels: the sampling is alpha over its radius, so a radius left in unbinned pixels
+        # gave the unbinned 0.577 mrad again (11-17); a pixel centre c becomes (c + 0.5) / factor - 0.5
+        disk = dict(disk)
+        if isinstance(disk.get("bright_field_edge_radius_px"), (int, float)):
+            disk["bright_field_edge_radius_px"] = float(disk["bright_field_edge_radius_px"]) / factor
+        if isinstance(disk.get("bright_field_center_px"), (list, tuple)):
+            disk["bright_field_center_px"] = [(float(value) + 0.5) / factor - 0.5 for value in disk["bright_field_center_px"]]
+        record["bright_field_disk"] = disk
+    scientific = info.metadata.get("scientific_metadata")
+    if isinstance(scientific, str):
+        import json
+
+        try:
+            scientific = json.loads(scientific)
+        except json.JSONDecodeError:
+            scientific = None
+    if isinstance(scientific, dict) and isinstance(scientific.get("axes"), list):
+        # the detector axes as binned: half the size, twice the step (the record must match the scan, 11-17)
+        import copy
+
+        scientific = copy.deepcopy(scientific)
+        for axis in scientific["axes"]:
+            if isinstance(axis, dict) and str(axis.get("name", "")).startswith("det"):
+                axis["size"] = int(axis.get("size", 0)) // factor
+                sampling = axis.get("sampling")
+                if isinstance(sampling, dict) and isinstance(sampling.get("value"), (int, float)):
+                    sampling["value"] = float(sampling["value"]) * factor
+        # and the detector step recorded as a calibration (the disk fit at the receiver): it wins over the axes
+        from quantem.gpu.formats.qem.metadata import DETECTOR_PIXEL_SIZE
+
+        for path, quantity in (scientific.get("calibration_overrides") or {}).items():
+            if path in DETECTOR_PIXEL_SIZE and isinstance(quantity, dict) and isinstance(quantity.get("value"), (int, float)):
+                quantity["value"] = float(quantity["value"]) * factor
+        record["scientific_metadata"] = scientific
+    return record
 
 
 def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):

@@ -47,6 +47,8 @@ def load(
     stack: bool | None = None,
     device: int | str | None = None,
     verbose: bool = True,
+    detector_bin: int = 1,
+    progress: bool = False,
 ) -> Dataset4dstem | list[Dataset4dstem]:
     """Load one or more 4D-STEM sources through an accelerated backend.
 
@@ -153,6 +155,13 @@ def load(
     scan_region, detector_region
         Optional precision-storage bounds as
         ``(row_start, row_stop, col_start, col_stop)``.
+    detector_bin
+        ``1`` (default), ``2``, ``4`` or ``8``: an ARINA HDF5 master on CUDA is summed ``detector_bin`` x
+        ``detector_bin`` on the GPU as it is encoded (flagged pixels corrected first; every electron kept), so the
+        resident is about ``detector_bin**2`` times smaller: for a GPU too small for the full scan. The record says
+        ``detector_bin`` and scales the detector sampling; other sources refuse it.
+    progress
+        ``True``: a bar (tqdm) over an HDF5 master's scan positions as they are decoded and encoded.
 
     Returns
     -------
@@ -174,6 +183,11 @@ def load(
     # tuple names several, each returned as its own result.
     single = isinstance(source, (str, os.PathLike)) or not isinstance(source, Sequence)
     sources = [source] if single else list(source)
+    if detector_bin != 1 and not all(isinstance(path, (str, os.PathLike)) and str(path).lower().endswith(".h5")
+                                     for path in sources):
+        # only the ARINA master's direct decode bins as it encodes; anything else would ignore it (11-17)
+        raise ValueError("detector_bin applies to ARINA HDF5 masters; load other sources at their detector size and "
+                         "bin a region with bin(dataset.read(...)).")
     precision = precision_name(dtype)
 
     # NumPy, EMPAD and saved QuantEM Zarr arrays: complete measurements, encoded on the GPU.
@@ -351,6 +365,8 @@ def load(
                         verbose=verbose,
                         backend=backend,
                         hot_pixel_correction=hot_pixel_correction,
+                        detector_bin=detector_bin,
+                        progress=progress,
                     )
                 )
         except BaseException:
@@ -381,8 +397,9 @@ def bin(data, factor: int = 2, axes: str = "detector", dtype=None, reduction: st
 
     A binned pixel is the sum of the ``factor**2`` pixels it covers, out[i, j] = sum_{a, b < factor} data[f i + a, f j + b]
     (divided by ``factor**2`` for ``reduction="mean"``): summing a detector b x b keeps every electron, which is why a
-    reconstruction reads a binned crop instead of an interpolated one. ``io.load`` refuses ``detector_bin`` for HDF5 and
-    .qem sources, so a caller bins as part of a read, ``bin(dataset.read(scan_region=...), factor=4)``.
+    reconstruction reads a binned crop instead of an interpolated one. ``io.load(master, detector_bin=2)`` bins an ARINA
+    master as it encodes (a GPU too small for the full scan); other sources bin as part of a read,
+    ``bin(dataset.read(scan_region=...), factor=4)``.
 
     ``data`` is 4D ``(scan_row, scan_col, det_row, det_col)``, 3D ``(frame, det_row, det_col)`` or 2D ``(det_row,
     det_col)``. ``axes`` is ``"detector"``, ``"scan"`` (4D only) or ``"all"`` (4D only). ``edge="crop"`` drops the
