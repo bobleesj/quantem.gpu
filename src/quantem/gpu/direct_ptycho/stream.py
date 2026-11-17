@@ -25,6 +25,7 @@ with shifts identical to direct ptychography alone and a 26 GB peak above the re
 
 import copy
 from collections import Counter, deque
+from contextlib import ExitStack, nullcontext
 from functools import wraps
 import hashlib
 import json
@@ -318,6 +319,17 @@ class _FrameStep:
         self.fit = fitted
         self.reference = np.array(coordinates, dtype=float)
         self.start = self.reference[VARIED].copy()
+
+
+def _fit_band(session):
+    """While a frame's optics are refitted: the whole-scan fit band of an encoded scan the device cannot hold densely
+    (``DirectPtycho._whole_scan_for_fit``, as ``aberrations()`` fits it); nothing for a session with its spectrum."""
+    streamed = getattr(session, "_streamed", None)
+    if streamed is None or not streamed.full_scan_only:
+        return nullcontext()
+    placement = session._whole_scan_band(False)
+    # no room for the band either: the refit says so itself (the session holds the encoded scan only)
+    return nullcontext() if placement is None else session._whole_scan_for_fit(placement, False)
 
 
 def _on_bound(coordinates, low, high):
@@ -714,6 +726,7 @@ class DirectPtychoSeries:
             began = time.perf_counter()
             session = step.open(data)
             saved = objective = None
+            band = ExitStack()                      # an encoded scan's fit band, held only while its optics are refitted
             if state.records is not None:
                 # A frame's refit starts from the frame before and its placement from the frames placed
                 # before it, so its identity holds the SHA-256 of the previous frame's record, which holds
@@ -734,10 +747,12 @@ class DirectPtychoSeries:
                 tilt, depth = step.fit.sample_tilt_mrad, step.fit.depth_spread_nm
             elif state.refit == "full" or (state.full_refit_every and index and index % state.full_refit_every == 0):
                 # The reference rotation is kept: the session is opened with it and a flipped frame is another calibration.
+                band.enter_context(_fit_band(session))
                 objective, coordinates, evaluations, stop, optics, tilt, depth = step.full(session, clock, began)
                 if state.refit == "defocus":
                     step.rebase(coordinates, optics, tilt, depth)
             else:
+                band.enter_context(_fit_band(session))
                 objective, coordinates, evaluations, stop, optics, tilt, depth = step.refit(session, clock, began)
                 kept = step.untrusted(coordinates, optics, self.aberrations[-1] if self.aberrations else None)
                 if kept:
@@ -746,6 +761,7 @@ class DirectPtychoSeries:
                     optics, tilt, depth = public_params(objective, coordinates, 5)
                     stop = f"kept the last frame's optics: {kept}"
                     print(f"{name}: {stop}", flush=True)
+            band.close()                            # the reconstruction has the device without the band spectrum
             chosen, reconstructed, sampling, seconds = step.run(session, optics, tilt, depth, state.factor,
                                                                         state.strengths, data)
             clock.update(seconds)
@@ -811,6 +827,7 @@ class DirectPtychoSeries:
             # Resident counts belong to the caller; only file inputs were opened by this step.
             try:
                 if session is not None:
+                    band.close()
                     session.close()
             finally:
                 if not resident:

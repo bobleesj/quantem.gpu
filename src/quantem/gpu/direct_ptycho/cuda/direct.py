@@ -402,8 +402,14 @@ class PreparedDirect:
         smoothness_inv_A: float,
         detector_weighting: str,
         detector_mask=None,
+        column_spectra=None,
     ):
         """Build normal equations once; strengths are applied at evaluation.
+
+        ``column_spectra`` serves an encoded scan whose G(q, k) the device cannot hold (``engine`` is then a
+        ``StreamedGeometry``): a callable returning batches ``(first, stop, spectra)`` of bright-field pixels in
+        the engine's order. The equations are sums over bright-field pixels, so each batch's are added in float64
+        and the device holds one batch of spectra and the equations, never G: the same system, no data left out.
 
         Each scan frequency Q with its supported aliases needs the Gram
         A = T^H W T, the right side b = T^H W g and the signal power
@@ -458,29 +464,45 @@ class PreparedDirect:
         _pixel_terms(
             (-(-nbf // 256),),
             (256,),
-            (layout.order, cache["kx_bf"], cache["ky_bf"], layout.weights, np.int32(nbf),
-             *optics_scalars[:4], coefficients, pixel),
+            # batches come in the engine's pixel order; the resident spectrum is walked in compact detector tiles
+            (layout.order if column_spectra is None else cp.arange(nbf, dtype=cp.int32), cache["kx_bf"],
+             cache["ky_bf"], layout.weights, np.int32(nbf), *optics_scalars[:4], coefficients, pixel),
         )
-        spectrum = engine.G_qk.reshape(nbf, -1)
-        groups = []
-        power = cp.zeros((), cp.float64)
+        aliases = []
         for group in layout.groups:
-            count, size = group.count, group.columns.size
-            dim = 2 * count if complex_object else count
-            augmented = cp.empty((size, dim + 1, dim + 1), cp.complex128)
-            normal_equations, parts = _normal_equations(count, complex_object)
             qr, qc = group.qr, group.qc
             if transform is not None:
                 qr, qc = (
                     cp.ascontiguousarray(np.float32(transform[0, 0]) * qr + np.float32(transform[0, 1]) * qc),
                     cp.ascontiguousarray(np.float32(transform[1, 0]) * qr + np.float32(transform[1, 1]) * qc),
                 )
-            normal_equations(
-                (-(-size // _WARPS), parts),
-                (32 * _WARPS,),
-                (spectrum, np.int32(spectrum.shape[1]), group.columns, np.int32(size), qr, qc,
-                 pixel, np.int32(nbf), *optics_scalars, coefficients, augmented),
-            )
+            aliases.append((qr, qc))
+        widths = [(2 * group.count if complex_object else group.count) + 1 for group in layout.groups]
+        if column_spectra is None:
+            batches = [(pixel, engine.G_qk.reshape(nbf, -1))]
+        else:
+            _check_batched_memory(engine, layout, widths)
+            batches = _pixel_batches(pixel, column_spectra())
+        sums = [None] * len(layout.groups)
+        for batch_pixel, spectrum in batches:
+            for index, (group, (qr, qc), width) in enumerate(zip(layout.groups, aliases, widths)):
+                size = group.columns.size
+                augmented = cp.empty((size, width, width), cp.complex128)
+                normal_equations, parts = _normal_equations(group.count, complex_object)
+                normal_equations(
+                    (-(-size // _WARPS), parts),
+                    (32 * _WARPS,),
+                    (spectrum, np.int32(spectrum.shape[1]), group.columns, np.int32(size), qr, qc,
+                     batch_pixel, np.int32(batch_pixel.shape[0]), *optics_scalars, coefficients, augmented),
+                )
+                if sums[index] is None:
+                    sums[index] = augmented
+                else:
+                    sums[index] += augmented
+        groups = []
+        power = cp.zeros((), cp.float64)
+        for group, augmented, width in zip(layout.groups, sums, widths):
+            count, dim = group.count, width - 1
             # G enters unscaled so V stays float32; the dose divides afterwards.
             gram = cp.ascontiguousarray(augmented[:, :dim, :dim])
             rhs = augmented[:, :dim, dim] / layout.dose
@@ -561,6 +583,29 @@ class PreparedDirect:
                 diagnostics["training_relative_sse"] = None
                 diagnostics["prediction_error_status"] = "undefined: no non-DC signal"
         return wave, diagnostics
+
+
+def _pixel_batches(pixel, column_spectra):
+    """Each batch of an encoded scan as (its pixels' k-only terms, its spectra as rows): the terms' detector row of
+    G becomes the row within the batch."""
+    for first, stop, spectra in column_spectra:
+        batch = cp.ascontiguousarray(pixel[first:stop])
+        batch[:, 1, 2] = cp.arange(stop - first, dtype=cp.int32).view(cp.float32)
+        yield batch, spectra.reshape(stop - first, -1)
+
+
+def _check_batched_memory(engine, layout, widths) -> None:
+    """Raise ``DeviceMemoryError`` when the device cannot hold the equations of a batched preparation: every
+    frequency's system twice (the sum and one batch's) and one batch of decoded columns and their spectra."""
+    from quantem.gpu.direct_ptycho.cuda.streamed import COLUMN_BATCH, DeviceMemoryError, free_device_bytes
+
+    _, rows, cols = engine._bf_grid()
+    systems = sum(group.columns.size * width * width * 16 for group, width in zip(layout.groups, widths))
+    needed = 2 * systems + COLUMN_BATCH * rows * ((cols + 2) * 4 + cols * 2)
+    free_bytes = free_device_bytes()
+    if needed > free_bytes * .8:
+        raise DeviceMemoryError(f"The damped {layout.shape[0]} x {layout.shape[1]} direct ptychography phase",
+                                needed / .8, free_bytes)
 
 
 # ---

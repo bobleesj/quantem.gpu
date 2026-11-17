@@ -706,10 +706,8 @@ class DirectPtycho:
                         raise ValueError("CUDA direct ptychography needs the acquisition resident on a CUDA device.")
                     full_scan_only = max(data.shape[:2]) > 1024 or _exceeds_device(data)
                     if full_scan_only and max(data.shape[:2]) <= 1024:
-                        print("Direct ptycho: the device cannot hold the dense bright-field spectrum; the full scan is "
-                              "reconstructed in batches of detector columns (no loss). aberrations() fits the whole "
-                              "scan on its fit band's frequencies when they fit the device; a primary, tilt=False or "
-                              "loss-computing fit reads a central region.")
+                        print("Direct ptycho: GPU memory is short; the scan is read in batches of detector columns "
+                              "(same result, slower fit).")
                     with cp.cuda.Device(data.device.index):
                         self._streamed = StreamedDirect(
                             data, mean_pattern=mean_pattern, center=bright_field_center_px,

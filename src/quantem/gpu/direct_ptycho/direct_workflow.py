@@ -99,12 +99,10 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
     the 512 x 512 test field). Any change to the optics, sampling or prior drops
     both. CUDA prepares and solves on the session's GPU (``direct_ptycho.cuda.direct``);
     MPS prepares on the Apple GPU and solves in float64 on the CPU
-    (``direct_ptycho.mps.direct``), from the same model and layout.
+    (``direct_ptycho.mps.direct``), from the same model and layout. An encoded scan the
+    device cannot hold densely is prepared from batches of its detector columns: the same
+    equations, summed batch by batch (no data left out, no region).
     """
-    if session._streamed is not None:
-        raise NotImplementedError(
-            "Regularized direct reconstruction needs a resident region; use select_region(...) first."
-        )
     if session.backend == "cuda":
         from quantem.gpu.direct_ptycho.cuda.direct import PreparedDirect
     else:
@@ -119,14 +117,17 @@ def solve(session, coefs, tilt, depth, factor, policy, *, compute_loss, force=Fa
     prepared = cached[1].get(policy["method"])
     if force or prepared is None:
         cached[1].pop(policy["method"], None)
-        prepared = PreparedDirect.prepare(
-            engine,
-            optics,
-            factor,
-            complex_object=policy["method"] == "complex",
-            smoothness_inv_A=policy["smoothness_inv_A"],
-            detector_weighting=policy["detector_weighting"],
-        )
+        streamed = session._streamed
+        with nullcontext() if streamed is None else session._encoded_on_device():
+            prepared = PreparedDirect.prepare(
+                engine,
+                optics,
+                factor,
+                complex_object=policy["method"] == "complex",
+                smoothness_inv_A=policy["smoothness_inv_A"],
+                detector_weighting=policy["detector_weighting"],
+                **({} if streamed is None else {"column_spectra": streamed.column_spectra}),
+            )
         cached[1][policy["method"]] = prepared
     return prepared.solve(
         policy["phase_damp"],
@@ -286,9 +287,15 @@ def _phase(session, wave):
 def _inputs(session, coefs, tilt, depth, factor, policy):
     """The engine, the optics and the key of every input a prepared system depends on.
 
-    The engine is the CUDA accelerator, or the MPS backend with its G(q, k) prepared at the session's rotation.
+    The engine is the CUDA accelerator, or the MPS backend with its G(q, k) prepared at the session's rotation;
+    for an encoded scan read in column batches, the scan's geometry (``StreamedDirect.geometry``).
     """
-    if session.backend == "cuda":
+    if session._streamed is not None:
+        engine = session._streamed.geometry(
+            voltage_kV=session.voltage_kV, semiangle_mrad=session.semiangle_mrad,
+            scan_sampling_A=session.scan_sampling_A, rotation_deg=session.scan_detector_rotation_deg)
+        spectra = engine.G_qk
+    elif session.backend == "cuda":
         engine = session._backend()._get_accelerator()
         spectra = engine.G_qk
     else:

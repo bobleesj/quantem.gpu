@@ -38,6 +38,50 @@ def free_device_bytes() -> int:
     return min(free_bytes, limit - pool.used_bytes()) if limit else free_bytes
 
 
+class DeviceMemoryError(MemoryError):
+    """Too little free device memory for one step; ``needed_bytes`` and ``free_bytes`` say by how much."""
+
+    def __init__(self, what: str, needed_bytes: int, free_bytes: int):
+        self.needed_bytes, self.free_bytes = int(needed_bytes), int(free_bytes)
+        super().__init__(f"{what} needs {needed_bytes / 1e9:.2f} GB of free GPU memory; {free_bytes / 1e9:.2f} GB "
+                         "is free. Close other GPU allocations or select a smaller output sampling factor.")
+
+
+class StreamedGeometry:
+    """What a prepared direct system reads of an engine, for an encoded scan whose G(q, k) is never resident.
+
+    The bright-field geometry at one rotation (``_cache``, as ``DirectEngine.cache_rotation`` computes it) and each
+    bright-field pixel's summed counts as ``G_qk[:, 0, 0]``; every other frequency of G comes in batches of detector
+    columns (``StreamedDirect._column_spectra``). It keeps no reference to the acquisition.
+    """
+
+    def __init__(self, k_row, k_col, summed_counts, scan_shape, *, wavelength, semiangle_mrad, angular_mrad,
+                 scan_sampling_A, bf_inds_row, bf_inds_col):
+        rows, cols = scan_shape
+        self.wavelength = float(wavelength)
+        self.bf_inds_row, self.bf_inds_col = bf_inds_row, bf_inds_col
+        semiangle_rad = semiangle_mrad * 1e-3
+        angle = cp.arctan2(k_col, k_row)
+        edge = cp.sqrt((cp.cos(angle) * angular_mrad[0] * 1e-3) ** 2 + (cp.sin(angle) * angular_mrad[1] * 1e-3) ** 2)
+        aperture = cp.clip((semiangle_rad - cp.sqrt(k_row**2 + k_col**2) * self.wavelength) / edge + 0.5, 0, 1)
+        self._cache = {
+            "num_bright_field_pixels": int(k_row.size), "ny": rows, "nx": cols,
+            "aperture_k_1d": cp.ascontiguousarray(aperture.astype(cp.float32)),
+            "kx_bf": cp.ascontiguousarray(k_row.astype(cp.float32)),
+            "ky_bf": cp.ascontiguousarray(k_col.astype(cp.float32)),
+            "qx_1d": cp.fft.fftfreq(rows, scan_sampling_A[0]).astype(cp.float32),
+            "qy_1d": cp.fft.fftfreq(cols, scan_sampling_A[1]).astype(cp.float32),
+            "wavelength": self.wavelength, "semiangle_rad": float(semiangle_rad),
+            "ang_y_rad": float(angular_mrad[0] * 1e-3), "ang_x_rad": float(angular_mrad[1] * 1e-3),
+        }
+        # the half plane's shape with only q = 0 held: one value a pixel, read as G_qk[:, 0, 0]
+        self.G_qk = cp.broadcast_to(summed_counts.astype(cp.complex64)[:, None, None], (k_row.size, 1, cols // 2 + 1))
+
+    def _bf_grid(self) -> tuple[int, int, int]:
+        """(bright-field pixels, scan rows, scan columns), as ``DirectEngine._bf_grid``."""
+        return self._cache["num_bright_field_pixels"], self._cache["ny"], self._cache["nx"]
+
+
 class StreamedDirect:
     """Borrow a complete exact-count resident and retain its immutable chunks.
 
@@ -204,6 +248,44 @@ class StreamedDirect:
         if int(errors.get()[0]):
             raise ValueError("An ANS detector column failed decoding. Reload the intact acquisition before reconstructing.")
 
+    def _detector_frequencies(self, wavelength, rotation_deg):
+        """Each bright-field pixel's (row, col) spatial frequency in the scan's frame at ``rotation_deg``, 1/A, and
+        the detector's (row, col) sampling in mrad as the data are held (swapped for a flipped rotation)."""
+        angular = self.detector_sampling_mrad[::-1] if self.transposed else self.detector_sampling_mrad
+        center = self.center[::-1] if self.transposed else self.center
+        # Match the resident-spectrum backend's detector reciprocal coordinates.
+        compute_shape = self.detector_shape[::-1] if self.transposed else self.detector_shape
+        sampling = tuple(wavelength / (step * 1e-3 * size) for step, size in zip(angular, compute_shape))
+        offsets_row = cp.arange(compute_shape[0], dtype=cp.float32) - center[0]
+        offsets_col = cp.arange(compute_shape[1], dtype=cp.float32) - center[1]
+        reciprocal_row = offsets_row[:, None] * (1.0 / (sampling[0] * compute_shape[0]))
+        reciprocal_col = offsets_col[None, :] * (1.0 / (sampling[1] * compute_shape[1]))
+        angle = -math.radians(rotation_deg)
+        cosine, sine = math.cos(angle), math.sin(angle)
+        k_row = (reciprocal_row * cosine + reciprocal_col * sine)[self.rows, self.cols]
+        k_col = (-reciprocal_row * sine + reciprocal_col * cosine)[self.rows, self.cols]
+        return k_row, k_col, angular
+
+    def geometry(self, *, voltage_kV, semiangle_mrad, scan_sampling_A, rotation_deg) -> StreamedGeometry:
+        """The engine a damped reconstruction prepares its equations on (``PreparedDirect.prepare``), kept while the
+        calibration is the same."""
+        key = (float(voltage_kV), float(semiangle_mrad), tuple(float(step) for step in scan_sampling_A),
+               float(rotation_deg))
+        kept = getattr(self, "_geometry", None)
+        if kept is None or kept[0] != key:
+            wavelength = wavelength_A_from_kV(voltage_kV)
+            k_row, k_col, angular = self._detector_frequencies(wavelength, rotation_deg)
+            mean = cp.asarray(self.mean_pattern.T if self.transposed else self.mean_pattern)
+            kept = self._geometry = key, StreamedGeometry(
+                k_row, k_col, mean[self.rows, self.cols] * math.prod(self.scan_shape), self.scan_shape,
+                wavelength=wavelength, semiangle_mrad=semiangle_mrad, angular_mrad=angular,
+                scan_sampling_A=scan_sampling_A, bf_inds_row=self.rows, bf_inds_col=self.cols)
+        return kept[1]
+
+    def column_spectra(self):
+        """G(q, k) in batches of ``COLUMN_BATCH`` bright-field pixels, for ``PreparedDirect.prepare``."""
+        return self._column_spectra(COLUMN_BATCH)
+
     def phase(self, aberrations, *, voltage_kV, semiangle_mrad, scan_sampling_A,
               rotation_deg, upsample, sample_tilt_mrad, depth_spread_A,
               higher_order_magnitudes=None, higher_order_angles=None):
@@ -222,26 +304,12 @@ class StreamedDirect:
         per_column = rows * (cols + 2) * 4
         available = int(free_bytes * .8) - fixed_bytes
         if available < per_column * 4:
-            raise MemoryError(
-                f"The full {output_shape} direct ptychography output needs more free GPU memory. "
-                "Close other GPU allocations or explicitly select a smaller output sampling factor."
-            )
+            raise DeviceMemoryError(f"The full {output_shape[0]} x {output_shape[1]} direct ptychography output",
+                                    (fixed_bytes + per_column * 4) / .8, free_bytes)
         batch_size = max(1, min(COLUMN_BATCH, self.num_bright_field_pixels,
                                 min(2 << 30, available // 4) // per_column))
         wavelength = wavelength_A_from_kV(voltage_kV)
-        angular = self.detector_sampling_mrad[::-1] if self.transposed else self.detector_sampling_mrad
-        center = self.center[::-1] if self.transposed else self.center
-        # Match the resident-spectrum backend's detector reciprocal coordinates.
-        compute_shape = self.detector_shape[::-1] if self.transposed else self.detector_shape
-        sampling = tuple(wavelength / (step * 1e-3 * size) for step, size in zip(angular, compute_shape))
-        offsets_row = cp.arange(compute_shape[0], dtype=cp.float32) - center[0]
-        offsets_col = cp.arange(compute_shape[1], dtype=cp.float32) - center[1]
-        reciprocal_row = offsets_row[:, None] * (1.0 / (sampling[0] * compute_shape[0]))
-        reciprocal_col = offsets_col[None, :] * (1.0 / (sampling[1] * compute_shape[1]))
-        angle = -math.radians(rotation_deg)
-        cosine, sine = math.cos(angle), math.sin(angle)
-        k_row = (reciprocal_row * cosine + reciprocal_col * sine)[self.rows, self.cols]
-        k_col = (-reciprocal_row * sine + reciprocal_col * cosine)[self.rows, self.cols]
+        k_row, k_col, angular = self._detector_frequencies(wavelength, rotation_deg)
         frequencies = []
         for side, output_side, step in zip(self.scan_shape, output_shape, scan_sampling_A):
             native = cp.fft.fftfreq(side, step).astype(cp.float32)
