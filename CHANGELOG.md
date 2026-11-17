@@ -6,6 +6,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Check the opposite rotation independently when a joint aberration fit reaches a tilt bound.
+
 - Keep HDF5 acquisition loading and MAPED block export on the selected CUDA device.
 
 - The WebGPU direct fit batches independent trial scores and reuses seed gradients across validation rings. Full-field phase reconstruction transforms only the required spectrum of each detector column.
