@@ -137,6 +137,8 @@ artifacts = [
     "src/quantem/gpu/detector/webgpu/*.ts",
     "src/quantem/gpu/dpc/webgpu/*.ts",
     "src/quantem/gpu/direct_ptycho/webgpu/*.ts",
+    "src/quantem/gpu/direct_ptycho/browser_fit/*.mjs",
+    "src/quantem/gpu/direct_ptycho/browser_fit/*.json",
     "src/quantem/gpu/direct_ptycho/webgpu/kernels/*.ts",
 ]
 

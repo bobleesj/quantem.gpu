@@ -22,6 +22,7 @@ import numpy as np
 import torch
 
 from quantem.gpu.device import select
+from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.formats import empad, zarr_zip
 from quantem.gpu.formats.qem.snapshot import is_qem_file
 from quantem.gpu.io import arrays, digitalmicrograph, encoded, paired, qem
@@ -170,6 +171,9 @@ def load(
     # The loaders take the backend name and, on CUDA, the device index (None: the current device).
     backend, _, index = select.resolve(device).partition(":")
     device = int(index) if index else None
+    if backend == "cuda" and device is not None and cp is not None and not cp.cuda.driver.ctxGetCurrent():
+        # Establish the requested first context before a nested device guard can restore CUDA device 0.
+        cp.cuda.Device(device).use()
     # One path, array or generated block source is one acquisition; a list or
     # tuple names several, each returned as its own result.
     single = isinstance(source, (str, os.PathLike)) or not isinstance(source, Sequence)

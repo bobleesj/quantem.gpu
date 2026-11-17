@@ -457,7 +457,8 @@ def _reduced_to_numpy(data) -> np.ndarray:
     """Convert a small reduced product to float32 NumPy for widget display."""
     if _is_loaded_instance(data, "cupy", "ndarray") and data.dtype == np.uint32:
         # CUDA rounds the exact count sum once, avoiding a second host allocation.
-        return data.astype(np.float32).get()
+        with data.device:
+            return data.astype(np.float32).get()
     return np.asarray(_to_host(data), dtype=np.float32)
 
 

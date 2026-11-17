@@ -27,6 +27,7 @@ export type QemCheckpointGroup = {
   K: number;
   nativeDtype: string;
   entries: Uint32Array;
+  directLookup: Uint32Array;
   blocks: { offset: number; frames: number; offsets: Uint32Array; columns: Uint32Array }[];
 };
 export type QemCheckpointSubmit = (group: QemCheckpointGroup) => RansPreparedGroup;
@@ -371,9 +372,8 @@ async function readQemHeader(file: QemByteFile, signal?: AbortSignal): Promise<Q
       chunk.first === nextScan &&
         Number.isSafeInteger(chunk.scans) &&
         chunk.scans > 0 &&
-        chunk.first + chunk.scans <= scans &&
-        (chunk.first + chunk.scans === scans || chunk.scans % 512 === 0),
-      "noncontiguous or unaligned scan chunks",
+        chunk.first + chunk.scans <= scans,
+      "noncontiguous scan chunks",
     );
     requireQem(
       Array.isArray(chunk.arrays) && chunk.arrays.length === 6,
@@ -483,18 +483,22 @@ async function admitQemFile(
   // loop over every byte. A served file streams the chunks through one response.
   // Cancellation, or any failure, ends that download instead of waiting for reads in flight.
   const entries = new Uint32Array(64 * 33 * 2);
+  const directLookup = new Uint32Array(64 * 1024);
   tables.frequencies.forEach((frequencies, model) => {
     let cumulative = 0;
     frequencies.forEach((frequency, symbol) => {
       const at = (model * 33 + symbol) * 2;
       entries[at] = (cumulative << 16) | symbol;
       entries[at + 1] = frequency;
+      const start = model * 1024 + cumulative;
+      directLookup.fill((symbol << 21) | (frequency << 10) | cumulative, start, start + frequency);
       cumulative += frequency;
     });
     requireQem(cumulative === 1024, "invalid fixed probability table");
   });
   const blockMeta: {
     index: number;
+    first: number;
     bytes: number;
     model: number;
     byte_start: number;
@@ -556,6 +560,7 @@ async function admitQemFile(
         const index = blockMeta.length;
         blockMeta.push({
           index,
+          first: chunk.first + block * 512,
           bytes: end - start,
           model: index,
           byte_start: body + payload.offset + start,
@@ -580,7 +585,7 @@ async function admitQemFile(
         }] : [];
       });
       if (parts.length) checkpoints.set(group.buffer, checkpoint!({
-        payload: group.buffer, K, nativeDtype: header.dtype, entries, blocks: parts,
+        payload: group.buffer, K, nativeDtype: header.dtype, entries, directLookup, blocks: parts,
       }));
     }
   };
@@ -718,6 +723,7 @@ async function admitQemFile(
           scale: 10,
           model_frames: 512,
           binary_lookup: true,
+          direct_lookup: true,
           payload_url: "payload",
           blocks_meta: blockMeta,
           models: blockMeta.map((block) => ({
@@ -749,7 +755,7 @@ async function admitQemFile(
         if (name === "manifest.json")
           return new TextEncoder().encode(JSON.stringify(mapped)).buffer;
         if (name === "entries") return entries.buffer;
-        if (name === "lookup") return new ArrayBuffer(4);
+        if (name === "lookup") return directLookup.buffer;
         // Payload bytes are decoded only from the authenticated GPU groups; reading
         // the file again would bypass its checksums.
         requireQem(name !== "payload", "payload bytes stay in authenticated GPU groups; load the file with a WebGPU device");

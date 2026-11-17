@@ -45,7 +45,8 @@ def test_extras_are_explicit_cuda_mps_and_cpu() -> None:
     ]
     assert extras["mps"] == [
         "mlx; sys_platform == 'darwin' and platform_machine == 'arm64'",
-        "pyobjc-framework-Metal; sys_platform == 'darwin' and platform_machine == 'arm64'",
+        "pyobjc-core<13; sys_platform == 'darwin' and platform_machine == 'arm64'",
+        "pyobjc-framework-Metal<13; sys_platform == 'darwin' and platform_machine == 'arm64'",
         "optuna==4.9.0",
         "scipy",
     ]

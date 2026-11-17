@@ -13,6 +13,8 @@ import type {
   WebGPUSampleOptions,
   DirectProtocol,
 } from "./protocol";
+import {phaseLayout, phaseNormalShader, solvePhase} from "./kernels/phase";
+import { agreementGradient } from "./kernels/agreement";
 import { fit } from "./optimizer";
 import { RansResidentSet } from "../../detector/webgpu/rans";
 import { qemHttpFile, type QemByteFile } from "../../detector/webgpu/qem-source";
@@ -269,6 +271,8 @@ type FullDetectorDirectSource = Omit<BfColumnDirectSource, "kind" | "encoding" |
   detector_origin_px: [number, number];
   scan_detector_rotation_flipped: boolean;
   header_sha256: string;
+  region?: [number, number, number, number];
+  resident?: RansResidentSet;
 };
 type DetectorDirectSource = BfColumnDirectSource | FullDetectorDirectSource;
 
@@ -279,7 +283,7 @@ function fullDetectorColumns(cal: DirectCal, source: FullDetectorDirectSource): 
   const rows = cal.bright_field_rows, cols = cal.bright_field_cols;
   const count = cal.num_bright_field_pixels;
   if (source.encoding !== "qem" || !["uint8", "uint16"].includes(source.dtype ?? "")
-      || source.scan_shape?.[0] !== cal.g_shape[1] || source.scan_shape?.[1] !== cal.g_shape[2]
+      || (source.region?.[2] ?? source.scan_shape?.[0]) !== cal.g_shape[1] || (source.region?.[3] ?? source.scan_shape?.[1]) !== cal.g_shape[2]
       || source.num_bright_field_pixels !== count
       || !shape || shape.length !== 2 || shape.some(value => !Number.isSafeInteger(value) || value <= 0)
       || shape[0] * shape[1] > 0xffffffff
@@ -434,9 +438,9 @@ function makeFftStages(n: number): string {
       `    let i1 = i0 + ${half}u;`,
       `    let w = FFT_TWIDDLES[${twiddleOffset}u + j];`,
       "    let t = cmul(w, s[i1]);",
-      "    let u = s[i0];",
-      "    s[i0] = u + t;",
-      "    s[i1] = u - t;",
+      `    let u = s[i0];`,
+      `    s[i0] = u + t;`,
+      `    s[i1] = u - t;`,
       "  }",
       "  workgroupBarrier();",
     );
@@ -453,8 +457,8 @@ const THICK_PARAMS_FIELDS = `
   _pad0: u32,
   _pad1: u32,
   _pad2: u32,`;
-const THICK_GAMMA_SIGNATURE = "fn gamma_mul(qx: f32, qy: f32, kx: f32, ky: f32, alpha_k2: f32, pk: vec2<f32>, G: vec2<f32>) -> vec2<f32> {";
-const THIN_GAMMA_SIGNATURE = "fn gamma_mul(qx: f32, qy: f32, kx: f32, ky: f32, pk: vec2<f32>, G: vec2<f32>) -> vec2<f32> {";
+const THICK_GAMMA_SIGNATURE = "fn transfer(qx: f32, qy: f32, kx: f32, ky: f32, alpha_k2: f32, pk: vec2<f32>) -> vec2<f32> {";
+const THIN_GAMMA_SIGNATURE = "fn transfer(qx: f32, qy: f32, kx: f32, ky: f32, pk: vec2<f32>) -> vec2<f32> {";
 // Thick, tilted crystal (CUDA _thick_correct_kernel): each direct ptychography term is averaged over the sample depth t. Term 1 dephases at
 // rate1 = -factor (alpha_m^2 - alpha_k^2) - 2 pi q.theta and term 2 at rate2 = +factor (alpha_p^2 - alpha_k^2) - 2 pi q.theta, so
 // the depth average multiplies them by sinc(rate t / 2). Without it the two overlap terms of a thick sample partly cancel at
@@ -471,7 +475,7 @@ const THICK_TERMS = `  var t1 = cmul(pm, pk_conj);
 const THIN_TERMS = `  let t1 = cmul(pm, pk_conj);
   let t2 = cmul(pp_conj, pk);`;
 
-function makeDirectShader(n: number, thick = false, native = n, cacheProbe = false): string {
+function makeDirectShader(n: number, thick = false, native = n, cacheProbe = false, fitStride = 0, phaseField = false, gateSidebands = false): string {
   const workgroupSize = Math.min(n, 256);
   const half = native / 2;
   const halfW = half + 1;
@@ -560,8 +564,8 @@ ${thick ? "fn thick_sinc(x: f32) -> f32 { return select(sin(x) / x, 1.0, abs(x) 
   var chi_p: f32;
   if (params.full_aberration != 0u) {
     // chi(k - q), not chi(q - k): the odd orders (coma, trefoil) change sign between them
-    chi_m = chi_full(kx - qx, ky - qy);
-    chi_p = chi_full(qx + kx, qy + ky);
+    ${gateSidebands ? "if (m.w != 0.0) { chi_m = chi_full(kx - qx, ky - qy); }" : "chi_m = chi_full(kx - qx, ky - qy);"}
+    ${gateSidebands ? "if (p.w != 0.0) { chi_p = chi_full(qx + kx, qy + ky); }" : "chi_p = chi_full(qx + kx, qy + ky);"}
   } else {
     let cos_term_m = m.y * params.cos2phi12 + m.z * params.sin2phi12;
     let cos_term_p = p.y * params.cos2phi12 + p.z * params.sin2phi12;
@@ -573,7 +577,10 @@ ${thick ? "fn thick_sinc(x: f32) -> f32 { return select(sin(x) / x, 1.0, abs(x) 
   let pk_conj = vec2<f32>(pk.x, -pk.y);
   let pp_conj = vec2<f32>(pp.x, -pp.y);
 ${thick ? THICK_TERMS : THIN_TERMS}
-  var gg = t1 - t2;
+  return t1 - t2;
+}
+fn gamma_mul(qx: f32, qy: f32, kx: f32, ky: f32, ${thick ? "alpha_k2: f32, " : ""}pk: vec2<f32>, G: vec2<f32>) -> vec2<f32> {
+  var gg = transfer(qx, qy, kx, ky, ${thick ? "alpha_k2, " : ""}pk);
   let mag_sq = gg.x * gg.x + gg.y * gg.y;
   let inv_mag = select(1e8, inverseSqrt(mag_sq), mag_sq > 1e-16);
   gg *= inv_mag;
@@ -760,6 +767,33 @@ fn finalizePartialGroups(@builtin(global_invocation_id) gid: vec3<u32>) {
 ${cacheProbe ? `
 // The incident probe depends on detector position and optics, not output q.
 // Evaluate it once per BF pixel, retaining the original float32 expressions.
+// Model agreement uses the unnormalized transfer function. Preserve the complex
+// numerator across BF chunks before forming the power at each scan frequency.
+@group(0) @binding(15) var<storage, read> fitFrequencies: array<vec2<u32>>;
+@group(0) @binding(14) var<storage, read_write> agreementTerms: array<vec4<f32>>;
+@compute @workgroup_size(64)
+fn modelAgreement(@builtin(global_invocation_id) id: vec3<u32>) {
+  let width = params.n / 2u + 1u;
+  let q = id.x;
+  let bandSize = arrayLength(&fitFrequencies);
+  if (q >= bandSize) { return; }
+  let row = fitFrequencies[q].x / width;
+  let col = fitFrequencies[q].x % width;
+  let qr = qx1d[row];
+  let qc = qy1d[col];
+  var sums = vec3<f32>(0.0);
+  for (var k = 0u; k < params.chunk_bf; k++) {
+    let bf = k + params.bf_offset;
+    let bg = bfGeom[bf];
+    if (bg.w == 0.0) { continue; }
+    let pk = cachedProbe[bf];
+    let gamma = transfer(qr, qc, bg.x, bg.y, ${thick ? "bg.z, " : ""}pk);
+    let g = gqk[k * ${fitStride}u + fitFrequencies[q].y];
+    sums += vec3<f32>(dot(g, gamma), g.y * gamma.x - g.x * gamma.y, dot(gamma, gamma));
+  }
+  agreementTerms[q] += vec4<f32>(sums, 0.0);
+}
+${thick ? agreementGradient(fitStride) : ""}
 @compute @workgroup_size(256)
 fn prepareProbe(@builtin(global_invocation_id) gid: vec3<u32>) {
   let bf = gid.x;
@@ -857,7 +891,7 @@ fn directObjFftCols(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workg
     let y = off + tid;
     if (y < ${n}u) {
       let v = s[y] * params.inv_n2;
-      phaseOut[y * ${n}u + col] = atan2(v.y, v.x);
+      phaseOut[y * ${n}u + col] = ${phaseField ? "atan2(sin(v.x),cos(v.x))" : "atan2(v.y, v.x)"};
     }
   }
 }
@@ -919,8 +953,8 @@ const SOURCE_FFT_BITREV: array<u32, ${n}> = array<u32, ${n}>(
 );`;
 }
 
-function makeSourceFftStages(n: SupportedDirectSize): string {
-  const workgroupSize = Math.min(n, 256);
+function makeSourceFftStages(n: SupportedDirectSize, workgroupSize = Math.min(n, 256), columns = 1): string {
+  const at = (index: string) => columns === 1 ? `s[${index}]` : `columnTile[${index} * ${columns}u + lane]`;
   const lines: string[] = ["  workgroupBarrier();"];
   for (let len = 2; len <= n; len *= 2) {
     const half = len / 2;
@@ -932,10 +966,10 @@ function makeSourceFftStages(n: SupportedDirectSize): string {
       `    let i0 = group * ${len}u + j;`,
       `    let i1 = i0 + ${half}u;`,
       `    let w = SOURCE_FFT_TWIDDLES[${twiddleOffset}u + j];`,
-      "    let t = cmul_source(w, s[i1]);",
-      "    let u = s[i0];",
-      "    s[i0] = u + t;",
-      "    s[i1] = u - t;",
+      `    let t = cmul_source(w, ${at("i1")});`,
+      `    let u = ${at("i0")};`,
+      `    ${at("i0")} = u + t;`,
+      `    ${at("i1")} = u - t;`,
       "  }",
       "  workgroupBarrier();",
     );
@@ -944,8 +978,16 @@ function makeSourceFftStages(n: SupportedDirectSize): string {
 }
 
 // BF-column unpack (detector counts -> complex G(q,k) columns) and the 2D source FFT of each column.
-function makeBfColumnGqkShader(n: SupportedDirectSize): string {
+function fftColumnTile(n: SupportedDirectSize): number {
+  // Four adjacent columns share coalesced reads/writes within WebGPU's 16 KiB minimum.
+  return n <= 512 ? 4 : 1;
+}
+
+function makeBfColumnGqkShader(n: SupportedDirectSize, compactOutput: boolean): string {
   const workgroupSize = Math.min(n, 256);
+  const columns = fftColumnTile(n);
+  const columnThreads = workgroupSize / columns;
+  const tile = (index: string) => columns === 1 ? `s[${index}]` : `columnTile[(${index}) * ${columns}u + lane]`;
   return `
 ${makeSourceFftConstants(n)}
 fn sample(gp: u32, mode: u32) -> u32 {
@@ -986,6 +1028,7 @@ struct FftParams {
 };
 @group(1) @binding(0) var<storage, read_write> fftData: array<vec2<f32>>;
 @group(1) @binding(1) var<uniform> fftParams: FftParams;
+${compactOutput ? "@group(1) @binding(2) var<storage, read_write> spectrum: array<vec2<f32>>;" : ""}
 var<workgroup> s: array<vec2<f32>, ${n}>;
 fn source_fft_inplace(tid: u32) {
 ${makeSourceFftStages(n)}
@@ -1007,33 +1050,34 @@ fn fftRows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
     if (x < ${n}u) { fftData[base + x] = s[x]; }
   }
 }
+${columns === 1 ? "" : `var<workgroup> columnTile: array<vec2<f32>, ${n * columns}>;`}
 @compute @workgroup_size(${workgroupSize})
 fn fftCols(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
-  let tid = lid.x;
-  let col = wid.y;
+  let lane = lid.x % ${columns}u;
+  let tid = lid.x / ${columns}u;
+  let col = wid.y * ${columns}u + lane;
   let bf = wid.z;
-  if (bf >= fftParams.chunk_bf) { return; }
   let base = bf * fftParams.plane;
-  for (var off = 0u; off < ${n}u; off = off + ${workgroupSize}u) {
-    let y = off + tid;
-    if (y < ${n}u) { s[SOURCE_FFT_BITREV[y]] = fftData[base + y * ${n}u + col]; }
+  for (var y = tid; y < ${n}u; y += ${columnThreads}u) {
+    if (col <= ${n/2}u) { ${tile("SOURCE_FFT_BITREV[y]")} = fftData[base + y * ${n}u + col]; }
   }
-  source_fft_inplace(tid);
-  for (var off = 0u; off < ${n}u; off = off + ${workgroupSize}u) {
-    let y = off + tid;
-    if (y < ${n}u) { fftData[base + y * ${n}u + col] = s[y]; }
+${makeSourceFftStages(n,columnThreads,columns)}
+  for (var y = tid; y < ${n}u; y += ${columnThreads}u) {
+    if (col <= ${n/2}u) {
+      ${compactOutput ? `spectrum[(bf * ${n}u + y) * ${n/2+1}u + col]` : `fftData[base + y * ${n}u + col]`} = ${tile("y")};
+    }
   }
 }
 `;
 }
 
 
-function makeGqkTransformShader(n: SupportedDirectSize): string {
+function makeGqkTransformShader(n: SupportedDirectSize, bandSize?: number): string {
   const half = n / 2;
   const halfW = half + 1;
-  const storedPlane = n * halfW;
+  const storedPlane = bandSize ?? n * halfW;
   const dstDecl = "@group(0) @binding(1) var<storage, read_write> dst: array<vec2<f32>>;";
-  const writeBody = `dst[bf * ${storedPlane}u + row * ${halfW}u + c] = v;`;
+  const writeBody = `dst[bf * ${storedPlane}u + i] = v;`;
   return `
 struct TransformParams {
   chunk_bf: u32,
@@ -1043,6 +1087,7 @@ struct TransformParams {
 };
 @group(0) @binding(0) var<storage, read> src: array<vec2<f32>>;
 ${dstDecl}
+${bandSize ? "@group(0) @binding(2) var<storage, read> band: array<u32>;" : ""}
 @group(0) @binding(3) var<uniform> tp: TransformParams;
 
 @compute @workgroup_size(256)
@@ -1050,8 +1095,9 @@ fn compact(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   let bf = gid.z;
   if (i >= ${storedPlane}u || bf >= tp.chunk_bf) { return; }
-  let row = i / ${halfW}u;
-  let c = i - row * ${halfW}u;
+  let flat = ${bandSize ? "band[i]" : "i"};
+  let row = flat / ${halfW}u;
+  let c = flat % ${halfW}u;
   let v = src[bf * ${n * n}u + row * ${n}u + c];
   ${writeBody}
 }
@@ -1332,11 +1378,13 @@ async function buildBfColumnGqkChunks(
   activeSourceIndices: Uint32Array,
   storageChunkCapacity: number,
   onProgress?: WebGPUProgressHandler,
+  fitBand?: {indices: GPUBuffer; size: number},
+  consume?: (encoder: GPUCommandEncoder, chunk: GPUBuffer, offset: number, count: number) => void,
 ): Promise<{ gqkChunks: GPUBuffer[]; chunkBfCounts: number[]; residentBytes: number }> {
   const t0 = performance.now();
   const emit = progressEmitter(onProgress, activeSourceIndices.length, cal.num_bright_field_pixels, t0);
   if (!source.url) throw new Error("BF-column source is missing a URL.");
-  if (Number(source.plane) !== plane) {
+  if (Number(source.plane) !== (source.kind === "full_detector" ? source.scan_shape[0] * source.scan_shape[1] : plane)) {
     throw new Error(`BF-column source plane ${source.plane} does not match ${n}x${n}=${plane}.`);
   }
   const maxActiveSource = activeSourceIndices.reduce((max, value) => Math.max(max, value), 0);
@@ -1354,8 +1402,8 @@ async function buildBfColumnGqkChunks(
     percent: 10,
     sourceFrames: plane,
   });
-  const module = device.createShaderModule({ code: makeBfColumnGqkShader(n), label: `Direct ptychography BF-column unpack+FFT ${n}` });
-  const compactModule = device.createShaderModule({ code: makeGqkTransformShader(n), label: `Direct ptychography gqk compact ${n}` });
+  const module = device.createShaderModule({ code: makeBfColumnGqkShader(n, !fitBand), label: `Direct ptychography BF-column unpack+FFT ${n}` });
+  const compactModule = device.createShaderModule({ code: makeGqkTransformShader(n, fitBand?.size), label: `Direct ptychography gqk compact ${n}` });
   const [unpackPipe, rowsPipe, colsPipe, compactPipe] = await Promise.all([
     device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "bfColumnsToGqk" } }),
     device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "fftRows" } }),
@@ -1365,13 +1413,14 @@ async function buildBfColumnGqkChunks(
   // uint8 columns pack 4 counts per word (mode 1), uint16 2 (mode 0); .qem columns arrive decoded
   const mode = source.encoding === "uint8" ? 1 : 0;
   const bytesPerBf = source.bytes_per_bright_field_pixel;
-  const storedPlane = storedPlaneFor(n);
+  const storedPlane = fitBand?.size ?? storedPlaneFor(n);
   const gqkChunks: GPUBuffer[] = [];
   const chunkBfCounts: number[] = [];
   let residentBytes = 0;
   let fetchBytes = 0;
   let fetchMs = 0;
-  let decodeMs = 0;
+  let admissionMs = 0;
+  let columnGatherMs = 0;
   let gpuWaitMs = 0;
   let ans: RansResidentSet | null = null;
   let previous: Promise<void> = Promise.resolve();
@@ -1381,6 +1430,10 @@ async function buildBfColumnGqkChunks(
     const started = performance.now();
     // Admission reads authenticated chunks directly from the selected file or
     // HTTP stream, without holding a second complete encoded copy on the host.
+    const admissionStarted = performance.now();
+    if (source.kind === "full_detector" && source.resident) {
+      ans = source.resident;
+    } else {
     const file = await openQemFile(source.url);
     const input = source.kind === "full_detector" ? {
       name: file.name, size: file.size, mode: file.mode,
@@ -1389,18 +1442,18 @@ async function buildBfColumnGqkChunks(
       expectedHeaderSha256: source.header_sha256,
     } : file;
     fetchBytes = file.size; fetchMs = performance.now() - started;
-    const decodeStarted = performance.now();
     ans = await RansResidentSet.loadQemFile(device,
       input,
       detail => emit({stage: "gather", message: "Preparing lossless ANS counts", detail, percent: 35}));
+    }
     const expectedShape = source.kind === "full_detector"
       ? [...source.scan_shape, ...source.detector_shape] : null;
-    if (ans.scanCount !== plane || (expectedShape
+    if (ans.scanCount !== source.plane || (expectedShape
       ? expectedShape.some((value, axis) => ans!.shape?.[axis] !== value) || ans.nativeDtype !== source.dtype
       : ans.detSize !== source.num_bright_field_pixels)) {
       throw new Error("QEM geometry or native count dtype does not match the direct ptychography source; export the review again.");
     }
-    decodeMs += performance.now() - decodeStarted;
+    admissionMs = performance.now() - admissionStarted;
   }
   for (let bfOffset = 0; bfOffset < activeSourceIndices.length; bfOffset += storageChunkCapacity) {
     const chunkBf = Math.min(storageChunkCapacity, activeSourceIndices.length - bfOffset);
@@ -1429,8 +1482,8 @@ async function buildBfColumnGqkChunks(
     const enc = device.createCommandEncoder();
     if (ans) {
       const decodeT = performance.now();
-      await ans.columnsComplex(0, selectedColumns.slice(bfOffset, bfOffset + chunkBf), full);
-      decodeMs += performance.now() - decodeT;
+      ans.encodeColumnsComplex(enc, temporaries, 0, selectedColumns.slice(bfOffset, bfOffset + chunkBf), full, source.kind === "full_detector" ? source.region : undefined);
+      columnGatherMs += performance.now() - decodeT;
     } else {
       const dataBuffer = makeBufferFromBytes(device, packed!, GPUBufferUsage.STORAGE, `direct bf-column packed ${bfOffset}`);
       const params = uniformU32(device, [0, 0, 0, mode, chunkBf, plane, 0, 0], `direct bf-column unpack params ${bfOffset}`);
@@ -1445,6 +1498,9 @@ async function buildBfColumnGqkChunks(
       pass.dispatchWorkgroups(Math.ceil(plane / BF_COLUMN_UNPACK_WORKGROUP_X), Math.ceil(chunkBf / BF_COLUMN_UNPACK_WORKGROUP_Y));
       pass.end();
     }
+    const resident = device.createBuffer({ size: chunkBf * storedPlane * GQK_BYTES_PER_VALUE, usage: GPUBufferUsage.STORAGE, label: `direct gqk ${GQK_MODE} chunk ${gqkChunks.length}` });
+    if (consume) temporaries.push(resident);
+    else gqkChunks.push(resident);
     // Row then column FFT of every column of the chunk, in place.
     const fftParams = uniformU32(device, [chunkBf, plane, 0, 0], `direct bf-column fft params ${bfOffset}`);
     temporaries.push(fftParams);
@@ -1454,23 +1510,26 @@ async function buildBfColumnGqkChunks(
       pass.setBindGroup(1, device.createBindGroup({ layout: pipeline.getBindGroupLayout(1), entries: [
         { binding: 0, resource: { buffer: full } },
         { binding: 1, resource: { buffer: fftParams } },
+        ...(!fitBand && pipeline === colsPipe ? [{ binding: 2, resource: { buffer: resident } }] : []),
       ] }));
-      pass.dispatchWorkgroups(1, n, chunkBf);
+      pass.dispatchWorkgroups(1, pipeline === colsPipe ? Math.ceil((n / 2 + 1) / fftColumnTile(n)) : n, chunkBf);
       pass.end();
     }
-    const resident = device.createBuffer({ size: chunkBf * storedPlane * GQK_BYTES_PER_VALUE, usage: GPUBufferUsage.STORAGE, label: `direct gqk ${GQK_MODE} chunk ${gqkChunks.length}` });
-    gqkChunks.push(resident);
-    const compactParams = uniformU32(device, [chunkBf, bfOffset, 0, 0], `direct gqk compact params ${bfOffset}`);
-    temporaries.push(compactParams);
-    const pass = enc.beginComputePass({ label: "direct gqk compact" });
-    pass.setPipeline(compactPipe);
-    pass.setBindGroup(0, device.createBindGroup({ layout: compactPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: full } },
-      { binding: 1, resource: { buffer: resident } },
-      { binding: 3, resource: { buffer: compactParams } },
-    ] }));
-    pass.dispatchWorkgroups(Math.ceil(storedPlane / 256), 1, chunkBf);
-    pass.end();
+    if (fitBand) {
+      const compactParams = uniformU32(device, [chunkBf, bfOffset, 0, 0], `direct gqk compact params ${bfOffset}`);
+      temporaries.push(compactParams);
+      const pass = enc.beginComputePass({ label: "direct gqk compact" });
+      pass.setPipeline(compactPipe);
+      pass.setBindGroup(0, device.createBindGroup({ layout: compactPipe.getBindGroupLayout(0), entries: [
+        { binding: 0, resource: { buffer: full } },
+        { binding: 1, resource: { buffer: resident } },
+        ...(fitBand ? [{ binding: 2, resource: { buffer: fitBand.indices } }] : []),
+        { binding: 3, resource: { buffer: compactParams } },
+      ] }));
+      pass.dispatchWorkgroups(Math.ceil(storedPlane / 256), 1, chunkBf);
+      pass.end();
+    }
+    consume?.(enc, resident, bfOffset, chunkBf);
     device.queue.submit([enc.finish()]);
     previous = device.queue.onSubmittedWorkDone().then(() => temporaries.forEach((buffer) => buffer.destroy()));
     chunkBfCounts.push(chunkBf);
@@ -1481,7 +1540,7 @@ async function buildBfColumnGqkChunks(
   gpuWaitMs += performance.now() - waitT;
   const totalMs = performance.now() - t0;
   const readTiming = source.encoding === "qem"
-    ? `open ${fetchMs.toFixed(1)} ms stream/admit ${decodeMs.toFixed(1)} ms`
+    ? `open ${fetchMs.toFixed(1)} ms authenticated admission ${admissionMs.toFixed(1)} ms, column dispatch setup ${columnGatherMs.toFixed(1)} ms`
     : `fetch ${fetchMs.toFixed(1)} ms`;
   console.log(
     `[direct] BF-column source prepared ${activeSourceIndices.length} BF from ${plane} scan positions `
@@ -1504,7 +1563,7 @@ async function buildBfColumnGqkChunks(
     gqkChunks.forEach(buffer => buffer.destroy());
     throw error;
   } finally {
-    ans?.dispose();
+    if (source.kind !== "full_detector" || !source.resident) ans?.dispose();
   }
 }
 
@@ -1513,12 +1572,21 @@ function chooseChunkCapacity(nbf: number, plane: number, device: GPUDevice): num
   const maxBuffer = device.limits.maxBufferSize || Number.MAX_SAFE_INTEGER;
   const safeStorage = maxStorage === Number.MAX_SAFE_INTEGER ? maxStorage : Math.floor(maxStorage * 0.75);
   const safeBuffer = maxBuffer === Number.MAX_SAFE_INTEGER ? maxBuffer : Math.floor(maxBuffer * 0.75);
-  const maxBytes = Math.max(1, Math.min(safeStorage, safeBuffer, MAX_GQK_CHUNK_BYTES));
+  // A mobile Adreno can advertise a 2 GiB binding yet lose the device when a
+  // single decode and FFT submission spans hundreds of full scan planes.
+  const batchBytes = device.adapterInfo?.vendor?.toLowerCase() === "qualcomm"
+    ? Math.max(16 * 1024 * 1024, REDUCE_BF_GROUP * plane * 8) : MAX_GQK_CHUNK_BYTES;
+  const maxBytes = Math.max(1, Math.min(safeStorage, safeBuffer, batchBytes));
   const maxByComplexBuffer = Math.max(1, Math.floor(maxBytes / (plane * 8)));
   const raw = Math.max(1, Math.min(nbf, MAX_BF_WORKGROUPS_PER_SUBMIT, maxByComplexBuffer));
   if (raw <= REDUCE_BF_GROUP) return raw;
   return Math.max(REDUCE_BF_GROUP, Math.floor(raw / REDUCE_BF_GROUP) * REDUCE_BF_GROUP);
 }
+
+type AgreementOptions = Pick<WebGPUReconstructionOptions, "higherOrder" | "sample" | "scanDetectorRotationDeg"> & {
+  /** Alternating 0.05 inverse Å rings for the fifth-order consistency check. */
+  ring?: 0 | 1;
+};
 
 export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
   readonly backend = "webgpu" as const;
@@ -1533,6 +1601,12 @@ export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
     sumGroups: GPUBindGroup[]; rowGroup: GPUBindGroup; colGroup: GPUBindGroup;
     probePipeline: GPUComputePipeline; probeGroup: GPUBindGroup;
     mirrorPipeline: GPUComputePipeline; mirrorGroup: GPUBindGroup;
+  } | null = null;
+  private agreementPlan: {
+    rotation: number; retainSpectrum: boolean; rings: Uint8Array; bands: {frequencies: Uint32Array; indices: GPUBuffer}[]; owned: GPUBuffer[];
+    paramsChunks: GPUBuffer[]; gqkChunks: GPUBuffer[]; chunkBfCounts: number[]; activeBfCount: number;
+    bfGeom: GPUBuffer; bfTrig: GPUBuffer; qx: GPUBuffer; qy: GPUBuffer; aberrations: GPUBuffer;
+    agreement: GPUComputePipeline; gradient: GPUComputePipeline; probePipeline: GPUComputePipeline;
   } | null = null;
   private cal: DirectCal;
   private n: SupportedDirectSize;
@@ -1554,7 +1628,7 @@ export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
   // `calJson` is the folder's `snapshots/cal.json`; the source holds exact BF columns or a full QEM.
   constructor(
     calJson: string,
-    detectorSource: { json: string },
+    detectorSource: { json: string; resident?: RansResidentSet },
   ) {
     if (!globalThis.isSecureContext || !navigator.gpu) {
       throw new Error(
@@ -1590,6 +1664,7 @@ export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
     this.n = n;
     this.plane = n * n;
     this.source = JSON.parse(detectorSource.json) as DetectorDirectSource;
+    if (this.source.kind === "full_detector") this.source.resident = detectorSource.resident;
     if (this.source.kind === "full_detector") {
       fullDetectorColumns(this.cal, this.source);
     } else if (this.source.kind !== "bf_columns") {
@@ -1605,6 +1680,232 @@ export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
     await this.prepareBfCount(this.cal.num_bright_field_pixels);
   }
 
+  private async prepareAgreement(rotation = baseRotationDeg(this.cal)) {
+    if (this.agreementPlan?.rotation === rotation) return this.agreementPlan;
+    this.releaseAgreement();
+    this.resetGpuBuffers();
+    const device = (this.source.kind === "full_detector" ? this.source.resident?.device : null) ?? await getGPUDevice(), n = this.n, cal = this.cal;
+    if (!device) throw new Error("Direct ptychography fitting requires a WebGPU adapter.");
+    const band: number[] = [];
+    const width = n / 2 + 1;
+    for (let row = 0; row < n; row++) {
+      for (let col = 0; col < width; col++) {
+        const q = Math.fround(Math.hypot(Math.fround(cal.scan_q_row[row]), Math.fround(cal.scan_q_col[col])));
+        if (q > Math.fround(0.2) && q < Math.fround(0.9)) band.push(row * width + col);
+      }
+    }
+    if (!band.length) throw new Error("The scan has no measured frequencies in the 0.2–0.9 inverse Å fit band.");
+    const active = collectActiveBfIndices(cal, cal.num_bright_field_pixels, rotation);
+    if (!active.length) throw new Error("The calibrated aperture contains no bright-field pixels.");
+    if (active.length * band.length * 8 > gqkBudgetBytes(cal)) throw new Error("The full fit band exceeds the calibrated GPU budget.");
+    const owned: GPUBuffer[] = [];
+    const keep = (buffer: GPUBuffer) => { owned.push(buffer); return buffer; };
+    const storage = (a: Float32Array, label: string) => keep(makeBufferFromArray(device, a, GPUBufferUsage.STORAGE, label));
+    try {
+      const frequencies = Uint32Array.from(band);
+      const indices = keep(makeBufferFromBytes(device, new Uint8Array(frequencies.buffer), GPUBufferUsage.STORAGE, "fit band"));
+      // Retain the Hermitian spectrum when it fits a small working set. Larger
+      // acquisitions stream the final phase so their full spectrum never needs to fit.
+      const retainSpectrum = active.length * storedPlaneFor(n) * GQK_BYTES_PER_VALUE <=
+        Math.min(320 * 1024 * 1024, gqkBudgetBytes(cal));
+      const module = device.createShaderModule({code: makeDirectShader(n, true, n, true, retainSpectrum ? storedPlaneFor(n) : band.length)});
+      const pipeline = (entryPoint: string) => device.createComputePipelineAsync({layout: "auto", compute: {module, entryPoint}});
+      const [probePipeline, agreement, gradient] = await Promise.all([pipeline("prepareProbe"), pipeline("modelAgreement"), pipeline("modelGradient")]);
+      const {gqkChunks, chunkBfCounts} = await buildBfColumnGqkChunks(device, cal, this.source, n, n*n, active,
+        chooseChunkCapacity(active.length, n*n, device), this.onProgress ?? undefined, retainSpectrum ? undefined : {indices, size: band.length});
+      owned.push(...gqkChunks);
+      const {geom, trig} = packGeometry(cal, active, rotation);
+      this.device = device;
+      const rings = Uint8Array.from(frequencies, index => {
+        const q = Math.hypot(Math.fround(cal.scan_q_row[Math.floor(index / width)]), Math.fround(cal.scan_q_col[index % width]));
+        return Math.floor(q / 0.05) % 2;
+      });
+      // Pack each ring in original frequency order. Its evaluations only
+      // visit that ring while reading the shared resident spectrum.
+      const bands = [undefined, 0, 1].map(ring => {
+        const selected = [];
+        for (let i = 0; i < band.length; i++) {
+          if (ring === undefined || rings[i] === ring) selected.push(i);
+        }
+        const mapping = Uint32Array.from(selected.flatMap(i => [band[i], retainSpectrum ? band[i] : i]));
+        return {
+          frequencies: Uint32Array.from(selected, i => band[i]),
+          indices: keep(makeBufferFromBytes(device, new Uint8Array(mapping.byteLength ? mapping.buffer : new ArrayBuffer(8)),
+            GPUBufferUsage.STORAGE, "fit frequency map")),
+        };
+      });
+      this.agreementPlan = {rotation, retainSpectrum, rings, bands, owned, probePipeline, agreement, gradient, activeBfCount: active.length,
+        gqkChunks, chunkBfCounts, bfGeom: storage(geom, "fit BF coordinates"), bfTrig: storage(trig, "fit BF angles"),
+        qx: storage(Float32Array.from(cal.scan_q_row), "fit scan row frequencies"),
+        qy: storage(Float32Array.from(cal.scan_q_col), "fit scan column frequencies"),
+        aberrations: storage(packAberrations(0, 0, 0).data, "fit aberrations"),
+        paramsChunks: chunkBfCounts.map(() => keep(device.createBuffer({size: DIRECT_PARAMS_BYTES,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST})))};
+      return this.agreementPlan;
+    } catch (error) {
+      owned.forEach(buffer => buffer.destroy());
+      throw error;
+    }
+  }
+
+  // A successful trust-region step asks for a gradient at the point just scored.
+  private scoredPoint: {key: string; terms: GPUBuffer; score: number} | null = null;
+  private releaseAgreement() {
+    this.scoredPoint?.terms.destroy();
+    this.scoredPoint = null;
+    this.agreementPlan?.owned.forEach(buffer => buffer.destroy());
+    this.agreementPlan = null;
+  }
+
+  /** Native-grid fifth-order model agreement over the measured 0.2–0.9 inverse Å band. */
+  async modelAgreement(c10A: number, c12A: number, phi12Rad: number,
+    options: AgreementOptions = {}): Promise<number> {
+    return (await this.evaluateAgreement(c10A, c12A, phi12Rad, options, false)).score;
+  }
+
+  async modelAgreementGradient(c10A: number, c12A: number, phi12Rad: number,
+    options: AgreementOptions = {}) {
+    return this.evaluateAgreement(c10A, c12A, phi12Rad, options, true);
+  }
+
+  /** Independent points share the resident fit spectrum and queue their readbacks together. */
+  async evaluateFitBatch(points: [number, number, number, AgreementOptions][], seedGradients: boolean) {
+    if (!points.length || points.length > 8) throw Error("Select between one and eight independent fit points.");
+    return this.runExclusive(async () => {
+      const rotation = points[0][3].scanDetectorRotationDeg;
+      if (points.some(p => p[3].scanDetectorRotationDeg !== rotation || p[3].ring !== undefined))
+        throw Error("Batched fit points require the same geometry and full frequency band.");
+      const buffers = await this.prepareAgreement(rotation);
+      const jobs = points.map(([c10,c12,phi,options]) =>
+        this.evaluatePrepared(buffers,c10,c12,phi,options,seedGradients,seedGradients,false));
+      const results = await Promise.allSettled(jobs);
+      return results.map(entry => {
+        if (entry.status === "rejected") throw entry.reason;
+        const r = entry.value;
+        if (!seedGradients) return r.score;
+        if (!r.ringResults) throw Error("No measured frequencies in the fitting band.");
+        return [r,...r.ringResults].map(v => [v.score,Array.from(v.gradient)]);
+      });
+    });
+  }
+
+  private async evaluateAgreement(c10A: number, c12A: number, phi12Rad: number,
+    options: AgreementOptions, derivatives: boolean) {
+    return this.runExclusive(async () => this.evaluatePrepared(
+      await this.prepareAgreement(options.scanDetectorRotationDeg), c10A, c12A, phi12Rad, options, derivatives));
+  }
+
+  private async evaluatePrepared(buffers: NonNullable<WebGPUDirectBackend["agreementPlan"]>,
+    c10A: number, c12A: number, phi12Rad: number, options: AgreementOptions,
+    derivatives: boolean, splitRings = false, cachePoint = true) {
+    const device = this.device!, n = this.n;
+    const {agreement, probePipeline} = buffers;
+    const {frequencies: band, indices} = buffers.bands[options.ring === undefined ? 0 : options.ring + 1];
+    if (!band.length) return {score: 0, gradient: new Float64Array(derivatives ? 28 : 0)};
+    const owned: GPUBuffer[] = [];
+    const allocate = (size: number, usage: GPUBufferUsageFlags) => {
+      const b = device.createBuffer({size, usage});
+      owned.push(b);
+      return b;
+    };
+    const group = (p: GPUComputePipeline, entries: [number, GPUBuffer][]) => device.createBindGroup({
+      layout: p.getBindGroupLayout(0), entries: entries.map(([binding, buffer]) => ({binding, resource: {buffer}})),
+    });
+    const width = n / 2 + 1;
+    try {
+      const key = JSON.stringify([c10A, c12A, phi12Rad, options.sample, options.higherOrder, options.ring]);
+      const cached = cachePoint && this.scoredPoint?.key === key ? this.scoredPoint : null;
+      if (cached && !derivatives) return {score: cached.score, gradient: new Float64Array(0)};
+      const terms = cached?.terms ?? allocate(band.length * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+      const probe = allocate(buffers.activeBfCount * 8, GPUBufferUsage.STORAGE);
+      const phi = phi12Rad * 180 / Math.PI;
+      const abr = packAberrations(c10A, c12A, phi, options.higherOrder);
+      device.queue.writeBuffer(buffers.aberrations, 0, abr.data as Float32Array<ArrayBuffer>);
+      const encoder = device.createCommandEncoder();
+      if (!cached) encoder.clearBuffer(terms);
+      let offset = 0;
+      for (const [i, count] of buffers.chunkBfCounts.entries()) {
+        const params = buffers.paramsChunks[i];
+        device.queue.writeBuffer(params, 0, makeParams(this.cal, n, c10A, c12A, phi,
+          this.cal.num_bright_field_pixels, offset, count, false, buffers.activeBfCount, true, options.sample));
+        if (cached) {
+          offset += count;
+          continue;
+        }
+        if (i === 0) {
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(probePipeline);
+          pass.setBindGroup(0, group(probePipeline, [[0, params], [3, buffers.bfGeom], [4, buffers.bfTrig],
+            [12, buffers.aberrations], [13, probe]]));
+          pass.dispatchWorkgroups(Math.ceil(buffers.activeBfCount / 256));
+          pass.end();
+        }
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(agreement);
+        pass.setBindGroup(0, group(agreement, [[0, params], [1, buffers.gqkChunks[i]], [3, buffers.bfGeom],
+          [5, buffers.qx], [6, buffers.qy], [12, buffers.aberrations], [13, probe], [14, terms], [15, indices]]));
+        pass.dispatchWorkgroups(Math.ceil(band.length / 64));
+        pass.end();
+        offset += count;
+      }
+      let gradientTerms: GPUBuffer | undefined;
+      if (derivatives) {
+        gradientTerms = allocate(band.length * 28 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+        encoder.clearBuffer(gradientTerms);
+        for (const [i, chunk] of buffers.gqkChunks.entries()) {
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(buffers.gradient);
+          pass.setBindGroup(0, group(buffers.gradient, [[0,buffers.paramsChunks[i]], [1,chunk], [3,buffers.bfGeom],
+            [5,buffers.qx], [6,buffers.qy], [12,buffers.aberrations], [14,terms], [15,indices], [16,gradientTerms]]));
+          pass.dispatchWorkgroups(Math.ceil(band.length / 64));
+          pass.end();
+        }
+      }
+      const scoreBytes = cached ? 0 : band.length * 16;
+      const gradientBytes = gradientTerms ? band.length * 28 * 4 : 0;
+      const read = allocate(scoreBytes + gradientBytes, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+      if (scoreBytes) encoder.copyBufferToBuffer(terms, 0, read, 0, scoreBytes);
+      if (gradientTerms) encoder.copyBufferToBuffer(gradientTerms, 0, read, scoreBytes, gradientBytes);
+      device.queue.submit([encoder.finish()]);
+      await read.mapAsync(GPUMapMode.READ);
+      const data = new Float32Array(read.getMappedRange());
+      const ringResults = splitRings ? [0, 1].map(() => ({score:0, gradient:new Float64Array(28)})) : undefined;
+      let score = cached?.score ?? 0;
+      if (!cached) {
+        for (let q = 0; q < band.length; q++) {
+          const i = q * 4, col = band[q] % width;
+          const weight = col === 0 || col === n / 2 ? 1 : 2;
+          if (data[i+2] > 0) {
+            const value = weight * (data[i] ** 2 + data[i+1] ** 2) / data[i+2];
+            score += value;
+            if (ringResults) ringResults[buffers.rings[q]].score += value;
+          }
+        }
+        if (cachePoint) {
+          this.scoredPoint?.terms.destroy();
+          this.scoredPoint = {key, terms, score};
+          owned.splice(owned.indexOf(terms), 1);
+        }
+      }
+      const gradient = new Float64Array(derivatives ? 28 : 0);
+      if (gradientTerms) {
+        const g = data.subarray(scoreBytes / 4);
+        for (let j = 0; j < 28; j++) {
+          for (let q = 0; q < band.length; q++) {
+            const col = band[q] % width;
+            const value = g[j*band.length + q] * (col === 0 || col === n/2 ? 1 : 2);
+            gradient[j] += value;
+            if (ringResults) ringResults[buffers.rings[q]].gradient[j] += value;
+          }
+        }
+      }
+      read.unmap();
+      return {score, gradient, ringResults};
+    } finally {
+      owned.forEach(b => b.destroy());
+    }
+  }
+
   async fit(
     options: WebGPUOptimizationOptions,
   ): Promise<DirectOptimizationResult> {
@@ -1616,6 +1917,7 @@ export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
     this.onProgress = null;
     // Submitted work may still reference these buffers when a view closes.
     void this.operationQueue.then(() => {
+      this.releaseAgreement();
       this.resetGpuBuffers();
       this.device = null;
     });
@@ -1634,6 +1936,7 @@ export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
   }
 
   private async setup(requiredBfCount = this.cal.num_bright_field_pixels, scanDetectorRotationDeg?: number): Promise<void> {
+    this.releaseAgreement();
     const capacity = this.clampBfCount(requiredBfCount);
     if (this.initialized && this.residentCovers(capacity, scanDetectorRotationDeg)) {
       this.updateGeometry(capacity, scanDetectorRotationDeg);
@@ -1722,7 +2025,7 @@ export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
       percent: 0,
       activeBf: capacity,
     });
-    const device = this.device || await getGPUDevice();
+    const device = this.device ?? (this.source.kind === "full_detector" ? this.source.resident?.device : null) ?? await getGPUDevice();
     if (!device) throw new Error("WebGPU device unavailable");
     const fftConfig = getWebGPUFFTConfig(n);
     if (!fftConfig) throw new Error(`Missing WebGPU direct ptychography FFT configuration for ${n}.`);
@@ -2007,6 +2310,146 @@ export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
     this.geometryBfCount = subset;
   }
 
+  // Reconstruct from the complete frequency grid. The fit only retains its
+  // measured band, so stream the original columns again for the final phase.
+  private async reconstructFitPhase(c10: number, c12: number, phi: number, options: WebGPUReconstructionOptions) {
+    const plan = await this.prepareAgreement(options.scanDetectorRotationDeg);
+    const device = this.device!, n = this.n, started = performance.now();
+    const module = device.createShaderModule({code: makeDirectShader(n, true, n, true)});
+    const pipelines = await Promise.all(["prepareProbe", "directObjSum", "directObjFftRows", "directObjFftCols"]
+      .map(entryPoint => device.createComputePipelineAsync({layout: "auto", compute: {module, entryPoint}})));
+    const [prepare, sum, rows, cols] = pipelines;
+    const owned: GPUBuffer[] = [];
+    const alloc = (size: number, usage: GPUBufferUsageFlags) => {
+      const buffer = device.createBuffer({size, usage}); owned.push(buffer); return buffer;
+    };
+    const dispatch = (enc: GPUCommandEncoder, p: GPUComputePipeline, entries: [number, GPUBuffer][], x: number, y = 1) => {
+      const pass = enc.beginComputePass(); pass.setPipeline(p);
+      pass.setBindGroup(0, device.createBindGroup({layout: p.getBindGroupLayout(0),
+        entries: entries.map(([binding, buffer]) => ({binding, resource: {buffer}}))}));
+      pass.dispatchWorkgroups(x, y); pass.end();
+    };
+    const degrees = phi * 180 / Math.PI;
+    const abr = packAberrations(c10, c12, degrees, options.higherOrder);
+    const active = collectActiveBfIndices(this.cal, this.cal.num_bright_field_pixels, options.scanDetectorRotationDeg);
+    const uniform = (offset: number, count: number) => makeParams(this.cal, n, c10, c12, degrees,
+      this.cal.num_bright_field_pixels, offset, count, false, active.length, abr.active, options.sample);
+    try {
+      const stage = alloc(n*n*8, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+      const phase = alloc(n*n*4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+      const probe = alloc(active.length*8, GPUBufferUsage.STORAGE);
+      const params = alloc(DIRECT_PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+      device.queue.writeBuffer(plan.aberrations, 0, abr.data as Float32Array<ArrayBuffer>);
+      device.queue.writeBuffer(params, 0, uniform(0, 1));
+      const init = device.createCommandEncoder(); init.clearBuffer(stage);
+      dispatch(init, prepare, [[0, params], [3, plan.bfGeom], [4, plan.bfTrig], [12, plan.aberrations], [13, probe]],
+        Math.ceil(active.length/256));
+      device.queue.submit([init.finish()]);
+      const sumChunk = (encoder: GPUCommandEncoder, buffer: GPUBuffer, offset: number, count: number) => {
+        options.signal?.throwIfAborted();
+        device.queue.writeBuffer(params, 0, uniform(offset, count));
+        dispatch(encoder, sum, [[0, params], [1, buffer], [2, stage], [3, plan.bfGeom],
+          [5, plan.qx], [6, plan.qy], [12, plan.aberrations], [13, probe]], Math.ceil(n*n/256));
+      };
+      if (plan.retainSpectrum) {
+        let offset = 0;
+        for (const [i, count] of plan.chunkBfCounts.entries()) {
+          const encoder = device.createCommandEncoder();
+          sumChunk(encoder, plan.gqkChunks[i], offset, count);
+          device.queue.submit([encoder.finish()]);
+          offset += count;
+        }
+      } else {
+        await buildBfColumnGqkChunks(device, this.cal, this.source, n, n*n, active,
+          chooseChunkCapacity(active.length, n*n, device), this.onProgress ?? undefined, undefined, sumChunk);
+      }
+      const end = device.createCommandEncoder();
+      dispatch(end, rows, [[2, stage]], 1, n);
+      dispatch(end, cols, [[0, params], [2, stage], [10, phase]], 1, n);
+      device.queue.submit([end.finish()]);
+      const pixels = await readF32(device, phase, n*n);
+      return {phase: pixels, width: n, height: n, gpuMs: performance.now() - started,
+        numBrightFieldPixels: this.cal.num_bright_field_pixels, scanDetectorRotationDeg: plan.rotation,
+        loss: null, adapterInfo: getGPUInfo(), softwareAdapter: isSoftwareGPUAdapter()};
+    } finally {
+      owned.forEach(buffer => buffer.destroy());
+    }
+  }
+
+  /** Full-field direct phase inversion. Damping acts on the coupled alias system. */
+  async reconstructPhase(c10A: number, c12A: number, phi12Rad: number,
+    options: Omit<AgreementOptions, "ring"> & {phaseDamp?: number; upsample?: "auto" | 1 | 2 | 3 | 4 | 8} = {}) {
+    return this.runExclusive(async () => {
+      const started = performance.now(), n = this.n, cal = this.cal;
+      const rowStep = Math.fround(cal.scan_q_row[1]), colStep = Math.fround(cal.scan_q_col[1]);
+      const required = 4 * cal.semiangle_rad / (cal.wavelength_A * n * Math.min(rowStep, colStep));
+      const auto = [1,2,3,4].find(value => value >= required - 1e-12) ?? 4;
+      const factor = options.upsample === undefined || options.upsample === "auto" ? auto : options.upsample;
+      const size = n * factor, damping = options.phaseDamp ?? 0.3;
+      if (!supportedDirectSize(size)) throw new Error(`No WebGPU FFT for the requested ${size} × ${size} phase grid.`);
+      if (!(Number.isFinite(damping) && damping > 0)) throw new Error("Phase damping must be finite and positive.");
+      const device = (this.source.kind === "full_detector" ? this.source.resident?.device : null) ?? await getGPUDevice();
+      if (!device) throw new Error("Direct phase reconstruction needs WebGPU.");
+      const rotation = options.scanDetectorRotationDeg ?? baseRotationDeg(cal);
+      const cutoff = (2 * cal.semiangle_rad + Math.max(...cal.angular_sampling_rad)) / cal.wavelength_A;
+      const layout = phaseLayout(n, factor, rowStep, colStep, cutoff);
+      const {count,aliases} = layout, entries = aliases*(aliases+1)/2+aliases;
+      const bytes = count * entries * 8;
+      if (bytes > device.limits.maxStorageBufferBindingSize) throw new Error("The coupled phase system exceeds this adapter's buffer limit.");
+      const active = Uint32Array.from({length:cal.num_bright_field_pixels}, (_,i)=>i);
+      const {geom, trig: angleData} = packGeometry(cal, active, rotation);
+      let aperturePower=0, scale=0;
+      for(let i=3;i<geom.length;i+=4){const p=Math.fround(geom[i]*geom[i]);aperturePower+=p;scale+=Math.fround(p*p);}
+      const owned:GPUBuffer[]=[];
+      const keep=(b:GPUBuffer)=>{owned.push(b);return b;};
+      const alloc=(size:number,usage:GPUBufferUsageFlags)=>keep(device.createBuffer({size,usage}));
+      const storage=(v:Float32Array | Uint32Array,label:string)=>keep(makeBufferFromBytes(device,
+        new Uint8Array(v.buffer,v.byteOffset,v.byteLength),GPUBufferUsage.STORAGE,label));
+      const compile=(module:GPUShaderModule,entryPoint:string)=>device.createComputePipelineAsync({layout:"auto",compute:{module,entryPoint}});
+      const dispatch=(enc:GPUCommandEncoder,p:GPUComputePipeline,entries:[number,GPUBuffer][],x:number,y=1)=>{
+        const pass=enc.beginComputePass();pass.setPipeline(p);
+        pass.setBindGroup(0,device.createBindGroup({layout:p.getBindGroupLayout(0),entries:entries.map(([binding,buffer])=>({binding,resource:{buffer}}))}));
+        pass.dispatchWorkgroups(x,y);pass.end();
+      };
+      try {
+        const source=makeDirectShader(n,true,n,true,0,false,true)+phaseNormalShader(n,size,aliases,rowStep,colStep);
+        const normal=device.createShaderModule({code:source});
+        const fft=device.createShaderModule({code:makeDirectShader(size,true,n,true,0,true)});
+        const [prepare,accumulate,measureDose,rows,cols]=await Promise.all([compile(normal,"prepareProbe"),compile(normal,"accumulatePhase"),
+          compile(normal,"phaseDetectorCounts"),compile(fft,"directObjFftRows"),compile(fft,"directObjFftCols")]);
+        const mapped=storage(layout.map,"phase aliases"),geometry=storage(geom,"phase detector coordinates");
+        const trig=storage(angleData,"phase detector angles");
+        const degrees=phi12Rad*180/Math.PI;
+        const coefficients=storage(packAberrations(c10A,c12A,degrees,options.higherOrder).data,"phase optics");
+        const params=alloc(DIRECT_PARAMS_BYTES,GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST);
+        const probe=alloc(active.length*8,GPUBufferUsage.STORAGE);
+        const counts=alloc(active.length*4,GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC);
+        const gram=alloc(bytes,GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC|GPUBufferUsage.COPY_DST);
+        const uniform=(grid:number,offset:number,count:number)=>makeParams(cal,grid,c10A,c12A,degrees,active.length,offset,count,false,active.length,true,options.sample);
+        device.queue.writeBuffer(params,0,uniform(n,0,1));
+        let encoder=device.createCommandEncoder(); encoder.clearBuffer(gram);
+        dispatch(encoder,prepare,[[0,params],[3,geometry],[4,trig],[12,coefficients],[13,probe]],Math.ceil(active.length/256));device.queue.submit([encoder.finish()]);
+        await buildBfColumnGqkChunks(device,cal,this.source,n,n*n,active,chooseChunkCapacity(active.length,n*n,device),this.onProgress??undefined,undefined,
+          (enc,buffer,offset,countBf)=>{
+            device.queue.writeBuffer(params,0,uniform(n,offset,countBf));
+            dispatch(enc,measureDose,[[0,params],[1,buffer],[7,counts]],Math.ceil(countBf/64));
+            dispatch(enc,accumulate,[[0,params],[1,buffer],[2,gram],[3,geometry],[12,coefficients],[13,probe],[17,mapped]],Math.ceil(count/64));
+          });
+        const scanSums=await readF32(device,counts,active.length);
+        const dose=scanSums.reduce((a,b)=>a+b,0)/(n*n*aperturePower);
+        if (!(dose>0) || !Number.isFinite(dose)) throw new Error("The measured incident dose must be positive.");
+        const field=solvePhase(layout,await readF32(device,gram,bytes/4),size,factor,rowStep,colStep,dose,damping*scale);
+        const stage=storage(field,"damped phase spectrum"),phase=alloc(size*size*4,GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC);
+        device.queue.writeBuffer(params,0,uniform(size,0,1));
+        encoder=device.createCommandEncoder();
+        dispatch(encoder,rows,[[2,stage]],1,size);
+        dispatch(encoder,cols,[[0,params],[2,stage],[10,phase]],1,size);
+        device.queue.submit([encoder.finish()]);
+        return {phase:await readF32(device,phase,size*size),width:size,height:size,upsample:factor,phaseDamp:damping,elapsedMs:performance.now()-started};
+      } finally {owned.forEach(b=>b.destroy());}
+    });
+  }
+
   async reconstruct(c10A: number, c12A: number, phi12Rad: number,
     options: WebGPUReconstructionOptions = {}): Promise<WebGPUDirectResult> {
     const factor = options.upsample ?? 1;
@@ -2015,6 +2458,9 @@ export class WebGPUDirectBackend implements DirectProtocol<WebGPUDirectResult> {
       options.signal?.throwIfAborted();
       // Loss is a native-grid diagnostic. It must not change the displayed estimator on release.
       const wantsLoss = options.computeLoss !== false;
+      if (this.agreementPlan && !wantsLoss && factor === 1 && this.clampBfCount(options.numBrightFieldPixels) === this.cal.num_bright_field_pixels) {
+        return this.reconstructFitPhase(c10A, c12A, phi12Rad, options);
+      }
       const native = wantsLoss || factor === 1
         ? await this.reconstructNative(c10A, c12A, phi12Rad, {...options, computeLoss: wantsLoss}) : null;
       let result: WebGPUDirectResult;
