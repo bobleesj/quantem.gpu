@@ -179,8 +179,7 @@ def test_float_original_to_qem_and_native_patterns(
     inspected = io.inspect(original, scan_shape=(5, 7))
     assert inspected.ready and inspected.detector_shape == (128, 128)
     assert inspected.scan_shape == (5, 7) and inspected.dtype == "float32"
-    options = {} if format_name == "numpy" else {"backend": backend}
-    with io.load(original, scan_shape=(5, 7), verbose=False, **options) as loaded:
+    with io.load(original, scan_shape=(5, 7), device=backend, verbose=False) as loaded:
         assert loaded.representation.value == "encoded"
         assert loaded.metadata["backend"] == backend
         assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= limit
