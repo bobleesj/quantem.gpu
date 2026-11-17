@@ -3222,7 +3222,7 @@ class DirectPtycho:
         ``sources`` are scans of one scan shape: recorded files, or scans already on the GPU (a live stream's
         ``datasets``). The optics are fitted once on this session's scan (``aberrations()``) unless ``fit``
         is given; every scan then refines only defocus and astigmatism from the scan before (``refit="full"``:
-        fits every scan independently instead), is reconstructed with ``method`` (and the damping keywords in
+        refines every aberration from the scan before instead), is reconstructed with ``method`` (and the damping keywords in
         ``strengths``), and is registered onto one combined image. Returns a ``DirectPtychoSeries`` (``add``, ``report``,
         ``show``, ``align``, ``reconstruct``). Without ``sources`` the series starts empty and grows scan by scan
         as they arrive: pass ``series.add`` to an ``ArinaListener`` as its ``process``.
@@ -3230,7 +3230,7 @@ class DirectPtycho:
         ``refit="none"`` applies the complete initial fit to every scan unchanged, including every
         aberration, sample tilt and depth. No fitting evaluations run; reconstruction and drift
         registration still run for each scan. ``save_dir`` is only supported by ``refit="defocus"``.
-        ``full_refit_every=5`` fits every aberration through fifth order on every 5th scan (rotation kept); the
+        ``full_refit_every=5`` refines every aberration through fifth order on every 5th scan from the scan before (rotation kept); the
         scans between refit defocus and astigmatism from it.
 
         ``max_frames=N`` retains the latest N reconstructed frames, sources, fits and report rows,

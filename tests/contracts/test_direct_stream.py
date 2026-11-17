@@ -765,47 +765,80 @@ def test_a_live_scan_is_named_by_its_acquisition(monkeypatch, tmp_path):
 
 
 @pytest.mark.usefixtures("cuda_runtime")
-def test_full_refit_fits_every_scan_independently(monkeypatch, tmp_path):
-    """refit="full" runs aberrations on each scan's session, rotation kept, and reconstructs at that fit's
-    optics; the low-order refit is not run, and saving records (which resume a defocus refit) is refused."""
+def test_a_full_refit_refines_every_aberration_from_the_last_scan(monkeypatch, tmp_path):
+    """refit="full" refines all 28
+    coordinates on each scan, starting from the scan before (the first from the fit); the low-order refit and the
+    fresh 200-trial fit are not run, and saving records (which resume a defocus refit) is refused."""
     from quantem.gpu.direct_ptycho import stream as stream_module
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
-    fits = []
+    starts, ends, real_refine = [], [], stream_module._refine_with_gradients
 
-    def aberrations(self, **options):
-        fits.append(options)
-        value = 0.1 * len(fits)
-        return SimpleNamespace(aberrations={"C10_nm": value, "C12_nm": -value, "phi12_deg": 10 * value},
-                               sample_tilt_mrad=(0.0, 0.0), depth_spread_nm=1.0,
-                               optimizer={"coordinates": np.zeros(28).tolist(), "evaluations": 7})
+    def refine(objective, start, bounds, norm, cap):
+        """The fifth-order refinement, its start and end recorded."""
+        starts.append(np.array(start))
+        record = real_refine(objective, start, bounds, norm, cap)
+        ends.append(np.array(record["coordinates"]))
+        return record
 
-    monkeypatch.setattr(FakeSession, "aberrations", aberrations, raising=False)
-    monkeypatch.setattr(stream_module, "_objective", lambda *args, **kwargs: pytest.fail("the low-order refit ran"))
+    def no_fresh_fit(self, **options):
+        pytest.fail("a fresh fit ran")
+
+    monkeypatch.setattr(FakeSession, "aberrations", no_fresh_fit, raising=False)
+    monkeypatch.setattr(stream_module, "_refit", lambda *args: pytest.fail("the low-order refit ran"))
+    monkeypatch.setattr(stream_module, "_refine_with_gradients", refine)
     series, _ = streamed(sources, fit, None, refit="full")
-    assert len(fits) == len(sources) and all(options["check_rotation"] is False for options in fits)
-    assert [optics["C10_nm"] for optics in series.aberrations] == pytest.approx([0.1 * (index + 1) for index in range(5)])
-    assert [run.optics["C10_nm"] for run in FakeSession.runs] == [optics["C10_nm"] for optics in series.aberrations]
-    assert [refit["evaluations"] for refit in series.refits] == [7] * 5
+    assert len(starts) == len(sources) and starts[0] == pytest.approx(fit.optimizer["coordinates"])
+    for before, start in zip(ends, starts[1:]):
+        assert start == pytest.approx(before)                     # each scan starts where the last one ended
+    assert [optics["C10_nm"] for optics in series.aberrations] == pytest.approx([end[0] for end in ends])
+    assert all(refit["stop"].startswith("full refit from the last scan") for refit in series.refits)
     with pytest.raises(ValueError, match="defocus refits"):
         streamed(sources, fit, tmp_path / "records", refit="full")
 
 
 @pytest.mark.usefixtures("cuda_runtime")
+def test_a_full_refit_ending_on_a_bound_falls_back_to_a_fresh_fit(monkeypatch, tmp_path):
+    from quantem.gpu.direct_ptycho import stream as stream_module
+
+    sources, fit = fake_stream(monkeypatch, tmp_path)
+    fits = []
+
+    def edge(objective, start, bounds, norm, cap):
+        """A refinement that runs into C10's bound."""
+        z = np.array(start); z[0] = bounds[0][1]
+        return {"coordinates": z, "objectives": 3, "stop": "converged"}
+
+    def aberrations(self, **options):
+        fits.append(options)
+        return SimpleNamespace(aberrations={"C10_nm": 0.5, "C12_nm": 0.0, "phi12_deg": 0.0}, sample_tilt_mrad=(0.0, 0.0),
+                               depth_spread_nm=1.0, optimizer={"coordinates": np.zeros(28).tolist(), "evaluations": 7})
+
+    monkeypatch.setattr(FakeSession, "aberrations", aberrations, raising=False)
+    monkeypatch.setattr(stream_module, "_refine_with_gradients", edge)
+    series, _ = streamed(sources, fit, None, refit="full")
+    assert len(fits) == len(sources) and all(options["check_rotation"] is False for options in fits)
+    assert [optics["C10_nm"] for optics in series.aberrations] == [0.5] * 5
+
+
+@pytest.mark.usefixtures("cuda_runtime")
 def test_a_full_refit_every_few_scans_is_held_by_the_defocus_refits_between(monkeypatch, tmp_path):
-    """full_refit_every=2: scans 2 and 4 fit every aberration (rotation kept); scans 1 and 3 refit only the low
-    orders, scan 3 with the higher orders of scan 2's fit held. Settings that cannot go with it are refused."""
+    """full_refit_every=2: scans 2 and 4 refine every aberration from the scan before (rotation kept); scans 1 and 3
+    refit only the low orders, scan 3 with the higher orders of scan 2's refit held. Settings that cannot go with it
+    are refused."""
     from quantem.gpu.direct_ptycho import stream as stream_module
 
     sources, fit = fake_stream(monkeypatch, tmp_path)
     size = len(fit.optimizer["coordinates"])
-    fits, held = [], []
+    starts, held, real_refine = [], [], stream_module._refine_with_gradients
 
-    def aberrations(self, **options):
-        fits.append(options)
-        return SimpleNamespace(aberrations={"C10_nm": 10.0 * len(fits), "C12_nm": 0.0, "phi12_deg": 0.0},
-                               sample_tilt_mrad=(0.0, 0.0), depth_spread_nm=1.0,
-                               optimizer={"coordinates": np.full(size, float(len(fits))).tolist(), "evaluations": 7})
+    def refine(objective, start, bounds, norm, cap):
+        """A full refinement (every coordinate free): every coordinate the number of full refits so far; the
+        defocus refit (the others held) refines as before."""
+        if (np.ptp(np.asarray(bounds), axis=1) > 0).sum() < size:
+            return real_refine(objective, start, bounds, norm, cap)
+        starts.append(np.array(start))
+        return {"coordinates": np.full(size, float(len(starts))), "objectives": 4, "stop": "converged"}
 
     real_refit = stream_module._refit
 
@@ -813,11 +846,12 @@ def test_a_full_refit_every_few_scans_is_held_by_the_defocus_refits_between(monk
         held.append(float(np.asarray(reference)[-1]))      # a higher-order coordinate the refit holds
         return real_refit(objective, reference, start, bounds)
 
-    monkeypatch.setattr(FakeSession, "aberrations", aberrations, raising=False)
+    monkeypatch.setattr(stream_module, "_refine_with_gradients", refine)
     monkeypatch.setattr(stream_module, "_refit", refit)
     series, _ = streamed(sources, fit, None, full_refit_every=2)
-    assert len(fits) == 2 and all(options["check_rotation"] is False for options in fits)
-    assert [series.aberrations[index]["C10_nm"] for index in (2, 4)] == [10.0, 20.0]
+    assert len(starts) == 2
+    assert starts[0][:3] == pytest.approx([series.aberrations[1][key] for key in ("C10_nm", "C12_nm", "phi12_deg")])
+    assert [series.aberrations[index]["C10_nm"] for index in (2, 4)] == [1.0, 2.0]
     assert held == [float(fit.optimizer["coordinates"][-1])] * 2 + [1.0]     # scans 0, 1, then 3
     for options, message in (({"full_refit_every": 0}, "positive integer"),
                              ({"full_refit_every": 2, "refit": "none"}, 'refit="defocus"')):
