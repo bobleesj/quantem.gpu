@@ -44,6 +44,25 @@ def read_pixel_mask(filepath):
         return None
 
 
+
+PIXEL_MASK_KEY = "entry/instrument/detector/detectorSpecific/pixel_mask"
+
+
+def write_pixel_mask(filepath, mask) -> None:
+    """Write the ARINA ``pixel_mask`` (>0 = flagged) into a master HDF5 that has none, where ``read_pixel_mask``
+    reads it; then ``io.load(..., hot_pixel_correction="median")`` fills those pixels. An existing mask is kept:
+    raises instead of replacing it.
+
+    Examples
+    --------
+    >>> write_pixel_mask("scan_master.h5", mask)  # doctest: +SKIP
+    """
+    with h5py.File(str(Path(filepath)), "r+") as handle:
+        if PIXEL_MASK_KEY in handle:
+            raise ValueError(f"{filepath} already has a pixel_mask; it is kept.")
+        handle.create_dataset(PIXEL_MASK_KEY, data=np.asarray(mask, dtype=np.uint32))
+
+
 def get_metadata(filepath: str) -> dict:
     """Read all scalar metadata from an HDF5 master file.
 
