@@ -6,6 +6,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Keep HDF5 acquisition loading and MAPED block export on the selected CUDA device.
+
 - The WebGPU direct fit batches independent trial scores and reuses seed gradients across validation rings. Full-field phase reconstruction transforms only the required spectrum of each detector column.
 
 - Mobile WebGPU detector integration can replace verified ANS groups with losslessly bit-packed counts for random-access aperture changes.
