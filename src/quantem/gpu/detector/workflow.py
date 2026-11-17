@@ -269,6 +269,43 @@ def _unflagged(pattern: np.ndarray) -> np.ndarray:
     return clean
 
 
+
+def exclude_marked_pixels(dataset, *, sample_scans: int = 256) -> list[tuple[int, int]]:
+    """Leave out of every detector sum the pixels the ARINA marks as flagged (65535 in every pattern), for a scan
+    saved without a pixel mask; record them as the scan's mask. Returns their (row, col), [] when there are none.
+
+    The mask comes from the file when it has one; this is for older files (2026-11-16 and before) that kept the
+    marker: five pixels at 65535 put 65535 in a pattern's statistics and a constant in every detector that covers
+    them. Only the marker counts, never brightness: a small bright-field disk's centre can be 20 times its
+    neighbours. The stored counts are unchanged; sums read the scan's valid pixels when they run.
+
+    Examples
+    --------
+    >>> exclude_marked_pixels(scan)  # doctest: +SKIP
+    [(21, 73), (125, 52), (142, 70), (143, 150), (164, 191)]
+    """
+    import cupy as cp
+
+    source = getattr(dataset, "data", None)
+    if not hasattr(source, "valid_pixels") or not hasattr(source, "decode_scan_range_device"):
+        return []
+    rows, cols, det_rows, det_cols = (int(side) for side in dataset.shape[-4:])
+    count = min(int(sample_scans), rows * cols)
+    sample = source.decode_scan_range_device(0, count).reshape(count, det_rows, det_cols)
+    marked = cp.asnumpy(cp.all(sample >= FLAGGED_COUNTS, axis=0)) & source.valid_pixels
+    del sample
+    coordinates = [(int(row), int(col)) for row, col in zip(*np.nonzero(marked))]
+    if not coordinates:
+        return []
+    source.valid_pixels = source.valid_pixels & ~marked
+    source.valid = cp.asarray(source.valid_pixels, dtype=cp.uint8)
+    record = dict(dataset.metadata.get("hot_pixel_correction") or {})
+    record.update(applied=False, stage="excluded", source="marked_pixels", method="exclude",
+                  coordinates_row_col=[list(pair) for pair in coordinates], pixel_count=len(coordinates))
+    dataset.metadata["hot_pixel_correction"] = record
+    return coordinates
+
+
 def _bright_disk(pattern: np.ndarray) -> np.ndarray:
     """The pixels of a float64 mean pattern above mean + std, flagged pixels left out: the bright-field disk every
     fit starts from."""
