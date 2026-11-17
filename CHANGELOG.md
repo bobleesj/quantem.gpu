@@ -6,6 +6,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- `ptycho.save_calibration(save_dir)` saves the session's calibration as ShowPtycho shows it (or the latest fit) in `save_dir/calibration/<scan>.json`, and `DirectPtycho.load_calibration(path)` gives it back as a fit for `series(fit=...)` and `run(fit)`, with no scan and no fitting. The calibration record also says the fit's `max_order` and `higher_order_limit`.
 - `fit.report()` shows its parameters in three groups across by default (a long single column filled the notebook); `report(columns=1)` gives the one long list, as for `pd.concat` comparisons.
 - Small CUDA devices, scans arriving one after another: a parked encoded scan now leaves the device at once (its
   chunks could stay until Python's collector ran, and the fit that parked it ran out of memory in about every second

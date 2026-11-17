@@ -11,7 +11,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.direct_ptycho.persistence import load_result, result_paths
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, reference_phase_limits
 from quantem.gpu.direct_ptycho.units import override_aberrations
 
 # drag-window tiles kept per control: a drag back and forth across one tile edge needs two
@@ -418,7 +418,7 @@ def run(
         reconstruction_method=policy["method"],
         reconstruction_options=dict(policy),
         reconstruction_diagnostics=diagnostics,
-        phase_clim=correction.phase_limits if correction is not None else None,
+        phase_clim=reference_phase_limits(correction) if correction is not None else None,
         fit_scan_region=correction.fit_scan_region if correction is not None else None,
         **session._fit_evidence(correction, coefs, tilt, depth),
     )

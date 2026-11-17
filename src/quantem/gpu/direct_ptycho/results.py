@@ -879,6 +879,14 @@ class DirectPtychoResult(Mapping[str, float]):
         return figure
 
 
+def reference_phase_limits(fit) -> tuple[float, float] | None:
+    """The phase contrast a reconstruction with ``fit`` shares with it, or None when the fit has no image
+    (``DirectPtycho.load_calibration``): the reconstruction then keeps its own."""
+    if getattr(fit, "object_wave", True) is None and fit.phase_clim is None:
+        return None
+    return fit.phase_limits
+
+
 @dataclass
 class DirectPtychoSeriesResult:
     """One independent or fixed-probe direct ptychography reconstruction series."""

@@ -47,7 +47,7 @@ from quantem.gpu.direct_ptycho.direct_workflow import settings as direct_setting
 from quantem.gpu.direct_ptycho.fifth_order_fit import _objective, _refine_with_gradients
 from quantem.gpu.direct_ptycho.fifth_order_parameters import public_params
 from quantem.gpu.direct_ptycho.persistence import _write_atomically, acquisition_identity, json_value, software_signature
-from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array
+from quantem.gpu.direct_ptycho.results import DirectPtychoResult, host_array, reference_phase_limits
 
 # Coordinates 0..2 of the fifth-order vector: C10 and the two C12 components.
 VARIED = slice(0, 3)
@@ -574,7 +574,7 @@ class DirectPtychoSeries:
         state = SimpleNamespace(
             step=step, refit=refit, full_refit_every=full_refit_every, strengths=strengths, factor=factor,
             records=records, shared=shared,
-            resuming=records is not None, previous=None, panel=_LivePanel(fit.phase_limits, methods[0],
+            resuming=records is not None, previous=None, panel=_LivePanel(reference_phase_limits(fit), methods[0],
                 damping=_damping_caption(regularization[methods[0]]), enabled=show),
             # What each load did with the detector's flagged pixels, announced once for the series.
             flagged={} if max_frames is None else deque(maxlen=max_frames),
@@ -951,8 +951,9 @@ class DirectPtychoSeries:
         covered = self.cover > 0
         has_coverage = bool(covered.any())
         latest, optics = self.frames[-1], self.aberrations[-1]
-        limits = [self.reference.phase_limits, *(_limits(self.combined[key], covered) if key == "amplitude"
-                                                 else self.reference.phase_limits for key in keys)]
+        reference = reference_phase_limits(self.reference) or _symmetric(self.images[keys[0]][-1])
+        limits = [reference, *(_limits(self.combined[key], covered) if key == "amplitude" else reference
+                               for key in keys)]
         images = [host_array(self.images[keys[0]][-1]), *(host_array(
             cp.where(covered, self.combined[key], cp.median(self.combined[key][covered])) if has_coverage
             else cp.full_like(self.combined[key], sum(limits[index + 1]) / 2)) for index, key in enumerate(keys))]
@@ -1088,8 +1089,8 @@ class DirectPtychoSeries:
         if not self.frames:
             raise ValueError("This series has no scans yet: show(interactive=True) opens a view the scans fill in.")
         covered = self.cover > 0
-        limits = [_limits(self.combined[key], covered) if key == "amplitude" else self.reference.phase_limits
-                  for key in keys]
+        reference = reference_phase_limits(self.reference) or _symmetric(self.images[keys[0]][-1])
+        limits = [_limits(self.combined[key], covered) if key == "amplitude" else reference for key in keys]
         import matplotlib.pyplot as plt
 
         from quantem.gpu.display._layout import panel_figure, panel_inches, resolve_columns
@@ -1185,6 +1186,12 @@ def _run(session, chosen, methods, upsample, strengths, *, neural=False):
     return images, sampling, seconds
 
 
+def _symmetric(phase) -> tuple[float, float]:
+    """Phase limits symmetric about zero that hold every pixel of ``phase``, as ``DirectPtychoResult.phase_limits``."""
+    limit = float(abs(phase).max()) or 1.0
+    return (-limit, limit)
+
+
 def _limits(image, covered):
     """Display limits of an amplitude: its 1st and 99th percentiles over the pixels a frame reaches
     (the empty canvas margin is zero and would set the lower limit)."""
@@ -1275,6 +1282,8 @@ def _panel(figure, axis, image, title, limits, sampling_A, width, cmap, *, uncov
     # Antialias on the values, not on colours: Matplotlib's automatic choice smooths the RGBA image
     # when it shrinks this much, 3 to 4 s a figure in a notebook against 0.2 s.
     image = image if uncovered is None else np.ma.masked_array(image, uncovered)
+    if limits is None:                              # a fit loaded from a calibration: this image's own contrast
+        limits = _symmetric(image)
     shown = axis.imshow(image, cmap=plt.get_cmap(cmap).with_extremes(bad=_UNCOVERED), vmin=limits[0], vmax=limits[1],
                         interpolation_stage="data")
     figure.colorbar(shown, ax=axis, fraction=.046, pad=.02)

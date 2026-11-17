@@ -9,7 +9,9 @@ from uuid import uuid4
 from quantem.gpu.geometry import sample_to_propagator_tilt
 from quantem.gpu.optics.physics import direct_auto_upsample
 
-# 9: the schema takes the direct-ptychography name, quantem.direct-calibration; the layout is that of 8.
+# 9: the schema takes the direct-ptychography name, quantem.direct-calibration; the layout is that of 8. A record
+#    also says what its fit searched, "max_order" and "higher_order_limit" (None when it was not a fifth-order fit;
+#    absent in a record written before they were added): load_calibration rebuilds the fit's search bounds from them.
 # 8: the output factor is "upsample" with "upsample_mode" (were "upsampling", "upsampling_mode"), the conventional
 #    method is "phase_of_mean", the direct strengths are phase_damp and amplitude_damp (were
 #    phase_damping and amplitude_damping), and "phase_estimator" is gone. The method and its options are one
@@ -122,6 +124,7 @@ def save_calibration(result, path):
             sample, scan_detector_rotation_deg=result.scan_detector_rotation_deg,
             scan_detector_rotation_flipped=result.scan_detector_rotation_flipped)),
         "loss": result.loss,
+        "max_order": result.optimizer.get("max_order"), "higher_order_limit": result.optimizer.get("higher_order_limit"),
         "reconstruction": {**deepcopy(result.reconstruction_options), "method": method},
         "reconstruction_diagnostics": deepcopy(result.reconstruction_diagnostics),
         "upsample": factor, "upsample_mode": "auto" if method == "phase_of_mean" else result.upsample_mode,
@@ -134,3 +137,79 @@ def save_calibration(result, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_atomically(path, "w", lambda file: file.write(encoded), encoding="utf-8")
     return path
+
+
+def _highest_order(aberrations) -> int:
+    """The highest aberration order with a non-zero term in ``aberrations`` (1: C10 and C12 only)."""
+    from .higher_order import ORDERS
+
+    return max([n for n, m in ORDERS if n >= 2 and float(aberrations.get(f"C{n}{m}_nm", 0.0)) != 0.0], default=1)
+
+
+def load_calibration(path):
+    """The fit a saved calibration describes, with no scan and no fitting.
+
+    The record is the model: its aberrations, sample tilt, depth spread and rotation are taken as written, by
+    ``save_calibration`` or by ShowPtycho after its sliders were moved. The fit coordinates a series refits from
+    are computed from them (``fifth_order_parameters.coordinates``), so they cannot disagree with the aberrations,
+    and the search bounds are those of a fit with the record's ``max_order`` and ``higher_order_limit`` (a record
+    without them: the highest order it holds, and the default limit). The result has no image
+    (``object_wave`` is None); ``series(fit=...)`` and ``run(fit)`` use it as they use the fit that was saved.
+    """
+    from quantem.gpu.device import resolve
+    from quantem.gpu.direct_ptycho.fifth_order_fit import DEFAULT_HIGHER_ORDER_LIMIT, fifth_order_bounds
+    from quantem.gpu.direct_ptycho.fifth_order_parameters import coordinates
+    from quantem.gpu.direct_ptycho.results import DirectPtychoResult
+    from quantem.gpu.direct_ptycho.units import validate_aberrations
+    from quantem.gpu.optics.physics import wavelength_A_from_kV
+
+    path = Path(path).expanduser()
+    record = json.loads(path.read_text(encoding="utf-8"))
+    found = record.get("schema") if isinstance(record, dict) else None
+    if found not in READABLE_CALIBRATION_SCHEMAS:
+        raise ValueError(f"{path} is a {found!r} record; a Direct ptycho calibration is {CALIBRATION_SCHEMA!r}.")
+    rows, columns = record["scan_shape"]
+    if record["scan_region"] != [0, rows, 0, columns]:
+        raise ValueError(f"{path} is the calibration of scan region {record['scan_region']}; a series needs the "
+                         "calibration of a whole scan.")
+    aberrations = validate_aberrations(record["aberrations"], higher_order=True)
+    tilt, depth = record["sample_tilt_mrad"], record["depth_spread_nm"]
+    if (tilt is None) != (depth is None):
+        raise ValueError(f"{path}: sample tilt and depth spread must describe one complete model.")
+    tilt = None if tilt is None else (float(tilt[0]), float(tilt[1]))
+    max_order = record.get("max_order") or _highest_order(aberrations)
+    limit = record.get("higher_order_limit") or DEFAULT_HIGHER_ORDER_LIMIT
+    reconstruction = dict(record["reconstruction"])
+    method = reconstruction.pop("method")
+    identity = record.get("session_identity") or {"geometry": {
+        key: record[key] for key in ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad",
+                                     "bright_field_radius_px")}}
+    geometry = identity["geometry"]
+    center = geometry.get("bright_field_center_px")
+    fit = DirectPtychoResult(
+        object_wave=None, backend=resolve("auto"), aberrations=aberrations, sample_tilt_mrad=tilt,
+        depth_spread_nm=None if depth is None else float(depth),
+        scan_detector_rotation_deg=record["scan_detector_rotation_deg"],
+        scan_detector_rotation_flipped=bool(record["scan_detector_rotation_flipped"]), loss=record["loss"],
+        optimizer={
+            "model": "broad_fifth_v1", "max_order": int(max_order), "higher_order_limit": float(limit),
+            "bounds": fifth_order_bounds(limit, tilt=depth is not None, max_order=int(max_order)).tolist(),
+            "coordinates": coordinates(aberrations, tilt, depth, wavelength_A_from_kV(float(record["voltage_kV"])),
+                                       float(record["semiangle_mrad"]) * 1e-3).tolist(),
+            "stop": "loaded from a saved calibration",
+        },
+        num_bright_field_pixels=geometry.get("num_bright_field_pixels"), voltage_kV=record["voltage_kV"],
+        semiangle_mrad=record["semiangle_mrad"], upsample=int(record["upsample"]),
+        upsample_mode=record["upsample_mode"], reconstruction_method=method, reconstruction_options=reconstruction,
+        reconstruction_diagnostics=deepcopy(record.get("reconstruction_diagnostics") or {}),
+        bright_field_center_px=None if center is None else tuple(center),
+        bright_field_radius_px=record["bright_field_radius_px"], saved_path=path,
+        metadata={"calibration": {key: record.get(key) for key in ("schema", "id", "generated_at_utc", "notes")}},
+        calibration_context={"scan_shape": [rows, columns], "scan_region": list(record["scan_region"]),
+                             "session_identity": deepcopy(identity)},
+    )
+    if method == "phase":
+        # as run(fit, method="phase", ...) leaves them on its fit: the phase settings a series of this fit starts from
+        fit._phase_settings = {key: reconstruction[key] for key in (
+            "phase_damp", "smoothness_inv_A", "detector_weighting") if reconstruction.get(key) is not None}
+    return fit

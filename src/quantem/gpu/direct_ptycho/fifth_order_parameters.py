@@ -155,6 +155,32 @@ def vector(fit, order):
     return np.array(z)
 
 
+def coordinates(aberrations, sample_tilt_mrad, depth_spread_nm, wavelength: float, semiangle_rad: float) -> np.ndarray:
+    """The 28 fit coordinates of a model given by name: the inverse of ``public_params``.
+
+    ``aberrations`` are nm and degrees (``C10_nm``, ``C12_nm``, ``phi12_deg`` and any higher order, ``C21_nm`` with
+    ``phi21_deg`` to ``C56_nm`` with ``phi56_deg``; a term not named is zero), the tilt is mrad (row, col) and the
+    depth spread nm, None for no tilt model. ``wavelength`` is in angstrom. Unlike ``vector``, the higher orders are
+    kept, so a saved calibration gives back the coordinates its fit ended on.
+    """
+    phi = np.deg2rad(aberrations.get("phi12_deg", 0.0)) * 2
+    c12 = aberrations.get("C12_nm", 0.0) / 10
+    tilt = sample_tilt_mrad or (0.0, 0.0)
+    z = [aberrations.get("C10_nm", 0.0) / 10, c12 * np.cos(phi), c12 * np.sin(phi),
+         tilt[0] / 5, tilt[1] / 5, (depth_spread_nm or 0.0) / 10]
+    for n, m in ORDERS:
+        if n < 2:
+            continue
+        scale = wavelength / (2 * np.pi * semiangle_rad ** (n + 1))
+        packed = float(aberrations.get(f"C{n}{m}_nm", 0.0)) * 10 / (n + 1)
+        if m:
+            angle = np.deg2rad(float(aberrations.get(f"phi{n}{m}_deg", 0.0))) * m
+            z.extend([packed * np.cos(angle) / scale, packed * np.sin(angle) / scale])
+        else:
+            z.append(packed / scale)
+    return np.array(z, dtype=np.float64)
+
+
 def public_params(obj, z, order):
     rows, packs = obj.encode(np.atleast_2d(z), order)
     r = rows[0]
