@@ -156,12 +156,14 @@ def load_h5_ans(
         # Two bounded compressed blocks read ahead while the GPU consumes
         # the current block, so reading can also overlap header preparation.
         # Only the current block is decoded on the GPU.
-        read_ahead = stack.enter_context(ThreadPoolExecutor(max_workers=2))
+        # Reader threads own their context for their entire lifetime. Restoring a fresh
+        # thread to its implicit device 0 would initialize an unrelated GPU.
+        read_ahead = stack.enter_context(
+            ThreadPoolExecutor(max_workers=2, initializer=cp.cuda.Device(selected).use)
+        )
 
         def prepare(block):
-            # The staging buffer is page-locked in this GPU's context, which a worker thread enters itself.
-            with cp.cuda.Device(selected):
-                return reader.prepare(np.arange(*block))
+            return reader.prepare(np.arange(*block))
 
         def release_unread_block():
             # Unconsumed prepared blocks have never been copied to the GPU.

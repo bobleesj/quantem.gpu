@@ -198,3 +198,25 @@ def test_calibrated_center_of_mass():
             rtol=2e-6,
             atol=1e-6,
         )
+
+@pytest.mark.skipif(BACKEND != "cuda", reason="Requires multiple CUDA devices")
+def test_generated_precision_save_on_noncurrent_cuda_device(tmp_path):
+    import torch
+    from quantem.gpu import io
+
+    if torch.cuda.device_count() < 2:
+        pytest.skip("Requires two visible GPUs")
+    current = torch.cuda.current_device()
+    target = (current + 1) % torch.cuda.device_count()
+    original = fixture()
+    with torch.cuda.device(target):
+        source = GeneratedScan(original)
+    source.device = source.tensor.device
+    path = tmp_path / "selected_master.h5"
+    io.save(path, source, dtype="scaled_uint16", backend="cuda", verbose=False)
+    assert torch.cuda.current_device() == current
+    with io.load(path, device=str(source.device), verbose=False) as reopened:
+        expected = restore_precision_reference(original, reopened.metadata["precision"])
+        result = reopened.read()
+        assert result.device == source.device
+        np.testing.assert_array_equal(result.cpu(), expected)
