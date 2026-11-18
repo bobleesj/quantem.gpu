@@ -336,7 +336,9 @@ phase: 0.49 s reading the file, 0.05 s refitting, 0.03-0.05 s per method,
 amplitude + phase agrees within 0.05 Å.
 
 - `series.report()`: per frame, the refit optics, evaluations, shift against
-  frame 0 (Å), live confidence and seconds per stage.
+  frame 0 (Å), live confidence and seconds per stage. Numbered scan labels
+  appear as `7` or `8_rot90`. Use `series.report(to_dict=True)` for the
+  original acquisition IDs.
 - `series.align()`: registers every pair up to three frames apart, solves one
   shift per frame by least squares, replaces `shifts_A` and rebuilds every
   combined image. Returns the `Drift` (pairs, closure, σ).

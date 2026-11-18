@@ -29,6 +29,7 @@ from contextlib import ExitStack, nullcontext
 from functools import wraps
 import hashlib
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -141,6 +142,11 @@ class DriftVelocity(dict):
             "time_source": time_source, "backend": "directptycho",
         }
         return cls(result)
+
+
+def _scan_label(name: str) -> str:
+    """Use the scan number and any suffix as the report label."""
+    return re.sub(r"^series_(?=[0-9])", "", name)
 
 
 def _locked(method):
@@ -1011,9 +1017,12 @@ class DirectPtychoSeries:
         the live pass's pair confidence (below CONFIDENCE: measured, not added), and seconds per stage
         and per method. Before align, Near threshold marks a confidence within 10% above CONFIDENCE
         (placed, worth a look); after align the shifts are the pairwise solve's, so its σ per frame
-        replaces that flag and the live confidence stays only as a record of the live pass."""
-        import pandas as pd
+        replaces that flag and the live confidence stays only as a record of the live pass.
 
+        The table displays numbered scans as labels such as ``7`` or ``8_rot90``.
+        Keep the original labels if shortening them would create duplicate index entries.
+        Use ``to_dict=True`` for the original acquisition IDs.
+        """
         rows = {}
         piezo = any(entry.get("piezo_nm") is not None for entry in self.timeline)
         if self.max_frames is not None:             # frames that left the window: what was kept of them
@@ -1042,8 +1051,23 @@ class DirectPtychoSeries:
                 **methods, **({"Annular detector (s)": clock["annular_s"]} if "annular_s" in clock else {}),
                 "Align (s)": clock["align_s"], "Display (s)": clock["display_s"], "Total (s)": clock["total_s"],
             }
-        return rows if to_dict else pd.DataFrame.from_dict(rows, orient="index").rename_axis(
-            "Frame" if self.max_frames is None else "Frame index")
+        if to_dict:
+            return rows
+
+        import pandas as pd
+
+        table = pd.DataFrame.from_dict(rows, orient="index")
+        if self.max_frames is None:
+            labels = [_scan_label(frame) for frame in table.index]
+            counts = Counter(labels)
+            table.index = [
+                label if counts[label] == 1 else frame
+                for frame, label in zip(table.index, labels, strict=True)
+            ]
+            return table.rename_axis("Frame")
+        if "Frame" in table:
+            table["Frame"] = table["Frame"].map(_scan_label)
+        return table.rename_axis("Frame index")
 
     @_locked
     def show(self, method=None, *, interactive: bool = False, size="medium", cmap: str = "gray"):

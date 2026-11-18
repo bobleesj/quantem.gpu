@@ -978,6 +978,45 @@ def rolling_bookkeeping(monkeypatch):
     return SimpleNamespace(begin=begin, Source=Source, anchors=anchors, module=stream_module)
 
 
+@pytest.mark.parametrize("max_frames", [None, 2])
+def test_report_displays_scan_numbers_and_preserves_acquisition_ids(rolling_bookkeeping, max_frames):
+    setup = rolling_bookkeeping
+    result = setup.begin(max_frames)
+    names = ("series_7", "series_8_rot0", "series_9_rot90", "named_series_10")
+    labels = ("7", "8_rot0", "9_rot90", "named_series_10")
+    for index, name in enumerate(names):
+        scan = setup.Source(index)
+        scan.metadata["series"] = name
+        assert result.add(scan)["Frame"] == name
+
+    table = result.report()
+    rows = result.report(to_dict=True)
+    assert tuple(entry["scan"] for entry in result.timeline) == names
+    if max_frames is None:
+        assert tuple(table.index) == labels
+        assert tuple(rows) == names
+    else:
+        assert tuple(table.index) == tuple(rows) == tuple(range(len(names)))
+        assert tuple(table["Frame"]) == labels
+        assert tuple(row["Frame"] for row in rows.values()) == names
+        assert result.frames == names[-max_frames:]
+
+    np.testing.assert_allclose(table["Shift row (Å)"], (0.0, 0.2, 0.4, 0.6))
+
+
+def test_report_keeps_distinct_index_labels_when_scan_names_overlap(rolling_bookkeeping):
+    setup = rolling_bookkeeping
+    result = setup.begin(None)
+    names = ("series_7", "7", "series_8_rot90")
+    for index, name in enumerate(names):
+        scan = setup.Source(index)
+        scan.metadata["series"] = name
+        result.add(scan)
+
+    assert tuple(result.report().index) == ("series_7", "7", "8_rot90")
+    assert tuple(result.report(to_dict=True)) == names
+
+
 @pytest.mark.parametrize("max_frames", [1, 3])
 def test_rolling_results_keep_absolute_rows_and_release_evicted_owners(rolling_bookkeeping, max_frames):
     """Repeated scan names stay distinct, rejected windows stay empty, and old owners leave the series."""
