@@ -2,6 +2,7 @@
 
 import copy
 import threading
+from dataclasses import replace
 
 import numpy as np
 
@@ -74,6 +75,25 @@ class LiveDetectorSession:
             self.session = prepare(self.source)
         return self.session
 
+    def _sum_encoded_suffix(self, mask, first):
+        """Sum the encoded chunks covering the unseen positions with the native indexes."""
+        chunks = [chunk for chunk in self.source.chunks if chunk.first + chunk.scans > first]
+        origin = chunks[0].first
+        if not origin:
+            return self._encoded_session().masked_sum(mask).reshape(-1)[first:]
+        # Descriptors use coordinates relative to the query. Borrow the payloads
+        # and index tables and change only the chunk offsets in this view.
+        suffix = copy.copy(self.source)
+        suffix.ready_scans = self.encoded - origin
+        suffix.shape = (1, suffix.ready_scans, *self.detector_shape)
+        suffix.chunks = [replace(chunk, first=chunk.first - origin) for chunk in chunks]
+        suffix._detector_total = None
+        query = prepare(suffix)
+        try:
+            return query.masked_sum(mask).reshape(-1)[first - origin:]
+        finally:
+            query.close()
+
     def masked_sum(self, mask):
         """Exact integer detector sums, rounded to float32 for display."""
         with self.lock, cp.cuda.Device(self.acquisition.device), self.stream:
@@ -88,7 +108,7 @@ class LiveDetectorSession:
             # that prefix once instead of decoding many dense batches and
             # synchronizing each result; tail-only updates still reuse it.
             if self.encoded and (not unchanged or first < self.encoded):
-                flat[:self.encoded] = self._encoded_session().masked_sum(mask).reshape(-1)
+                flat[first:self.encoded] = self._sum_encoded_suffix(mask, first)
                 first = self.encoded
             valid_mask = np.asarray(mask, dtype=bool) & self.acquisition.source.valid_pixels
             if self.tail is not None:

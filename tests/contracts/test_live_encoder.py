@@ -113,6 +113,39 @@ def test_unchanged_aperture_uses_indexes_when_counts_cross_ans_boundary(monkeypa
         live.release()
 
 
+def test_live_detector_queries_only_newly_encoded_chunks_for_a_stable_mask(monkeypatch):
+    cp = pytest.importorskip("cupy")
+    from quantem.gpu.streaming import preview
+
+    live = LiveEncoder((32, 512), (8, 8))
+    raw = cp.arange(live.total * 64, dtype=cp.uint32).astype(cp.uint16).reshape(-1, 8, 8)
+    mask = np.indices((8, 8)).sum(axis=0) > 4
+    prepared_sizes = []
+    prepare = preview.prepare
+
+    def record_size(source):
+        prepared_sizes.append(source.shape[1])
+        return prepare(source)
+
+    monkeypatch.setattr(preview, "prepare", record_size)
+    session = live.detector_session()
+    try:
+        for end in (128, 4096, 4300, 8192, 16384):
+            live.add(live.received, raw[live.received:end].copy())
+            image = session.masked_sum(mask).reshape(-1)
+            expected = raw[:end, cp.asarray(mask)].sum(1, dtype=cp.uint64).astype(cp.float32).get()
+            np.testing.assert_array_equal(image[:end], expected)
+            assert np.isnan(image[end:]).all()
+        assert prepared_sizes == [4096, 4096, 8192]
+        image = session.masked_sum(~mask).reshape(-1)
+        expected = raw[:, cp.asarray(~mask)].sum(1, dtype=cp.uint64).astype(cp.float32).get()
+        np.testing.assert_array_equal(image, expected)
+        assert prepared_sizes[-1] == live.total
+    finally:
+        session.close()
+        live.release()
+
+
 def test_failed_encoded_refresh_preserves_previous_image_and_can_retry(monkeypatch):
     cp = pytest.importorskip("cupy")
     raw = (cp.arange(4608 * 16 * 16, dtype=cp.uint32) % 65536).astype(cp.uint16).reshape(-1, 16, 16)
