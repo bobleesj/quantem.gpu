@@ -492,7 +492,8 @@ def _write_master_file(
 
     detector_shape = tuple(int(size) for size in detector_shape)
     n_frames = int(sum(high - low + 1 for low, high in frame_ranges))
-    with h5py.File(master_path, mode) as master:
+    # Creation-order tracking enables dense storage for large attributes such as scan positions.
+    with h5py.File(master_path, mode, track_order=True) as master:
         entry = master.require_group("entry")
         if "data" in entry:
             del entry["data"]
@@ -525,7 +526,7 @@ def _write_master_file(
 
 def _copy_master_shell(source_master, output_master):
     """Copy source Arina master metadata, excluding entry/data links."""
-    with h5py.File(source_master, "r") as source, h5py.File(output_master, "w") as output:
+    with h5py.File(source_master, "r") as source, h5py.File(output_master, "w", track_order=True) as output:
         for key, value in source.attrs.items():
             output.attrs[key] = value
         for name in source:
