@@ -7,6 +7,7 @@ dtype when comparing implementations.
 
 ## Evidence and implementation
 
+- [Live BF and ADF on a growing scan](reports/2026-11-17-live-detector-suffix.md): incremental CUDA queries and exact parity.
 - [Seven ANS acquisitions on CUDA](reports/2026-10-25-seven-ans-acquisitions.md): native-resolution BF/DF/ADF updates, exact parity and corruption recovery.
 - [Virtual-image validation record](validation.md): retained CUDA, Metal and WebGPU gates, timings and unresolved memory cases. Its implementation-status statements belong to the recorded work, not an automatic current-release guarantee.
 - [Scientific operation and source map](../../kernels/virtual-detectors.md): detector coordinates, masks and optimized reduction ownership.

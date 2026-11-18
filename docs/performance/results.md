@@ -38,6 +38,13 @@ candidate, and native-app limitations. The two-second full-size target is not me
 
 The [density batching comparison](direct/reports/2026-11-01-broad-density-batching.md) preserves every candidate and matched CUDA fit output while reducing host proposal overhead. Default standard fitting is unchanged; broad fitting remains a larger workload.
 
+## Live CUDA detector previews, 2026-11-17
+
+The [live detector suffix comparison](virtual-detectors/reports/2026-11-17-live-detector-suffix.md)
+measures GPU-backed query latency on a growing 512 × 512 recorded scan.
+Median BF query time fell from 1.83 to 1.17 ms and ADF from 1.67 to 1.00 ms,
+with exact detector sums at every update.
+
 ## Joint ANS detector queries, 2026-10-25
 
 The [seven-acquisition CUDA record](virtual-detectors/reports/2026-10-25-seven-ans-acquisitions.md)
