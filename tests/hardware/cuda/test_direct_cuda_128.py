@@ -780,3 +780,20 @@ def test_cuda_chunked_phase_is_in_row_col_order(size: int, num_bright_field_pixe
     phase, _ = engine._fused_chunked_core(c10, c12, phi12)
     # a few pixels can cross the atan2 branch cut differently; the 99th percentile is the orientation-sensitive check
     assert float(cp.percentile(cp.abs(phase - ref_phase), 99)) < 3e-4
+
+
+def test_bright_field_spectra_written_into_an_existing_array_are_the_same_bits() -> None:
+    cp = _cupy()
+    from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra
+
+    rng = cp.random.RandomState(7)
+    first, second = (rng.poisson(3, size=(16, 16, 12, 12)).astype(cp.uint16) for _ in range(2))
+    rows, cols = cp.nonzero(cp.ones((12, 12), cp.bool_))
+    rows, cols = rows[10:90], cols[10:90]
+    held, _ = bright_field_spectra(first, rows, cols, (16, 16), (12, 12))
+    fresh, fresh_dc = bright_field_spectra(second, rows, cols, (16, 16), (12, 12))
+    again, dc = bright_field_spectra(second, rows, cols, (16, 16), (12, 12), out=held)
+    assert again is held and dc == fresh_dc
+    assert bool((held == fresh).all())
+    with pytest.raises(ValueError, match="out is"):
+        bright_field_spectra(second, rows, cols, (16, 16), (12, 12), out=held[:, :8])

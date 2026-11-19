@@ -107,7 +107,7 @@ def run(data, scan_shape=None, *, scan_detector_rotation_deg=None, scan_detector
                      scan_detector_rotation_flipped=transposed, elapsed_s=elapsed_s)
 
 
-def integrate(com_row, com_col) -> np.ndarray:
+def integrate(com_row, com_col):
     """Integrate scan-frame gradients without an implicit polarity reversal.
 
     Uses frequencies in cycles per scan pixel and the inverse-gradient factor
@@ -115,20 +115,33 @@ def integrate(com_row, com_col) -> np.ndarray:
     gradient with positive sign and unit gain. The result is zero mean.
     Units are input-vector units times scan pixels, not calibrated radians;
     physical phase requires detector-angle, scan-spacing and wavelength factors.
+
+    Computed where the gradients are: NumPy arrays on the host give a NumPy
+    image, CuPy arrays give a CuPy image on their GPU (the same formula).
     """
-    spectrum_row = np.fft.fft2(com_row.astype(np.float32))
-    spectrum_col = np.fft.fft2(com_col.astype(np.float32))
-    k_row, k_col = np.meshgrid(
-        np.fft.fftfreq(com_row.shape[0]).astype(np.float32),
-        np.fft.fftfreq(com_row.shape[1]).astype(np.float32),
+    xp = _array_module(com_row)
+    spectrum_row = xp.fft.fft2(com_row.astype(xp.float32))
+    spectrum_col = xp.fft.fft2(com_col.astype(xp.float32))
+    k_row, k_col = xp.meshgrid(
+        xp.fft.fftfreq(com_row.shape[0]).astype(xp.float32),
+        xp.fft.fftfreq(com_row.shape[1]).astype(xp.float32),
         indexing="ij",
     )
     k_squared = k_row ** 2 + k_col ** 2
     k_squared[0, 0] = 1.0
     phase_fft = (-1j / (2 * np.pi)) * (k_row * spectrum_row + k_col * spectrum_col) / k_squared
     phase_fft[0, 0] = 0
-    phase = np.real(np.fft.ifft2(phase_fft)).astype(np.float32)
+    phase = xp.real(xp.fft.ifft2(phase_fft)).astype(xp.float32)
     return phase - phase.mean()
+
+
+def _array_module(array):
+    """NumPy, or CuPy for an array held on a GPU."""
+    if type(array).__module__.partition(".")[0] == "cupy":
+        import cupy
+
+        return cupy
+    return np
 
 
 def find_optimal_rotation(com_row, com_col, *, scan_detector_rotation_flipped=None):

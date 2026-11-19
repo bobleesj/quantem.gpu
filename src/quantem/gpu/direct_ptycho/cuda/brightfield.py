@@ -114,6 +114,7 @@ def bright_field_spectra(
     bf_inds_col: cp.ndarray,
     scan_gpts: tuple[int, ...],
     det_gpts: tuple[int, ...],
+    out: cp.ndarray | None = None,
 ) -> tuple[cp.ndarray, complex]:
     """Return G(q, k), the 2D spectrum of each selected pixel's scan image, and its mean DC value.
 
@@ -123,6 +124,10 @@ def bright_field_spectra(
     (raw counts, the complex stack and G_qk, 19 GB each). Each chunk's scan images are written straight into the
     staging buffer as complex64, transformed there, and their kept columns copied into G once; gathering, transposing,
     casting, transforming and cropping as separate arrays moved every chunk through memory seven times.
+
+    ``out``: a G(q, k) of this geometry to write into, for new counts of the same scan and detector (a live preview
+    gives one open solver each look's counts). No result is allocated and the memory pool is left as it is, so the
+    next look's buffers come from it; the spectra are the same bits.
     """
     num_bright_field_pixels = len(bf_inds_row)
     scan_row, scan_col = int(scan_gpts[0]), int(scan_gpts[1])
@@ -132,7 +137,13 @@ def bright_field_spectra(
     # (N_scan, det_row, det_col) view of the raw counts
     flat_data = data.reshape(-1, det_row, det_col)
     pixels = bf_inds_row.astype(cp.int32) * det_col + bf_inds_col.astype(cp.int32)
-    G_qk = cp.empty((num_bright_field_pixels, scan_row, stored_col), dtype=cp.complex64)
+    shape = (num_bright_field_pixels, scan_row, stored_col)
+    if out is None:
+        G_qk = cp.empty(shape, dtype=cp.complex64)
+    elif out.shape != shape or out.dtype != cp.complex64:
+        raise ValueError(f"out is {out.dtype} {out.shape}; these counts give complex64 {shape}.")
+    else:
+        G_qk = out
     bytes_per_bf = scan_row * scan_col * 8  # complex64
     target_chunk_bytes = 256 * 1024 ** 2
     chunk_bf = max(1, min(num_bright_field_pixels, target_chunk_bytes // bytes_per_bf))
@@ -147,7 +158,8 @@ def bright_field_spectra(
         G_qk[bf_start:bf_end] = spectra[:, :, :stored_col]
     dc_value = complex(G_qk[:, 0, 0].mean().get())
     del staging, scan_images, spectra
-    cp.get_default_memory_pool().free_all_blocks()
+    if out is None:
+        cp.get_default_memory_pool().free_all_blocks()
     return G_qk, dc_value
 
 

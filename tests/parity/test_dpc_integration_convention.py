@@ -36,3 +36,16 @@ def test_screening_preserves_sign_for_forced_rotation_and_exchanged_axes():
             source = (detector_col, detector_row) if flipped else (detector_row, detector_col)
             result = _dpc_phase(*source, angle, flipped)
             np.testing.assert_allclose(result, phase, atol=1e-6)
+
+
+def test_gradients_on_a_gpu_are_integrated_there_to_the_same_image():
+    import pytest
+    cp = pytest.importorskip("cupy")
+    if not cp.cuda.is_available():
+        pytest.skip("no CUDA device")
+    rng = np.random.default_rng(0)
+    grad_row, grad_col = rng.normal(size=(2, 96, 128)).astype(np.float32)
+    host = integrate(grad_row, grad_col)
+    device = integrate(cp.asarray(grad_row), cp.asarray(grad_col))
+    assert isinstance(device, cp.ndarray) and device.dtype == cp.float32
+    np.testing.assert_allclose(cp.asnumpy(device), host, atol=2e-6 * float(np.abs(host).max()))
