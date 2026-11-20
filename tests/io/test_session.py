@@ -100,3 +100,25 @@ def test_each_scan_of_a_go_gets_its_own_state_from_the_log(folder):
     first = session.state(1000)["scan_rotation_deg"]
     assert first == {"value": 91.5, "age_s": pytest.approx(0.0, abs=1e-6), "between": None, "indices": None}
     assert session.state(1000)["pair_rotation_deg"]["value"] == 90
+
+
+def test_a_value_set_for_one_scan_alone_does_not_follow_into_the_next_scan(tmp_path):
+    scans = [{"session": "pair", "series_id": n, "series": f"series_{n}", "first_index": (n - 1) * 100, "expected": 100,
+              "received": 100, "begin_epoch_s": T0 + 10 * n, "scan_pattern": "raster", "dwell_s": 0.01} for n in (1, 2, 3)]
+    (tmp_path / "index.jsonl").write_text("".join(checked(row) + "\n" for row in scans))
+    days = [tmp_path / "logs" / "2026-11-19", tmp_path / "logs" / "2026-11-20"]
+    for day in days:
+        day.mkdir(parents=True)
+    first = [{"session": "pair", "event": "reading", "time_utc": utc(T0), "changed": [], "scan_rotation_deg": 0.0},
+             {"session": "pair", "event": "scan_beam_on", "time_utc": utc(T0 + 10), "series_id": 1, "beam_on_epoch_s": T0 + 10,
+              "pair_rotation_deg": 0, "scan_rotation_deg": 0.0},
+             {"session": "pair", "event": "scan_beam_on", "time_utc": utc(T0 + 20), "series_id": 2, "beam_on_epoch_s": T0 + 20,
+              "pair_rotation_deg": 90, "scan_rotation_deg": 90.0}]
+    second = [{"session": "pair", "event": "scan_beam_on", "time_utc": utc(T0 + 30), "series_id": 3, "beam_on_epoch_s": T0 + 30}]
+    (days[0] / "session-log.jsonl").write_text("".join(json.dumps(row) + "\n" for row in first))
+    (days[1] / "session-log.jsonl").write_text("".join(json.dumps(row) + "\n" for row in second))
+    session = io.session(tmp_path, log=tmp_path / "logs")                    # the folder of days: both are read
+    table = session.report(names=("scan_rotation_deg", "pair_rotation_deg"))
+    assert list(table["clock"]) == ["logged", "logged", "logged"]
+    assert list(table["scan_rotation_deg"]) == [0.0, 90.0, 0.0]              # the plain scan after the pair: the last reading
+    assert table["pair_rotation_deg"][1] == 90 and table["pair_rotation_deg"].isna()[2]   # nothing was set for scan 3

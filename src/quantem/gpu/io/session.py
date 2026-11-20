@@ -57,11 +57,15 @@ def _log_rows(source) -> list[dict]:
     found = []
     for item in sources:
         path = Path(item)
-        path = path / LOG_FILE if path.is_dir() else path
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                if line.strip():
-                    found.append(json.loads(line))
+        if path.is_dir() and not (path / LOG_FILE).exists():
+            paths = sorted(path.glob(f"*/{LOG_FILE}"))      # a folder of days: a session past midnight is in two
+        else:
+            paths = [path / LOG_FILE if path.is_dir() else path]
+        for path in paths:
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        found.append(json.loads(line))
     return found
 
 
@@ -117,7 +121,7 @@ class Session:
         self.read_period_s = float(read_period_s)
         # a scan's own line holds what was set for that scan alone, exact at its first pattern: a reading at beam-on
         set_at_start = [{**{name: value for name, value in row.items() if name not in _NOT_SET},
-                         "_epoch_s": row["beam_on_epoch_s"], "_exact": True}
+                         "_epoch_s": row["beam_on_epoch_s"], "_exact": True, "_series_id": row.get("series_id")}
                         for row in log if row.get("event") == "scan_beam_on" and set(row) - _NOT_SET - {"_epoch_s"}]
         self.readings = sorted([row for row in log if row.get("event") == "reading"] + set_at_start, key=_row_time)
         self._reading_times = [row["_epoch_s"] for row in self.readings]
@@ -195,6 +199,8 @@ class Session:
         place = bisect_right(self._reading_times, when)
         found: dict[str, dict] = {}
         for reading in reversed(self.readings[:place]):         # the newest reading of each name
+            if reading.get("_exact") and reading.get("_series_id") != row.get("series_id"):
+                continue                            # set for another scan alone (a pair's rotation): not this one's
             for name, value in reading.items():
                 if name not in _NOT_READINGS and not name.startswith("_") and name not in found:
                     found[name] = {"value": value, "age_s": when - reading["_epoch_s"], "between": None,
@@ -351,7 +357,8 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
     session
         Which session, when the folder holds scans of several.
     log
-        The session log, when it is not in ``folder``: a file, a folder holding one, or several.
+        The session log, when it is not in ``folder``: a file, a folder holding one, a folder of dated folders
+        (a session past midnight is read from both days), or several of these.
     read_period_s
         How often the microscope was read; a changed reading is placed within this time.
 
