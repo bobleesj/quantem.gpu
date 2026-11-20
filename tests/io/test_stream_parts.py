@@ -63,6 +63,8 @@ def test_the_live_image_keeps_its_rows_when_earlier_scans_leave_the_device():
         encoder.source.release_scans_before(CHUNK)         # the first chunk's part is on disk: it leaves
         again = session.masked_sum(mask)
         np.testing.assert_array_equal(again, first)        # nothing new arrived: the image as it was
+        assert np.isnan(session.frame(3)).all()             # its pattern is on disk, not on the device
+        np.testing.assert_array_equal(session.frame(CHUNK + 3), counts[CHUNK + 3].astype(np.float32))
     finally:
         session.close()
     np.testing.assert_array_equal(first.reshape(-1), counts.reshape(2 * CHUNK, -1).sum(axis=1).astype(np.float32))

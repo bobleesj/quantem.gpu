@@ -131,7 +131,7 @@ class LiveDetectorSession:
             return result
 
     def frame(self, index: int):
-        """Return a measured DP, or NaN where that position has not arrived."""
+        """Return a measured DP, or NaN where that position has not arrived or is no longer on the device."""
         if not 0 <= index < self.acquisition.total:
             raise IndexError(f"Scan index {index} is outside {self.scan_shape}.")
         live = self.acquisition
@@ -143,7 +143,8 @@ class LiveDetectorSession:
             with live.lock:
                 if live.source.is_released:
                     raise ValueError("This live acquisition was released; start another acquisition.")
-                if index >= live.received:
+                if index >= live.received or index < live.source.released_scans:
+                    # not arrived yet, or released from the device once its part of the stream was on disk
                     return np.full(self.detector_shape, np.nan, np.float32)
                 if live.updated is not None:
                     self.frame_stream.wait_event(live.updated)
