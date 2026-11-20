@@ -782,6 +782,25 @@ def test_cuda_chunked_phase_is_in_row_col_order(size: int, num_bright_field_pixe
     assert float(cp.percentile(cp.abs(phase - ref_phase), 99)) < 3e-4
 
 
+@pytest.mark.parametrize("scan", [(5, 7), (16, 16), (3, 33)])
+@pytest.mark.parametrize("dtype", ["uint16", "float32"])
+def test_bright_field_spectra_are_each_pixels_scan_image_transformed(scan, dtype) -> None:
+    """Every selected pixel's spectrum is the half-plane transform of its own scan image, for scans whose positions
+    are not a whole number of the kernel's groups and for float counts."""
+    import cupy as cp
+
+    from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra
+
+    counts = np.random.default_rng(3).poisson(40.0, (*scan, 6, 5)).astype(dtype)
+    rows = np.array([0, 2, 3, 5, 5], np.int32)
+    cols = np.array([1, 0, 4, 2, 3], np.int32)
+    spectra, dc = bright_field_spectra(cp.asarray(counts), cp.asarray(rows), cp.asarray(cols), scan, (6, 5))
+    expected = np.fft.rfft2(counts[:, :, rows, cols].transpose(2, 0, 1).astype(np.float64), axes=(1, 2))
+    assert spectra.shape == expected.shape and spectra.dtype == cp.complex64
+    np.testing.assert_allclose(cp.asnumpy(spectra), expected, rtol=0, atol=2e-6 * np.abs(expected).max())
+    assert abs(dc - expected[:, 0, 0].mean()) <= 1e-6 * abs(expected[:, 0, 0].mean())
+
+
 def test_bright_field_spectra_written_into_an_existing_array_are_the_same_bits() -> None:
     cp = _cupy()
     from quantem.gpu.direct_ptycho.cuda.brightfield import bright_field_spectra

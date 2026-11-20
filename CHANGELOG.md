@@ -6,6 +6,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- `bright_field_spectra` transforms each chunk's scan images real-to-complex straight into G(q, k) and lays its counts-to-images kernel out so neighbouring threads read together: 3.1 ms for the 9298 bright-field pixels of a 128 x 128 scan on one workstation GPU, was 5.5 (the bytes moved take 1.5 ms at the 1.4 TB/s a plain copy reaches). The spectra agree with the complex transform's to float32 rounding (2 parts in 10 million of a typical value); `out=` still gives the bits a fresh array would.
 - `dpc.integrate` computes where its gradients are: CuPy arrays are integrated on their GPU and give a CuPy image (the same formula, the same image to 3 parts in 10 million); NumPy arrays as before. A live 512 x 512 preview integrates in 1 ms instead of 17.
 - `bright_field_spectra(..., out=)` writes the spectra of new counts into an existing G(q, k) of the same geometry: the same bits, nothing allocated for the result and the memory pool left as it is, for a live preview that gives one open solver each look's counts.
 - `ptycho.save_calibration(save_dir)` saves the session's calibration as ShowPtycho shows it (or the latest fit) in `save_dir/calibration/<scan>.json`, and `DirectPtycho.load_calibration(path)` gives it back as a fit for `series(fit=...)` and `run(fit)`, with no scan and no fitting. The calibration record also says the fit's `max_order` and `higher_order_limit`.
