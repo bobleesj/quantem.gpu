@@ -245,9 +245,18 @@ def save(
 
     if precision_name(dtype) or (isinstance(data, Dataset4dstem) and "precision" in data.metadata):
         if Path(filepath).suffix.lower() == ".qem":
+            from quantem.gpu.resident.cuda.precision import PrecisionSource as CUDAPrecisionSource
+
+            if isinstance(data, Dataset4dstem) and type(data.data) is CUDAPrecisionSource and not precision_name(dtype):
+                from quantem.gpu.io.qem import save_scaled
+
+                # a scaled uint16 result already on a CUDA device (a merged tilt series): its codes as they are
+                save_scaled(filepath, data.data, {**data.metadata, **(metadata or {})})
+                return SaveResult(str(filepath), "cuda", complete=True)
             raise NotImplementedError(
-                "QEM precision codecs are not implemented. Save this scaled/quantized "
-                "result as HDF5, or save an exact supported acquisition as .qem."
+                "QEM precision codecs are written only from a scaled uint16 result already on a CUDA device "
+                "(a merge with dtype='scaled_uint16'). Save other scaled/quantized data as HDF5, or save an "
+                "exact supported acquisition as .qem."
             )
         precision_backend = save_precision(filepath, data, dtype=dtype, scan_shape=scan_shape,
             metadata=metadata, backend=backend, format=format, compression=compression,

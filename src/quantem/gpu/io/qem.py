@@ -11,6 +11,7 @@ import base64
 import bisect
 import copy
 import hashlib
+import json
 import math
 import os
 import time
@@ -94,6 +95,149 @@ def save_streamed(path, source, metadata: dict | None = None) -> None:
     write_envelope(path, header, cursor, spans if metal else _staged(spans))
 
 
+QUANTIZATION = "scaled_uint16_quantization"      # the processing record every scaled .qem declares
+
+
+def save_scaled(path, source, metadata: dict | None = None) -> None:
+    """Atomically save calibrated scaled-uint16 codes (a merged tilt series) as ``.qem``, as the native
+    application writes them: the ANS streams as they are on the device, the regional intensity calibration, and
+    the MAPED records as ``attributes``. Nothing is decoded and an existing file is never replaced.
+
+    Examples
+    --------
+    >>> merged = maped.merge(crop=True, dtype="scaled_uint16")       # doctest: +SKIP
+    >>> io.save("merged.qem", merged)                                # doctest: +SKIP
+    """
+    from quantem.gpu.resident.cuda.precision import PrecisionSource as CUDAPrecisionSource
+
+    if type(source) is not CUDAPrecisionSource:
+        raise TypeError("Scaled .qem saving takes a CUDA scaled-uint16 result (a merge with dtype='scaled_uint16').")
+    path = Path(path)
+    if path.suffix.lower() != ".qem":
+        raise ValueError(f"Saved copies use the .qem extension; got {path.name!r}.")
+    if path.exists():
+        raise FileExistsError(f"{path} already exists; choose a new destination.")
+    if source.is_released:
+        raise ValueError("Save a complete open scaled result; merge or load it again first.")
+    metadata = {} if metadata is None else metadata
+    shape = [int(side) for side in source.shape]
+    report = source.precision
+    regions = report["regions"]
+    pixels = shape[2] * shape[3]
+    table, spans, cursor, first = [], [], 0, 0
+    for part in source.parts:
+        for chunk in part.chunks:
+            region = next((number for number, bounds in enumerate(regions)
+                           if bounds["first_frame"] <= first and first + chunk.scans <= bounds["stop_frame"]), None)
+            if region is None:
+                raise ValueError("Calibrated regions do not cover the saved frames in order; merge again.")
+            streams = math.ceil(chunk.scans / 512) * pixels
+            payload, offsets, models = chunk.arrays[:3]
+            used = int(offsets[streams])            # the payload's own length: the last stream's stop
+            entries = []
+            for array, count in ((payload, used), (offsets, streams + 1), (models, streams)):
+                cursor += -cursor % 8               # arrays start on 8-byte boundaries, as in the integer codec
+                entries.append(dict(offset=cursor, count=count))
+                spans.append((cursor, array[:count]))
+                cursor += count * array.dtype.itemsize
+            table.append(dict(first=first, scans=int(chunk.scans), region=region, arrays=entries))
+            first += chunk.scans
+    if first != shape[0] * shape[1] or not cursor:
+        raise ValueError("Calibrated codes do not cover every frame; merge again.")
+    scientific = qem_metadata.acquisition_metadata(tuple(shape), metadata)
+    processing = list(scientific.get("processing") or [])
+    if not any(record.get("operation") == QUANTIZATION and record.get("changes_measurements") is True
+               for record in processing if isinstance(record, dict)):
+        processing.append({"operation": QUANTIZATION, "changes_measurements": True})
+    scientific = {**scientific, "processing": processing}
+    attributes = {name: json.dumps(metadata[key], default=qem_metadata.json_metadata, sort_keys=True)
+                  for key, name in qem_metadata.MAPED_RECORDS.items() if isinstance(metadata.get(key), dict)}
+    header = dict(
+        version=1, codec=SCALED_CODEC, profile=SCALED_CODEC, interval=512, shape=shape, dtype="uint16",
+        intensity_calibration=report, attributes=attributes, chunks=table, scientific_metadata=scientific,
+        container=qem_metadata.CONTAINER, container_version=qem_metadata.CONTAINER_VERSION,
+    )
+    write_envelope(path, header, cursor, _staged(spans))
+
+
+def _load_scaled_cuda(path, header, start, device, verbose):
+    """Reopen saved scaled uint16 codes and their regional calibration on CUDA, unchanged: every 64 MiB block of
+    the body is checked before any stream reaches the device, and values are restored as
+    ``float32(code * scale + offset)`` only inside queries."""
+    import cupy as cp
+
+    from quantem.gpu.resident.cuda.precision import PrecisionSource as CUDAPrecisionSource
+    from quantem.gpu.resident.cuda.precision import _ANSIntensityCodes
+
+    started = time.perf_counter()
+    shape = tuple(header["shape"])
+    pixels = math.prod(shape[2:])
+    body = bytearray(header["bytes"])
+    view = memoryview(body)
+    with open(path, "rb") as handle:
+        handle.seek(start)
+        for number, expected in enumerate(header["sha256"]):
+            block = view[number * BLOCK_BYTES:(number + 1) * BLOCK_BYTES]
+            if handle.readinto(block) != len(block) or hashlib.sha256(block).hexdigest() != expected:
+                raise ValueError(f"ANS checksum mismatch in block {number}; recopy the file.")
+    index = getattr(device, "index", None)
+    if index is None and isinstance(device, str) and ":" in device:
+        index = int(device.split(":")[-1])
+    parts = []
+    try:
+        with cp.cuda.Device(0 if index is None else int(index)):
+            for number, chunk in enumerate(header["chunks"]):
+                scans = chunk["scans"]
+                streams = math.ceil(scans / 512) * pixels
+                arrays = []
+                for spec, dtype in zip(chunk["arrays"], (np.uint8, np.uint32, np.uint8)):
+                    size = spec["count"] * np.dtype(dtype).itemsize
+                    arrays.append(np.frombuffer(view[spec["offset"]:spec["offset"] + size], dtype))
+                payload, stops, kinds = arrays
+                if (len(stops) != streams + 1 or len(kinds) != streams or stops[0] != 0
+                        or stops[-1] != chunk["arrays"][0]["count"]
+                        or np.any(stops[1:] < stops[:-1]) or np.any((kinds > 63) & (kinds < 252))):
+                    raise ValueError(f"Scaled .qem chunk {number} has invalid stream offsets or models; "
+                                     "save the result again.")
+                part = _ANSIntensityCodes((1, scans, *shape[2:]), cp.uint16)
+                with cp.cuda.using_allocator():     # retained, so outside the memory pool
+                    part.chunks.append(Chunk(0, scans, tuple(cp.asarray(array) for array in arrays)))
+                part.ready_scans = scans
+                parts.append(part)
+            report = header["intensity_calibration"]
+            source = CUDAPrecisionSource(parts, shape, report)
+    except BaseException:
+        for part in parts:
+            part.release()
+        raise
+    metadata = qem_metadata.effective_metadata({}, header["scientific_metadata"])
+    metadata.update(
+        resident_metadata(shape, np.float32, source.nbytes, backend="cuda"),
+        scientific_metadata=header["scientific_metadata"],
+        container=header["container"],
+        container_version=header["container_version"],
+        **qem_metadata.maped_records(header.get("attributes", {})),
+        precision=report,
+        conversion_report_origin="saved",
+        source_kind="resident",
+        source_path=str(Path(path).resolve()),
+        device=str(source.device),
+        resident_codec="ans",
+        resident_profile=SCALED_CODEC,
+        source_dtype=report["source_dtype"],
+        storage_dtype="uint16",
+        lossless_exact=report["changed"] == 0,
+        file_counts_exact=False,
+        working_counts_exact=False,
+        load_timings=dict(resident_ready_seconds=time.perf_counter() - started,
+                          verified_encoded_bytes=header["bytes"]),
+    )
+    if verbose:
+        print(f"Loaded scaled uint16 ANS on CUDA in {time.perf_counter() - started:.3f} s "
+              f"(RMSE {report['rmse']:.3g}, max error {report['max_abs_error']:.3g}).")
+    return Dataset4dstem(source, metadata)
+
+
 def save_bits(path: str | Path, source: BitANSResident, metadata: dict | None = None) -> None:
     """Save encoded measurement bit lanes as ``.qem`` without a decoded cube or the original file."""
     source._check()
@@ -138,9 +282,7 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
         return _load_bits(path, header, start, backend, device)
     if header["codec"] == SCALED_CODEC:
         if backend != "mps":
-            raise NotImplementedError(
-                "Scaled uint16 .qem results reopen on Apple GPUs (device='mps')."
-            )
+            return _load_scaled_cuda(path, header, start, device, verbose)
         return _load_scaled_mps(path, header, start, verbose)
     if backend == "mps":
         dataset = _load_counts_mps(path, header, start, verbose)
