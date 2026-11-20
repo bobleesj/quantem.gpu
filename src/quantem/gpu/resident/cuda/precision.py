@@ -17,6 +17,12 @@ _SOURCE = (Path(__file__).with_name("kernels") / "precision.cu").read_text()
 _NAMES = ("precision_encode_measure_regional",)
 
 
+_restore_codes = cp.ElementwiseKernel(
+    "uint16 code, float64 scale, float64 offset", "float32 intensity",
+    "intensity = (float)((double)code * scale + offset)", "quantem_precision_restore",
+)
+
+
 def _kernel(name: str):
     """Return scaled-uint16 conversion kernel ``name`` compiled for the current device."""
     return cuda_module(_SOURCE, _NAMES, ("--std=c++11", "--fmad=false"))[name]
@@ -171,12 +177,15 @@ class PrecisionSource(DetectorQueries):
         """Return the logical float32 element count for array-style consumers."""
         return math.prod(self.shape)
 
-    def _restore(self, codes, report):
-        """Convert stored codes back to float32 intensities with the part's calibration."""
-        return (
-            codes.astype(cp.float64) * report["scale"]
-            + report["offset"]
-        ).astype(cp.float32)
+    def _restore(self, codes, report, out=None):
+        """Convert stored codes back to float32 intensities with the part's calibration.
+
+        One fused pass: each code is scaled and offset in float64 and written as float32, with the same
+        values as ``(codes.astype(float64) * scale + offset).astype(float32)`` and none of its three
+        temporary arrays (four times the result's size in float64, for every region read). ``out``
+        receives the result in place.
+        """
+        return _restore_codes(codes, np.float64(report["scale"]), np.float64(report["offset"]), out)
 
     def encoded_blocks(self):
         """Yield every decoded block of stored codes, part by part, in scan order."""
@@ -229,8 +238,9 @@ class PrecisionSource(DetectorQueries):
                         base = start + block * part.block_frames
                         codes = part.decode_block_device(block)
                         left, right = max(low, base), min(high, base + len(codes))
-                        output[left - first:right - first] = self._restore(
-                            codes[left - base:right - base], report
+                        self._restore(
+                            codes[left - base:right - base], report,
+                            out=output[left - first:right - first],
                         )
                 start = end
                 if start >= stop:
