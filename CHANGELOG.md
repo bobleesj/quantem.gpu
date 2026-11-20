@@ -6,6 +6,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- A scaled uint16 result on CUDA frees the scan rows a reader has passed: `release_rows_before(row)` lets whole stored regions go (it raised before), so a result being replaced region by region shrinks while its replacement grows; a freed row raises when read.
 - `io.session`: a value set for one scan alone (a pair's rotation, a tilt) applies to that scan only; and `log=` takes a folder of dated folders, so a session past midnight is read from both days.
 - A scaled uint16 result on a CUDA device (a merged tilt series: `maped.merge(dtype="scaled_uint16")`) saves as `.qem` with `io.save` and reopens on CUDA with `io.load`: the ANS codes as they are on the device, the regional calibration and the MAPED records, in the layout the native application writes and Apple GPUs already read. A 501 x 499 merge is 0.77 GiB, written in 0.5 s and reopened in 0.9 s (its HDF5 was about 2 GB).
 - A live detector session keeps its image when earlier scans of the acquisition are released from the device (a stream saved in parts as it arrives): it sums only what is new, and positions released before any look stay not-a-number.

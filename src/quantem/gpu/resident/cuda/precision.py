@@ -121,6 +121,23 @@ def encode_ans(codes, shape):
     return result
 
 
+class _FreedPart:
+    """A part whose scan rows were released: it keeps its place in the scan and refuses every read."""
+
+    nbytes = 0
+
+    def __init__(self, shape):
+        self.shape = shape
+
+    def release(self):
+        """Nothing left to free."""
+
+    def __getattr__(self, name):
+        raise RuntimeError(
+            "These scan rows were released (release_rows_before); they cannot be read again."
+        )
+
+
 class PrecisionSource(DetectorQueries):
     """Own all encoded intensities; decode only bounded query intermediates."""
 
@@ -332,11 +349,19 @@ class PrecisionSource(DetectorQueries):
             )
 
     def release_scans_before(self, stop: int) -> None:
-        """Scaled-precision parts are calibrated per scan region and are freed only together."""
-        raise TypeError(
-            "A scaled-precision source frees its rows only all at once; call close() "
-            "when the last consumer finishes."
-        )
+        """Free the parts that end at or before scan position ``stop``; their rows cannot be read again.
+
+        A part is one stored scan region with its own calibration, so only whole parts leave: a part that
+        reaches past ``stop`` stays. A reader that passes over the scan once (a running merge adding one
+        more tilt) calls this as it goes, so the result it replaces shrinks while the new one grows.
+        """
+        for index, end in enumerate(self._ends):
+            if end > stop:
+                break
+            part = self.parts[index]
+            if not isinstance(part, _FreedPart):
+                part.release()
+                self.parts[index] = _FreedPart(part.shape)
 
     def release(self):
         for part in self.parts:
