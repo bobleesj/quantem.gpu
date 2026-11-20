@@ -5,5 +5,6 @@ this package only encodes and serves partial-scan queries.
 """
 
 from quantem.gpu.streaming.encoder import IncompleteAcquisition, LiveEncoder
+from quantem.gpu.streaming.parts import chunks_of, dataset_of
 
-__all__ = ["IncompleteAcquisition", "LiveEncoder"]
+__all__ = ["IncompleteAcquisition", "LiveEncoder", "chunks_of", "dataset_of"]

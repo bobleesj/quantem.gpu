@@ -3,7 +3,8 @@
 A receiver that streams scans numbers every pattern it keeps, from 0, across the session's scans. Each saved scan's
 header carries ``session``, ``first_index`` and ``begin_epoch_s``; the folder may also hold ``index.jsonl`` (one
 checked line per kept scan, written by the receiver) and ``session-log.jsonl`` (the microscope's readings, written
-when one changed and once a minute). ``session(folder)`` reads those and joins them by time.
+when one changed and once a minute). A stream may also be saved in parts cut by index instead of one file per scan
+(a ``.qem`` of patterns ``[a, b)`` whose header names its scans); a scan is then put together from its parts. ``session(folder)`` reads those and joins them by time.
 
 >>> from quantem.gpu import io
 >>> session = io.session("scans/2026-11-20")            # doctest: +SKIP
@@ -74,6 +75,11 @@ def _row_time(row: dict) -> float:
     return row["_epoch_s"]
 
 
+def _offset(piece: dict) -> int:
+    """Where a piece starts in its scan: the order of a scan's pieces."""
+    return piece["offset"]
+
+
 def _first_index(row: dict) -> int:
     """A scan's first index: the order of a session's scans."""
     return row["first_index"]
@@ -132,6 +138,7 @@ class Session:
                 row["start_epoch_s"], row["clock"] = row.get("begin_epoch_s"), "receiver"
         self.scans = _Scans(self)
         self._opened: tuple[int, object] | None = None
+        self._parts: dict = {}                      # the parts opened last, by path
         self.count = max((row["first_index"] + row["received"] for row in index), default=0)
 
     def __repr__(self) -> str:
@@ -229,11 +236,36 @@ class Session:
             raise FileNotFoundError(f"Scan {row.get('series')} (patterns {row['first_index']} to "
                                     f"{row['first_index'] + row['received'] - 1}) is not in {self.folder}.")
         if self._opened is None or self._opened[0] != row["first_index"]:
-            scan = load(row["path"], device=self.device, verbose=False)
+            scan = (self._from_parts(row) if row.get("pieces")
+                    else load(row["path"], device=self.device, verbose=False))
             if self.readings:                       # the file's own header is left as it was written
                 scan.metadata["state"] = self._scan_state(row)
             self._opened = (row["first_index"], scan)
         return self._opened[1]
+
+    def _from_parts(self, row: dict):
+        """A scan put together from the parts that hold its patterns: their chunks, in order, as one dataset of the
+        scan's own shape (1 x patterns when it ended early). The two newest parts stay open between scans."""
+        from quantem.gpu.io.load import load
+        from quantem.gpu.streaming import chunks_of, dataset_of
+
+        chunks, first = [], None
+        for piece in row["pieces"]:
+            if piece["path"] not in self._parts:
+                self._parts[piece["path"]] = load(piece["path"], device=self.device, hot_pixel_correction="none",
+                                                  verbose=False)
+            part = self._parts[piece["path"]]
+            first = first or part
+            chunks += chunks_of(part.data, piece["at"], piece["at"] + piece["patterns"])
+        shape = row.get("stored_shape")
+        if not shape or math.prod(shape) != row["received"]:
+            shape = (1, row["received"])
+        metadata = {**(row.get("metadata") or {}), "part": None, "first_index": row["first_index"],
+                    "series": row.get("series")}
+        scan = dataset_of(chunks, shape, like=first, metadata=metadata)
+        for path in list(self._parts)[:-2]:
+            del self._parts[path]                   # the scan holds the chunks it uses; the rest is freed
+        return scan
 
     def _scan_state(self, row: dict) -> dict:
         """A scan's state at its first pattern, for its ``metadata["state"]``: the readings, how old each was, and
@@ -335,9 +367,14 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
     if not folder.is_dir():
         raise NotADirectoryError(f"{folder} is not a folder of saved scans.")
     parts: dict[tuple[str, int], dict] = {}
+    cut: dict[str, list[dict]] = {}                 # session -> its parts cut by index, each naming its scans
     for path in sorted(folder.glob("*.qem")):
         metadata = inspect(path).metadata or {}
         if metadata.get("session") is None or metadata.get("first_index") is None:
+            continue
+        if isinstance(metadata.get("part"), dict):
+            cut.setdefault(str(metadata["session"]), []).append(
+                {"path": path, "first_index": int(metadata["first_index"]), **metadata["part"]})
             continue
         key = (str(metadata["session"]), int(metadata["first_index"]))
         if key in parts and "grid_of" in metadata:
@@ -345,7 +382,7 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
         parts[key] = {"path": path, "metadata": metadata}
     written = _index_rows(folder / INDEX_FILE) if (folder / INDEX_FILE).exists() else []
     written = [row for row in written if "first_index" in row]
-    known = sorted({key[0] for key in parts} | {str(row["session"]) for row in written})
+    known = sorted({key[0] for key in parts} | {str(row["session"]) for row in written} | set(cut))
     if not known:
         raise ValueError(f"No session in {folder}: its scans carry no session and first_index, and there is no "
                          f"{INDEX_FILE}. Scans saved before 2026-11-19 open one at a time with io.load.")
@@ -367,11 +404,39 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
                           "received": frames, "begin_epoch_s": metadata.get("begin_epoch_s"),
                           "scan_pattern": metadata.get("scan_pattern") or "raster",
                           "dwell_s": optics.get("dwell_s"), "flyback_s": optics.get("flyback_s")})
+    listed = {row["first_index"]: row for row in index}
+    pieces: dict[int, list[dict]] = {}              # a scan's first index -> where its patterns lie in the parts
+    for part in sorted(cut.get(identifier, []), key=_first_index):
+        for entry in part["scans"]:
+            first = int(entry["first_index"])
+            pieces.setdefault(first, []).append({"path": part["path"], "at": int(entry["at"]),
+                                                 "offset": int(entry["offset"]), "patterns": int(entry["patterns"])})
+            described = entry.get("metadata") or {}
+            row = listed.get(first)
+            if row is None:                         # still arriving, or the index copy is older than this part
+                optics = described.get("optics") if isinstance(described.get("optics"), dict) else {}
+                row = listed[first] = {"session": identifier, "series_id": entry.get("series_id"),
+                                       "series": entry.get("series"), "first_index": first,
+                                       "expected": entry.get("expected"), "received": 0, "counted": True,
+                                       "begin_epoch_s": described.get("begin_epoch_s"),
+                                       "scan_pattern": described.get("scan_pattern") or "raster",
+                                       "dwell_s": optics.get("dwell_s"), "flyback_s": optics.get("flyback_s")}
+                index.append(row)
+            if row.get("counted"):
+                row["received"] += int(entry["patterns"])
+            row.setdefault("stored_shape", entry.get("stored_shape"))
+            if described:
+                row["metadata"] = described
     index.sort(key=_first_index)
     for row in index:
+        row.pop("counted", None)
         part = parts.get((identifier, row["first_index"]))
         row["path"] = None if part is None else part["path"]
         optics = None if part is None else part["metadata"].get("optics")
+        held = sorted(pieces.get(row["first_index"], []), key=_offset)
+        if part is None and held and sum(piece["patterns"] for piece in held) >= (row.get("received") or 0) > 0:
+            row["pieces"], row["path"] = held, held[0]["path"]     # every pattern of it is in parts here
+            optics = (row.get("metadata") or {}).get("optics")
         row["optics"] = optics if isinstance(optics, dict) else None
         if row.get("received") is None:
             raise ValueError(f"{row['path']}: its header gives no scan shape, so its patterns cannot be counted.")
