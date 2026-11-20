@@ -41,6 +41,12 @@ def folder(tmp_path):
         {"session": "night", "event": "reading", "time_utc": utc(T0 + 4), "changed": ["defocus_nm"],
          "defocus_nm": -30.0, "beam_tilt_mrad": [0.0, 0.0]},
         {"session": "other", "event": "reading", "time_utc": utc(T0 + 1), "changed": ["defocus_nm"], "defocus_nm": 99.0},
+        {"session": "night", "event": "reading", "time_utc": utc(T0 + 50), "changed": ["scan_rotation_deg", "beam_tilt_mrad"],
+         "defocus_nm": -30.0, "scan_rotation_deg": 90.0, "beam_tilt_mrad": [2.0, 0.0]},
+        {"session": "night", "event": "scan_beam_on", "time_utc": utc(T0 + 100.5), "series_id": 8,
+         "beam_on_epoch_s": T0 + 100.5, "pair_rotation_deg": 90, "scan_rotation_deg": 91.5},
+        {"session": "night", "event": "reading", "time_utc": utc(T0 + 103), "changed": ["scan_rotation_deg"],
+         "defocus_nm": -30.0, "scan_rotation_deg": 1.5, "beam_tilt_mrad": [2.0, 0.0]},      # written late, after the restore
     ]
     (tmp_path / "session-log.jsonl").write_text("".join(json.dumps(row) + "\n" for row in events))
     return tmp_path
@@ -49,9 +55,11 @@ def folder(tmp_path):
 def test_scans_times_and_the_clock_pair(folder):
     session = io.session(folder, session="night")
     assert session.count == 2000 and len(session.scans) == 2
-    assert session.clock_offset_s == pytest.approx(OFFSET) and session.clock_spread_s == 0
+    assert session.clock_offset_s == pytest.approx(0.0, abs=1e-6)
     assert session.time(0) == pytest.approx(T0)
-    assert session.time(1500) == pytest.approx(T0 + 100 + 5.0)       # scan 2 has no start of its own: the offset places it
+    assert session.time(1500) == pytest.approx(T0 + 100.5 + 5.0)     # every scan's own beam-on line places it
+    assert [row["clock"] for row in session.index] == ["logged", "logged"]
+    assert session.clock_spread_s == pytest.approx(0.5)              # the two scans' pairs disagree by this much
     assert "2 scans" in repr(session) and "0 of 2 files" in repr(session)
 
 
@@ -80,3 +88,15 @@ def test_a_scan_that_is_not_in_the_folder_says_so(folder):
         session.scans[1]
     with pytest.raises(IndexError):
         session.state(2000)
+
+
+def test_each_scan_of_a_go_gets_its_own_state_from_the_log(folder):
+    table = io.session(folder, session="night").report()
+    assert list(table["first_index"]) == [0, 1000]
+    assert list(table["defocus_nm"]) == [-10.0, -30.0]               # read once at Go in the header; here per scan
+    assert list(table["beam_tilt_mrad"]) == [[0.0, 0.0], [2.0, 0.0]]
+    assert table["scan_rotation_deg"][1] == 91.5 and table["file"][1] is None     # set for scan 2, in its own line
+    session = io.session(folder, session="night")
+    first = session.state(1000)["scan_rotation_deg"]
+    assert first == {"value": 91.5, "age_s": pytest.approx(0.0, abs=1e-6), "between": None, "indices": None}
+    assert session.state(1000)["pair_rotation_deg"]["value"] == 90

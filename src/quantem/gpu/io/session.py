@@ -11,13 +11,14 @@ when one changed and once a minute). ``session(folder)`` reads those and joins t
 >>> session.state(300_000)["defocus_nm"]                # doctest: +SKIP
 {'value': -12.0, 'age_s': 3.2, 'between': None, 'indices': None}
 >>> session.patterns(0, 512)                            # doctest: +SKIP
+>>> session.report()                                    # doctest: +SKIP    one row per scan, with its readings
 """
 
 from __future__ import annotations
 
 from bisect import bisect_right
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import math
 from os import PathLike
@@ -28,6 +29,7 @@ import zlib
 INDEX_FILE = "index.jsonl"
 LOG_FILE = "session-log.jsonl"
 _NOT_READINGS = frozenset({"session", "event", "time_utc", "source", "changed"})
+_NOT_SET = _NOT_READINGS | {"series_id", "beam_on_epoch_s"}
 
 
 def _index_rows(path: Path) -> list[dict]:
@@ -107,10 +109,14 @@ class Session:
                  device=None):
         self.folder, self.id, self.index, self.device = folder, identifier, index, device
         self.read_period_s = float(read_period_s)
-        self.readings = sorted((row for row in log if row.get("event") == "reading"), key=_row_time)
+        # a scan's own line holds what was set for that scan alone, exact at its first pattern: a reading at beam-on
+        set_at_start = [{**{name: value for name, value in row.items() if name not in _NOT_SET},
+                         "_epoch_s": row["beam_on_epoch_s"], "_exact": True}
+                        for row in log if row.get("event") == "scan_beam_on" and set(row) - _NOT_SET - {"_epoch_s"}]
+        self.readings = sorted([row for row in log if row.get("event") == "reading"] + set_at_start, key=_row_time)
         self._reading_times = [row["_epoch_s"] for row in self.readings]
         beam_on = {row.get("series_id"): row["beam_on_epoch_s"] for row in log
-                   if row.get("event") == "scan_startup" and row.get("beam_on_epoch_s") is not None}
+                   if row.get("event") in ("scan_startup", "scan_beam_on") and row.get("beam_on_epoch_s") is not None}
         offsets = [row["begin_epoch_s"] - beam_on[row.get("series_id")] for row in index
                    if row.get("begin_epoch_s") is not None and row.get("series_id") in beam_on]
         self.clock_offset_s = median(offsets) if offsets else None
@@ -169,7 +175,8 @@ class Session:
         changed is known only to one read period (``read_period_s``) and the clocks' spread: a pattern inside that
         window has ``between=(old, new)`` and ``indices=(first, last)``, the patterns of its scan the change may lie
         among. Without a session log the values are the scan's own header (read once when it was started), with
-        ``age_s`` None.
+        ``age_s`` None. What the acquisition set for one scan alone (a pair's rotation, a tilt of a series) is in that
+        scan's own log line and holds from its first pattern, with ``age_s`` counted from its beam-on.
         """
         row = self._row(index)
         when = self.time(index)
@@ -188,6 +195,8 @@ class Session:
         dwell = row.get("dwell_s")
         for number in range(max(place - 1, 0), len(self.readings)):
             reading = self.readings[number]
+            if reading.get("_exact"):
+                continue                            # set for one scan before its first pattern: no window
             opens = reading["_epoch_s"] - self.read_period_s - spread
             if opens > when:
                 break
@@ -220,8 +229,45 @@ class Session:
             raise FileNotFoundError(f"Scan {row.get('series')} (patterns {row['first_index']} to "
                                     f"{row['first_index'] + row['received'] - 1}) is not in {self.folder}.")
         if self._opened is None or self._opened[0] != row["first_index"]:
-            self._opened = (row["first_index"], load(row["path"], device=self.device, verbose=False))
+            scan = load(row["path"], device=self.device, verbose=False)
+            if self.readings:                       # the file's own header is left as it was written
+                scan.metadata["state"] = self._scan_state(row)
+            self._opened = (row["first_index"], scan)
         return self._opened[1]
+
+    def _scan_state(self, row: dict) -> dict:
+        """A scan's state at its first pattern, for its ``metadata["state"]``: the readings, how old each was, and
+        the ones that were changing as it began."""
+        state = self.state(row["first_index"])
+        when = self.time(row["first_index"])
+        return {"index": row["first_index"], "clock": row["clock"],
+                "time_utc": None if when is None else datetime.fromtimestamp(when, timezone.utc).isoformat(),
+                "readings": {name: entry["value"] for name, entry in state.items()},
+                "age_s": {name: entry["age_s"] for name, entry in state.items()},
+                "changing": {name: list(entry["between"]) for name, entry in state.items() if entry["between"]}}
+
+    def report(self, names: Sequence[str] = ("defocus_nm", "beam_tilt_mrad", "scan_rotation_deg", "stage_um")):
+        """One row per scan: its place in the session and the chosen readings at its first pattern, as a pandas
+        table. A reading that was changing as the scan began is shown as ``(old, new)``.
+
+        >>> session.report()                                    # doctest: +SKIP
+        >>> session.report(names=("defocus_nm", "piezo_nm"))    # doctest: +SKIP
+        """
+        import pandas as pd
+
+        table = []
+        for number, row in enumerate(self.index):
+            state = self.state(row["first_index"])
+            when = self.time(row["first_index"])
+            line = {"scan": number, "series": row.get("series"), "first_index": row["first_index"],
+                    "patterns": row["received"], "scan_pattern": row.get("scan_pattern"),
+                    "time_utc": None if when is None else datetime.fromtimestamp(when, timezone.utc).isoformat(),
+                    "clock": row["clock"], "file": None if row["path"] is None else row["path"].name}
+            for name in names:
+                entry = state.get(name)
+                line[name] = None if entry is None else (entry["between"] if entry["between"] else entry["value"])
+            table.append(line)
+        return pd.DataFrame(table)
 
     def patterns(self, start: int, stop: int):
         """The counts of patterns ``start`` to ``stop - 1`` in arrival order, one tensor (patterns, rows, cols) on
