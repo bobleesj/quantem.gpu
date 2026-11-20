@@ -62,7 +62,9 @@ class LiveDetectorSession:
                 source = copy.copy(live.source)
                 source.shape = (1, ready, *self.detector_shape)
                 source.chunks = list(live.source.chunks)
-                source._detector_total = live.source._detector_total.copy()
+                # None once scans were released from the device (a stream saved in parts as it arrives)
+                total = live.source._detector_total
+                source._detector_total = None if total is None else total.copy()
                 self.source = source
                 self.encoded = ready
             # Received patterns are immutable. The receiver retires the staging
@@ -76,11 +78,16 @@ class LiveDetectorSession:
         return self.session
 
     def _sum_encoded_suffix(self, mask, first):
-        """Sum the encoded chunks covering the unseen positions with the native indexes."""
+        """Sum the encoded chunks covering the unseen positions with the native indexes. Returns the first position
+        summed and the sums from there: later than ``first`` when the positions before it were released from the
+        device unseen (they stay not-a-number in the image)."""
         chunks = [chunk for chunk in self.source.chunks if chunk.first + chunk.scans > first]
+        if not chunks:
+            return self.encoded, np.empty(0, np.float32)
         origin = chunks[0].first
         if not origin:
-            return self._encoded_session().masked_sum(mask).reshape(-1)[first:]
+            return first, self._encoded_session().masked_sum(mask).reshape(-1)[first:]
+        first = max(first, origin)
         # Descriptors use coordinates relative to the query. Borrow the payloads
         # and index tables and change only the chunk offsets in this view.
         suffix = copy.copy(self.source)
@@ -90,7 +97,7 @@ class LiveDetectorSession:
         suffix._detector_total = None
         query = prepare(suffix)
         try:
-            return query.masked_sum(mask).reshape(-1)[first - origin:]
+            return first, query.masked_sum(mask).reshape(-1)[first - origin:]
         finally:
             query.close()
 
@@ -108,7 +115,8 @@ class LiveDetectorSession:
             # that prefix once instead of decoding many dense batches and
             # synchronizing each result; tail-only updates still reuse it.
             if self.encoded and (not unchanged or first < self.encoded):
-                flat[first:self.encoded] = self._sum_encoded_suffix(mask, first)
+                start, sums = self._sum_encoded_suffix(mask, first)
+                flat[start:self.encoded] = sums
                 first = self.encoded
             valid_mask = np.asarray(mask, dtype=bool) & self.acquisition.source.valid_pixels
             if self.tail is not None:

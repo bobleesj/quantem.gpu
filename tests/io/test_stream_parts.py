@@ -52,3 +52,34 @@ def test_a_chunk_is_never_split():
         chunks_of(encoder.source, 10, CHUNK)
     with pytest.raises(ValueError, match="needs"):
         dataset_of(chunks_of(encoder.source, 0, CHUNK), (2, CHUNK), like=encoder)
+
+
+def test_the_live_image_keeps_its_rows_when_earlier_scans_leave_the_device():
+    encoder, counts = streamed(4)
+    mask = np.ones((12, 12), bool)
+    session = encoder.detector_session()
+    try:
+        first = session.masked_sum(mask).copy()            # both chunks summed while they are on the device
+        encoder.source.release_scans_before(CHUNK)         # the first chunk's part is on disk: it leaves
+        again = session.masked_sum(mask)
+        np.testing.assert_array_equal(again, first)        # nothing new arrived: the image as it was
+    finally:
+        session.close()
+    np.testing.assert_array_equal(first.reshape(-1), counts.reshape(2 * CHUNK, -1).sum(axis=1).astype(np.float32))
+
+
+def test_a_live_image_begun_after_a_release_shows_what_is_still_on_the_device():
+    counts = np.random.default_rng(5).integers(0, 4096, (3 * CHUNK, 12, 12), dtype=np.uint16)
+    encoder = LiveEncoder((3, CHUNK), (12, 12), device="cuda:0")
+    for first in (0, CHUNK):
+        encoder.add(first, cp.asarray(counts[first:first + CHUNK]))
+    encoder.source.release_scans_before(CHUNK)
+    session = encoder.detector_session()
+    try:
+        encoder.add(2 * CHUNK, cp.asarray(counts[2 * CHUNK:]))
+        image = session.masked_sum(np.ones((12, 12), bool)).reshape(-1)
+    finally:
+        session.close()
+    sums = counts.reshape(3 * CHUNK, -1).sum(axis=1).astype(np.float32)
+    assert np.isnan(image[:CHUNK]).all()                   # released before anything looked: not a number, not zero
+    np.testing.assert_array_equal(image[CHUNK:], sums[CHUNK:])
