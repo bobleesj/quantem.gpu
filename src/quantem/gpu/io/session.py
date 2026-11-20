@@ -18,6 +18,7 @@ when one changed and once a minute). A stream may also be saved in parts cut by 
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime, timezone
 import json
@@ -34,19 +35,23 @@ _NOT_SET = _NOT_READINGS | {"series_id", "beam_on_epoch_s"}
 
 
 def _index_rows(path: Path) -> list[dict]:
-    """The checked lines of an index.jsonl; a cut-off last line is dropped, a damaged earlier one raises."""
-    lines = [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
+    """Read checked records, ignoring only a partial final line."""
+    lines = path.read_bytes().split(b"\n")
     found = []
-    for number, line in enumerate(lines):
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
         try:
             record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError("expected an object")
             crc = record.pop("crc32")
             if crc != zlib.crc32(json.dumps(record, allow_nan=False, sort_keys=True).encode()):
                 raise ValueError("checksum")
-        except (ValueError, KeyError, AttributeError) as error:
-            if number == len(lines) - 1:
+        except (ValueError, KeyError) as error:
+            if number == len(lines):
                 break
-            raise ValueError(f"{path}: line {number + 1} is damaged ({error}).") from error
+            raise ValueError(f"{path}: line {number} is damaged ({error}).") from error
         found.append(record)
     return found
 
@@ -89,6 +94,24 @@ def _first_index(row: dict) -> int:
     return row["first_index"]
 
 
+def _beam_on_times(index: list[dict], log: list[dict]) -> dict[int, float]:
+    """Join repeated detector series IDs in order when every scan has a matching beam-on record."""
+    starts = defaultdict(set)
+    for event in log:
+        series, started = event.get("series_id"), event.get("beam_on_epoch_s")
+        if event.get("event") in ("scan_startup", "scan_beam_on") and series is not None and started is not None:
+            starts[series].add(started)
+    scans = defaultdict(list)
+    for row in index:
+        scans[row.get("series_id")].append(row["first_index"])
+    return {
+        first: started
+        for series, indices in scans.items()
+        if len(indices) == len(starts[series])
+        for first, started in zip(sorted(indices), sorted(starts[series]), strict=True)
+    }
+
+
 class _Scans(Sequence):
     """A session's scans in arrival order; one is loaded when it is asked for."""
 
@@ -125,17 +148,16 @@ class Session:
                         for row in log if row.get("event") == "scan_beam_on" and set(row) - _NOT_SET - {"_epoch_s"}]
         self.readings = sorted([row for row in log if row.get("event") == "reading"] + set_at_start, key=_row_time)
         self._reading_times = [row["_epoch_s"] for row in self.readings]
-        beam_on = {row.get("series_id"): row["beam_on_epoch_s"] for row in log
-                   if row.get("event") in ("scan_startup", "scan_beam_on") and row.get("beam_on_epoch_s") is not None}
-        offsets = [row["begin_epoch_s"] - beam_on[row.get("series_id")] for row in index
-                   if row.get("begin_epoch_s") is not None and row.get("series_id") in beam_on]
+        beam_on = _beam_on_times(index, log)
+        offsets = [row["begin_epoch_s"] - beam_on[row["first_index"]] for row in index
+                   if row.get("begin_epoch_s") is not None and row["first_index"] in beam_on]
         self.clock_offset_s = median(offsets) if offsets else None
         self.clock_spread_s = max(offsets) - min(offsets) if offsets else None
         for row in index:
             # on the microscope PC's clock, where the readings are: its own start when logged, else the receiver's
             # start moved by the offset the other scans gave
-            if row.get("series_id") in beam_on:
-                row["start_epoch_s"], row["clock"] = beam_on[row["series_id"]], "logged"
+            if row["first_index"] in beam_on:
+                row["start_epoch_s"], row["clock"] = beam_on[row["first_index"]], "logged"
             elif row.get("begin_epoch_s") is not None and self.clock_offset_s is not None:
                 row["start_epoch_s"], row["clock"] = row["begin_epoch_s"] - self.clock_offset_s, "offset"
             else:
@@ -376,7 +398,8 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
     parts: dict[tuple[str, int], dict] = {}
     cut: dict[str, list[dict]] = {}                 # session -> its parts cut by index, each naming its scans
     for path in sorted(folder.glob("*.qem")):
-        metadata = inspect(path).metadata or {}
+        header = inspect(path)
+        metadata = header.metadata or {}
         if metadata.get("session") is None or metadata.get("first_index") is None:
             continue
         if isinstance(metadata.get("part"), dict):
@@ -386,7 +409,7 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
         key = (str(metadata["session"]), int(metadata["first_index"]))
         if key in parts and "grid_of" in metadata:
             continue                                # the scan as it arrived is preferred to its copy on a grid
-        parts[key] = {"path": path, "metadata": metadata}
+        parts[key] = {"path": path, "metadata": metadata, "scan_shape": header.scan_shape}
     written = _index_rows(folder / INDEX_FILE) if (folder / INDEX_FILE).exists() else []
     written = [row for row in written if "first_index" in row]
     known = sorted({key[0] for key in parts} | {str(row["session"]) for row in written} | set(cut))
@@ -403,7 +426,7 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
     for (owner, first), part in parts.items():      # a scan here that the index copy does not list yet, or no index
         if owner == identifier and first not in listed:
             metadata = part["metadata"]
-            shape = metadata.get("scan_positions_shape") or metadata.get("scan_shape")
+            shape = part["scan_shape"]
             frames = math.prod(int(side) for side in shape) if shape else None
             optics = metadata.get("optics") if isinstance(metadata.get("optics"), dict) else {}
             index.append({"session": identifier, "series_id": metadata.get("series_id"),

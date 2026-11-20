@@ -1,7 +1,9 @@
 """A streamed session's index and session log, joined by time."""
 
 from datetime import datetime, timezone
+from importlib import import_module
 import json
+from types import SimpleNamespace
 import zlib
 
 import pytest
@@ -33,7 +35,8 @@ def folder(tmp_path):
         {"session": "other", "series_id": 1, "series": "series_1", "first_index": 0, "expected": 10,
          "received": 10, "begin_epoch_s": T0, "scan_pattern": "raster", "dwell_s": 0.01},
     ]
-    (tmp_path / "index.jsonl").write_text("".join(checked(row) + "\n" for row in scans) + '{"session": "nig')
+    complete = "".join(checked(row) + "\n" for row in scans).encode()
+    (tmp_path / "index.jsonl").write_bytes(complete + b'{"session": "nig\xc3')
     events = [
         {"session": "night", "event": "reading", "time_utc": utc(T0 - 5), "changed": [], "defocus_nm": -10.0,
          "beam_tilt_mrad": [0.0, 0.0]},
@@ -122,3 +125,45 @@ def test_a_value_set_for_one_scan_alone_does_not_follow_into_the_next_scan(tmp_p
     assert list(table["clock"]) == ["logged", "logged", "logged"]
     assert list(table["scan_rotation_deg"]) == [0.0, 90.0, 0.0]              # the plain scan after the pair: the last reading
     assert table["pair_rotation_deg"][1] == 90 and table["pair_rotation_deg"].isna()[2]   # nothing was set for scan 3
+
+
+def test_qem_without_index_uses_the_shape_from_its_file_header(tmp_path, monkeypatch):
+    path = tmp_path / "scan.qem"
+    path.touch()
+    header = SimpleNamespace(
+        scan_shape=(2, 3),
+        metadata={"session": "night", "series_id": 7, "first_index": 12, "series": "series_7"},
+    )
+
+    def read_header(source):
+        assert source == path
+        return header
+
+    monkeypatch.setattr(import_module("quantem.gpu.io.inspect"), "inspect", read_header)
+    saved = io.session(tmp_path)
+
+    assert saved.count == 18
+    assert saved.index[0]["received"] == 6
+    assert saved.index[0]["path"] == path
+
+
+def test_reused_detector_series_id_keeps_the_clock_for_each_scan(tmp_path):
+    scans = [
+        {"session": "night", "series_id": 7, "first_index": first, "received": 10,
+         "begin_epoch_s": T0 + delay + OFFSET, "dwell_s": 0.01}
+        for first, delay in ((0, 0), (10, 100))
+    ]
+    events = [
+        {"session": "night", "event": kind, "time_utc": utc(T0 + delay),
+         "series_id": 7, "beam_on_epoch_s": T0 + delay}
+        for kind, delay in (("scan_startup", 0), ("scan_beam_on", 0), ("scan_beam_on", 100))
+    ]
+    (tmp_path / "index.jsonl").write_text("".join(checked(row) + "\n" for row in scans))
+    log = tmp_path / "session-log.jsonl"
+    log.write_text("".join(json.dumps(event) + "\n" for event in events))
+
+    saved = io.session(tmp_path)
+
+    assert saved.time(0) == pytest.approx(T0, abs=1e-5)
+    assert saved.time(10) == pytest.approx(T0 + 100, abs=1e-5)
+    assert saved.clock_offset_s == pytest.approx(OFFSET)
