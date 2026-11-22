@@ -3,6 +3,7 @@
 import bisect
 import math
 import struct
+from functools import cache
 from pathlib import Path
 
 import numpy as np
@@ -17,10 +18,16 @@ _SOURCE = (Path(__file__).with_name("kernels") / "precision.cu").read_text()
 _NAMES = ("precision_encode_measure_regional",)
 
 
-_restore_codes = cp.ElementwiseKernel(
-    "uint16 code, float64 scale, float64 offset", "float32 intensity",
-    "intensity = (float)((double)code * scale + offset)", "quantem_precision_restore",
-)
+@cache
+def _restore_kernel():
+    """Build the restore kernel on demand so imports also work without CUDA."""
+    if cp is None:
+        raise RuntimeError("CUDA scaled-count restoration requires CuPy.")
+    return cp.ElementwiseKernel(
+        "uint16 code, float64 scale, float64 offset", "float32 intensity",
+        "intensity = (float)((double)code * scale + offset)", "quantem_precision_restore",
+        options=("--fmad=false",),
+    )
 
 
 def _kernel(name: str):
@@ -185,7 +192,8 @@ class PrecisionSource(DetectorQueries):
         temporary arrays (four times the result's size in float64, for every region read). ``out``
         receives the result in place.
         """
-        return _restore_codes(codes, np.float64(report["scale"]), np.float64(report["offset"]), out)
+        outputs = () if out is None else (out,)
+        return _restore_kernel()(codes, np.float64(report["scale"]), np.float64(report["offset"]), *outputs)
 
     def encoded_blocks(self):
         """Yield every decoded block of stored codes, part by part, in scan order."""

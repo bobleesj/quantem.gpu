@@ -86,6 +86,11 @@ def test_cuda_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
                 session.frame(index), expected.reshape(-1, 7, 9)[index]
             )
 
+        np.testing.assert_array_equal(
+            loaded.data.decode_scan_range_torch(6, 12).cpu().numpy(),
+            expected.reshape(-1, 7, 9)[6:12],
+        )
+
         indices = [17, 0, 17, 29, 6]
         np.testing.assert_allclose(
             session.reduce_frames(indices, "mean"),
