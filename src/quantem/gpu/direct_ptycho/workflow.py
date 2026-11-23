@@ -455,26 +455,15 @@ def _central_fit_region(rows: int, columns: int, num_bright_field_pixels: int, v
 
 
 def _exceeds_device(data: Dataset4dstem) -> bool:
-    """Whether the device cannot hold the dense bright-field spectrum next to this encoded integer acquisition.
-
-    The dense path decodes the bright-field crop and keeps G(q, k): ``_fit_region_bytes``'s 7 bytes a bright-field
-    pixel and scan position plus 0.5 GiB, the bright-field pixels counted on the mean pattern as the streamed path
-    selects them. Its fit's working arrays also grow with the band frequencies (140,000 at a 0.66 A step), so only
-    70 % of the free memory counts. With less than that the scan is reconstructed from the encoded counts in bounded
-    batches of detector columns instead, and fitted on its band spectrum (``_whole_scan_for_fit``). (A quarter of the
-    decoded acquisition, the earlier rule, and then 85 % of the free memory both sent a 512 x 512 scan with 1266
-    bright-field pixels to the dense path at 4096 MiB free, where the fit ran out.)
+    """Whether a whole-scan session reads this encoded integer acquisition in batches of detector columns instead of
+    decoding its bright field densely: always, whatever the free memory (11-23, Bob: "ANS is the first class citizen";
+    max VRAM for one scan 5-10 GB). The dense path held a 512 x 512 scan's bright field at 17 GB above the scan for
+    2.4 s (Samsung, 8,930 bright-field pixels); the batches give the same phase (tests/contracts/
+    test_direct_full_device.py) with about 7 GB, in about 6 s. Odd scan sides and scans beyond 4096 keep their paths.
     """
-    from quantem.gpu.direct_ptycho.cuda.streamed import free_device_bytes
     from quantem.gpu.resident.cuda.counts import StreamedCounts
 
-    if type(data.data) is not StreamedCounts or max(data.shape[:2]) > 4096 or any(side % 2 for side in data.shape[:2]):
-        return False
-    with cp.cuda.Device(data.device.index):
-        mean = np.asarray(detector.mean(data), dtype=np.float64)
-        bright_field_pixels = int((mean > mean.mean() + mean.std()).sum())
-        positions = math.prod(data.shape[:2])
-        return free_device_bytes() * 0.7 < (512 << 20) + positions * bright_field_pixels * 7
+    return type(data.data) is StreamedCounts and max(data.shape[:2]) <= 4096 and not any(side % 2 for side in data.shape[:2])
 
 
 class DirectPtycho:
@@ -710,9 +699,6 @@ class DirectPtycho:
                     if data.device is None or data.device.type != "cuda":
                         raise ValueError("CUDA direct ptychography needs the acquisition resident on a CUDA device.")
                     full_scan_only = max(data.shape[:2]) > 1024 or _exceeds_device(data)
-                    if full_scan_only and max(data.shape[:2]) <= 1024:
-                        print("Direct ptycho: GPU memory is short; the scan is read in batches of detector columns "
-                              "(same result, slower fit).")
                     with cp.cuda.Device(data.device.index):
                         self._streamed = StreamedDirect(
                             data, mean_pattern=mean_pattern, center=bright_field_center_px,

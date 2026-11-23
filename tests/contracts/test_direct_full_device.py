@@ -1,5 +1,5 @@
-"""A scan on a device too full for its dense spectrum still gets its damped phase, the same one, from batches of
-detector columns; when even that cannot fit, the error says how much memory is free and how much is needed."""
+"""An encoded scan's whole-scan session reads batches of detector columns (ANS first, never a dense decode); its damped
+phase is the dense one; when even the batches cannot fit, the error says how much memory is free and how much is needed."""
 
 import numpy as np
 import pytest
@@ -79,8 +79,8 @@ def test_too_little_memory_for_the_batches_says_how_much_is_free_and_needed(monk
     assert isinstance(raised.value, MemoryError)
 
 
-def test_a_full_device_is_said_in_one_line(monkeypatch, capsys):
-    monkeypatch.setattr(workflow, "_exceeds_device", _always)
-    with _encoded() as data, DirectPtycho(data, **SETTINGS):
-        said = [line for line in capsys.readouterr().out.splitlines() if "batches of detector columns" in line]
-    assert len(said) == 1 and len(said[0]) < 130 and "same result" in said[0]
+def test_an_encoded_scan_is_never_decoded_dense():
+    """ANS first (11-23): with room on the device or without, the whole-scan session reads the encoded counts in
+    batches and says nothing about memory."""
+    with _encoded() as data, DirectPtycho(data, **SETTINGS) as session:
+        assert session._streamed is not None and session._streamed.full_scan_only
