@@ -102,7 +102,7 @@ def test_stream_frames_keep_their_hash_chain(tmp_path):
 def test_a_phase_manifest_carries_its_screening_record(tmp_path):
     """An ssb.json with ssb.npy is direct.json with direct.npy; its screening record's fit block is
     computed.phase_of_mean and the tilt-corrected one computed.direct_tilt."""
-    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
+    from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA
     from quantem.gpu.formats.direct_phase import SCHEMA
 
     manifest = {"schema": "quantem.ssb-phase/2", "phase_file": "ssb.npy", "phase_sha256": "0" * 64,
@@ -115,7 +115,8 @@ def test_a_phase_manifest_carries_its_screening_record(tmp_path):
     assert sorted(path.name for path in tmp_path.iterdir()) == ["direct.json", "direct.npy", "ssb.json.before"]
     record = json.loads((tmp_path / "direct.json").read_text())
     assert record["schema"] == SCHEMA and record["phase_file"] == "direct.npy" and record["phase_sha256"] == "0" * 64
-    assert record["run_metadata"] == {"schema": SCREEN_ACQUISITION_SCHEMA,
+    # the layout this script writes; QuantEM Live's own rewrite carries it to SCREEN_ACQUISITION_SCHEMA
+    assert record["run_metadata"] == {"schema": "quantem.screen-acquisition/3",
                                       "computed": {"phase_of_mean": {"loss": 0.1, "schema": FIT_SCHEMA},
                                                    "direct_tilt": {"loss": 0.2}}}
     assert rewrite(tmp_path).splitlines()[-1] == "0 file(s) rewritten, 0 skipped."

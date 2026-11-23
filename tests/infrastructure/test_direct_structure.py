@@ -100,7 +100,7 @@ def test_run_series_reuses_only_exact_results(
         }
         # a record as quantem.live screens it: the series stores a fit only in a record of this schema
         (dataset / "config.json").write_text(
-            json.dumps({"schema": "quantem.screen-acquisition/3", "computed": {"phase_of_mean": settings}})
+            json.dumps({"schema": "quantem.screen-acquisition/4", "computed": {"phase_of_mean": settings}})
         )
         np.save(dataset / "bf.npy", np.full((8, 9), 20 + index))
         np.save(dataset / "df.npy", np.full((8, 9), 30 + index))
@@ -227,7 +227,7 @@ def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation
         (raw / f"scan_{frame}_master.h5").write_bytes(b"raw")
     saved = out / "scan_1"
     saved.mkdir(parents=True)
-    (saved / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3", "computed": {"phase_of_mean": {
+    (saved / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/4", "computed": {"phase_of_mean": {
         "schema": FIT_SCHEMA, "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
         "scan_detector_rotation_deg": 159.0, "scan_detector_rotation_flipped": True, "bright_field_radius_px": 53.4}}}))
     opened = []
@@ -332,7 +332,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
         (dataset / "config.json").write_text(
             json.dumps(
                 {
-                    "schema": "quantem.screen-acquisition/3",
+                    "schema": "quantem.screen-acquisition/4",
                     "computed": {
                         "phase_of_mean": {
                             "schema": FIT_SCHEMA,
@@ -419,7 +419,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     earlier = {"C10": 5.0, "C12": -0.3, "phi12": 0.18}
     # every value differs from dataset.yaml, so anything read from this block would show below; the record itself
     # is current (quantem.live's rewrite stamps the record and leaves an earlier fit block as it is)
-    (reference / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3", "computed": {"phase_of_mean": {
+    (reference / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/4", "computed": {"phase_of_mean": {
         "aberrations": earlier, "aberration_unit": "nm", "rotation_angle_deg": 0.0, "com_reversed": True, "loss": 0.014,
         "voltage_kV": 80.0, "semiangle_mrad": 20.0, "scan_sampling_A": (0.2, 0.2), "bright_field_radius_px": 55.0}}}))
     for frame in (1, 2):
@@ -730,7 +730,7 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
            "detector_sampling_mrad": [0.552, 0.552], "aberrations": {"C10_nm": 15.77, "C12_nm": 6.7, "phi12_deg": 17.5},
            "scan_detector_rotation_deg": 339.78, "scan_detector_rotation_flipped": True,
            "bright_field_center_px": [95.5, 96.25], "bright_field_radius_px": 53.4}
-    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3", "source_master": str(source),
+    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/4", "source_master": str(source),
                                                      "computed": {"phase_of_mean": fit}}))
     opened = []
     monkeypatch.setattr(DirectPtycho, "open", classmethod(lambda cls, path, **kwargs: opened.append((path, kwargs)) or "session"))
@@ -743,7 +743,7 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
     assert (kwargs["detector_sampling_mrad"], kwargs["bright_field_center_px"], kwargs["bright_field_radius_px"]) == (
         (0.552, 0.552), (95.5, 96.25), 53.4)
     assert kwargs["aberrations"]["C10_nm"] == 15.77
-    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3", "computed": {"phase_of_mean": {}}}))
+    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/4", "computed": {"phase_of_mean": {}}}))
     with pytest.raises(ValueError, match="holds no direct ptychography fit"):
         open_screen_record(record)
 
@@ -780,7 +780,7 @@ def test_open_screen_record_opens_at_the_tilt_corrected_fit(tmp_path, monkeypatc
             ({"phase_of_mean": {**plain, "sample_tilt_mrad": [1.0, 2.0], "depth_spread_nm": 5.0}}, plain["aberrations"],
              ((1.0, 2.0), 5.0)),
             ({"phase_of_mean": plain, "direct_tilt": {**joint, "state": "failed"}}, plain["aberrations"], (None, None))):
-        (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/3",
+        (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/4",
                                                          "source_master": str(source), "computed": computed}))
         session = open_screen_record(record)
         assert session.kwargs["aberrations"] == optics == screen_record_settings(record)["aberrations"]

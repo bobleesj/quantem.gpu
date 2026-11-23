@@ -39,8 +39,10 @@ FIT_SCHEMA = f"quantem.direct-fit/{SCHEMA}"
 # The top-level "schema" of the screening record that holds the fit block (live/screen/<dataset>/config.json). The
 # record belongs to quantem.live: this is the schema of the record its reader accepts, and it takes no other. It
 # is written here only when DirectPtycho.run_series creates the record, and required of a record that exists.
+# 4: QuantEM Live's own keys and files say direct where they said ssb (computed.direct_tilt, computed.direct_locked,
+#    direct_result, direct_phase.npy); quantem.live's tools/rewrite_direct_names.py carries a /3 record over once.
 # 3: the fit block is computed.phase_of_mean (it was named for the old method before).
-SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/3"
+SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/4"
 # The same for a saved result record (direct-aberrations.json, direct-run.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
 # 15: the record takes the direct-ptychography names: schema quantem.direct-result, files direct-aberrations and

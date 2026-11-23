@@ -1170,12 +1170,12 @@ probe reference is fitted again, and the physical settings come from
 [stored fit schema](../maintainer/2026-10-11-stored-fit-schema.md).
 
 That `config.json` is QuantEM Live's screening record, which Live reads only
-with `"schema": "quantem.screen-acquisition/3"` at its top level
+with `"schema": "quantem.screen-acquisition/4"` at its top level
 (`quantem.gpu.direct_ptycho.persistence.SCREEN_ACQUISITION_SCHEMA`). A record that
 `run_series` creates carries that key. In a record that exists it
 changes nothing outside `computed.phase_of_mean`; a record with another top-level
 schema, or none, raises `ValueError` before anything is written and names
-QuantEM Live's `tools/rewrite_screen_config.py`.
+QuantEM Live's rewrite tools (`tools/rewrite_direct_names.py` for a `/3` record).
 
 `dataset.yaml` is read only at schema `quantem.dataset/2`: the `microscope`
 voltage and semi-angle, the file entry's `scan_detector_rotation_deg` (a

@@ -469,7 +469,7 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
     from quantem.gpu.direct_ptycho.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
     from quantem.gpu.direct_ptycho.series import saved_fit, write_fit_metadata
 
-    assert SCREEN_ACQUISITION_SCHEMA == "quantem.screen-acquisition/3"
+    assert SCREEN_ACQUISITION_SCHEMA == "quantem.screen-acquisition/4"
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": -0.5}
     result = DirectPtychoResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_center_px=(31.5, 32.5))
@@ -500,7 +500,7 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
         folder.mkdir()
         (folder / "config.json").write_text(json.dumps(earlier), encoding="utf-8")
         before = (folder / "config.json").read_bytes()
-        with pytest.raises(ValueError, match="quantem.screen-acquisition/3") as refused:
+        with pytest.raises(ValueError, match="quantem.screen-acquisition/4") as refused:
             write_fit_metadata(folder, settings, result, (0.6, 0.6))
         assert str(folder / "config.json") in str(refused.value) and repr(earlier.get("schema")) in str(refused.value)
         assert (folder / "config.json").read_bytes() == before and sorted(path.name for path in folder.iterdir()) == ["config.json"]

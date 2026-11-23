@@ -451,7 +451,7 @@ def write_fit_metadata(
             raise ValueError(
                 f"{config_path} is a screening record with schema {found!r}; this version stores a fit only in a "
                 f"record with schema {SCREEN_ACQUISITION_SCHEMA!r}. Nothing was written. Rewrite the record once "
-                "with quantem.live's tools/rewrite_screen_config.py."
+                "with quantem.live's tools/rewrite_direct_names.py (a quantem.screen-acquisition/3 record) or its earlier tools."
             )
     else:
         config = {"schema": SCREEN_ACQUISITION_SCHEMA}
