@@ -200,13 +200,20 @@ def advance(session) -> bool:
     windows = [tile for _, tiles, _ in getattr(session, "_direct_windows", {}).values() for tile in tiles]
     pending = [window for window in windows if not window.series.ready]
     if pending:
-        pending[0].step()
+        try:
+            pending[0].step()
+        except MemoryError:
+            # A drag window is optional. Free every tile and finish the idle
+            # build so later drags use the exact preview without retrying it.
+            session._direct_windows.clear()
+            session._direct_window_memory_exhausted = True
+            return True
     return all(window.series.ready for window in windows)
 
 
 def _windowed(session, factor, policy) -> bool:
     """Whether drags of this method can use a window: a resident region, and for direct ptychography CUDA's fine-grid coherent sum."""
-    if session._streamed is not None:
+    if session._streamed is not None or getattr(session, "_direct_window_memory_exhausted", False):
         return False
     if policy.get("method", "phase_of_mean") == "phase_of_mean":
         return session.backend == "cuda" and factor > 1
