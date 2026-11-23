@@ -4,6 +4,7 @@ export interface RansPreparedGroup {
   tables: GPUBuffer;
   offsets: GPUBuffer;
   entriesWord: number;
+  lookupWord?: number;
 }
 
 /** Byte reader of one .qem series as the resident set loads it (qem-source.ts builds it). */

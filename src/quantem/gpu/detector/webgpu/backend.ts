@@ -711,6 +711,13 @@ export class DetectorCompute {
   // GPU-resident centered DPC component. This keeps the common CoMx/CoMy display path on GPU:
   // CoM reduction -> global mean -> component subtraction, with no JavaScript pass over scan pixels.
   maskedDpcBuffer(mask: Uint32Array, detCols: number, component: "row" | "col" | 0 | 1): { buffer: GPUBuffer; n: number; cleanup?: () => void } {
+    // A resident ANS decode already computes both moments. Keep both centered
+    // maps so switching DPC components or opening iDPC reuses that decode.
+    if (this.residentCoMEncoder) {
+      const pair = this.maskedDpcPairBuffers(mask, detCols);
+      const source = component === "row" || component === 0 ? pair.row : pair.col;
+      return { buffer: this.copyScanBuffer(source), n: pair.n, cleanup: pair.cleanup };
+    }
     const device = this.device;
     const { idx, n, integerFlags } = this.maskedCoMSelection(mask, detCols);
     const comp = component === "row" || component === 0 ? 0 : 1;

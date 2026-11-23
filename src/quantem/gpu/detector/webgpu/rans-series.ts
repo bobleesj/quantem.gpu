@@ -111,6 +111,7 @@ export class RansResidentSeries {
 
   // Loads overlap in time, so durations are not summed here: each set keeps its
   // own loadMs and checkpointMs, and readyMs is the elapsed time of the series.
+  resident(tilt: number) { return this.sets[tilt]; }
   get payloadBytes() { return this.sets.reduce((sum, set) => sum + set.payloadBytes, 0); }
   /** Time from the start of loading to the latest published acquisition. */
   get readyMs() { return this.finishedAt - this.started; }
