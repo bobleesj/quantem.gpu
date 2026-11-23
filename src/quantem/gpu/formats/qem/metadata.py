@@ -56,6 +56,7 @@ MAPED_RECORDS = {
     "maped_merge": "quantem_maped_merge_v1",
     "maped_summary": "quantem_maped_summary_v1",
     "maped_run": "quantem_maped_run_v1",  # steps, merge settings, tilt files, software and commits
+    "maped_series": "quantem_maped_series_v1",  # the series as the merge worker saw it: tilts, mrad, optics
 }
 # The retained hot_pixel_correction record carries this under "schema"; a record with another
 # value, or none, is the same as no record.
