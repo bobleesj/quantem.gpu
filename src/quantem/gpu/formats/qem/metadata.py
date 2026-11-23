@@ -52,7 +52,12 @@ NOT_RETAINED = frozenset((
 ))
 # The records a merged multi-tilt result carries, and the versioned name each is stored under as JSON
 # text: a root attribute of an HDF5 master, an entry of ``attributes`` in a scaled .qem header.
-MAPED_RECORDS = {"maped_merge": "quantem_maped_merge_v1", "maped_summary": "quantem_maped_summary_v1"}
+MAPED_RECORDS = {
+    "maped_merge": "quantem_maped_merge_v1",
+    "maped_summary": "quantem_maped_summary_v1",
+    "maped_run": "quantem_maped_run_v1",  # steps, merge settings, tilt files, software and commits
+    "maped_series": "quantem_maped_series_v1",  # the series as the merge worker saw it: tilts, mrad, optics
+}
 # The retained hot_pixel_correction record carries this under "schema"; a record with another
 # value, or none, is the same as no record.
 # 3: a median fill rounds half to even (it rounded down) and grows its window past 3 x 3 until a valid
