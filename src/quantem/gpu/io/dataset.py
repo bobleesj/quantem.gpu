@@ -5,7 +5,7 @@ import warnings
 from dataclasses import dataclass
 from math import prod
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from weakref import ref
 
 import numpy as np
@@ -23,6 +23,34 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from quantem.gpu.detector import BrightFieldDisk
+
+
+def _browse_region(scan_shape, location, region_shape):
+    """Place a named region inside the field, leaving room for surrounding positions."""
+    quarters = {
+        "top left": (1, 1),
+        "top right": (1, 3),
+        "middle": (2, 2),
+        "bottom left": (3, 1),
+        "bottom right": (3, 3),
+    }
+    if location not in quarters:
+        raise ValueError(f"Choose scan_region from {', '.join(quarters)}, or give its row and column bounds.")
+    if (
+        not isinstance(region_shape, (tuple, list)) or len(region_shape) != 2
+        or region_shape[0] != region_shape[1]
+        or type(region_shape[0]) is not int or region_shape[0] < 2 or region_shape[0] % 2
+        or region_shape[0] > min(scan_shape)
+    ):
+        raise ValueError(f"Choose a square, even scan_region_shape (rows, cols) within the {tuple(scan_shape)} scan.")
+
+    bounds = []
+    for edge, length, quarter in zip(scan_shape, region_shape, quarters[location], strict=True):
+        margin = min(length, edge // 2)
+        center = max(margin, min(edge - margin, edge * quarter // 4))
+        start = center - length // 2
+        bounds.extend((start, start + length))
+    return tuple(bounds)
 
 
 class Calibration:
@@ -298,9 +326,21 @@ class Dataset4dstem:
             device=device, verbose=False,
         )
 
-    def browse(self, *, scan_region: tuple[int, int, int, int] | None = None, interactive: bool = False, size: str = "medium"):
-        """The whole scan at a glance, before any reconstruction, with the region to reconstruct boxed: scan_region (row
-        start, row stop, col start, col stop, stops exclusive).
+    def browse(
+        self,
+        *,
+        scan_region: tuple[int, int, int, int] | Literal[
+            "top left", "top right", "middle", "bottom left", "bottom right"
+        ] | None = None,
+        scan_region_shape: tuple[int, int] = (64, 64),
+        interactive: bool = False,
+        size: str = "medium",
+    ):
+        """Show the scan and optionally box a region for reconstruction.
+
+        For a named region, ``scan_region_shape`` gives an even square in scan positions.
+        A tuple ``scan_region=(row_start, row_stop, col_start, col_stop)`` sets the bounds
+        directly, with exclusive stops.
 
         interactive=False (quantem.widget's ShowDirect): the virtual bright field and annular dark field and the mean
         diffraction pattern with the bright-field disk drawn (detector.bright_field_disk on the mean pattern), the box
@@ -309,8 +349,10 @@ class Dataset4dstem:
         cell. Nothing is loaded again. Why: a scientist looks at where the region sits before direct ptychography or
         any reconstruction, and picks it by hand.
 
-        >>> acquisition.browse(scan_region=(224, 288, 224, 288))
+        >>> acquisition.browse(scan_region="bottom right", scan_region_shape=(64, 64))
         >>> acquisition.browse(scan_region=(224, 288, 224, 288), interactive=True)"""
+        if isinstance(scan_region, str):
+            scan_region = _browse_region(self.shape[:2], scan_region, scan_region_shape)
         if interactive:
             from quantem.widget import Show4DSTEM
 

@@ -2,7 +2,25 @@
 
 import pytest
 
-from quantem.gpu.io.dataset import Dataset4dstem
+from quantem.gpu.io.dataset import Dataset4dstem, _browse_region
+
+
+@pytest.mark.parametrize(("location", "start"), [
+    ("top left", (96, 96)),
+    ("top right", (96, 352)),
+    ("middle", (224, 224)),
+    ("bottom left", (352, 96)),
+    ("bottom right", (352, 352)),
+])
+def test_named_browse_regions_select_a_64_square(location, start):
+    row, col = start
+    assert _browse_region((512, 512), location, (64, 64)) == (row, row + 64, col, col + 64)
+
+
+def test_named_browse_region_keeps_support_inside_a_small_scan():
+    assert _browse_region((128, 256), "bottom right", (64, 64)) == (32, 96, 160, 224)
+    with pytest.raises(ValueError, match="within the"):
+        _browse_region((128, 256), "middle", (192, 64))
 
 
 def test_acquisition_summary_does_not_materialize_storage(tmp_path):
