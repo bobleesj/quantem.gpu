@@ -298,6 +298,53 @@ class Dataset4dstem:
             device=device, verbose=False,
         )
 
+    def browse(self, *, scan_region: tuple[int, int, int, int] | None = None, interactive: bool = False, size: str = "medium"):
+        """The whole scan at a glance, before any reconstruction, with the region to reconstruct boxed: scan_region (row
+        start, row stop, col start, col stop, stops exclusive).
+
+        interactive=False (quantem.widget's ShowDirect): the virtual bright field and annular dark field and the mean
+        diffraction pattern with the bright-field disk drawn (detector.bright_field_disk on the mean pattern), the box
+        a square to drag. interactive=True (Show4DSTEM): every pattern, a virtual detector to drag on the pattern, the
+        box as its Rect on the virtual image. Either way the box, as dragged, is ``acquisition.scan_region`` in the next
+        cell. Nothing is loaded again. Why: a scientist looks at where the region sits before direct ptychography or
+        any reconstruction, and picks it by hand.
+
+        >>> acquisition.browse(scan_region=(224, 288, 224, 288))
+        >>> acquisition.browse(scan_region=(224, 288, 224, 288), interactive=True)"""
+        if interactive:
+            from quantem.widget import Show4DSTEM
+
+            view = Show4DSTEM(self)
+            view.show_direct = False  # browsing only: direct ptychography is its own step
+            if scan_region is not None:  # the Rect's centre and size, set so selected_scan_region() gives scan_region back exactly
+                row_start, row_stop, col_start, col_stop = (int(value) for value in scan_region)
+                view.vi_roi_mode = "rect"
+                view.vi_roi_center_row, view.vi_roi_center_col = (row_start + row_stop - 1) / 2, (col_start + col_stop - 1) / 2
+                view.vi_roi_center = [view.vi_roi_center_row, view.vi_roi_center_col]
+                view.vi_roi_height, view.vi_roi_width = row_stop - row_start - 1, col_stop - col_start - 1
+            self.scan_region = view.selected_scan_region() if scan_region is not None else None
+            view.observe(lambda change: setattr(self, "scan_region", view.selected_scan_region() if view.vi_roi_mode == "rect" else None),
+                         names=["vi_roi_mode", "vi_roi_center_row", "vi_roi_center_col", "vi_roi_height", "vi_roi_width"])
+            return view
+        from quantem.gpu import detector
+        from quantem.widget import ShowDirect
+
+        disk = detector.bright_field_disk(self, semiangle_mrad=getattr(self, "semiangle_mrad", None))
+        center, radius, edge = disk.bright_field_center_px, disk.bright_field_radius_px, disk.bright_field_edge_radius_px
+        bright = detector.bf(self, bright_field_center_px=center, bright_field_radius_px=radius)
+        dark = detector.adf(self, bright_field_center_px=center, bright_field_edge_radius_px=edge)
+        step = getattr(self, "scan_sampling_A", None)
+        step = float(step[0] if isinstance(step, (tuple, list)) else step) if step is not None else 1.0
+        sampling = disk.detector_sampling_mrad
+        name = str(self.metadata.get("source_path", "")) if isinstance(getattr(self, "metadata", None), dict) else ""
+        self.scan_region = scan_region
+        view = ShowDirect(bright, dark, scan_sampling_A=step, region=self.scan_region,
+                          editable=True, patterns=[disk.mean_pattern], pattern_labels=["mean pattern"], beam_center_px=center,
+                          disk_radius_px=edge, mrad_per_px=0.0 if sampling is None else float(sampling[0]),
+                          title=Path(name).name.removesuffix("_master.h5") if name else "", size=size)
+        view.observe(lambda change: setattr(self, "scan_region", None if change.new is None else tuple(int(value) for value in change.new)), names=["region"])
+        return view
+
     def mean(self, dim: tuple[int, int]) -> torch.Tensor:
         """Return a float32 scan image or mean diffraction pattern as a tensor.
 
@@ -815,6 +862,12 @@ def _set_microscope_or_frozen(self, name: str, value) -> None:
             self.metadata.pop("scan_detector_rotation_deg", None)
         else:
             self.metadata["scan_detector_rotation_deg"] = float(value) % 360.0
+    elif name == "scan_region":
+        # the region picked by hand in browse(): its box keeps this up to date as it is dragged; None forgets it
+        if value is None:
+            self.metadata.pop("scan_region", None)
+        else:
+            self.metadata["scan_region"] = tuple(int(edge) for edge in value)
     else:
         _frozen_setattr(self, name, value)
 
@@ -824,6 +877,9 @@ for _name in MICROSCOPE:
 Dataset4dstem.scan_detector_rotation_deg = property(
     lambda self: self.metadata.get("scan_detector_rotation_deg"),
     doc="Scan-to-detector rotation in degrees when known, else None: ``data.scan_detector_rotation_deg = 169``.")
+Dataset4dstem.scan_region = property(
+    lambda self: self.metadata.get("scan_region"),
+    doc="The region picked in browse(), (row start, row stop, col start, col stop), else None: the box as last dragged.")
 _frozen_setattr = Dataset4dstem.__setattr__
 Dataset4dstem.__setattr__ = _set_microscope_or_frozen
 
