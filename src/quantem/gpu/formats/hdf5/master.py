@@ -194,6 +194,10 @@ def get_metadata(filepath: str) -> dict:
     metadata.update(reader(Path(filepath), metadata, recorded_shape))
     # a merged result's records, under the keys every reader gives them
     metadata.update(maped_records(metadata))
+    # a (row, col) calibration a master records on its root (a MAPED merge) comes back as numbers, as from a .qem
+    for key in ("scan_sampling_A", "detector_sampling_mrad", "detector_sampling_inv_A"):
+        if isinstance(metadata.get(key), np.ndarray):
+            metadata[key] = [float(value) for value in metadata[key]]
     return metadata
 
 
