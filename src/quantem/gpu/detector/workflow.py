@@ -260,8 +260,13 @@ FLAGGED_COUNTS = 65535.0   # a detector pixel the ARINA flags (dead, hot) reads 
 
 def _unflagged(pattern: np.ndarray) -> np.ndarray:
     """The mean pattern with flagged pixels (2**16 - 1 in every frame) at 0: a handful of them outweigh the whole
-    disk in mean + std and the fit took them for it (2026-11-16: six such pixels gave a 1.4 px disk for a 43 px one)."""
-    flagged = pattern >= FLAGGED_COUNTS
+    disk in mean + std and the fit took them for it (2026-11-16: six such pixels gave a 1.4 px disk for a 43 px one).
+
+    A marker in every frame averages to exactly 2**16 - 1 (a uint32 marker's float32 mean rounds up to 2**32), so only
+    those values are flagged: a float acquisition's bright-field disk can be brighter than 65535 per pixel, and zeroing every pixel
+    above it left the disk's edge ring alone (2026-11-24, an EMPAD-G1 WSe2 scan: 349 of its 444 disk pixels, an
+    edge radius of 4.98 px for an 11.64 px disk)."""
+    flagged = (pattern == FLAGGED_COUNTS) | (pattern >= 2.0**32 - 1)
     if not flagged.any():
         return pattern
     clean = pattern.copy()
@@ -289,10 +294,14 @@ def exclude_marked_pixels(dataset, *, sample_scans: int = 256) -> list[tuple[int
     source = getattr(dataset, "data", None)
     if not hasattr(source, "valid_pixels") or not hasattr(source, "decode_scan_range_device"):
         return []
+    dtype = np.dtype(getattr(source, "dtype", "float32"))
+    if dtype.kind != "u":
+        return []      # markers are integer counts; a float scan's bright pixels can be above 65535 in every pattern
     rows, cols, det_rows, det_cols = (int(side) for side in dataset.shape[-4:])
     count = min(int(sample_scans), rows * cols)
     sample = source.decode_scan_range_device(0, count).reshape(count, det_rows, det_cols)
-    marked = cp.asnumpy(cp.all(sample >= FLAGGED_COUNTS, axis=0)) & source.valid_pixels
+    # the marker is the stored type's largest value (65535, or 2**32 - 1 for uint32 counts), never a brightness
+    marked = cp.asnumpy(cp.all(sample == np.iinfo(dtype).max, axis=0)) & source.valid_pixels
     del sample
     coordinates = [(int(row), int(col)) for row, col in zip(*np.nonzero(marked))]
     if not coordinates:
