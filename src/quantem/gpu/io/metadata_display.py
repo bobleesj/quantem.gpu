@@ -190,7 +190,8 @@ def calibration_table(metadata: dict) -> "pd.DataFrame":
                            if CALIBRATION_LABELS[name] in rows)
     table = {label: {"Value": display_value(rows[label]["Value"]), "Unit": rows[label]["Unit"], "Source": rows[label]["Metadata"]}
              for label in labels}
-    if rows.get("Pixel correction", {}).get("Value") is not None:   # the flagged pixels, filled or kept, and from what
+    # the flagged pixels, filled or kept, and from what: only when a correction is recorded (an array has no mask)
+    if rows.get("Pixel correction", {}).get("Value") not in (None, NOT_RECORDED):
         table["Pixel correction"] = {"Value": rows["Pixel correction"]["Value"], "Unit": "",
                                      "Source": metadata.get("pixel_mask_source") or "the stored pixel mask"}
     return pd.DataFrame.from_dict(table, orient="index", columns=["Value", "Unit", "Source"]).rename_axis("Calibration")
