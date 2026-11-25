@@ -299,6 +299,84 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
     return dataset
 
 
+# What a transposed copy keeps of the reopened copy's record as the copy states it: how its counts relate to the
+# original acquisition, which re-encoding the frames does not change.
+_KEPT_EVIDENCE = (
+    "source_dtype", "source_logical_tensor_bytes", "file_counts_exact", "working_counts_exact", "lossless_exact",
+    "detector_mask_policy", "hot_pixel_correction", "flagged_markers_stored_as_zero", "source_kind", "source_path",
+    "original_source_path", "container", "container_version",
+)
+
+
+SCALED_TRANSPOSE = ("detector_transpose keeps the stored values; this copy holds scaled intensity codes. Load the "
+                    "original acquisition with detector_transpose=True.")
+
+
+def refuse_transpose(path) -> None:
+    """Refuse ``detector_transpose`` for a ``.qem`` copy from its header, before its arrays are uploaded: a copy saved
+    transposed (it would be swapped back) or a scaled one (calibrated codes, not stored values)."""
+    from quantem.gpu.io import arrays
+
+    header, _, _ = read_header_with_digest(path)
+    if header["codec"] == SCALED_CODEC:
+        raise NotImplementedError(SCALED_TRANSPOSE)
+    arrays.refuse_second_transpose(dict(header.get("metadata") or {}, source_path=str(path),
+                                        scientific_metadata=header.get("scientific_metadata")))
+
+
+def transposed(stored: Dataset4dstem, *, verbose: bool) -> Dataset4dstem:
+    """A reopened ``.qem`` copy encoded again with each pattern's rows and columns swapped (``detector_transpose``).
+
+    A ``.qem`` reopens by uploading its encoded arrays, never decoding them, so a swap cannot ride on that upload:
+    the stored frames are decoded on the GPU in bounded blocks of scan rows, transposed and encoded into a new
+    resident, as an original acquisition's load does (``arrays.load_array_resident``). The copy's own record (its
+    calibration, the flagged-pixel correction it was written with, its source dtype) is kept with every detector
+    axis swapped, and pixels it excludes stay excluded. The caller closes ``stored``.
+    """
+    import cupy as cp
+
+    from quantem.gpu.io import arrays
+
+    arrays.refuse_second_transpose(stored.metadata)
+    if not (type(stored.data) is StreamedCounts or isinstance(stored.data, BitANSResident)):
+        raise NotImplementedError(SCALED_TRANSPOSE)
+    shape, columns = stored.shape, stored.shape[1]
+    valid = getattr(stored.data, "valid_pixels", None)
+
+    def read_frames(first, stop):
+        """Frames ``first`` to ``stop`` (row-major scan order) as one CuPy block: whole scan rows read together."""
+        parts, cursor = [], first
+        while cursor < stop:
+            row, column = divmod(cursor, columns)
+            if column == 0 and stop - cursor >= columns:
+                rows = (stop - cursor) // columns
+                region = (row, row + rows, 0, columns)
+            else:
+                region = (row, row + 1, column, min(columns, column + stop - cursor))
+            part = stored.read(scan_region=region, output="native")
+            parts.append(part.reshape(-1, *shape[2:]))
+            cursor += parts[-1].shape[0]
+        return parts[0] if len(parts) == 1 else cp.concatenate(parts)
+
+    metadata = {key: value for key, value in stored.metadata.items() if key != "qem_header_sha256"}
+    loaded = arrays.load_array_resident(
+        shape, np.dtype(stored.metadata["dtype"]), read_frames, metadata,
+        backend="cuda", device=stored.device.index,
+        pixel_mask=None if valid is None or valid.all() else (~valid).astype(np.uint8),
+        hot_pixel_correction="none", detector_transpose=True, verbose=False,
+    )
+    kept = {key: stored.metadata[key] for key in _KEPT_EVIDENCE if key in stored.metadata}
+    loaded.metadata.update(arrays.transposed_record(kept))
+    if getattr(stored.data, "_background", None) is not None:
+        # the mean-dark plane products subtract (an EMPAD float copy), in the transposed frame like the values
+        loaded.data._background = arrays.transposed_frames(stored.data._background[None])[0]
+    if verbose:
+        seconds = loaded.metadata["load_timings"]["resident_ready_seconds"]
+        print(f"Decoded {shape} and encoded it again with the detector rows and columns swapped (detector_transpose) "
+              f"on the GPU in {seconds:.1f} s.")
+    return loaded
+
+
 def mps_counts_dataset(resident: MPSStreamedCounts, metadata: dict, started: float, verbose: bool) -> Dataset4dstem:
     """Wrap an exact native-count Metal resident with the common loaded-data metadata.
 

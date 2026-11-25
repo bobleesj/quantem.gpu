@@ -72,9 +72,14 @@ def load_h5_ans(
     backend,
     hot_pixel_correction,
     detector_bin: int = 1,
+    detector_transpose: bool = False,
     progress: bool = False,
 ):
     """Load bounded native chunks into a backend-owned runtime encoded resident.
+
+    ``detector_transpose`` (CUDA): each decoded block, corrected and binned, has its frames transposed on the GPU just
+    before it is encoded (``arrays.transposed_frames``, one tiled pass in device memory); the record is the stored one
+    with every detector axis swapped.
 
     ``detector_bin`` (2, 4 or 8, CUDA, 8- and 16-bit ARINA masters): each decoded block has its flagged pixels
     corrected, is summed ``detector_bin`` x ``detector_bin`` on the GPU (``bin``: every electron kept) and only then
@@ -89,10 +94,12 @@ def load_h5_ans(
     # workflows over several acquisitions (MAPED tilts, focal series) label each
     # one by the file it came from; every branch below copies info.metadata
     info.metadata["source_path"] = str(path)
+    if detector_transpose:
+        arrays.refuse_second_transpose(info.metadata)
     generic = arrays.load_hdf5_array_resident(
         path, dataset_path=dataset_path, backend=backend,
         device=device, verbose=verbose, hot_pixel_correction=hot_pixel_correction,
-        info=info,
+        info=info, detector_transpose=detector_transpose,
     )
     if generic is not None and detector_bin != 1:
         generic.close()
@@ -100,11 +107,13 @@ def load_h5_ans(
                                   "loads at its native detector size.")
     if generic is not None:
         if saved_correction is not None:
-            generic.metadata.update(arrays.correction_metadata(saved_correction))
+            generic.metadata.update(arrays.correction_metadata(
+                arrays.transposed_record({"hot_pixel_correction": saved_correction})["hot_pixel_correction"]
+                if detector_transpose else saved_correction))
         return generic
     if backend == "mps":
-        if detector_bin != 1:
-            raise NotImplementedError("detector_bin needs CUDA.")
+        if detector_bin != 1 or detector_transpose:
+            raise NotImplementedError("detector_bin and detector_transpose need CUDA.")
         return _load_h5_ans_mps(path, info, hot_pixel_correction, verbose)
     if backend != "cuda":
         raise NotImplementedError("Runtime HDF5-to-encoded needs CUDA or MPS.")
@@ -143,8 +152,14 @@ def load_h5_ans(
                 unfilled = cp.asarray(~valid)
             rows, cols = binned[2] * factor, binned[3] * factor
             valid = valid[:rows, :cols].reshape(binned[2], factor, binned[3], factor).all(axis=(1, 3))
-        source = (arrays.bit_resident(shape, dtype, info.metadata, valid, "cuda", selected)
-                  if bit_lanes else StreamedCounts(binned, dtype, valid))
+        # the resident's geometry and validity mask, transposed after the correction and the bin
+        stored = (*binned[:2], binned[3], binned[2]) if detector_transpose else binned
+        if detector_transpose:
+            valid = np.ascontiguousarray(valid.T)
+        source = (arrays.bit_resident(stored, dtype,
+                                      arrays.transposed_record(info.metadata) if detector_transpose else info.metadata,
+                                      valid, "cuda", selected)
+                  if bit_lanes else StreamedCounts(stored, dtype, valid))
         resident = source._lanes if bit_lanes else source
         # A failed load frees the chunks it encoded: they live outside the memory
         # pool, and a traceback keeps this frame (and the source) alive.
@@ -241,6 +256,8 @@ def load_h5_ans(
                 del raw
                 raw = summed.astype(dtype)
                 del summed
+            if detector_transpose:
+                raw = arrays.transposed_frames(raw)
             (source.append_device if bit_lanes else source.append)(raw)
             del raw
             if bar is not None:
@@ -266,6 +283,8 @@ def load_h5_ans(
         )
         if factor != 1:                          # after the resident's own fields, which say detector_bin=1
             metadata.update(_binned_record(info, factor, binned))
+        if detector_transpose:                   # last: the stored record, every detector axis swapped
+            metadata = arrays.transposed_record(metadata)
         if verbose:
             print(_loaded_report(source.shape, "NVIDIA GPU", metadata))
         return Dataset4dstem(source, metadata)
@@ -539,4 +558,5 @@ def _loaded_report(shape, device_name: str, metadata: dict) -> str:
         f"{device_name}, {seconds:.1f} s. "
         f"ANS: {metadata['working_logical_tensor_bytes'] / 1e9:.2f} GB uncompressed "
         f"to {metadata['physical_resident_bytes'] / 1e9:.2f} GB resident on GPU. {outcome}."
+        + (" Detector rows and columns swapped (detector_transpose)." if metadata.get("detector_transpose") else "")
     )

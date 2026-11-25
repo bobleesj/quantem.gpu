@@ -48,6 +48,7 @@ def load(
     device: int | str | None = None,
     verbose: bool = True,
     detector_bin: int = 1,
+    detector_transpose: bool = False,
     progress: bool = False,
 ) -> Dataset4dstem | list[Dataset4dstem]:
     """Load one or more 4D-STEM sources through an accelerated backend.
@@ -160,6 +161,14 @@ def load(
         ``detector_bin`` on the GPU as it is encoded (flagged pixels corrected first; every electron kept), so the
         resident is about ``detector_bin**2`` times smaller: for a GPU too small for the full scan. The record says
         ``detector_bin`` and scales the detector sampling; other sources refuse it.
+    detector_transpose
+        ``True`` swaps each pattern's rows and columns as it is encoded, on the GPU (CUDA), for an acquisition whose
+        detector axes are swapped relative to the scan (a reflection, which no scan-detector rotation can undo) when a
+        reconstruction needs the detector in the scan's frame. EMPAD RAW, NumPy, Zarr, HDF5 masters and ``.qem`` copies take it; a
+        ``.qem`` is decoded and encoded again on the GPU. The resident holds ``data[r, c, j, i]`` of the stored
+        ``data[r, c, i, j]``, every detector calibration follows its axis, and ``detector_transpose`` is recorded in the
+        metadata and as a processing step, so a saved copy reopens transposed without asking again (asking again
+        is refused). A recorded ``scan_detector_rotation_flipped`` is inverted.
     progress
         ``True``: a bar (tqdm) over an HDF5 master's scan positions as they are decoded and encoded.
 
@@ -189,6 +198,8 @@ def load(
         raise ValueError("detector_bin applies to ARINA HDF5 masters; load other sources at their detector size and "
                          "bin a region with bin(dataset.read(...)).")
     precision = precision_name(dtype)
+    if detector_transpose and backend != "cuda":
+        raise NotImplementedError("detector_transpose needs CUDA; load at the stored orientation on this device.")
 
     # NumPy, EMPAD and saved QuantEM Zarr arrays: complete measurements, encoded on the GPU.
     array_sources = [isinstance(path, (str, os.PathLike))
@@ -231,6 +242,7 @@ def load(
                         backend=backend,
                         device=device,
                         hot_pixel_correction=hot_pixel_correction,
+                        detector_transpose=detector_transpose,
                         verbose=verbose,
                     ))
                     for file, signature in signatures.items():
@@ -269,12 +281,24 @@ def load(
             raise ValueError("DM loading preserves stored counts; omit dtype for lossless loading.")
         if len(sources) > 1 and stack:
             raise ValueError("DM acquisitions cannot be stacked; omit stack to receive one resident acquisition per file.")
+        if detector_transpose and not all(snapshots):
+            raise NotImplementedError("detector_transpose applies to EMPAD, NumPy, Zarr, HDF5 and .qem sources; "
+                                      "DigitalMicrograph files load at their stored orientation.")
         loader = qem.load_streamed if all(snapshots) else digitalmicrograph.load_dm
+        if detector_transpose:
+            for path in sources:
+                qem.refuse_transpose(path)
         loaded = []
         try:
             for path in sources:
                 loaded.append(loader(path, backend=backend, representation=representation,
                                       scan_shape=scan_shape, device=device, verbose=verbose))
+                if detector_transpose:
+                    stored = loaded.pop()
+                    try:
+                        loaded.append(qem.transposed(stored, verbose=verbose))
+                    finally:
+                        stored.close()
                 if all(dm_sources):
                     # DM has no stored detector-validity mask. Record the policy
                     # without pretending that unflagged measurements were changed.
@@ -307,6 +331,9 @@ def load(
             )
         if apply_mask:
             raise NotImplementedError("Precision loading supports scan_region and detector_region; remove the masking control.")
+        if detector_transpose:
+            raise NotImplementedError("detector_transpose keeps the stored values; scaled precision storage does not "
+                                      "take it. Load the original acquisition with detector_transpose=True.")
         loaded = []
         try:
             for path in sources:
@@ -328,6 +355,9 @@ def load(
         representation = DataRepresentation.ENCODED
     selected_representation = _selected_representation(sources, representation)
     if selected_representation is DataRepresentation.PAIRED:
+        if detector_transpose:
+            raise NotImplementedError("The paired layout keeps the stored orientation; omit detector_transpose or "
+                                      "load as encoded.")
         if backend != "cuda":
             raise NotImplementedError("The paired resident layout requires a CUDA device.")
         if any(value is not None for value in (dataset_path, scan_region, detector_region)):
@@ -366,6 +396,7 @@ def load(
                         backend=backend,
                         hot_pixel_correction=hot_pixel_correction,
                         detector_bin=detector_bin,
+                        detector_transpose=detector_transpose,
                         progress=progress,
                     )
                 )

@@ -114,6 +114,15 @@ Readers accept `quantem.scientific-metadata/2` only. A file with schema 1 is
 refused with a message that names the schema; export it again from its source.
 No reader converts schema-1 units.
 
+### Transposed detector
+
+A copy whose frames were transposed as they were loaded (`io.load(..., detector_transpose=True)`) stores the
+transposed frames: `axes[2]` and `axes[3]` describe them, with each other's size and step, and every detector quantity
+and override is stored for the axis it now belongs to. It declares the processing step `detector_transpose`
+(`changes_measurements: false`) and keeps `detector_transpose: true` in the retained `metadata` block; a reader that
+finds the flag requires the step. `source_metadata` still describes the file as stored, so a reader maps its source x
+to row and source y to column for such a copy.
+
 ## QEM specification 0.0.3
 
 Adds an optional `sample` group to `scientific_metadata`: the specimen as a person declared it (for example a session's

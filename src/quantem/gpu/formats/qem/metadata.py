@@ -63,6 +63,9 @@ MAPED_RECORDS = {
 # 3: a median fill rounds half to even (it rounded down) and grows its window past 3 x 3 until a valid
 #    neighbor exists (it wrote 0); largest_window_px replaces kernel_size.
 # 2: the pixel list is coordinates_row_col (coordinates_row_column in the unnamed version 1).
+# Detector rows and columns swapped as the frames were ingested (io.load(..., detector_transpose=True)): the stored
+# frames are the source's transposed, and ``detector_transpose`` in the retained metadata says so.
+TRANSPOSE_PROCESSING = dict(operation="detector_transpose", changes_measurements=False)
 HOT_PIXEL_SCHEMA = "quantem.hot-pixel-correction/3"
 # The provenance of a calibration override: a value set by hand, or the detector sampling
 # ``data.calibration.detector_sampling()`` fitted on the bright-field disk.
@@ -264,6 +267,8 @@ def _processing_records(metadata: dict) -> list[dict]:
             method=str(correction.get("method")),
             pixel_count=int(correction.get("pixel_count", 0)),
         ))
+    if metadata.get("detector_transpose"):
+        records.append(dict(TRANSPOSE_PROCESSING))
     markers = int(metadata.get("flagged_markers_stored_as_zero") or 0)
     if markers:
         # Flagged pixels are excluded from every measurement; their uint32
@@ -365,8 +370,9 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
                     value=float(value) * factor, unit=output_unit,
                     provenance="source_metadata", evidence=key,
                 ), path)
-    # Source files name these by x and y; the saved copy names them by array axis.
-    for path, source_axis in zip(DETECTOR_PIXEL_SIZE, ("y", "x")):
+    # Source files name these by x and y; the saved copy names them by array axis, which a detector_transpose
+    # load exchanged: the stored rows are the file's x.
+    for path, source_axis in zip(DETECTOR_PIXEL_SIZE, ("x", "y") if metadata.get("detector_transpose") else ("y", "x")):
         record_quantity(
             path,
             {"rad": 1000, "mrad": 1},

@@ -328,6 +328,11 @@ def validate_declared_processing(header: dict) -> None:
                 "Flagged detector pixels were replaced but processing does not declare "
                 "flagged_pixel_replacement; re-export the original acquisition."
             )
+    if retained.get("detector_transpose") and "detector_transpose" not in declared:
+        raise ValueError(
+            "The detector rows and columns were swapped (detector_transpose) but processing does not declare "
+            "detector_transpose; re-export the original acquisition."
+        )
     if retained.get("flagged_markers_stored_as_zero") and "flagged_marker_zeroing" not in declared:
         raise ValueError(
             "Flagged-pixel markers were stored as 0 but processing does not declare "
