@@ -24,7 +24,7 @@ import numpy as np
 import torch
 
 from quantem.gpu.device.cuda_runtime import cuda_device_index
-from quantem.gpu.device.metal_runtime import shared_array
+from quantem.gpu.device.metal_runtime import numpy_view, shared_array
 from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE
 from quantem.gpu.formats.qem import metadata as qem_metadata
@@ -36,6 +36,7 @@ from quantem.gpu.resident.cuda.counts import StreamedCounts, pinned
 from quantem.gpu.resident.cuda.hot_pixels import CUDAHotPixelCorrector
 from quantem.gpu.resident.hot_pixels import hot_pixel_record
 from quantem.gpu.resident.mps import precision as metal_precision
+from quantem.gpu.resident.mps.arrays import MetalArray
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 from quantem.gpu.resident.mps.hot_pixels import MPSHotPixelCorrector
 from quantem.gpu.resident.mps.spatial import build_index
@@ -93,8 +94,6 @@ def load_array_resident(
     """
     started = time.perf_counter()
     shape = tuple(shape)
-    if detector_transpose and backend != "cuda":
-        raise NotImplementedError("detector_transpose needs CUDA; load at the stored orientation on this device.")
     if detector_transpose:
         refuse_second_transpose(metadata)
     stored_shape = (*shape[:2], shape[3], shape[2]) if detector_transpose else shape
@@ -149,7 +148,7 @@ def load_array_resident(
             elif backend == "cuda":
                 source = resident = StreamedCounts(stored_shape, dtype, valid)
             else:
-                source = resident = MPSStreamedCounts(shape, dtype, valid)
+                source = resident = MPSStreamedCounts(stored_shape, dtype, valid)
             corrector_type = CUDAHotPixelCorrector if backend == "cuda" else MPSHotPixelCorrector
             corrector = corrector_type(pixel_mask, hot_pixel_correction)
 
@@ -159,9 +158,9 @@ def load_array_resident(
                 tensor_input = torch.is_tensor(block)
                 if tensor_input and detector_transpose:
                     # a Torch block reaches the encoder as its bytes, which a transpose would scramble
-                    raise NotImplementedError("detector_transpose reads NumPy, file and CuPy frame blocks.")
+                    raise NotImplementedError("detector_transpose reads NumPy, file and decoded GPU frame blocks.")
                 # frames already decoded on this GPU (a .qem encoded again with detector_transpose)
-                device_input = backend == "cuda" and isinstance(block, cp.ndarray)
+                device_input = isinstance(block, MetalArray) if backend == "mps" else isinstance(block, cp.ndarray)
                 block_dtype = np.dtype(str(block.dtype).removeprefix("torch.")) if tensor_input else block.dtype
                 if (
                     block.shape != (stop - first, *shape[2:])
@@ -200,19 +199,28 @@ def load_array_resident(
                         source.append_device(shared_array(tensor_buffer(block_t), dtype, block_t.shape))
                         del block_t, block
                         continue
-                    raw = metal_precision.upload(block)
+                    raw = block if device_input else metal_precision.upload(block)
                     try:
                         if corrector is not None:
                             corrector.apply(raw)
+                        if detector_transpose:
+                            swapped = transposed_frames(raw)
+                            raw.release()
+                            raw = swapped
                         (source.append_device if bit_lanes else resident.append)(
                             shared_array(raw._mtl, raw.dtype, raw.shape)
                         )
                         if not bit_lanes:
                             resident.spatial_chunks.append(
-                                build_index(resident, raw._mtl, len(block))
+                                build_index(resident, raw._mtl, int(block.shape[0]))
                             )
+                        if detector_transpose and floating:
+                            # hashed beside the next block from the shared buffer itself, then released
+                            checksum.shared(raw)
+                            raw = None
                     finally:
-                        raw.release()
+                        if raw is not None:
+                            raw.release()
                 del block
             if floating:
                 source.header["logical_sha256"] = checksum.hexdigest()
@@ -308,6 +316,20 @@ class _Checksum:
 
     stream = None
 
+    def shared(self, raw) -> None:
+        """Hash an Apple GPU block (a Metal array the GPU has finished writing) from its unified memory, beside the
+        next block, and release it after; the caller hands it over."""
+        self._wait(held=1)
+
+        def digest():
+            try:
+                self.digest.update(memoryview(numpy_view(raw._mtl, raw.dtype, raw.size)).cast("B"))
+            finally:
+                raw.release()
+
+        self.pending.append(self.worker.submit(digest))
+        self.blocks += 1
+
     def hexdigest(self) -> str:
         self._wait(held=0)
         return self.digest.hexdigest()
@@ -374,6 +396,11 @@ def transposed_frames(raw):
     reads the frames as the resident holds them. Reading them transposed inside the encoder instead was slower
     (0.80 s against 0.67 s for a 512 x 512 x 192 x 192 master): its reads of neighbouring pixels are no longer adjacent.
     """
+    if isinstance(raw, MetalArray) or getattr(raw, "_mtl", None) is not None:
+        # an Apple GPU block: the same tile on Metal, a new Metal array the caller releases
+        from quantem.gpu.resident.mps.transpose import transposed_frames as metal_transposed_frames
+
+        return metal_transposed_frames(raw)
     import cupy as cp
 
     from quantem.gpu.device.cuda_runtime import cuda_module

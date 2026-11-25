@@ -363,7 +363,6 @@ def test_a_transposed_master_copy_is_not_swapped_back(tmp_path):
 
 def test_detector_transpose_is_refused_where_it_cannot_apply(tmp_path):
     from quantem.gpu import io
-    from quantem.gpu.io import arrays
     from tests.contracts.io.test_digitalmicrograph import write_dm4
 
     path = arina_master(tmp_path)
@@ -372,8 +371,6 @@ def test_detector_transpose_is_refused_where_it_cannot_apply(tmp_path):
     dm = write_dm4(tmp_path / "scan.dm4", measured_values("float32", shape=(2, 3, 8, 6)))
     with pytest.raises(NotImplementedError, match="DigitalMicrograph"):
         io.load(dm, detector_transpose=True, verbose=False)
-    with pytest.raises(NotImplementedError, match="needs CUDA"):       # Apple GPUs: refused before any Metal call
-        arrays.load_array_resident((1, 1, 2, 2), np.uint16, None, {}, backend="mps", detector_transpose=True)
     np.save(tmp_path / "float.npy", measured_values("float32", shape=(2, 3, 8, 6)))
     with pytest.raises(NotImplementedError, match="scaled precision"):
         io.load(tmp_path / "float.npy", dtype="scaled_uint16", detector_transpose=True, verbose=False)

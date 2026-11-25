@@ -19,8 +19,9 @@ as stored. `detector_transpose: true` is kept in the retained metadata and `dete
 processing step, and `validate_declared_processing` requires the two to agree. A copy saved transposed reopens
 transposed; asking a saved copy (`.qem`, or an HDF5 master whose attributes carry the record) for
 `detector_transpose=True` again is refused before anything is read, rather than swapping back. A recorded
-`scan_detector_rotation_flipped` is inverted, since direct ptychography transposes the frames when it is set. CUDA
-only; MPS, DM, scaled precision and the paired layout refuse the option.
+`scan_detector_rotation_flipped` is inverted, since direct ptychography transposes the frames when it is set. CUDA and
+Apple GPUs (MPS: the same 32 x 32 tile as a Metal kernel, for NumPy, ARINA masters and `.qem` copies; tested on an M5
+Max); DM, scaled precision and the paired layout refuse the option.
 
 **Setup.** An RTX PRO 6000 Blackwell Workstation Edition whose host ran another job on its second GPU (the first three
 rows), and an RTX PRO 6000 Blackwell Server Edition on an otherwise idle host (the last row). The WSe2 RAW above (1.07 GB

@@ -328,48 +328,39 @@ def transposed(stored: Dataset4dstem, *, verbose: bool) -> Dataset4dstem:
     """A reopened ``.qem`` copy encoded again with each pattern's rows and columns swapped (``detector_transpose``).
 
     A ``.qem`` reopens by uploading its encoded arrays, never decoding them, so a swap cannot ride on that upload:
-    the stored frames are decoded on the GPU in bounded blocks of scan rows, transposed and encoded into a new
+    the stored frames are decoded on the GPU (CUDA or MPS) in bounded blocks, transposed and encoded into a new
     resident, as an original acquisition's load does (``arrays.load_array_resident``). The copy's own record (its
     calibration, the flagged-pixel correction it was written with, its source dtype) is kept with every detector
     axis swapped, and pixels it excludes stay excluded. The caller closes ``stored``.
     """
-    import cupy as cp
-
     from quantem.gpu.io import arrays
 
     arrays.refuse_second_transpose(stored.metadata)
-    if not (type(stored.data) is StreamedCounts or isinstance(stored.data, BitANSResident)):
+    # integer counts or typed bit lanes; scaled intensity codes are a subclass of the counts and are refused
+    if not (type(stored.data) in (StreamedCounts, MPSStreamedCounts) or isinstance(stored.data, BitANSResident)):
         raise NotImplementedError(SCALED_TRANSPOSE)
-    shape, columns = stored.shape, stored.shape[1]
+    shape = stored.shape
     valid = getattr(stored.data, "valid_pixels", None)
+    backend = "mps" if stored.device.type == "mps" else "cuda"
 
     def read_frames(first, stop):
-        """Frames ``first`` to ``stop`` (row-major scan order) as one CuPy block: whole scan rows read together."""
-        parts, cursor = [], first
-        while cursor < stop:
-            row, column = divmod(cursor, columns)
-            if column == 0 and stop - cursor >= columns:
-                rows = (stop - cursor) // columns
-                region = (row, row + rows, 0, columns)
-            else:
-                region = (row, row + 1, column, min(columns, column + stop - cursor))
-            part = stored.read(scan_region=region, output="native")
-            parts.append(part.reshape(-1, *shape[2:]))
-            cursor += parts[-1].shape[0]
-        return parts[0] if len(parts) == 1 else cp.concatenate(parts)
+        """Frames ``first`` to ``stop`` (row-major scan order) as stored, decoded into one block on this GPU."""
+        frames = stored.data.decode_scan_range_device(first, stop)
+        return frames if backend == "mps" else frames.reshape(stop - first, *shape[2:])
 
     metadata = {key: value for key, value in stored.metadata.items() if key != "qem_header_sha256"}
     loaded = arrays.load_array_resident(
         shape, np.dtype(stored.metadata["dtype"]), read_frames, metadata,
-        backend="cuda", device=stored.device.index,
+        backend=backend, device=stored.device.index if backend == "cuda" else None,
         pixel_mask=None if valid is None or valid.all() else (~valid).astype(np.uint8),
         hot_pixel_correction="none", detector_transpose=True, verbose=False,
     )
     kept = {key: stored.metadata[key] for key in _KEPT_EVIDENCE if key in stored.metadata}
     loaded.metadata.update(arrays.transposed_record(kept))
-    if getattr(stored.data, "_background", None) is not None:
+    background = getattr(stored.data, "_background", None)
+    if background is not None:
         # the mean-dark plane products subtract (an EMPAD float copy), in the transposed frame like the values
-        loaded.data._background = arrays.transposed_frames(stored.data._background[None])[0]
+        loaded.data._background = background.T.contiguous() if hasattr(background, "contiguous") else background.T.copy()
     if verbose:
         seconds = loaded.metadata["load_timings"]["resident_ready_seconds"]
         print(f"Decoded {shape} and encoded it again with the detector rows and columns swapped (detector_transpose) "

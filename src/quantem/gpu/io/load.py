@@ -162,7 +162,7 @@ def load(
         resident is about ``detector_bin**2`` times smaller: for a GPU too small for the full scan. The record says
         ``detector_bin`` and scales the detector sampling; other sources refuse it.
     detector_transpose
-        ``True`` swaps each pattern's rows and columns as it is encoded, on the GPU (CUDA), for an acquisition whose
+        ``True`` swaps each pattern's rows and columns as it is encoded, on the GPU (CUDA or MPS), for an acquisition whose
         detector axes are swapped relative to the scan (a reflection, which no scan-detector rotation can undo) when a
         reconstruction needs the detector in the scan's frame. EMPAD RAW, NumPy, Zarr, HDF5 masters and ``.qem`` copies take it; a
         ``.qem`` is decoded and encoded again on the GPU. The resident holds ``data[r, c, j, i]`` of the stored
@@ -198,8 +198,6 @@ def load(
         raise ValueError("detector_bin applies to ARINA HDF5 masters; load other sources at their detector size and "
                          "bin a region with bin(dataset.read(...)).")
     precision = precision_name(dtype)
-    if detector_transpose and backend != "cuda":
-        raise NotImplementedError("detector_transpose needs CUDA; load at the stored orientation on this device.")
 
     # NumPy, EMPAD and saved QuantEM Zarr arrays: complete measurements, encoded on the GPU.
     array_sources = [isinstance(path, (str, os.PathLike))

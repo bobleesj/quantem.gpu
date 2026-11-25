@@ -18,7 +18,7 @@ import h5py
 import numpy as np
 
 from quantem.gpu.device.cuda_runtime import _release_pinned, cp, cuda_device_index
-from quantem.gpu.device.metal_runtime import release_buffer
+from quantem.gpu.device.metal_runtime import release_buffer, shared_array
 from quantem.gpu.formats.hdf5.reads import FrameReader
 from quantem.gpu.formats.hdf5.master import HOT_PIXEL_CORRECTION_ATTRIBUTE
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
@@ -112,9 +112,9 @@ def load_h5_ans(
                 if detector_transpose else saved_correction))
         return generic
     if backend == "mps":
-        if detector_bin != 1 or detector_transpose:
-            raise NotImplementedError("detector_bin and detector_transpose need CUDA.")
-        return _load_h5_ans_mps(path, info, hot_pixel_correction, verbose)
+        if detector_bin != 1:
+            raise NotImplementedError("detector_bin needs CUDA.")
+        return _load_h5_ans_mps(path, info, hot_pixel_correction, verbose, detector_transpose)
     if backend != "cuda":
         raise NotImplementedError("Runtime HDF5-to-encoded needs CUDA or MPS.")
 
@@ -355,7 +355,7 @@ def _binned_record(info, factor: int, binned) -> dict:
     return record
 
 
-def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
+def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose, detector_transpose=False):
     """Decode bounded HDF5 blocks and encode native-count ANS with Metal.
 
     Counts are stored in the narrowest unsigned type that holds every value
@@ -367,16 +367,18 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     """
     if np.dtype(info.dtype) == np.dtype("uint32"):
         try:
-            return _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, np.dtype("uint16"))
+            return _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, np.dtype("uint16"),
+                                       detector_transpose)
         except _ExceedsUint16:
             pass
-    return _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, np.dtype(info.dtype))
+    return _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, np.dtype(info.dtype), detector_transpose)
 
 
-def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
+def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype, detector_transpose=False):
     """Load the master into a resident of ``dtype`` (the stored dtype, or uint16 for uint32 counts).
 
-    uint16 counts whose every value is at most 255 end as a uint8 resident.
+    uint16 counts whose every value is at most 255 end as a uint8 resident. ``detector_transpose``: each decoded batch,
+    corrected and narrowed, is transposed on the GPU (``arrays.transposed_frames``) before it is encoded and indexed.
     """
     # Metal decoding is imported only on the MPS path, like every platform decoder.
     from quantem.gpu.io.hdf5.mps.decode import (
@@ -401,8 +403,13 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
     valid = np.ones(info.detector_shape, bool)
     if info.pixel_mask is not None and not corrector.record["applied"]:
         valid &= np.asarray(info.pixel_mask) == 0
-    source = (arrays.bit_resident(shape, dtype, info.metadata, valid, "mps")
-              if bit_lanes else MPSStreamedCounts(shape, dtype, valid))
+    stored = (*shape[:2], shape[3], shape[2]) if detector_transpose else shape
+    if detector_transpose:
+        valid = np.ascontiguousarray(valid.T)
+    source = (arrays.bit_resident(stored, dtype,
+                                  arrays.transposed_record(info.metadata) if detector_transpose else info.metadata,
+                                  valid, "mps")
+              if bit_lanes else MPSStreamedCounts(stored, dtype, valid))
     resident = source._lanes if bit_lanes else source
     reader = FrameReader(str(path))
     decoder = None
@@ -468,6 +475,7 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
                 workspace.enter_context(source.encoding_workspace(chunk_scans))
             try:
                 pending = pool.submit(decode_next, ranges[0])
+                swapped = None
                 for index in range(len(ranges)):
                     raw = pending.result()
                     pending = None
@@ -482,17 +490,24 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
                             recycle_frames(raw)
                             raw = counts
                             above_byte |= byte
-                        (source.append_device if bit_lanes else source.append)(raw)
+                        frames = raw
+                        if detector_transpose:
+                            swapped = arrays.transposed_frames(raw)
+                            frames = shared_array(swapped._mtl, swapped.dtype, swapped.shape)
+                        (source.append_device if bit_lanes else source.append)(frames)
                         if not bit_lanes:
                             index_started = time.perf_counter()
                             source.spatial_chunks.append(
-                                build_index(source, raw._mtl, int(raw.shape[0]))
+                                build_index(source, frames._mtl, int(frames.shape[0]))
                             )
                             source.load_metrics["index_seconds"] = (
                                 source.load_metrics.get("index_seconds", 0.0)
                                 + time.perf_counter() - index_started
                             )
                     finally:
+                        if swapped is not None:
+                            swapped.release()
+                            swapped = None
                         recycle_frames(raw)
                         del raw
             finally:
@@ -538,6 +553,8 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
             resident_ready_seconds=time.perf_counter() - started,
         ),
     )
+    if detector_transpose:                       # last: the stored record, every detector axis swapped
+        metadata = arrays.transposed_record(metadata)
     if verbose:
         print(_loaded_report(source.shape, "Apple GPU", metadata))
         if dtype != stored_dtype:
