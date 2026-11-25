@@ -246,6 +246,8 @@ def test_reused_fit_display_keeps_the_native_session_result(handoff, monkeypatch
     session.source_kind = "hdf5"
     session._result_signature = Mock(return_value={})
     reused = session.primary
+    # a fit saved from a file session reloads with that session's calibration snapshot, so accepting it takes no new one
+    reused.calibration_context = {"scan_shape": [8, 8], "scan_region": [0, 8, 0, 8], "session_identity": {}}
     receive = Mock()
     monkeypatch.setattr(fifth_order_fit, "load_result", lambda **kwargs: reused)
     result = handoff.run(session, show=True, save_dir=tmp_path, on_initial_fit=receive)

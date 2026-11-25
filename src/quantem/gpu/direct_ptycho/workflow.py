@@ -536,8 +536,9 @@ class DirectPtycho:
         True when the detector's row and column axes are swapped relative to the scan, which no rotation can
         produce. Omitted, it is estimated with the rotation, or False when the rotation is given. Detector
         calibration and reported centres remain in the original (row, col) frame.
-    bright_field_intensity_threshold : float
-        Fraction of the mean-pattern maximum a bright-field pixel must exceed.
+    bright_field_intensity_threshold : float, optional
+        Fraction of the mean-pattern maximum a bright-field pixel must exceed. Omitted, the threshold a saved
+        calibration recorded, else 0.0 (every pixel inside the disk).
     bright_field_radius_px : float, optional
         Bright-field radius in detector pixels; the detected disk when omitted.
     source_path : str, optional

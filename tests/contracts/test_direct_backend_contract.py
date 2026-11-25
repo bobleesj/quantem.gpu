@@ -78,7 +78,8 @@ def test_public_direct_has_one_backend_neutral_signature() -> None:
     assert shared <= constructor.parameters.keys()
     assert constructor.parameters["backend"].default == "auto"
     reconstruct = inspect.signature(DirectPtycho.run)
-    assert reconstruct.parameters["compute_loss"].default is True
+    # None computes the diagnostic for every run except a phase run saving the reference calibration
+    assert reconstruct.parameters["compute_loss"].default is None
 
 
 def test_mps_preview_honors_compute_loss(monkeypatch) -> None:

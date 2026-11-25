@@ -45,9 +45,11 @@ def test_every_public_direct_entry_point_defaults_to_full_bright_field() -> None
 
     from quantem.gpu import DirectPtycho
 
-    for entry_point in (DirectPtycho, DirectPtycho.open):
-        signature = inspect.signature(entry_point)
-        assert signature.parameters["bright_field_intensity_threshold"].default == 0.0
+    open_threshold = inspect.signature(DirectPtycho.open).parameters["bright_field_intensity_threshold"]
+    assert open_threshold.default == 0.0
+    # None takes the threshold a saved calibration recorded, and 0.0 (the full disk) when there is none
+    threshold = inspect.signature(DirectPtycho).parameters["bright_field_intensity_threshold"]
+    assert threshold.default is None
 
 
 def test_direct_auto_backend_never_falls_back_to_cpu(monkeypatch) -> None:

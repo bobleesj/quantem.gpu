@@ -192,7 +192,7 @@ class FakeSession:
         import cupy
 
         strengths = {name: value for name, value in options.items() if name not in (
-            "upsample", "compute_loss", "force", "verbose")}
+            "upsample", "compute_loss", "save_calibration", "force", "verbose")}
         FakeSession.runs.append(SimpleNamespace(frame=self.data.name, method=method, chosen=chosen,
                                                 optics=dict(chosen.aberrations), strengths=strengths,
                                                 factor=options["upsample"]))

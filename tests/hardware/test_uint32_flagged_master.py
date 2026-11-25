@@ -169,8 +169,9 @@ def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(
             assert loaded.metadata["flagged_markers_stored_as_zero"] == 0
 
 
-def test_direct_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, capsys):
-    """DirectPtycho.open takes io.load's default median fill and prints one line naming how to keep raw values."""
+def test_direct_open_keeps_flagged_pixels_and_records_them(tmp_path, capsys):
+    """DirectPtycho.open loads with io.load's default (2026-11-10: flagged pixels keep their stored values and are left
+    out of the bright field), records the four flagged pixels, and prints no replacement line."""
     from quantem.gpu import DirectPtycho
 
     backend = _backend()
@@ -179,7 +180,5 @@ def test_direct_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, ca
     with DirectPtycho.open(master, backend=backend, scan_shape=(32, 32), voltage_kV=300, semiangle_mrad=30,
                   scan_sampling_A=0.5, scan_detector_rotation_deg=0.0) as session:
         correction = session.source_provenance["hot_pixel_correction"]
-        assert (correction["method"], correction["pixel_count"], correction["applied"]) == ("median", 4, True)
-    out = capsys.readouterr().out
-    assert "Direct ptycho: 4 flagged detector pixels replaced by their 3 x 3 neighbor median" in out
-    assert 'io.load(path, hot_pixel_correction="none") and use DirectPtycho(data)' in out
+        assert (correction["method"], correction["pixel_count"], correction["applied"]) == ("none", 4, False)
+    assert "flagged detector pixels replaced" not in capsys.readouterr().out

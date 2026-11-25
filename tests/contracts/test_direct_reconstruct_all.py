@@ -1,4 +1,5 @@
 """One scientist call reconstructs three methods with one shared optical fit."""
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
@@ -14,6 +15,8 @@ def test_all_reuses_one_fit_and_matches_separate_calls(monkeypatch):
     session._device = None
     session.backend = "cuda"
     session._aberrations_explicit = False
+    # as the constructor leaves it: no reference fit, so run() neither saves a calibration nor keeps a series reference
+    session._aberration_search = None
     fit = object()
     session.aberrations = Mock(return_value=fit)
     session._resolve_upsample = lambda value: 3
@@ -26,7 +29,8 @@ def test_all_reuses_one_fit_and_matches_separate_calls(monkeypatch):
     def direct(owner, parameters, **options):
         method = options["policy"]["method"]
         calls.append((method, parameters, options))
-        return f"{method}-result"
+        # run() records on a regularized result whether its factor was automatic, so the stand-in takes attributes
+        return SimpleNamespace(name=f"{method}-result")
 
     session._run_direct = conventional
     monkeypatch.setattr(direct_workflow, "run", direct)
@@ -43,7 +47,7 @@ def test_all_reuses_one_fit_and_matches_separate_calls(monkeypatch):
         options = {} if method == "phase_of_mean" else {"phase_damp": .05}
         if method == "complex":
             options["amplitude_damp"] = .1
-        assert session.run(fit, method=method, **options) == images[method]
+        assert session.run(fit, method=method, upsample="auto", **options) == images[method]
     assert session.aberrations.call_count == 1
     assert not hasattr(session, "find_aberrations")
     assert not hasattr(session, "compare_rotation_branches")
