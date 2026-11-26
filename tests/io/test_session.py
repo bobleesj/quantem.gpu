@@ -78,6 +78,18 @@ def test_a_reading_is_reported_with_its_age_and_a_change_as_an_interval(folder):
     assert session.state(600)["beam_tilt_mrad"]["value"] == [0.0, 0.0]
 
 
+def test_a_track_places_the_logs_readings_by_pattern_index(folder):
+    """A reading that changed while a scan was taken is a step at the pattern being taken then; what changed between
+    two scans is the next scan's first value."""
+    session = io.session(folder, session="night")
+    defocus = session.track("defocus_nm")
+    assert defocus == {"indices": [0, 400], "values": [-10.0, -30.0], "source": "session log"}      # 4 s into scan 1
+    tilt = session.track("beam_tilt_mrad")
+    assert tilt["indices"] == [0, 1000] and tilt["values"] == [[0.0, 0.0], [2.0, 0.0]]              # changed between the scans
+    with pytest.raises(KeyError, match="stage_um"):
+        session.track("stage_um")
+
+
 def test_a_folder_of_several_sessions_asks_which(folder):
     with pytest.raises(ValueError, match="choose one with session="):
         io.session(folder)

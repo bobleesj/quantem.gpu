@@ -259,18 +259,51 @@ class Session:
         return found
 
     def track(self, name: str) -> dict:
-        """One quantity along the session by pattern index, from the parts' own headers: ``{"indices", "values"}``,
-        where ``values[k]`` held from pattern ``indices[k]`` until the next. A scan's optics read when it was started
-        give one step at its first pattern; steps inside a scan are the ones its acquisition recorded by index.
+        """One quantity along the session by pattern index: ``{"indices", "values", "source"}``, where ``values[k]``
+        held from pattern ``indices[k]`` until the next.
+
+        With a session log (``source`` "session log"): each scan's first pattern has the newest reading at its start,
+        and every reading that changed while the scan was taken is a step at the pattern being taken then, placed to
+        one read period and the clocks' spread (``state`` gives that window). What changed between two scans shows as
+        the next scan's first value. Without a log (``source`` "parts"): the steps the parts' own headers carry, the
+        scan's optics read at Go and the steps its acquisition recorded by index.
 
         >>> defocus = session.track("defocus_nm")               # doctest: +SKIP
         >>> defocus["indices"], defocus["values"]               # doctest: +SKIP
         ([0, 1048576, 1310720], [0.0, -12.0, -24.0])
         """
-        if name not in self.tracks:
-            raise KeyError(f"No track {name!r}: this session's parts record {sorted(self.tracks)}.")
-        indices, values = self.tracks[name]
-        return {"indices": list(indices), "values": list(values)}
+        if not self.readings:
+            if name not in self.tracks:
+                raise KeyError(f"No track {name!r}: this session's parts record {sorted(self.tracks)}.")
+            indices, values = self.tracks[name]
+            return {"indices": list(indices), "values": list(values), "source": "parts"}
+        indices: list[int] = []
+        values: list = []
+
+        def step(index: int, value) -> None:
+            if not values or values[-1] != value:
+                indices.append(int(index))
+                values.append(value)
+
+        for row in self.index:
+            first = row["first_index"]
+            held = self.state(first).get(name)
+            if held is not None:
+                step(first, held["value"])
+            dwell, start = row.get("dwell_s"), row.get("start_epoch_s")
+            if not dwell or start is None:
+                continue
+            end = start + row["received"] * float(dwell)
+            place = bisect_right(self._reading_times, start)
+            for reading in self.readings[place:]:
+                if reading["_epoch_s"] > end:
+                    break
+                if reading.get("_exact") or name not in reading:
+                    continue
+                step(self._index_at(row, reading["_epoch_s"]), reading[name])
+        if not values:
+            raise KeyError(f"No reading {name!r} in this session's log, and its parts record {sorted(self.tracks)}.")
+        return {"indices": indices, "values": values, "source": "session log"}
 
     def _before(self, number: int, name: str):
         """The value a name had in the newest reading before reading ``number``, or None."""
