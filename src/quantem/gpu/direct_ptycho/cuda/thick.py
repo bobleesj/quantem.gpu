@@ -503,6 +503,13 @@ class ThickSample:
         if self._band_key != key:
             rows_idx, cols_idx, flat, weight = band_frequencies(cache["qx_1d"], cache["qy_1d"], band_inv_A,
                                                                 half_plane=half)
+            if int(rows_idx.size) == 0:
+                finest = float(max(cp.abs(cache["qx_1d"]).max(), cp.abs(cache["qy_1d"]).max()))
+                low, high = (float(edge) for edge in band_inv_A)
+                raise ValueError(
+                    f"No scan frequency falls in the fit band ({low:g} to {high:g} 1/A): the scan's finest is "
+                    f"{finest:.3f} 1/A, so its step (about {0.5 / finest:.2f} A) is too coarse for direct "
+                    f"ptychography. Take the scan at a finer step: under {0.5 / low:.1f} A, usually 0.3 to 0.6 A.")
             if band_only:
                 flat = cp.arange(flat.size, dtype=cp.int64)
             self._band = (rows_idx, cols_idx, flat,
