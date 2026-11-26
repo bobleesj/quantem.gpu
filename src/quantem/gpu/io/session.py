@@ -4,7 +4,10 @@ A receiver that streams scans numbers every pattern it keeps, from 0, across the
 header carries ``session``, ``first_index`` and ``begin_epoch_s``; the folder may also hold ``index.jsonl`` (one
 checked line per kept scan, written by the receiver) and ``session-log.jsonl`` (the microscope's readings, written
 when one changed and once a minute). A stream may also be saved in parts cut by index instead of one file per scan
-(a ``.qem`` of patterns ``[a, b)`` whose header names its scans); a scan is then put together from its parts. ``session(folder)`` reads those and joins them by time.
+(a ``.qem`` of patterns ``[a, b)`` whose header names its scans); a scan is then put together from its parts, with
+the record its own file would hold when the part with its last pattern carries one. A part's header may also carry
+``tracks``: each reading as steps by pattern index (``track``), which ``state`` reads when there is no session log.
+``session(folder)`` reads those and joins them by time.
 
 >>> from quantem.gpu import io
 >>> session = io.session("scans/2026-11-20")            # doctest: +SKIP
@@ -12,6 +15,8 @@ when one changed and once a minute). A stream may also be saved in parts cut by 
 >>> session.state(300_000)["defocus_nm"]                # doctest: +SKIP
 {'value': -12.0, 'age_s': 3.2, 'between': None, 'indices': None}
 >>> session.patterns(0, 512)                            # doctest: +SKIP
+>>> session.track("defocus_nm")                         # doctest: +SKIP
+{'indices': [0, 1048576], 'values': [0.0, -12.0]}
 >>> session.report()                                    # doctest: +SKIP    one row per scan, with its readings
 """
 
@@ -139,8 +144,10 @@ class Session:
     """
 
     def __init__(self, folder: Path, identifier: str, index: list[dict], log: list[dict], *, read_period_s: float,
-                 device=None):
+                 device=None, tracks: dict | None = None):
         self.folder, self.id, self.index, self.device = folder, identifier, index, device
+        # {name: (indices, values)}: what the parts say held from each index on (``track``)
+        self.tracks = tracks or {}
         self.read_period_s = float(read_period_s)
         # a scan's own line holds what was set for that scan alone, exact at its first pattern: a reading at beam-on
         set_at_start = [{**{name: value for name, value in row.items() if name not in _NOT_SET},
@@ -214,9 +221,13 @@ class Session:
         row = self._row(index)
         when = self.time(index)
         if not self.readings or when is None:
-            optics = row.get("optics") or {}
+            held = dict(row.get("optics") or {})
+            for name, (indices, values) in self.tracks.items():     # what the parts say held at this index
+                place = bisect_right(indices, int(index)) - 1
+                if place >= 0:
+                    held[name] = values[place]
             return {name: {"value": value, "age_s": None, "between": None, "indices": None}
-                    for name, value in optics.items()}
+                    for name, value in held.items()}
         spread = 0.0 if row["clock"] == "logged" else float(self.clock_spread_s or 0.0)
         place = bisect_right(self._reading_times, when)
         found: dict[str, dict] = {}
@@ -246,6 +257,20 @@ class Session:
                 if dwell:
                     entry["indices"] = (self._index_at(row, opens), self._index_at(row, reading["_epoch_s"] + spread))
         return found
+
+    def track(self, name: str) -> dict:
+        """One quantity along the session by pattern index, from the parts' own headers: ``{"indices", "values"}``,
+        where ``values[k]`` held from pattern ``indices[k]`` until the next. A scan's optics read when it was started
+        give one step at its first pattern; steps inside a scan are the ones its acquisition recorded by index.
+
+        >>> defocus = session.track("defocus_nm")               # doctest: +SKIP
+        >>> defocus["indices"], defocus["values"]               # doctest: +SKIP
+        ([0, 1048576, 1310720], [0.0, -12.0, -24.0])
+        """
+        if name not in self.tracks:
+            raise KeyError(f"No track {name!r}: this session's parts record {sorted(self.tracks)}.")
+        indices, values = self.tracks[name]
+        return {"indices": list(indices), "values": list(values)}
 
     def _before(self, number: int, name: str):
         """The value a name had in the newest reading before reading ``number``, or None."""
@@ -286,11 +311,46 @@ class Session:
             first = first or part
             chunks += chunks_of(part.data, piece["at"], piece["at"] + piece["patterns"])
         shape = row.get("stored_shape")
-        if not shape or math.prod(shape) != row["received"]:
-            shape = (1, row["received"])
-        metadata = {**(row.get("metadata") or {}), "part": None, "first_index": row["first_index"],
-                    "series": row.get("series")}
-        scan = dataset_of(chunks, shape, like=first, metadata=metadata)
+        whole = bool(shape) and math.prod(shape) == row["received"]
+        if not whole:
+            columns = int(shape[1]) if shape else 0
+            raster = (row.get("scan_pattern") or "raster") == "raster"
+            # a raster scan that ended early keeps its finished lines as lines
+            lines = row["received"] // columns if raster and columns and row["received"] % columns == 0 else 0
+            shape = (lines, columns) if lines else (1, row["received"])
+        from types import SimpleNamespace
+
+        from quantem.gpu.formats.qem import metadata as qem_metadata
+        from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
+
+        record = row.get("record") if whole else None
+        if record is None and row.get("metadata"):
+            # no record (the scan ended early, or an older part): its header as it was at its start, read as a
+            # file's header is; a header that cannot be read that way is kept as it is
+            try:
+                described = dict(row["metadata"])
+                record = {"scientific_metadata": qem_metadata.acquisition_metadata(
+                              (*(int(side) for side in shape), *first.data.shape[2:]), described),
+                          "metadata": qem_metadata.retained_metadata(described)}
+            except (ValueError, KeyError, TypeError):
+                record = None
+        if record:                                  # the scan's own record, as one file of it would hold it
+            scientific = record["scientific_metadata"]
+            metadata = qem_metadata.effective_metadata(dict(record["metadata"]), scientific)
+            metadata.setdefault("original_source_path", metadata.get("source_path"))
+            metadata.update(scientific_metadata=scientific, container=first.metadata.get("container"),
+                            container_version=first.metadata.get("container_version"), source_kind="resident",
+                            source_path=str(Path(row["pieces"][0]["path"]).resolve()),
+                            parts=[Path(piece["path"]).name for piece in row["pieces"]],
+                            device=str(first.metadata.get("device")), resident_profile=INTEGER_CODEC,
+                            lossless_exact=True, first_index=row["first_index"], series=row.get("series"),
+                            received=int(row["received"]), expected=row.get("expected"))
+            like = SimpleNamespace(data=first.data, metadata={})
+        else:
+            metadata = {**(row.get("metadata") or {}), "part": None, "first_index": row["first_index"],
+                        "series": row.get("series")}
+            like = first
+        scan = dataset_of(chunks, shape, like=like, metadata=metadata)
         for path in list(self._parts)[:-2]:
             del self._parts[path]                   # the scan holds the chunks it uses; the rest is freed
         return scan
@@ -436,7 +496,14 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
                           "dwell_s": optics.get("dwell_s"), "flyback_s": optics.get("flyback_s")})
     listed = {row["first_index"]: row for row in index}
     pieces: dict[int, list[dict]] = {}              # a scan's first index -> where its patterns lie in the parts
+    tracks: dict[str, tuple[list, list]] = {}       # a quantity -> the indices it changed at and its values from there
     for part in sorted(cut.get(identifier, []), key=_first_index):
+        for name, steps in (part.get("tracks") or {}).items():
+            indices, values = tracks.setdefault(name, ([], []))
+            for at, value in zip(steps["at"], steps["values"], strict=True):
+                if not values or values[-1] != value:           # a part repeats what held at its first pattern
+                    indices.append(part["first_index"] + int(at))
+                    values.append(value)
         for entry in part["scans"]:
             first = int(entry["first_index"])
             pieces.setdefault(first, []).append({"path": part["path"], "at": int(entry["at"]),
@@ -457,15 +524,24 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
             row.setdefault("stored_shape", entry.get("stored_shape"))
             if described:
                 row["metadata"] = described
+            if entry.get("record"):                 # written with the scan's last pattern
+                row["record"] = entry["record"]
     index.sort(key=_first_index)
     for row in index:
         row.pop("counted", None)
         part = parts.get((identifier, row["first_index"]))
         row["path"] = None if part is None else part["path"]
         optics = None if part is None else part["metadata"].get("optics")
-        held = sorted(pieces.get(row["first_index"], []), key=_offset)
-        if part is None and held and sum(piece["patterns"] for piece in held) >= (row.get("received") or 0) > 0:
-            row["pieces"], row["path"] = held, held[0]["path"]     # every pattern of it is in parts here
+        held, reached = [], 0
+        for piece in sorted(pieces.get(row["first_index"], []), key=_offset):
+            if piece["offset"] == reached:          # from the scan's first pattern on, without a gap
+                held.append(piece)
+                reached += piece["patterns"]
+        if part is None and held and (row.get("received") or 0) > 0:
+            if reached < row["received"]:
+                # the receiver stopped before the rest was written: the patterns that reached the disk are the scan
+                row["received"] = reached
+            row["pieces"], row["path"] = held, held[0]["path"]
             optics = (row.get("metadata") or {}).get("optics")
         row["optics"] = optics if isinstance(optics, dict) else None
         if row.get("received") is None:
@@ -477,4 +553,4 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
         if "time_utc" in row:
             row["_epoch_s"] = _epoch_s(row["time_utc"])
     events = [row for row in events if "_epoch_s" in row]
-    return Session(folder, identifier, index, events, read_period_s=read_period_s, device=device)
+    return Session(folder, identifier, index, events, read_period_s=read_period_s, device=device, tracks=tracks)
