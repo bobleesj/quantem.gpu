@@ -538,9 +538,8 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
                 held.append(piece)
                 reached += piece["patterns"]
         if part is None and held and (row.get("received") or 0) > 0:
-            if reached < row["received"]:
-                # the receiver stopped before the rest was written: the patterns that reached the disk are the scan
-                row["received"] = reached
+            # the receiver stopped before the rest was written: the patterns that reached the disk are the scan
+            row["received"] = min(row["received"], reached)
             row["pieces"], row["path"] = held, held[0]["path"]
             optics = (row.get("metadata") or {}).get("optics")
         row["optics"] = optics if isinstance(optics, dict) else None
