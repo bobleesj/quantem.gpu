@@ -1,0 +1,95 @@
+{
+  "packages": [
+    {
+      "file": "alembic-1.17.2-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/ba/88/6237e97e3385b57b5f1528647addea5cc03d4d65d5979ab24327d41fb00d/alembic-1.17.2-py3-none-any.whl",
+      "sha256": "f483dd1fe93f6c5d49217055e4d15b905b425b6af906746abb35b69c1996c4e6"
+    },
+    {
+      "file": "colorlog-6.10.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/6d/c1/e419ef3723a074172b68aaa89c9f3de486ed4c2399e2dbd8113a4fdcaf9e/colorlog-6.10.1-py3-none-any.whl",
+      "sha256": "2d7e8348291948af66122cff006c9f8da6255d224e7cf8e37d8de2df3bad8c9c"
+    },
+    {
+      "file": "mako-1.3.10-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/87/fb/99f81ac72ae23375f22b7afdb7642aba97c00a713c217124420147681a2f/mako-1.3.10-py3-none-any.whl",
+      "sha256": "baef24a52fc4fc514a0887ac600f9f1cff3d82c61d4d700a1fa84d597b88db59"
+    },
+    {
+      "file": "markupsafe-3.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/markupsafe-3.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "31a48bf0c5914d64d442175520d803c6488681882ff152c3a07838736b1f3b60"
+    },
+    {
+      "file": "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "3db3c4f3e0448f4d62a85c262692f1260ccd8a91335442bd2442f21ffeddb558"
+    },
+    {
+      "file": "optuna-4.9.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/ab/f3/e5fcd5d9b15771ed6dc10e3a7eeddc672e418f4f4c4653d216cc1d857e2d/optuna-4.9.0-py3-none-any.whl",
+      "sha256": "f52f3be6148654850c92a5860d398fd88ec6b2c84ab68d9c3d07dcff02e7afee"
+    },
+    {
+      "file": "packaging-24.2-py3-none-any.whl",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/packaging-24.2-py3-none-any.whl",
+      "sha256": "fdbc12e70e25c89b3e95a853f09065c629ebd6add9bf7a788ce6cfdb35b5c7b0"
+    },
+    {
+      "file": "pyodide-lock.json",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide-lock.json",
+      "sha256": "f6e6f42f451f42affbbcddb00e8c9a3278dcbf399f57aab9f3f568839a7ff4a6"
+    },
+    {
+      "file": "pyodide.asm.js",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide.asm.js",
+      "sha256": "b22e5831eade9ff10e6fe2c811c68688cd91f10154377b4f80debcf5bafa1e56"
+    },
+    {
+      "file": "pyodide.asm.wasm",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide.asm.wasm",
+      "sha256": "5effb6a1a6cc4a1a85bec4622701aa797c031e1de923cbbaf2ad47abdc4ab325"
+    },
+    {
+      "file": "pyodide.mjs",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide.mjs",
+      "sha256": "635a6da3218fe4e5668da595acfe8b5ce77453d597d602f19a423dd250653441"
+    },
+    {
+      "file": "python_stdlib.zip",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/python_stdlib.zip",
+      "sha256": "71fee17f88a6260ec8c9c7c063533ee59c021fdc88a1ce76247378d3c4a35f4c"
+    },
+    {
+      "file": "pyyaml-6.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyyaml-6.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "02c517acb78aa37b1ae95c964442f5f77ddf217ab8f76c1422fca52ffe4cb784"
+    },
+    {
+      "file": "sqlalchemy-2.0.39-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/sqlalchemy-2.0.39-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "7ca4781ffc240fa04bbc5eb56e23c614ac728c80c7834bfe75708b422350af37"
+    },
+    {
+      "file": "sqlite3-1.0.0-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/sqlite3-1.0.0-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "bc9429a898016f040272b57e44c3beb7cebfa18226cc856d0b4abca88c8ceea7"
+    },
+    {
+      "file": "tqdm-4.67.1-py3-none-any.whl",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/tqdm-4.67.1-py3-none-any.whl",
+      "sha256": "93748be542ca5a4f4708cfdaf6bd1526e04fbbbef3b3972de79a58c1ab89294a"
+    },
+    {
+      "file": "typing_extensions-4.14.1-py3-none-any.whl",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/typing_extensions-4.14.1-py3-none-any.whl",
+      "sha256": "cacfad0508850d9e87aaa4ba2af8c8fcd392cbb5a3c7ad33e76ab907da34544c"
+    }
+  ],
+  "wheels": [
+    "optuna-4.9.0-py3-none-any.whl",
+    "alembic-1.17.2-py3-none-any.whl",
+    "colorlog-6.10.1-py3-none-any.whl",
+    "mako-1.3.10-py3-none-any.whl"
+  ]
+}

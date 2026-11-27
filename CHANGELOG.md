@@ -67,6 +67,15 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `StreamedCounts.park()` and `restore()` move an encoded acquisition to page-locked host memory and back.
 - `DirectPtycho.on_park`: set it on a session over your own dataset to let a fit on a small device park that dataset;
   it is called first, so a viewer on the dataset closes its detector sessions there.
+- Open bitshuffle-compressed float32 HDF5 scans directly with `io.load()` in a fresh Python process.
+- Check the opposite rotation independently when a joint aberration fit reaches a tilt bound.
+- Keep HDF5 acquisition loading and MAPED block export on the selected CUDA device.
+- The WebGPU direct fit batches independent trial scores and reuses seed gradients across validation rings. Full-field phase reconstruction transforms only the required spectrum of each detector column.
+- Mobile WebGPU detector integration can replace verified ANS groups with losslessly bit-packed counts for random-access aperture changes.
+- WebGPU uses a direct symbol table for camera QEM detector reductions while preserving native counts and stream verification.
+- WebGPU decodes selected scan windows once for diffraction-pattern reductions and reuses exact detector moments across DPC views.
+- Direct ptychography previews use the scan GPU on fresh notebook callback threads.
+- Save and reopen reviewed direct ptychography object and probe waves with their sampling and aberrations.
 
 ## rc18 - 2026-11-11
 

@@ -86,15 +86,20 @@ def estimate_180_degrees_off(monkeypatch):
     monkeypatch.setattr(workflow, "_estimate_rotation", lambda *args: (180.0, False))
 
 
-def test_an_estimate_180_degrees_off_keeps_the_branch_with_positive_columns(estimate_180_degrees_off):
-    """Both branches are fitted independently; the dark-field columns have positive phase only on the true one.
+@pytest.mark.parametrize("map_opposite", [True, False], ids=["mapped", "independent"])
+def test_an_estimate_180_degrees_off_keeps_the_branch_with_positive_columns(
+    estimate_180_degrees_off, monkeypatch, map_opposite
+):
+    """Mapped and independently searched branches both select the known crystal rotation.
 
     Replaces the polarity check that moved the branch only for a negative median-centred skew and refitted from
     the mapped twin. Here the probe is near focus (C10 -3 nm), so the low-angle dark field peaks on the columns.
     """
     pytest.importorskip("mlx.core")
     from quantem.gpu import DirectPtycho
+    from quantem.gpu.direct_ptycho import workflow
 
+    monkeypatch.setattr(workflow, "MAP_OPPOSITE_BRANCH", map_opposite)
     frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
     with DirectPtycho(frames, scan_detector_rotation_deg=0.0, **_settings(detector_mrad)) as session:
         direct = session.aberrations(search="primary", trials=40, check_rotation=False, verbose=False)
@@ -113,7 +118,7 @@ def test_an_estimate_180_degrees_off_keeps_the_branch_with_positive_columns(esti
         assert checked.aberrations[name] == pytest.approx(direct.aberrations[name], abs=0.05)
     assert checked.aberrations["C10_nm"] == pytest.approx(-3.0, abs=0.1)
     assert checked.loss == pytest.approx(direct.loss, rel=1e-3)
-    assert {record["search"] for record in checked.trial_records} == {0, 1}
+    assert {record["search"] for record in checked.trial_records} == ({0} if map_opposite else {0, 1})
 
 
 def test_unresolved_columns_leave_the_choice_to_the_phase_tail(estimate_180_degrees_off):
@@ -128,9 +133,11 @@ def test_unresolved_columns_leave_the_choice_to_the_phase_tail(estimate_180_degr
         checked = session.aberrations(search="primary", trials=40, verbose=False)
     branches = checked.rotation_branches
     assert branches.decided_by == "phase_tail" and checked.scan_detector_rotation_deg == 0.0
-    assert not branches.columns and "no atomic columns located" in branches.summary
+    assert {record["search"] for record in checked.trial_records} == {0, 1}
+    assert branches.columns.shape == (0, 2) and "no atomic columns located" in branches.summary
     assert branches.branches[1].phase_skewness == pytest.approx(phase_skewness(checked.phase), abs=1e-6)
     assert branches.branches[0].phase_skewness < 0.0 < 1.0 < branches.branches[1].phase_skewness
+    assert branches.branches[0].aberrations["C10_nm"] == -branches.branches[1].aberrations["C10_nm"]
     assert checked.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.15)
     assert checked.aberrations["C12_nm"] == pytest.approx(2.5, abs=0.1)
 
@@ -156,7 +163,7 @@ def test_reconstruct_keeps_the_branch_comparison_of_the_fit_it_applies(estimate_
             assert isinstance(result.show("rotation"), Figure)
         changed = session.run(aberrations={"C10_nm": fitted.aberrations["C10_nm"] + 1.0})
         assert changed.rotation_branches is None
-        with pytest.raises(ValueError, match="compare_rotation_branches"):
+        with pytest.raises(ValueError, match="scan_rotations"):
             changed.show("rotation")
     capsys.readouterr()
     with DirectPtycho(frames, **_settings(detector_mrad)) as fresh:
@@ -256,16 +263,16 @@ def test_a_given_rotation_is_never_flipped(capsys):
         result = session.run()
         assert result.scan_detector_rotation_deg == 180.0 and result.rotation_branches is None
         assert "Direct ptycho: kept" not in capsys.readouterr().out
-        branches = session.compare_rotation_branches(trials=40, verbose=False)
+        branches = session.scan_rotations(report=False, trials=40, verbose=False)
         assert branches.kept_rotation_deg == 180.0 and branches.chosen_rotation_deg == 0.0
         assert branches.summary.startswith("kept the given 180.0°; the evidence selects 0.0°")
         assert session.scan_detector_rotation_deg == 180.0
         kept = session.run()
         assert kept.scan_detector_rotation_deg == 180.0 and kept.rotation_branches is branches
-        assert session.compare_rotation_branches(trials=40, verbose=False, apply=True).kept_rotation_deg == 0.0
+        assert session.scan_rotations(report=False, trials=40, verbose=False, apply=True).kept_rotation_deg == 0.0
         assert session.scan_detector_rotation_deg == 0.0
         with pytest.raises(TypeError, match="check_rotation"):
-            session.compare_rotation_branches(check_rotation=False)
+            session.scan_rotations(check_rotation=False)
 
 
 def test_joint_fit_takes_a_c10_range_and_holds_c12_at_zero():
@@ -386,7 +393,7 @@ def test_refine_rotation_recovers_a_two_degree_offset(monkeypatch, estimate_deg)
     assert record["refined_agreement"] == fit.sample_agreement > record["estimate_agreement"]
     assert record["evaluations"] <= 12
     assert fit.aberrations["C10_nm"] == pytest.approx(-3.0, abs=0.1)
-    assert len([trial for trial in fit.trial_records if trial["stage"] == "search"]) == 80
+    assert len([trial for trial in fit.trial_records if trial["stage"] == "search"]) == 40
 
 
 def test_a_given_rotation_is_fitted_once_and_not_refined():

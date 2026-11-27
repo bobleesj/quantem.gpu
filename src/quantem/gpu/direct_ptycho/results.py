@@ -422,6 +422,11 @@ class DirectPtychoResult(Mapping[str, float]):
         return table.to_html(float_format=lambda value: f"{value:.6g}", max_rows=None)
 
     @property
+    def object(self):
+        """Complex transmission function on the result's array backend."""
+        return self.object_wave
+
+    @property
     def phase(self):
         """Phase of the complex transmission function: ``angle(object_wave)``."""
         if _is_cupy_array(self.object_wave):
@@ -472,7 +477,7 @@ class DirectPtychoResult(Mapping[str, float]):
         """
         return probe_grid(self)[2]
 
-    def probe(self, *, space: Literal["real", "fourier"] = "real"):
+    def probe(self, space: Literal["real", "fourier"] = "real"):
         """Calculate the normalized complex model probe on the result's GPU.
 
         Reuses voltage, convergence semiangle and
@@ -615,8 +620,8 @@ class DirectPtychoResult(Mapping[str, float]):
         Parameters
         ----------
         view : {"phase", "probe", "rotation", "parameters", "depth", "tilt", "convergence"}, optional
-            Show the reconstructed phase alone, or two model-probe intensity
-            panels side by side. Fourier intensity shows the aperture;
+            Show the reconstructed phase alone, or real-space model probe intensity.
+            Use ``probe_phase`` for the illuminated aperture;
             aberrations are encoded in the complex Fourier probe's phase.
             ``rotation`` draws the 180-degree branch evidence of an estimated
             rotation (``rotation_branches.show()``): both branches' fits at
@@ -815,7 +820,7 @@ class DirectPtychoResult(Mapping[str, float]):
             if self.rotation_branches is None:
                 raise ValueError(
                     "This result has no 180-degree branch comparison: its rotation was given or recorded, or "
-                    "check_rotation=False. Run direct.scan_rotations(report=False, ) to fit and compare both branches.")
+                    "check_rotation=False. Run direct.scan_rotations(report=False) to fit and compare both branches.")
             return self.rotation_branches.show(axsize=axsize, cmap=cmap, save=save)
         if view == "convergence":
             from quantem.gpu.direct_ptycho.convergence import plot_convergence
@@ -845,10 +850,20 @@ class DirectPtychoResult(Mapping[str, float]):
             bars = scalebar(column_sampling, "Å", arrays.shape[0], axsize[0])
             panel_size = (12, 12)
         elif view == "probe":
-            arrays = [abs(self.probe()) ** 2, abs(self.probe(space="fourier")) ** 2]
-            titles = ["Real-space model probe · intensity", "Fourier-space model probe · intensity"]
-            bars = [scalebar(self.probe_sampling_A[1], "Å", arrays[0].shape[0], axsize[0]),
-                    scalebar(self.probe_sampling_mrad[1], "mrad", arrays[1].shape[0], axsize[0])]
+            intensity = host_array(abs(self.probe()) ** 2)
+            # Frame the central 99% of the energy on each axis at native sampling.
+            bounds = []
+            for axis in (0, 1):
+                energy = intensity.sum(axis=1 - axis, dtype=np.float64).cumsum()
+                low, high = np.searchsorted(energy, energy[-1] * np.array([0.005, 0.995]))
+                bounds.append((int(low), int(high) + 1))
+            width = max(hi - lo for lo, hi in bounds)
+            side = min(min(intensity.shape), max(8, int(np.ceil(width * 1.15))))
+            row, col = [max(0, min(length - side, (lo + hi - side) // 2))
+                        for (lo, hi), length in zip(bounds, intensity.shape)]
+            arrays = intensity[row:row + side, col:col + side]
+            titles = "Real-space probe intensity"
+            bars = scalebar(self.probe_sampling_A[1], "Å", side, axsize[0])
             panel_size = (6, 6)
         else:
             raise ValueError(f"Choose view='phase', 'amplitude', 'probe', 'rotation', 'parameters', 'depth', 'tilt' or 'convergence'; "

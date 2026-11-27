@@ -636,6 +636,8 @@ def load_hdf5_array_resident(
             in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32"))
         ):
             return None
+        import hdf5plugin  # noqa: F401 - register HDF5 filters before reading compressed values
+
         starts = [0]
         for data in datasets:
             if (

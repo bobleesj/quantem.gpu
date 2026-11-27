@@ -13,7 +13,7 @@ import bisect
 import json
 import math
 import sys
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack
 from pathlib import Path
 
 import h5py
@@ -77,6 +77,7 @@ def load_precision(
         pack, resident_type = metal.encode_ans, metal.PrecisionSource
     else:
         selected = _cuda_device(path) if device is None else int(str(device).removeprefix("cuda:"))
+        context.enter_context(torch.cuda.device(selected))
         context.enter_context(cp.cuda.Device(selected))
         # Return blocks cached by earlier work before converting, and this
         # conversion's own scratch after it, so neither sits beside the result.
@@ -154,8 +155,11 @@ def save_precision(
     source = None
     writer = None
     progress = None
-    context = nullcontext() if backend == "mps" else cp.cuda.Device(_cuda_device(payload))
-    with context:
+    with ExitStack() as context:
+        if backend == "cuda":
+            selected = _cuda_device(payload)
+            context.enter_context(torch.cuda.device(selected))
+            context.enter_context(cp.cuda.Device(selected))
         try:
             if same_precision:
                 report = dict(payload.precision)
@@ -690,13 +694,15 @@ def _cuda_device(source) -> int:
     """The CUDA device an in-memory source already occupies; files use the current device.
 
     Converting on the source's own GPU avoids a cross-device copy of every block.
-    A generated block source names no device in its contract, so it converts on
-    the current device, where its producer runs.
+    Generated sources may declare their CUDA device. Sources without one use the current device.
     """
     if isinstance(source, cuda.PrecisionSource):
         return source._device_id
     if isinstance(source, cp.ndarray):
         return source.device.id
-    if isinstance(source, torch.Tensor) and source.device.type == "cuda" and source.device.index is not None:
-        return source.device.index
+    device = getattr(source, "device", None)
+    if isinstance(device, (torch.device, str)):
+        device = torch.device(device)
+        if device.type == "cuda" and device.index is not None:
+            return device.index
     return cp.cuda.Device().id
