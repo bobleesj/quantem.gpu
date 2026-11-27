@@ -171,3 +171,15 @@ def test_a_current_ssb_result_takes_the_direct_names(tmp_path):
                       "signature": {"schema": RESULT_SCHEMA, "operation": "run", "direct_source_sha256": "a" * 64},
                       "result": {"thickness_method": "direct_depth", "has_direct": True, "upsample": 2}}
     assert rewrite(tmp_path).splitlines()[-1] == "0 file(s) rewritten, 0 skipped."
+
+
+def test_a_calibration_9_names_the_detector_axes_tilt_tilt_mrad(tmp_path):
+    """A direct calibration /9 names the detector-axes tilt propagator_tilt_mrad; /10 names it tilt_mrad. The numbers
+    and the scan-frame sample_tilt_mrad stay; a second run finds nothing to rewrite."""
+    from quantem.gpu.direct_ptycho.calibration import CALIBRATION_SCHEMA
+
+    earlier = {"schema": "quantem.direct-calibration/9", "sample_tilt_mrad": [3.0, -4.0], "propagator_tilt_mrad": [2.3, -4.5]}
+    (tmp_path / "calibration.json").write_text(json.dumps(earlier))
+    rewrite(tmp_path)
+    assert json.loads((tmp_path / "calibration.json").read_text()) == {"schema": CALIBRATION_SCHEMA, "sample_tilt_mrad": [3.0, -4.0], "tilt_mrad": [2.3, -4.5]}
+    assert rewrite(tmp_path).splitlines()[-1] == "0 file(s) rewritten, 0 skipped."

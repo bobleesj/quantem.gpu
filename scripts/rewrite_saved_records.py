@@ -34,6 +34,9 @@ nominal_upsampling_requirement is nominal_upsample_requirement. A ``method`` or 
   ``reconstruction_method`` beside ``reconstruction_options`` holds them as ShowPtycho's one
   ``reconstruction`` dict, ``{"method": ..., "phase_damp": ..., ...}``.
 
+- A ``quantem.direct-calibration/9`` names the tilt along the detector axes ``propagator_tilt_mrad``; ``/10`` names it
+  ``tilt_mrad`` (26 Nov 2026), and every calibration this script writes is ``/10``.
+
 Earlier ShowPtycho calibrations (/4 to /7) are carried by quantem.widget's ``scripts/rewrite_direct_calibration.py``
 and QuantEM Live's screening ``config.json`` by its ``tools/rewrite_screen_config.py``.
 
@@ -95,6 +98,13 @@ OLD_FILE = re.compile(r"ssb(?=$|[-_.])")
 def direct_name(name):
     """A file or folder name with its leading ssb said direct: ssb-fit is direct-fit, ssb.json is direct.json."""
     return OLD_FILE.sub("direct", name, count=1) if OLD_FILE.match(name) else name
+
+
+def detector_tilt(record):
+    """A direct calibration /9 as /10: its detector-axes tilt propagator_tilt_mrad named tilt_mrad; any other record as it is."""
+    if not isinstance(record, dict) or record.get("schema") != "quantem.direct-calibration/9":
+        return record
+    return {("tilt_mrad" if key == "propagator_tilt_mrad" else key): value for key, value in record.items()} | {"schema": "quantem.direct-calibration/10"}
 
 
 def direct_names(value):
@@ -246,7 +256,7 @@ class Rewriter:
 
     def named(self, path, record, indent):
         """Any other record of an ssb schema under its direct names, with an ssb-named phase array beside it."""
-        new = direct_names(record)
+        new = detector_tilt(direct_names(record))
         target = path.with_name(direct_name(path.name))
         names = record.get("phase_file"), new.get("phase_file")
         moves = isinstance(names[0], str) and names[0] != names[1] and (path.parent / names[0]).is_file()
@@ -329,7 +339,7 @@ def main():
             rewriter.manifest(path, record)
         elif schema == CALIBRATION and ("reconstruction_method" in record or "reconstruction_options" in record):
             rewriter.named(path, calibration_record(record), 2)
-        elif schema in DIRECT:
+        elif schema in DIRECT or schema == "quantem.direct-calibration/9":
             rewriter.named(path, record, 2)
     for folder, records in frames.items():
         rewriter.frames(folder, records)
