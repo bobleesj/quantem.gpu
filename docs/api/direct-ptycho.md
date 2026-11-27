@@ -379,7 +379,7 @@ Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.
 The public methods are `aberrations()`, `run()`, and `scan_rotations()`.
 Update old `fit_aberrations()`, `reconstruct()`, and rotation-comparison calls to these
 names; the renamed methods do not retain aliases. Saved records take the new
-names too (`quantem.direct-result/15`, `quantem.direct-calibration/9`); the CHANGELOG
+names too (`quantem.direct-result/15`, `quantem.direct-calibration/10`); the CHANGELOG
 names the script that rewrites existing files once. The series entry point is
 `DirectPtycho.series(...)`; there is no `stream(...)` spelling.
 The package is `quantem.gpu.direct_ptycho` (for example

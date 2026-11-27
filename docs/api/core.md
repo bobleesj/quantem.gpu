@@ -120,7 +120,7 @@ aberration-fit choice, and package revision with the result.
 
 Direct ptychography states the sample tilt along the scan axes (`sample_tilt_mrad`); a
 ptychographic object and its propagator live along the detector axes
-(`propagator_tilt_mrad`). `quantem.gpu.geometry` converts between them with the
+(`tilt_mrad`). `quantem.gpu.geometry` converts between them with the
 convention direct ptychography, DPC and screening apply to the centre of mass,
 `scan = R(θ) · D · detector`, where `R(θ)` is the scan-detector rotation and `D`
 swaps the detector's row and column axes when `scan_detector_rotation_flipped`
@@ -129,13 +129,13 @@ is true:
 ```python
 from quantem.gpu.geometry import propagator_to_sample_tilt, sample_to_propagator_tilt
 
-propagator_tilt_mrad = sample_to_propagator_tilt(
+tilt_mrad = sample_to_propagator_tilt(
     result.sample_tilt_mrad,
     scan_detector_rotation_deg=result.scan_detector_rotation_deg,
     scan_detector_rotation_flipped=result.scan_detector_rotation_flipped,
 )
 sample_tilt_mrad = propagator_to_sample_tilt(
-    propagator_tilt_mrad,
+    tilt_mrad,
     scan_detector_rotation_deg=result.scan_detector_rotation_deg,
     scan_detector_rotation_flipped=result.scan_detector_rotation_flipped,
 )
