@@ -329,6 +329,9 @@ def _on_scan_gpu(method):
     """
     @wraps(method)
     def on_scan_gpu(self, *args, **kwargs):
+        # A new notebook callback thread has no CUDA context to restore.
+        if self._device is not None and not cp.cuda.driver.ctxGetCurrent():
+            cp.cuda.Device(self._device).use()
         with nullcontext() if self._device is None else cp.cuda.Device(self._device):
             return method(self, *args, **kwargs)
     return on_scan_gpu
@@ -809,6 +812,7 @@ class DirectPtycho:
             correction = source_dataset.metadata.get("hot_pixel_correction")
             self.source_provenance = None if correction is None else {"hot_pixel_correction": correction}
         self._compute: DirectPtychoProtocol | None = None
+        self._review_viewer = None
         self._reconstruction: DirectPtychoResult | None = None
         self.best_loss = float("inf")
         self.trial_history: list[dict[str, object]] = []
@@ -1458,7 +1462,7 @@ class DirectPtycho:
         return self._accept_result(result)
 
     def _fit_both_branches(self, fit: Callable[[], DirectPtychoResult], *, keep_first: bool,
-                           measure_gain: bool = False,
+                           tilt_limit_mrad: float, measure_gain: bool = False,
                            mapped: Callable[[DirectPtychoResult], DirectPtychoResult] | None = None) -> DirectPtychoResult:
         """Fit the session's rotation and that rotation plus 180 degrees, then keep one branch.
 
@@ -1480,6 +1484,22 @@ class DirectPtycho:
             result = fit() if search == 0 or mapped is None else mapped(fits[0])
             label_trials(result, search=search)
             fits.append(self._finish_fit(result))
+        # A boundary optimum can be a local maximum. Search from the original start
+        # on the opposite branch and map the better agreement back to its twin.
+        if mapped is not None and any(math.isclose(abs(v), tilt_limit_mrad, rel_tol=1e-6)
+                                      for v in fits[0].sample_tilt_mrad):
+            self._aberrations, self._aberrations_explicit, self.sample_tilt_mrad, self.depth_spread_nm = start
+            independent = self._finish_fit(fit())
+            label_trials(independent, search=1)
+            if independent.sample_agreement > fits[1].sample_agreement:
+                self.set_rotation(first_rotation)
+                twin = self._finish_fit(mapped(independent))
+                twin.trial_records = fits[0].trial_records
+                twin.elapsed_s += fits[0].elapsed_s + fits[1].elapsed_s
+                fits = [twin, independent]
+            else:
+                fits[1].trial_records = independent.trial_records
+                fits[1].elapsed_s += independent.elapsed_s
         compared, dark_field = fits, self._dark_field_image()
         region = None if self._band_fit is None else self._band_fit.get("scan_region")
         if region is not None:
@@ -2119,7 +2139,7 @@ class DirectPtycho:
             if save is not None:
                 figure.savefig(save, dpi="figure", bbox_inches="tight")
             return figure
-        if any(value is not None for value in (size, region, rows, columns, cmap, save)):
+        if any(value is not None for value in (region, rows, columns, cmap, save)):
             raise ValueError(
                 "Use size, rows, columns, cmap and save with direct.show('focus') or a static landscape "
                 "('depth', 'tilt', 'parameters'); use mode='static' to save focus images. "
@@ -2129,13 +2149,48 @@ class DirectPtycho:
             from quantem.widget import ShowPtycho
         except ImportError as exc:
             raise ImportError("direct.show() opens ShowPtycho from quantem.widget: pip install quantem.widget") from exc
+        if size is not None:
+            options["size"] = size
         if show_probe:
             from quantem.gpu.direct_ptycho.probe_explorer import ProbeExplorer
 
-            return ProbeExplorer(self, **options)
+            explorer = ProbeExplorer(self, **options)
+            self._review_viewer = ref(explorer.reconstruction)  # save() saves the waves it shows
+            return explorer
         viewer = ShowPtycho(self, **options)
         self._viewer = ref(viewer)                  # save_calibration() writes what it shows
+        self._review_viewer = ref(viewer)           # save() saves the waves it shows
         return viewer
+
+    def save(self, save_dir: str | Path) -> DirectPtychoResult:
+        """Save the reviewed complex object, real-space probe and their sampling in result.zip.
+
+        A live viewer supplies the reviewed optics, sampling and reconstruction settings
+        and writes its calibration and phase preview beside the waves. Without a viewer,
+        the most recent reconstruction is saved. Returns the saved reconstruction.
+        """
+        folder = Path(save_dir)
+        viewer = self._review_viewer() if self._review_viewer is not None else None
+        if viewer is not None:
+            if not hasattr(viewer, "_reviewed_result"):
+                raise RuntimeError("Install a quantem.widget build with reviewed-result saving support.")
+            result = viewer._reviewed_result(folder)
+        else:
+            result = self._reconstruction
+            if result is None:
+                raise ValueError("Open ptycho.show() or call ptycho.run() before saving the waves.")
+            folder.mkdir(parents=True, exist_ok=True)
+        from quantem.gpu.direct_ptycho.archive import save_review
+
+        save_review(result, folder)
+        return result
+
+    @staticmethod
+    def load(path: str | Path) -> DirectPtychoResult:
+        """Open the saved waves for inspection without loading the scan or fitting the optics."""
+        from quantem.gpu.direct_ptycho.archive import load_review
+
+        return load_review(Path(path))
 
     def _show_trials(self, *, best: int | None = None, last: int | None = None,
                      first: int | None = None, upsample: int | Literal["auto"] = "auto",
@@ -2366,15 +2421,16 @@ class DirectPtycho:
 
         ``check_rotation=True`` (default) settles the 180-degree ambiguity of an estimated scan-detector rotation. The
         centre-of-mass curl cannot tell omega from omega + 180 degrees and both fit equally well (the second is the
-        conjugate object with C10 of the opposite sign). So the fit runs twice, at the estimate and at the estimate
-        plus 180 degrees, two independent searches with the same settings, and keeps the branch whose atomic columns,
-        located on the scan's dark field, have positive phase; when no columns are resolved, the branch with the
-        larger phase tail (``scan_rotations`` explains both tests). The fit then costs two searches: two
-        joint fits took 9 to 25 s in all on 512 x 512 scans on an M-series Mac, two MPS standard fits (``tilt=False``)
-        3 to 10 s. ``result.rotation_branches`` records both fits and the
+        conjugate object with C10 of the opposite sign). The default joint fit searches once and maps its optics to the opposite
+        rotation when the search bounds preserve this symmetry. If a tilt component reaches its bound,
+        an independent search checks the mapped fit and the higher-agreement solution supplies both branches.
+        Fits without this symmetry search each branch independently.
+        Both branches are evaluated at their own rotation. Positive phase at dark-field atomic columns selects
+        the branch when decisive. Otherwise the larger phase tail suggests a branch, with polarity unresolved.
+        ``result.rotation_branches`` records both candidates and the
         evidence, ``result.show("rotation")`` draws it, and one line (with ``verbose``) says which branch was kept.
         A rotation given to ``DirectPtycho(...)`` or recorded with the acquisition is the user's calibration: it is fitted
-        once and never moved. ``direct.scan_rotations(report=False, )`` still fits both branches of it and reports.
+        once and never moved. ``direct.scan_rotations(report=False)`` still fits both branches of it and reports.
         ``check_rotation=False`` fits once at the session's rotation, estimated or not.
         ``check_rotation="both"`` explicitly compares both 180-degree branches
         even for a supplied angle, before the fifth-order refinement.
@@ -2914,7 +2970,7 @@ class DirectPtycho:
             else:
                 try:
                     result = self._fit_both_branches(fit, keep_first=branches == "keep", measure_gain=gain_once,
-                                                     mapped=mapped)
+                                                     mapped=mapped, tilt_limit_mrad=tilt_limit_mrad)
                 finally:
                     if gain_once:
                         self._compare_standard = True

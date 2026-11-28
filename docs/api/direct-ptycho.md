@@ -379,7 +379,7 @@ Use `from quantem.gpu import DirectPtycho` and `ptycho.run(...)` in new code.
 The public methods are `aberrations()`, `run()`, and `scan_rotations()`.
 Update old `fit_aberrations()`, `reconstruct()`, and rotation-comparison calls to these
 names; the renamed methods do not retain aliases. Saved records take the new
-names too (`quantem.direct-result/15`, `quantem.direct-calibration/9`); the CHANGELOG
+names too (`quantem.direct-result/15`, `quantem.direct-calibration/10`); the CHANGELOG
 names the script that rewrites existing files once. The series entry point is
 `DirectPtycho.series(...)`; there is no `stream(...)` spelling.
 The package is `quantem.gpu.direct_ptycho` (for example
@@ -438,3 +438,7 @@ probe or establish specimen depth resolution. Reset All restores launch settings
 
 The Python workflow is `DirectPtycho`; there is no other class name for it. Use `aberrations()` for optical fitting. The scientific algorithm
 name `method="phase_of_mean"` remains available alongside `"phase"` and `"complex"`.
+
+## Save a reviewed reconstruction
+
+After adjusting a live ShowPtycho viewer, `ptycho.save(save_dir="review")` saves its calibration and waves. Reopen the result with `result = DirectPtycho.load("review")`. The loaded `result.object` and `result.probe("real")` are complex NumPy arrays. Use `result.probe("fourier")` for the centered Fourier probe.

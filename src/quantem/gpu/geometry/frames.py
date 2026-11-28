@@ -1,7 +1,7 @@
 """Scan-detector frame arithmetic shared by direct ptychography, ptychography and session tools.
 
 Direct ptychography states the sample tilt in the scan frame (``sample_tilt_mrad``, (row, col) along the scan axes). A ptychographic
-reconstruction places its object and propagator in the detector frame, so its tilt (``propagator_tilt_mrad``) is
+reconstruction places its object and propagator in the detector frame, so its tilt (``tilt_mrad``) is
 the same vector expressed along the detector's (row, col) axes. The two frames differ by the scan-detector rotation
 ``theta`` (``scan_detector_rotation_deg``) and, when ``scan_detector_rotation_flipped`` is true, by a swap of the
 detector's row and column axes, the convention direct ptychography, DPC and screening apply to the centre of mass:
@@ -54,7 +54,7 @@ def sample_to_propagator_tilt(
     Returns
     -------
     tuple[float, float]
-        The tilt in mrad, (row, col) along the original detector axes (``propagator_tilt_mrad``).
+        The tilt in mrad, (row, col) along the original detector axes (``tilt_mrad``).
 
     Examples
     --------
@@ -68,7 +68,7 @@ def sample_to_propagator_tilt(
 
 
 def propagator_to_sample_tilt(
-    propagator_tilt_mrad: tuple[float, float],
+    tilt_mrad: tuple[float, float],
     *,
     scan_detector_rotation_deg: float,
     scan_detector_rotation_flipped: bool = False,
@@ -80,7 +80,7 @@ def propagator_to_sample_tilt(
 
     Parameters
     ----------
-    propagator_tilt_mrad : (float, float)
+    tilt_mrad : (float, float)
         Tilt in mrad, (row, col) along the original detector axes.
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees.
@@ -97,7 +97,7 @@ def propagator_to_sample_tilt(
     >>> propagator_to_sample_tilt((0.0, -2.0), scan_detector_rotation_deg=90.0)
     (2.0, -1.2246467991473532e-16)
     """
-    row, col = _pair("propagator_tilt_mrad", propagator_tilt_mrad)
+    row, col = _pair("tilt_mrad", tilt_mrad)
     if scan_detector_rotation_flipped:
         row, col = col, row
     cosine, sine = _rotation(scan_detector_rotation_deg)

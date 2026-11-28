@@ -122,7 +122,7 @@ def test_a_scan_region_that_does_not_span_the_scan_shape_is_refused(tmp_path):
         load_bf_columns_mps(tmp_path / "showptycho")
 
 
-@pytest.mark.parametrize("schema", ["quantem.direct-calibration/9"])
+@pytest.mark.parametrize("schema", ["quantem.direct-calibration/10"])
 def test_python_fit_calibration_does_not_block_acquisition_loading(tmp_path, schema):
     """Reopening saved Python optics falls back to the original acquisition, in the current layout."""
     from quantem.gpu.direct_ptycho.mps.frames import find_bf_columns

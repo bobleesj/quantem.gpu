@@ -2,6 +2,7 @@
 
 import json
 import warnings
+from contextlib import nullcontext
 from dataclasses import dataclass
 from math import prod
 from pathlib import Path
@@ -320,7 +321,10 @@ class Dataset4dstem:
         device = str(source.device if device is None else device)
         if path is None:
             return load(source, dtype=dtype, device=device, verbose=False)
-        save(path, source, dtype=dtype, backend=device.split(":")[0], verbose=verbose)
+        target = torch.device(device)
+        context = torch.cuda.device(target) if target.type == "cuda" and target.index is not None else nullcontext()
+        with context:
+            save(path, source, dtype=dtype, backend=target.type, verbose=verbose)
         return load(
             path, dtype="native" if dtype == "float32" else dtype,
             device=device, verbose=False,

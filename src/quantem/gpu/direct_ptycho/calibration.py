@@ -9,6 +9,8 @@ from uuid import uuid4
 from quantem.gpu.geometry import sample_to_propagator_tilt
 from quantem.gpu.optics.physics import direct_auto_upsample
 
+# 10: the tilt along the detector axes is "tilt_mrad" (was "propagator_tilt_mrad"): one name with myptycho's
+#    Propagator(tilt_mrad=); the scan-frame tilt stays "sample_tilt_mrad". No number changes.
 # 9: the schema takes the direct-ptychography name, quantem.direct-calibration; the layout is that of 8. A record
 #    also says what its fit searched, "max_order" and "higher_order_limit" (None when it was not a fifth-order fit;
 #    absent in a record written before they were added): load_calibration rebuilds the fit's search bounds from them.
@@ -21,7 +23,7 @@ from quantem.gpu.optics.physics import direct_auto_upsample
 # 7: the output factor is "upsampling" (was "upsampling_factor") and reconstruction_options names the direct
 #    strengths phase_damping and amplitude_damping (were phase_regularization and amplitude_regularization).
 # An earlier record is rewritten once with quantem.widget's scripts/rewrite_direct_calibration.py.
-CALIBRATION_SCHEMA = "quantem.direct-calibration/9"
+CALIBRATION_SCHEMA = "quantem.direct-calibration/10"
 # Every calibration record a reader accepts, the current one first.
 READABLE_CALIBRATION_SCHEMAS = (CALIBRATION_SCHEMA,)
 
@@ -120,7 +122,7 @@ def save_calibration(result, path):
         "source": portable_source(result.source_path, path.parent), "scan_region": context["scan_region"],
         "scan_shape": context["scan_shape"], "bright_field_radius_px": geometry["bright_field_radius_px"],
         "sample_tilt_mrad": sample, "depth_spread_nm": depth,
-        "propagator_tilt_mrad": (None if sample is None else sample_to_propagator_tilt(
+        "tilt_mrad": (None if sample is None else sample_to_propagator_tilt(
             sample, scan_detector_rotation_deg=result.scan_detector_rotation_deg,
             scan_detector_rotation_flipped=result.scan_detector_rotation_flipped)),
         "loss": result.loss,
@@ -167,7 +169,8 @@ def load_calibration(path):
     record = json.loads(path.read_text(encoding="utf-8"))
     found = record.get("schema") if isinstance(record, dict) else None
     if found not in READABLE_CALIBRATION_SCHEMAS:
-        raise ValueError(f"{path} is a {found!r} record; a Direct ptycho calibration is {CALIBRATION_SCHEMA!r}.")
+        raise ValueError(f"{path} is a {found!r} record; a Direct ptycho calibration is {CALIBRATION_SCHEMA!r}: an "
+                         "earlier layout is rewritten once with quantem.widget's scripts/rewrite_direct_calibration.py.")
     rows, columns = record["scan_shape"]
     if record["scan_region"] != [0, rows, 0, columns]:
         raise ValueError(f"{path} is the calibration of scan region {record['scan_region']}; a series needs the "

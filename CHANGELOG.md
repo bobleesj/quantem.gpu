@@ -6,6 +6,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Renamed: the tilt along the detector axes is `tilt_mrad` (was `propagator_tilt_mrad`) in `sample_to_propagator_tilt`'s keyword and the direct calibration record, now `quantem.direct-calibration/10`; a /9 record is refused and rewritten once with quantem.widget's `scripts/rewrite_direct_calibration.py`. No number changes.
 - `detector_transpose=True` also loads on Apple GPUs (MPS): the same 32 x 32 tiled transpose runs as a Metal kernel for NumPy arrays, ARINA masters and `.qem` copies, bit for bit the transpose of a plain load on an M5 Max.
 - `data.calibration.table()` no longer lists a pixel correction from "the stored pixel mask" for an array that has no mask and no correction record.
 - `io.load(source, detector_transpose=True)` swaps each pattern's rows and columns as it is encoded on CUDA, for an acquisition whose detector is transposed relative to the scan (a reflection, which no scan-detector rotation gives) when a reconstruction needs the detector in the scan's frame: EMPAD RAW, NumPy, Zarr, HDF5 and ARINA masters (with or without `detector_bin`) and `.qem` copies. Each block is transposed in one tiled pass on the device just before it is encoded. Every detector calibration follows its axis, and `detector_transpose` is recorded in the metadata and as a processing step, so a saved copy reopens transposed. On one RTX PRO 6000 the WSe2 EMPAD-G1 RAW of Zenodo 10621271 loads in 0.539 s transposed against 0.536 s plain, a 512 x 512 x 192 x 192 uint16 ARINA master in 0.472 s against 0.449 s (one tiled device pass, 1.6 ms a 1.2 GB block); a `.qem` copy, which reopens without decoding, is decoded and encoded again (0.87 to 1.37 s). A float32 load also hashes its stored checksum on a worker thread now (the WSe2 RAW 0.67 to 0.42 s on a busy host) (`docs/maintainer/2026-11-24-detector-transpose.md`).
@@ -68,6 +69,15 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `StreamedCounts.park()` and `restore()` move an encoded acquisition to page-locked host memory and back.
 - `DirectPtycho.on_park`: set it on a session over your own dataset to let a fit on a small device park that dataset;
   it is called first, so a viewer on the dataset closes its detector sessions there.
+- Open bitshuffle-compressed float32 HDF5 scans directly with `io.load()` in a fresh Python process.
+- Check the opposite rotation independently when a joint aberration fit reaches a tilt bound.
+- Keep HDF5 acquisition loading and MAPED block export on the selected CUDA device.
+- The WebGPU direct fit batches independent trial scores and reuses seed gradients across validation rings. Full-field phase reconstruction transforms only the required spectrum of each detector column.
+- Mobile WebGPU detector integration can replace verified ANS groups with losslessly bit-packed counts for random-access aperture changes.
+- WebGPU uses a direct symbol table for camera QEM detector reductions while preserving native counts and stream verification.
+- WebGPU decodes selected scan windows once for diffraction-pattern reductions and reuses exact detector moments across DPC views.
+- Direct ptychography previews use the scan GPU on fresh notebook callback threads.
+- Save and reopen reviewed direct ptychography object and probe waves with their sampling and aberrations.
 
 ## rc18 - 2026-11-11
 

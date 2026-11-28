@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Every job runs in full once a week, whatever changed.
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,13 +17,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Each job below runs only when the files it tests changed. A change to this
+  # workflow, a scheduled or manual run, or a diff that cannot be computed runs
+  # every job.
+  changes:
+    name: Changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      native: ${{ steps.areas.outputs.native }}
+      qem: ${{ steps.areas.outputs.qem }}
+      python: ${{ steps.areas.outputs.python }}
+      docs: ${{ steps.areas.outputs.docs }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - id: areas
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/ci_changed_areas.sh
+
   qem-portable:
     name: QEM reference and integrity (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.qem == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15, windows-latest]
+        # Linux runs these files in the Python job.
+        os: [macos-15, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -34,6 +64,8 @@ jobs:
 
   python:
     name: Python 3.11
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -64,10 +96,13 @@ jobs:
       - name: Type-check the bundled browser sources
         run: npm run typecheck
       - name: Run Python tests
-        run: PYTHONPATH=src pytest -q -m "" -n 2 --dist worksteal --durations=20
+        run: PYTHONPATH=src pytest -q -m "" -n 4 --dist worksteal --durations=20
 
+  # The GPU docs workflow builds the pages on main, so this job checks pull requests.
   docs:
     name: Documentation
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -89,9 +124,22 @@ jobs:
 
   metal:
     name: Metal package
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Give unchanged sources their commit times
+        run: bash scripts/ci_restore_mtimes.sh
+      # SwiftPM rebuilds only the targets whose sources changed since the cached build.
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: swiftpm-metal-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved', 'native/**', 'src/quantem/gpu/**/*.metal', 'src/quantem/gpu/**/*.msl', 'src/quantem/gpu/display/colormaps.json') }}
+          restore-keys: swiftpm-metal-${{ runner.os }}-
       - name: Check Swift formatting
         run: >-
           xcrun swift-format lint --strict --recursive
@@ -109,9 +157,23 @@ jobs:
 
   metal-platforms:
     name: Native consumers and iOS
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Give unchanged sources their commit times
+        run: bash scripts/ci_restore_mtimes.sh
+      - uses: actions/cache@v4
+        with:
+          path: |
+            tests/hardware/metal/swift_original_packing/.build
+            .build
+          key: swiftpm-platforms-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved', 'native/**', 'tests/hardware/metal/swift_original_packing/**', 'src/quantem/gpu/**/*.metal', 'src/quantem/gpu/**/*.msl') }}
+          restore-keys: swiftpm-platforms-${{ runner.os }}-
       - name: Check native EMPAD source contract
         run: |
           swift build -c release --package-path tests/hardware/metal/swift_original_packing --product EMPADSourceParity
