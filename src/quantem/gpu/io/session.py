@@ -224,8 +224,10 @@ class Session:
             held = dict(row.get("optics") or {})
             for name, (indices, values) in self.tracks.items():     # what the parts say held at this index
                 place = bisect_right(indices, int(index)) - 1
-                if place >= 0:
+                if place >= 0 and values[place] is not None:
                     held[name] = values[place]
+                elif place >= 0:                    # ended: the scan at this index does not carry it
+                    held.pop(name, None)
             return {name: {"value": value, "age_s": None, "between": None, "indices": None}
                     for name, value in held.items()}
         spread = 0.0 if row["clock"] == "logged" else float(self.clock_spread_s or 0.0)
@@ -266,7 +268,8 @@ class Session:
         and every reading that changed while the scan was taken is a step at the pattern being taken then, placed to
         one read period and the clocks' spread (``state`` gives that window). What changed between two scans shows as
         the next scan's first value. Without a log (``source`` "parts"): the steps the parts' own headers carry, the
-        scan's optics read at Go and the steps its acquisition recorded by index.
+        scan's optics read at Go and the steps its acquisition recorded by index; a value of None means the scans
+        from that index on do not carry the quantity (a MAPED tilt after its series).
 
         >>> defocus = session.track("defocus_nm")               # doctest: +SKIP
         >>> defocus["indices"], defocus["values"]               # doctest: +SKIP
@@ -531,6 +534,10 @@ def session(folder: str | PathLike[str], *, session: str | None = None, log=None
     pieces: dict[int, list[dict]] = {}              # a scan's first index -> where its patterns lie in the parts
     tracks: dict[str, tuple[list, list]] = {}       # a quantity -> the indices it changed at and its values from there
     for part in sorted(cut.get(identifier, []), key=_first_index):
+        for name, (indices, values) in tracks.items():
+            if name not in (part.get("tracks") or {}) and values[-1] is not None:
+                indices.append(part["first_index"])             # no scan of this part carries it: it ends here
+                values.append(None)
         for name, steps in (part.get("tracks") or {}).items():
             indices, values = tracks.setdefault(name, ([], []))
             for at, value in zip(steps["at"], steps["values"], strict=True):

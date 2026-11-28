@@ -179,3 +179,35 @@ def test_reused_detector_series_id_keeps_the_clock_for_each_scan(tmp_path):
     assert saved.time(0) == pytest.approx(T0, abs=1e-5)
     assert saved.time(10) == pytest.approx(T0 + 100, abs=1e-5)
     assert saved.clock_offset_s == pytest.approx(OFFSET)
+
+
+def test_a_track_ends_where_the_scans_stop_carrying_it(tmp_path, monkeypatch):
+    """A tilt series' beam tilt is not the next scan's (review, 11-27: it was read for every later scan): the writer
+    ends it with None inside a part, and a later part that does not name it ends it at its first pattern."""
+    def entry(series, first, at, **metadata):
+        return {"series": series, "first_index": first, "at": at, "offset": 0, "patterns": 100, "expected": 100,
+                "stored_shape": [10, 10], "metadata": {"series": series, "optics": {"defocus_nm": -12.0}, **metadata}}
+
+    headers = {
+        "night-000000000000.qem": {"patterns": 200, "scans": [entry("tilt_1", 0, 0), entry("plain_2", 100, 100)], "tracks": {
+            "defocus_nm": {"at": [0], "values": [-12.0]}, "tilt_mrad": {"at": [0, 100], "values": [[17.0, 0.0], None]}}},
+        "night-000000000200.qem": {"patterns": 100, "scans": [entry("tilt_3", 200, 0)], "tracks": {
+            "defocus_nm": {"at": [0], "values": [-12.0]}, "tilt_mrad": {"at": [0], "values": [[0.0, 17.0]]}}},
+        "night-000000000300.qem": {"patterns": 100, "scans": [entry("plain_4", 300, 0)], "tracks": {
+            "defocus_nm": {"at": [0], "values": [-12.0]}}},
+    }
+    for name in headers:
+        (tmp_path / name).touch()
+
+    def read_header(source):
+        return SimpleNamespace(scan_shape=(1, headers[source.name]["patterns"]), metadata={
+            "session": "night", "first_index": int(source.stem.split("-")[1]), "part": headers[source.name]})
+
+    monkeypatch.setattr(import_module("quantem.gpu.io.inspect"), "inspect", read_header)
+    saved = io.session(tmp_path)
+
+    assert saved.track("tilt_mrad") == {"indices": [0, 100, 200, 300], "values": [[17.0, 0.0], None, [0.0, 17.0], None],
+                                        "source": "parts"}
+    assert saved.state(50)["tilt_mrad"]["value"] == [17.0, 0.0] and saved.state(250)["tilt_mrad"]["value"] == [0.0, 17.0]
+    assert "tilt_mrad" not in saved.state(150) and "tilt_mrad" not in saved.state(350)
+    assert saved.state(350)["defocus_nm"]["value"] == -12.0
